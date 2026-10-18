@@ -20,7 +20,8 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download the latest `bbsae-0.1.0.jar` from the repository's **Releases** page.
+1. Download [`bbsae-0.1.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.1.0/bbsae-0.1.0.jar)
+   from the **v0.1.0** release.
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
 3. Put `bbsae-0.1.0.jar` and the BBS FS jar into the game's `mods/` folder.
