@@ -35,8 +35,8 @@
 
 - 根目录 `bbsae-0.1.0.jar`
 - `build/libs/bbsae-0.1.0.jar`
-- SHA-256：`2D07AC01A16B79E7EEAED1F0DC7FCA0A008AF4EA61D7518DD0DADD4CAE817D21`
-- 大小：`406390` 字节
+- SHA-256：`C125F87AB4FF12005EAC660C17520A15C544018CE1E085EE7A3329A402BF22E6`
+- 大小：`406520` 字节
 
 ---
 
@@ -607,8 +607,8 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 ## 9. 当前最终产物
 
 - `/bbsae-0.1.0.jar`
-- SHA-256 `2D07AC01A16B79E7EEAED1F0DC7FCA0A008AF4EA61D7518DD0DADD4CAE817D21`
-- 大小 `406390`
+- SHA-256 `C125F87AB4FF12005EAC660C17520A15C544018CE1E085EE7A3329A402BF22E6`
+- 大小 `406520`
 - 构建时间 2026-10-18 21:53
 - 构建方式：`gradle build --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
 
@@ -1033,8 +1033,8 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 7. **镜像对齐 AM**：叠半透明镜像副本，而不是整幅折叠丢一半。
 8. **测试**：61/61 通过；`ShaderPixelTest` 用真实 GL 3.2 上下文做像素断言并输出
    `docs/verify/round8-pixel-effects.png`。
-9. **产物**：`bbsae-0.1.0.jar`，406390 字节，
-   SHA-256 `2D07AC01A16B79E7EEAED1F0DC7FCA0A008AF4EA61D7518DD0DADD4CAE817D21`。
+9. **产物**：`bbsae-0.1.0.jar`，406520 字节，
+   SHA-256 `C125F87AB4FF12005EAC660C17520A15C544018CE1E085EE7A3329A402BF22E6`。
 10. **新增 `PixelPlan`**：参数解析与 GL 分离；`supports()` 改为 `SUPPORTED` 集合，
     `EffectCoverageTest` 同时检查“注册表→渲染器”和“渲染器→注册表”。
 

@@ -156,6 +156,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private int exportHeight = 1080;
     private int exportFps = 30;
     private UITrackpad exportDurationField;
+    private UITrackpad settingsDurationField;
     private int primedWidth = -1;
     private final java.util.ArrayDeque<String> undoStack = new java.util.ArrayDeque<>();
     private final java.util.ArrayDeque<String> redoStack = new java.util.ArrayDeque<>();
@@ -2736,6 +2737,7 @@ public class UICompositorPanel extends UIDashboardPanel
             : (this.doc == null ? 0F : this.doc.duration));
         exportDuration.relative(this.modalBox).x(190).y(300).w(120).h(20);
         exportDuration.tooltip(IKey.constant("0 = 使用合成时长；>0 时直接传给 BBS 原生录像器"));
+        this.settingsDurationField = exportDuration;
 
         UILabel exportHint = new UILabel(IKey.constant("秒；0 = 当前合成时长"));
         exportHint.color(0xFF8A94A6, false);
@@ -2750,10 +2752,18 @@ public class UICompositorPanel extends UIDashboardPanel
                 return;
             }
 
-            float seconds = this.project.settings.exportDuration > 0F
-                ? this.project.settings.exportDuration
-                : this.doc.duration;
+            /* Read the live trackpad, not the stored setting: if the user types 40 and clicks this
+             * button without pressing Enter, the stored value may still be 0. */
+            float seconds = this.settingsDurationField == null
+                ? 0F
+                : (float) this.settingsDurationField.getValue();
 
+            if (seconds <= 0F)
+            {
+                seconds = this.doc.duration;
+            }
+
+            this.project.settings.exportDuration = Math.max(0F, Math.min(3600F, seconds));
             this.doc.duration = Math.max(0.1F, seconds);
             this.doc.workAreaOut = this.doc.duration;
             this.syncBbsLoopToDocument();
@@ -2761,6 +2771,12 @@ public class UICompositorPanel extends UIDashboardPanel
             this.filmPanel.forceSave();
             this.save();
             this.refreshSheets();
+            this.refreshLayers();
+
+            if (this.trackTimeline != null)
+            {
+                this.trackTimeline.fit();
+            }
             this.setStatus("导出时长 / 合成 / BBS 时间轴 = "
                 + String.format(java.util.Locale.ROOT, "%.2fs", this.doc.duration));
         });

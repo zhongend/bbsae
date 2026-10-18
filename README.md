@@ -126,8 +126,8 @@ Verified in this iteration:
   frame contains the compositor layers, proving the frame-overlay path reaches the video file;
 - the final jar has Minecraft references remapped to intermediary and keeps BBS class names.
 
-Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **406390** bytes,
-SHA-256 `2D07AC01A16B79E7EEAED1F0DC7FCA0A008AF4EA61D7518DD0DADD4CAE817D21` (check the file if it is
+Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **406520** bytes,
+SHA-256 `C125F87AB4FF12005EAC660C17520A15C544018CE1E085EE7A3329A402BF22E6` (check the file if it is
 repacked). The jar is produced by `gradlew build`; `remapJar` writes it directly and the class
 entries are intermediary-remapped.
 
