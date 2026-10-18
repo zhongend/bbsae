@@ -8,10 +8,15 @@
 - **UI architecture:** [`docs/ui-architecture.zh.md`](docs/ui-architecture.zh.md)
 - **Photon research:** [`docs/photon-research.zh.md`](docs/photon-research.zh.md)
 - **Developer handoff:** [`docs/HANDOFF.zh.md`](docs/HANDOFF.zh.md)
+- **中文图文介绍 / Chinese gallery:** [`docs/GALLERY.zh.md`](docs/GALLERY.zh.md)
 - **Round 8 (Alight Motion PIXEL effects):** [`docs/ROUND8-01-AUDIT.zh.md`](docs/ROUND8-01-AUDIT.zh.md),
   [`docs/ROUND8-02-PIXEL.zh.md`](docs/ROUND8-02-PIXEL.zh.md),
   [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md),
   [`docs/ROUND8-04-PUBLISH.zh.md`](docs/ROUND8-04-PUBLISH.zh.md)
+
+<p align="center">
+  <img src="docs/gallery/hero.png" alt="BBS Compositor — editor, effects and export" width="100%">
+</p>
 
 > This repository does **not** redistribute the BBS FS jar. Download BBS FS 2.7-1.20.1 from its
 > official Modrinth page and put `bbs-2.7-1.20.1.jar` in `libs/` before building.
@@ -33,6 +38,71 @@ export** without touching the `.dat` film format.
 3. Put `bbsae-0.1.0.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
+
+## Gallery
+
+> 中文版图文介绍（含逐张说明）见 **[docs/GALLERY.zh.md](docs/GALLERY.zh.md)**。
+
+### The editor, not an overlay
+
+<p align="center">
+  <img src="docs/gallery/editor-overview.png" alt="BBS Compositor editor: effects library, live preview, Effect Controls and track timeline" width="100%">
+</p>
+
+BBS Compositor opens as an **independent BBS dashboard panel**, not a transparent overlay on the
+film editor. The layout follows a Premiere-style information architecture:
+
+1. **Effects library** — search, categories and a recent list; double-click applies to the selected track.
+2. **Live FBO preview** — the compositor renders into its own framebuffer with selection handles,
+   safe-area/grid overlays, and **FX / Mask / BBS-world** toggles for A/B comparison.
+3. **Effect Controls** — motion, opacity, blend mode, the applied-effect stack, layer styles,
+   masks, text, grade, and the context-sensitive Layer/Comp/Output pages.
+4. **Track timeline** — one row per layer, movable/trimable clips, frame snapping, work-area
+   shading, markers and a BBS-native keyframe drawer.
+
+<p align="center">
+  <img src="docs/gallery/timeline.png" alt="Track timeline with per-layer clips, snapping and markers" width="100%">
+</p>
+
+### 53 effects, including the Alight Motion PIXEL family
+
+The compositor ships a curated catalogue rather than a wall of half-implemented effects. It covers
+blur, colour, keying, generate, distort, stylize, transitions and depth. Round 8 added seven
+screen/retro effects built on the shared PIXEL shader:
+
+**Scanlines · Glitch · VHS · Halftone · Emboss · Mirror · Kaleidoscope**
+
+<p align="center">
+  <a href="docs/verify/round8-pixel-effects.png">
+    <img src="docs/verify/round8-pixel-effects.png" alt="Scanlines, Glitch, VHS, Halftone, Emboss, Mirror and Kaleidoscope" width="640">
+  </a>
+</p>
+
+Halftone uses Alight Motion-style properties (dots across the project width, strength, angle, row
+phase, ink/paper colours); Mirror overlays a mirrored copy with an opacity control. All seven run in
+**layer space**, so the pattern follows the layer when it is moved, scaled or rotated.
+
+### Grading, assets, 3D and export
+
+| <img src="docs/verify/round6-grade6.png" alt="AE-style colour wheels" width="100%"> | <img src="docs/verify/ui-7-asset-library.png" alt="Asset library with Minecraft icons" width="100%"> |
+| :---: | :---: |
+| **AE-style grading** — lift/gamma/gain wheels, five-point master curve, presets and keyframeable exposure/contrast/saturation/vibrance. | **Asset library** — project media plus the client's item/block/entity/gui textures, searchable and pageable. |
+
+| <img src="docs/verify/round7-3d2.png" alt="3D camera and 3D card in the compositor" width="100%"> | <img src="docs/verify/ui-4-export-dialog.png" alt="Export dialog with resolution, aspect and frame rate" width="100%"> |
+| :---: | :---: |
+| **3D camera and 2.5D cards** — free camera, depth ordering, adjustment layers and precomps. | **BBS-native export** — resolution/aspect/fps presets write into BBS's recorder, then F6 renders the real film. |
+
+| <img src="docs/verify/round6-export-1080p60.png" alt="A frame from a 1080p60 export" width="100%"> |
+| :---: |
+| **A real 1920×1080 @ 60 fps export** — 494 frames, 8.23 s, with the compositor layers baked into the MP4. |
+
+### Built on BBS's own frame path
+
+The compositor does not re-encode films or patch `.dat` files. BBS serializes a small
+`bbsae:composition` camera clip; `CompRenderer` draws the layer stack at the
+`RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
+its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
+encoding.
 
 ## Status
 
@@ -312,13 +382,14 @@ per-character text editing on canvas.
   content into the dashboard's coordinate space. Masks use JOML's column-major translation
   (`m30/m31`); using `m03/m13` silently collapsed every mask to the top-left corner.
 
-## Screenshots
+## Screenshots and verification
 
-The track/Effect Controls redesign was verified in the development client
-([`docs/ui-track-redesign.png`](docs/ui-track-redesign.png)): the left Effects library, centre
-preview, right Effect Controls and bottom track timeline are visible together; a split at the
-playhead produced two consistent halves, the moved/trimmed bars show their in/out range, and the
-BBS keyframe drawer aligns its playhead with the track ruler. An older exported MP4 frame is in
+The screenshots above were captured from the Fabric 1.20.1 + BBS 2.7 development client. The
+editing workflow was verified with real mouse/keyboard injection: applying an effect, trimming a
+track, splitting at the playhead, opening the export dialog, switching to the grade page and
+playing back. The full evidence set lives in [`docs/verify/`](docs/verify/), including the real
+`1920x1080@60fps` export frame `docs/verify/round6-export-1080p60.png` and the PIXEL contact
+sheet. An older exported MP4 frame is still available at
 [`docs/export-frame3.png`](docs/export-frame3.png).
 
 ## License
