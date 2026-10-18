@@ -82,7 +82,7 @@
 - 真实导出：`1920x1080 @ 60 fps`、494 帧、8.23 s；`docs/verify/round6-export-1080p60.png` 抽帧含合成器面板/标题/进度条。扭曲 shader 有真实 GL 像素断言（`ShaderDistortTest`，未跳过）。
 - 开发客户端：Fabric Loader 0.16.14 + BBS 2.7-1.20.1 下启动成功，BBS Compositor 面板注册成功；预览能显示合成内容，布局为 效果库 / 预览 / Effect Controls / 轨道时间轴，无重叠；轨道头、可移动/裁剪 bar、秒刻度、播放头、工作区、FX 徽章可见；关键帧抽屉与轨道播放头对齐。截图见 `docs/ui-track-redesign.png`。
 - 真实导出：使用 BBS 自带 recorder 生成了 `320x180@20fps`、39 帧的 H.264 MP4；抽帧确认合成层（面板、标题、HUD）进入视频，不只是屏幕预览。
-- 最终 `bbsae-0.1.0.jar`（**406097** 字节，SHA-256 `514E7AB228A3AA959D9621204DFDB7E799CD52983E20F77B7D6D95AC8D144948`）由 `gradlew build` 的 `remapJar` 将 Minecraft 引用重映射到 intermediary，BBS 类名保留；产物在项目根目录和 `build/libs/`。
+- 最终 `bbsae-0.1.0.jar`（**406128** 字节，SHA-256 `11A88F08A12EC2F556840BB58443240B7796EA6B830D17E4107C0BACCC847B21`）由 `gradlew build` 的 `remapJar` 将 Minecraft 引用重映射到 intermediary，BBS 类名保留；产物在项目根目录和 `build/libs/`。
 - 第九轮新增真实 20 秒（1202 帧、20.033 秒）、25 秒（1502 帧、25.033 秒）和 **40 秒（2402 帧、40.033 秒）** 1920×1080@60 导出；导出对话框和**进入工程后的“合成器设置”**都有“导出时长（秒）”字段，直接传给 BBS 原生录像器，不再受相机 12 秒或 loop 20 秒限制。证据见 `docs/verify/round9-export-40s-ffprobe.txt`、`round9-export-40s-35s.png`、`round9-bbs-preview-layer.png`。
 
 ## 已知技术风险

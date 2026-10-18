@@ -91,7 +91,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIButton exportFilm;
     private final UIButton replaySelector;
     private final UIIcon focusButton;
-    private final UIIcon settingsButton;
+    private final UIButton settingsButton;
     private final UIIcon prevFrame;
     private final UIIcon nextFrame;
     private final UIIcon addLayer;
@@ -269,9 +269,9 @@ public class UICompositorPanel extends UIDashboardPanel
         this.focusButton.w(20).h(20);
         this.focusButton.tooltip(IKey.constant("聚焦预览（F）"));
 
-        this.settingsButton = new UIIcon(Icons.GEAR, (icon) -> this.showSettings());
-        this.settingsButton.w(20).h(20);
-        this.settingsButton.tooltip(IKey.constant("合成器设置：默认图层时长、快捷键方案、外部播放"));
+        this.settingsButton = new UIButton(IKey.constant("设置"), (button) -> this.showSettings());
+        this.settingsButton.w(44).h(20);
+        this.settingsButton.tooltip(IKey.constant("合成器设置：导出时长、默认图层时长、快捷键方案、外部播放"));
 
         this.save.tooltip(IKey.constant("保存工程（Ctrl+S）"));
         this.play.tooltip(IKey.constant("播放 / 暂停（空格）"));
@@ -286,11 +286,11 @@ public class UICompositorPanel extends UIDashboardPanel
         this.prevFrame.relative(this.header).x(326).y(3).w(20).h(18);
         this.nextFrame.relative(this.header).x(350).y(3).w(20).h(18);
         this.timecode.relative(this.header).x(378).y(3).w(96).h(18);
-        this.save.relative(this.header).x(1F, -240).y(3).w(52).h(18);
-        this.exportFilm.relative(this.header).x(1F, -182).y(3).w(62).h(18);
-        this.renderMode.relative(this.header).x(1F, -114).y(3).w(58).h(18);
-        this.settingsButton.relative(this.header).x(1F, -50).y(3).w(20).h(18);
-        this.focusButton.relative(this.header).x(1F, -24).y(3).w(20).h(18);
+        this.save.relative(this.header).x(1F, -300).y(3).w(52).h(18);
+        this.exportFilm.relative(this.header).x(1F, -242).y(3).w(62).h(18);
+        this.renderMode.relative(this.header).x(1F, -174).y(3).w(58).h(18);
+        this.settingsButton.relative(this.header).x(1F, -108).y(3).w(44).h(18);
+        this.focusButton.relative(this.header).x(1F, -44).y(3).w(20).h(18);
 
         this.header.add(this.title, this.replaySelector, this.play, this.prevFrame, this.nextFrame,
             this.timecode, this.save, this.exportFilm, this.renderMode, this.settingsButton, this.focusButton);
