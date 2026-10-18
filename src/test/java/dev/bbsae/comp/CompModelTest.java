@@ -59,6 +59,24 @@ public class CompModelTest
     }
 
     @Test
+    public void layerCanMovePastTwentySecondsWhenCompositionIsLonger()
+    {
+        CompLayer layer = new CompLayer("long", "Long", "solid");
+
+        layer.in = 0F;
+        layer.out = 20F;
+
+        layer.moveTo(20F, 20F, 40F);
+
+        assertEquals(20F, layer.in, 0.0001F);
+        assertEquals(40F, layer.out, 0.0001F);
+
+        layer.trimOutTo(40F, 20F, 40F);
+
+        assertEquals(40F, layer.out, 0.0001F);
+    }
+
+    @Test
     public void demoProjectHasLayersAndBbsTracks()
     {
         CompProject project = CompStore.demo("unit-test");

@@ -2181,6 +2181,43 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
+    /**
+     * The timeline's drag range is {@code doc.duration}. If a duration field is raised, the
+     * composition itself has to grow first; otherwise the user sees a barrier at the old end
+     * (the reported "20s wall") even though the export field says 40.
+     */
+    private void adoptCompositionDuration(float seconds)
+    {
+        if (this.doc == null || seconds <= 0F)
+        {
+            return;
+        }
+
+        if (seconds <= this.doc.duration + 0.0001F)
+        {
+            return;
+        }
+
+        this.doc.duration = seconds;
+        this.doc.workAreaOut = Math.max(this.doc.workAreaIn + 0.1F, seconds);
+
+        if (this.film != null && this.filmPanel != null && this.project != null)
+        {
+            this.syncBbsLoop(Math.max(20, Math.round(seconds * 20F) + 1));
+            CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, seconds);
+            this.filmPanel.forceSave();
+        }
+
+        this.refreshLayers();
+        this.refreshSheets();
+        this.save();
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.fit();
+        }
+    }
+
     private void syncBbsLoop(int ticks)
     {
         if (this.filmPanel == null
@@ -2674,7 +2711,7 @@ public class UICompositorPanel extends UIDashboardPanel
         note.color(0xFF8A94A6, false);
         note.relative(this.modalBox).x(18).y(266).w(1F, -36).h(28);
 
-        UILabel exportLabel = new UILabel(IKey.constant("导出时长（秒）"));
+        UILabel exportLabel = new UILabel(IKey.constant("合成 / 导出时长（秒）"));
         exportLabel.relative(this.modalBox).x(18).y(302).w(160).h(18);
 
         UITrackpad exportDuration = new UITrackpad((value) ->
@@ -2685,6 +2722,12 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.project.settings.exportDuration = Math.max(0F, Math.min(3600F, value.floatValue()));
+
+            if (this.project.settings.exportDuration > 0F)
+            {
+                this.adoptCompositionDuration(this.project.settings.exportDuration);
+            }
+
             this.save();
         });
         exportDuration.limit(0F, 3600F);
@@ -2694,11 +2737,11 @@ public class UICompositorPanel extends UIDashboardPanel
         exportDuration.relative(this.modalBox).x(190).y(300).w(120).h(20);
         exportDuration.tooltip(IKey.constant("0 = 使用合成时长；>0 时直接传给 BBS 原生录像器"));
 
-        UILabel exportHint = new UILabel(IKey.constant("秒；0 = 合成时长"));
+        UILabel exportHint = new UILabel(IKey.constant("秒；0 = 当前合成时长"));
         exportHint.color(0xFF8A94A6, false);
         exportHint.relative(this.modalBox).x(318).y(304).w(170).h(16);
 
-        UIButton applyExportDuration = new UIButton(IKey.constant("把导出时长写入合成与 BBS 时间轴"), (button) ->
+        UIButton applyExportDuration = new UIButton(IKey.constant("应用时长到合成与 BBS 时间轴"), (button) ->
         {
             if (this.doc == null || this.film == null || this.filmPanel == null || this.project == null)
             {
@@ -3138,6 +3181,12 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.project.settings.exportDuration = Math.max(0F, Math.min(3600F, value.floatValue()));
+
+            if (this.project.settings.exportDuration > 0F)
+            {
+                this.adoptCompositionDuration(this.project.settings.exportDuration);
+            }
+
             this.save();
         });
         duration.limit(0.1F, 3600F).setValue(exportDuration);
@@ -3238,6 +3287,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
             return;
         }
+
+        this.adoptCompositionDuration(exportSeconds);
 
         /* Make the physical film agree with this panel before BBS starts recording. A clip
          * trimmed to a few seconds used to leave the rest of the export as the raw BBS frame,

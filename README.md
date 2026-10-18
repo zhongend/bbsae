@@ -117,7 +117,7 @@ what is and is not implemented.
 
 Verified in this iteration:
 
-- `compileJava` and all **64** tests pass (headless model + real hidden-window OpenGL 3.2 pixel
+- `compileJava` and all **65** tests pass (headless model + real hidden-window OpenGL 3.2 pixel
   tests + export-duration/icon checks);
 - the addon loads in a Fabric 1.20.1 + BBS 2.7 development client;
 - the compositor preview renders the composition (not a blank frame) after fixing projection,
@@ -126,8 +126,8 @@ Verified in this iteration:
   frame contains the compositor layers, proving the frame-overlay path reaches the video file;
 - the final jar has Minecraft references remapped to intermediary and keeps BBS class names.
 
-Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **406128** bytes,
-SHA-256 `11A88F08A12EC2F556840BB58443240B7796EA6B830D17E4107C0BACCC847B21` (check the file if it is
+Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **406390** bytes,
+SHA-256 `2D07AC01A16B79E7EEAED1F0DC7FCA0A008AF4EA61D7518DD0DADD4CAE817D21` (check the file if it is
 repacked). The jar is produced by `gradlew build`; `remapJar` writes it directly and the class
 entries are intermediary-remapped.
 
@@ -154,9 +154,13 @@ entries are intermediary-remapped.
   40.033 s** (`docs/verify/round9-export-40s-35s.png`, `round9-export-40s-ffprobe.txt`), a
   25-second composition produced 1502 frames / 25.033 s, and a 20-second run is kept at
   `docs/verify/round9-export-20s-15s.png`;
+- **fixed the actual 20-second drag wall:** the field used to update only `exportDuration`, while
+  the timeline clamps drags to `doc.duration`; the callback now calls
+  `adoptCompositionDuration(seconds)`, extending `doc.duration`, work area, composition clip and
+  BBS loop first. A layer can now be dragged from 20 s to 40 s (`layerCanMovePastTwentySeconds...`);
 - a BBS-preview-layer-only export at `docs/verify/round9-bbs-preview-layer.png` proves the
   `bbs` layer now samples the clean world frame in the export path;
-- tests now **64 / 64** (added `compositionExportDurationExtendsPastTheTwelveSecondFilmDefault`
+- tests now **65 / 65** (added `compositionExportDurationExtendsPastTheTwelveSecondFilmDefault`
   and `IconResourceTest`). Details: [`docs/ROUND9-EXPORT-SYNC.zh.md`](docs/ROUND9-EXPORT-SYNC.zh.md).
 
 2026-10-18 eighth pass (Alight Motion PIXEL effects, first-principles bug audit):

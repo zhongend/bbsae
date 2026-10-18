@@ -35,8 +35,8 @@
 
 - 根目录 `bbsae-0.1.0.jar`
 - `build/libs/bbsae-0.1.0.jar`
-- SHA-256：`11A88F08A12EC2F556840BB58443240B7796EA6B830D17E4107C0BACCC847B21`
-- 大小：`406128` 字节
+- SHA-256：`2D07AC01A16B79E7EEAED1F0DC7FCA0A008AF4EA61D7518DD0DADD4CAE817D21`
+- 大小：`406390` 字节
 
 ---
 
@@ -607,14 +607,14 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 ## 9. 当前最终产物
 
 - `/bbsae-0.1.0.jar`
-- SHA-256 `11A88F08A12EC2F556840BB58443240B7796EA6B830D17E4107C0BACCC847B21`
-- 大小 `406128`
+- SHA-256 `2D07AC01A16B79E7EEAED1F0DC7FCA0A008AF4EA61D7518DD0DADD4CAE817D21`
+- 大小 `406390`
 - 构建时间 2026-10-18 21:53
 - 构建方式：`gradle build --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
 
 当前源码最后一次验证：
 
-- `test` **64/64** 通过；`jar` 由 `remapJar` 重新打包；
+- `test` **65/65** 通过；`jar` 由 `remapJar` 重新打包；
 - 第八轮新增 `EffectRenderer.PixelPlan`、7 个 PIXEL 效果、`PixelPlanTest`、
   `ShaderPixelTest` 12 个真实 GL 像素断言；
 - 第九轮新增 20 秒导出、`BBS 预览` 图层导出、`IconResourceTest`；
@@ -1033,8 +1033,8 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 7. **镜像对齐 AM**：叠半透明镜像副本，而不是整幅折叠丢一半。
 8. **测试**：61/61 通过；`ShaderPixelTest` 用真实 GL 3.2 上下文做像素断言并输出
    `docs/verify/round8-pixel-effects.png`。
-9. **产物**：`bbsae-0.1.0.jar`，406128 字节，
-   SHA-256 `11A88F08A12EC2F556840BB58443240B7796EA6B830D17E4107C0BACCC847B21`。
+9. **产物**：`bbsae-0.1.0.jar`，406390 字节，
+   SHA-256 `2D07AC01A16B79E7EEAED1F0DC7FCA0A008AF4EA61D7518DD0DADD4CAE817D21`。
 10. **新增 `PixelPlan`**：参数解析与 GL 分离；`supports()` 改为 `SUPPORTED` 集合，
     `EffectCoverageTest` 同时检查“注册表→渲染器”和“渲染器→注册表”。
 
@@ -1074,8 +1074,11 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 
 - 导出对话框新增 **“导出时长（秒）”**（`CompSettings.exportDuration`，0 = 合成时长）和
   **“同步到 BBS 时间轴”** 按钮；用户可以直接输入 40/60/120 秒；
-- **进入工程后的“合成器设置”弹窗也有同一字段**和
-  **“把导出时长写入合成与 BBS 时间轴”** 按钮；不需要先打开导出对话框；
+- **进入工程后的“合成器设置”弹窗也有“合成 / 导出时长（秒）”字段**和
+  **“应用时长到合成与 BBS 时间轴”** 按钮；不需要先打开导出对话框；
+- **修复真正的 20 秒拖拽屏障**：字段回调调用 `adoptCompositionDuration(seconds)`，
+  先扩展 `doc.duration`、workArea、composition clip、BBS loop，再刷新时间轴；
+  之前只写 `exportDuration`，`doc.duration` 仍是 20，拖图层自然被 20 秒夹住；
 - **compositor Export 直接调用 BBS 原生 `UIFilmRecorder.startRecording`**，传入
   `round(exportSeconds * 20) + 1` ticks；导出期间关闭 `BBSSettings.editorLoop`，结束后恢复，
   同时把 BBS `loopMin/loopMax` 同步到导出长度。
@@ -1105,7 +1108,9 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
   （`docs/verify/round9-export-40s-35s.png`、`round9-export-40s-ffprobe.txt`）——
   这是用户可直接操作的、绕过 20 秒的入口；
 - 只含 `bbs` 图层的 comp 导出：`docs/verify/round9-bbs-preview-layer.png`；
-- 测试 **64/64**（新增导出时长 + 图标资源测试）。
+- 测试 `layerCanMovePastTwentySecondsWhenCompositionIsLonger`：comp 40 秒时，
+  `in=0/out=20` 的图层可以移动到 `in=20/out=40`，证明 20 秒不是图层硬上限；
+- 测试 **65/65**（导出时长 + 拖拽排序 + 图标资源）。
 
 ### 19.4 仍要注意
 

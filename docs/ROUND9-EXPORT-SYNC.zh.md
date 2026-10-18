@@ -109,6 +109,29 @@ if (!BbsPreviewBridge.isActive()) return;
 2. 采样源必须是**干净的当前世界帧**，不是上一帧已经烘进合成器的画面；
 3. 2D overlay 不能把深度写进 BBS 世界 framebuffer，否则下一帧世界会留下上一帧的合成残影。
 
+### 2.6 真正的 20 秒屏障：`doc.duration` 没有跟着改
+
+用户后来描述得更准确：不是导出只有 20 秒，而是**在时间轴上拖图层，拖到 20 秒就像有一道墙**。
+
+根因不在导出器，而在时间轴的拖动范围：
+
+```java
+private float duration() {
+    return Math.max(0.1F, this.doc().duration);
+}
+```
+
+`UICompTrackTimeline` 的移动/裁剪都把它当上限：
+
+```java
+float maxIn = Math.max(0F, compDuration - length);
+layer.moveTo(newIn, fps, compDuration);
+```
+
+之前的“导出时长”字段只写了 `CompSettings.exportDuration`，**没有写 `CompDocument.duration`**。
+所以用户把导出时长改成 40，`doc.duration` 仍然是 20；拖动图层时仍然被 20 秒夹住。
+这正是“设置改了，但 20 秒屏障还在”的第一性原因。
+
 ## 3. 修复
 
 ### 3.1 时长：`exportDurationTicks`
@@ -135,9 +158,12 @@ public static int exportDurationTicks(int filmTicks, float compDurationSeconds)
 - 导出对话框新增 **“导出时长（秒）”**（`CompProject.CompSettings.exportDuration`，
   0 = 使用合成时长）和 **“同步到 BBS 时间轴”** 按钮；不再要求用户只能改 composition
   duration 来试出一个能导出的长度；
-- **进入工程后的“合成器设置”弹窗也有同一个“导出时长（秒）”字段**，并带
-  **“把导出时长写入合成与 BBS 时间轴”** 按钮：进入工程 → 设置 → 输入 60 → 应用；
+- **进入工程后的“合成器设置”弹窗也有“合成 / 导出时长（秒）”字段**，并带
+  **“应用时长到合成与 BBS 时间轴”** 按钮：进入工程 → 设置 → 输入 60 → 应用；
   composition、BBS clip、loopMax 和导出器都使用 60 秒；
+- 关键修复：字段回调调用 `adoptCompositionDuration(seconds)`，**先把 `doc.duration`
+  扩到该值**，再设置 `workAreaOut`、`CompositionClip` 和 BBS loop；时间轴 `duration()`
+  立即变成 40/60，图层可以拖过旧 20 秒边界。`startBbsExport` 也会在导出前做同样扩展；
 - `startBbsExport` 用 `exportSeconds = settings.exportDuration > 0 ? 设置值 : doc.duration`，
   调用 `CompositionClip.prepareForExport(..., exportSeconds)`，并 `filmPanel.forceSave()`，
   把 clip 真正写进影片数据；
@@ -320,8 +346,11 @@ ffprobe 记录：`docs/verify/round9-export-40s-ffprobe.txt`。
   - 240 ticks + 20s → 401 ticks；
   - 240 ticks + 8s → 240 ticks；
   - 600 ticks + 8s → 600 ticks。
+- `CompModelTest.layerCanMovePastTwentySecondsWhenCompositionIsLonger`：
+  `in=0/out=20` 的图层在 `compDuration=40` 下 `moveTo(20)` → `in=20/out=40`，
+  证明 20 秒不是图层本身的硬上限；
 - `IconResourceTest.compositorIconIsPackagedAtButtonSize`：图标存在、16×16、保留 alpha。
-- 全量 **64 / 64** 通过。
+- 全量 **65 / 65** 通过。
 
 ### 4.6 图标
 
