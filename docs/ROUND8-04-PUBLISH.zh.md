@@ -15,8 +15,9 @@
 | `f0c0ab1` | `Update handoff with round 8 build and entry points` |
 | `1ae375b` | `Document GitHub publish and release asset` |
 | `007c531` | `Record final publish commit and release notes` |
+| `5d63fee` | `Add visual gallery and Chinese illustrated introduction` |
 
-本文件最后更新时 `main` 的最新提交是 `007c531`。远程源码已验证包含：
+本文件最后更新时 `main` 的最新提交是 `5d63fee`。远程源码已验证包含：
 
 - `EffectRenderer.planPixel` / `SUPPORTED`；
 - `docs/ROUND8-01-AUDIT.zh.md`、`ROUND8-02-PIXEL.zh.md`、`ROUND8-03-VERIFY.zh.md`；
@@ -72,3 +73,18 @@ POST   https://uploads.github.com/repos/zhongend/bbsae/releases/{release_id}/ass
 - `javap` 显示 Minecraft 引用是 intermediary（`net/minecraft/class_...`），
   BBS 引用保留 `mchorse/bbs_mod/...`；
 - 测试：61/61 通过。
+
+## 6. 图文介绍页（追加）
+
+为了在 GitHub 首页直接展示界面，追加了 commit `5d63fee`
+（`Add visual gallery and Chinese illustrated introduction`）：
+
+- `docs/gallery/hero.png`：1600×900 首页 banner（标题 + 编辑器截图 + 四个效果缩略图）；
+- `docs/gallery/editor-overview.png`：1920×1200 带 4 个编号标注的界面总览；
+- `docs/gallery/timeline.png`：轨道时间轴细节裁图；
+- `docs/GALLERY.zh.md`：中文逐图介绍；
+- `README.md`：顶部 hero、Gallery 章节、调色/素材/3D/导出截图表格。
+
+GitHub 渲染后的图片 URL 已验证为
+`https://github.com/zhongend/bbsae/raw/main/docs/gallery/hero.png` 等；
+Release 说明也加上了同一张 hero 图。
