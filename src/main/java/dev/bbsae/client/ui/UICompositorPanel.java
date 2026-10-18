@@ -2137,6 +2137,7 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.doc != null)
         {
             CompositionClip.ensureForFilm(film, this.project.id, this.doc.id, this.doc.duration);
+            this.syncBbsLoopToDocument();
         }
 
         this.refreshLayers();
@@ -2166,6 +2167,25 @@ public class UICompositorPanel extends UIDashboardPanel
      * at workAreaOut, so the editor appeared to stop at 12s. Follow the duration when the out
      * point is still the untouched default; leave a deliberately shorter loop alone.
      */
+    /**
+     * BBS's own record button uses the film panel's loop range before it uses the camera duration.
+     * Keep that range on the composition length too, so "open compositor, press BBS record" and
+     * "press compositor Export" produce the same length.
+     */
+    private void syncBbsLoopToDocument()
+    {
+        if (this.filmPanel == null || this.doc == null
+            || this.filmPanel.cameraEditor == null || this.filmPanel.cameraEditor.clips == null)
+        {
+            return;
+        }
+
+        int ticks = Math.max(20, Math.round(this.doc.duration * 20F) + 1);
+
+        this.filmPanel.cameraEditor.clips.loopMin = 0;
+        this.filmPanel.cameraEditor.clips.loopMax = ticks;
+    }
+
     private static void normalizeWorkArea(CompDocument doc)
     {
         if (doc == null)
@@ -2444,6 +2464,7 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.doc != null)
         {
             CompositionClip.ensureForFilm(film, this.project.id, this.doc.id, this.doc.duration);
+            this.syncBbsLoopToDocument();
         }
 
         this.refreshLayers();
@@ -3068,6 +3089,7 @@ public class UICompositorPanel extends UIDashboardPanel
         mchorse.bbs_mod.ui.film.UIFilmPanel.applyExportSizeToBBS();
 
         this.save();
+        this.syncBbsLoopToDocument();
 
         /* Make the physical film agree with this panel before BBS starts recording. A clip
          * trimmed to a few seconds used to leave the rest of the export as the raw BBS frame,
@@ -3263,6 +3285,7 @@ public class UICompositorPanel extends UIDashboardPanel
             if (this.film != null)
             {
                 CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+                this.syncBbsLoopToDocument();
             }
 
             this.refreshLayers();
@@ -5870,6 +5893,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 /* The camera clip is what BBS's recorder uses for its length. Keep it in sync
                  * with the composition as soon as the user edits the duration. */
                 CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+                this.syncBbsLoopToDocument();
 
                 if (this.filmPanel != null)
                 {
