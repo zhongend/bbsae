@@ -126,8 +126,8 @@ Verified in this iteration:
   frame contains the compositor layers, proving the frame-overlay path reaches the video file;
 - the final jar has Minecraft references remapped to intermediary and keeps BBS class names.
 
-Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **405489** bytes,
-SHA-256 `023FFEC6510EB779F98BC8BCE42B3664615DC7D3AC4895F1E8DD10CAED7057A6` (check the file if it is
+Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **406097** bytes,
+SHA-256 `514E7AB228A3AA959D9621204DFDB7E799CD52983E20F77B7D6D95AC8D144948` (check the file if it is
 repacked). The jar is produced by `gradlew build`; `remapJar` writes it directly and the class
 entries are intermediary-remapped.
 
@@ -145,7 +145,10 @@ entries are intermediary-remapped.
 - added the user-provided compositor icon as `assets/bbsae/assets/textures/gui/compositor_icon.png`
   (16×16), used by the dashboard tab and the `bbsae:composition` clip;
 - the export dialog has an explicit **Export duration (seconds)** field (persisted as
-  `CompSettings.exportDuration`, 0 = composition duration) and a **Sync to BBS timeline** button;
+  `CompSettings.exportDuration`, 0 = composition duration) and a **Sync to BBS timeline** button.
+  The same field is available in the **compositor settings** after entering a project, with an
+  **Apply export duration to composition + BBS timeline** button, so the length can be changed
+  before opening the export dialog;
   the value is passed to BBS's native recorder directly as `round(seconds * 20) + 1` ticks, and
   `editorLoop` is disabled for the export. A 40-second setting produced **2402 frames /
   40.033 s** (`docs/verify/round9-export-40s-35s.png`, `round9-export-40s-ffprobe.txt`), a

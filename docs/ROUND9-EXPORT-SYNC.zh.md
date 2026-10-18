@@ -135,6 +135,9 @@ public static int exportDurationTicks(int filmTicks, float compDurationSeconds)
 - 导出对话框新增 **“导出时长（秒）”**（`CompProject.CompSettings.exportDuration`，
   0 = 使用合成时长）和 **“同步到 BBS 时间轴”** 按钮；不再要求用户只能改 composition
   duration 来试出一个能导出的长度；
+- **进入工程后的“合成器设置”弹窗也有同一个“导出时长（秒）”字段**，并带
+  **“把导出时长写入合成与 BBS 时间轴”** 按钮：进入工程 → 设置 → 输入 60 → 应用；
+  composition、BBS clip、loopMax 和导出器都使用 60 秒；
 - `startBbsExport` 用 `exportSeconds = settings.exportDuration > 0 ? 设置值 : doc.duration`，
   调用 `CompositionClip.prepareForExport(..., exportSeconds)`，并 `filmPanel.forceSave()`，
   把 clip 真正写进影片数据；

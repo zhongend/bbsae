@@ -35,8 +35,8 @@
 
 - 根目录 `bbsae-0.1.0.jar`
 - `build/libs/bbsae-0.1.0.jar`
-- SHA-256：`023FFEC6510EB779F98BC8BCE42B3664615DC7D3AC4895F1E8DD10CAED7057A6`
-- 大小：`405489` 字节
+- SHA-256：`514E7AB228A3AA959D9621204DFDB7E799CD52983E20F77B7D6D95AC8D144948`
+- 大小：`406097` 字节
 
 ---
 
@@ -607,8 +607,8 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 ## 9. 当前最终产物
 
 - `/bbsae-0.1.0.jar`
-- SHA-256 `023FFEC6510EB779F98BC8BCE42B3664615DC7D3AC4895F1E8DD10CAED7057A6`
-- 大小 `405489`
+- SHA-256 `514E7AB228A3AA959D9621204DFDB7E799CD52983E20F77B7D6D95AC8D144948`
+- 大小 `406097`
 - 构建时间 2026-10-18 21:53
 - 构建方式：`gradle build --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
 
@@ -1033,8 +1033,8 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 7. **镜像对齐 AM**：叠半透明镜像副本，而不是整幅折叠丢一半。
 8. **测试**：61/61 通过；`ShaderPixelTest` 用真实 GL 3.2 上下文做像素断言并输出
    `docs/verify/round8-pixel-effects.png`。
-9. **产物**：`bbsae-0.1.0.jar`，405489 字节，
-   SHA-256 `023FFEC6510EB779F98BC8BCE42B3664615DC7D3AC4895F1E8DD10CAED7057A6`。
+9. **产物**：`bbsae-0.1.0.jar`，406097 字节，
+   SHA-256 `514E7AB228A3AA959D9621204DFDB7E799CD52983E20F77B7D6D95AC8D144948`。
 10. **新增 `PixelPlan`**：参数解析与 GL 分离；`supports()` 改为 `SUPPORTED` 集合，
     `EffectCoverageTest` 同时检查“注册表→渲染器”和“渲染器→注册表”。
 
@@ -1074,6 +1074,8 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 
 - 导出对话框新增 **“导出时长（秒）”**（`CompSettings.exportDuration`，0 = 合成时长）和
   **“同步到 BBS 时间轴”** 按钮；用户可以直接输入 40/60/120 秒；
+- **进入工程后的“合成器设置”弹窗也有同一字段**和
+  **“把导出时长写入合成与 BBS 时间轴”** 按钮；不需要先打开导出对话框；
 - **compositor Export 直接调用 BBS 原生 `UIFilmRecorder.startRecording`**，传入
   `round(exportSeconds * 20) + 1` ticks；导出期间关闭 `BBSSettings.editorLoop`，结束后恢复，
   同时把 BBS `loopMin/loopMax` 同步到导出长度。

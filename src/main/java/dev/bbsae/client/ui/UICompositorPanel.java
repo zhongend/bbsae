@@ -2674,8 +2674,59 @@ public class UICompositorPanel extends UIDashboardPanel
         note.color(0xFF8A94A6, false);
         note.relative(this.modalBox).x(18).y(266).w(1F, -36).h(28);
 
+        UILabel exportLabel = new UILabel(IKey.constant("导出时长（秒）"));
+        exportLabel.relative(this.modalBox).x(18).y(302).w(160).h(18);
+
+        UITrackpad exportDuration = new UITrackpad((value) ->
+        {
+            if (this.project == null)
+            {
+                return;
+            }
+
+            this.project.settings.exportDuration = Math.max(0F, Math.min(3600F, value.floatValue()));
+            this.save();
+        });
+        exportDuration.limit(0F, 3600F);
+        exportDuration.setValue(settings.exportDuration > 0F
+            ? settings.exportDuration
+            : (this.doc == null ? 0F : this.doc.duration));
+        exportDuration.relative(this.modalBox).x(190).y(300).w(120).h(20);
+        exportDuration.tooltip(IKey.constant("0 = 使用合成时长；>0 时直接传给 BBS 原生录像器"));
+
+        UILabel exportHint = new UILabel(IKey.constant("秒；0 = 合成时长"));
+        exportHint.color(0xFF8A94A6, false);
+        exportHint.relative(this.modalBox).x(318).y(304).w(170).h(16);
+
+        UIButton applyExportDuration = new UIButton(IKey.constant("把导出时长写入合成与 BBS 时间轴"), (button) ->
+        {
+            if (this.doc == null || this.film == null || this.filmPanel == null || this.project == null)
+            {
+                this.setStatus("先进入一个影片工程");
+
+                return;
+            }
+
+            float seconds = this.project.settings.exportDuration > 0F
+                ? this.project.settings.exportDuration
+                : this.doc.duration;
+
+            this.doc.duration = Math.max(0.1F, seconds);
+            this.doc.workAreaOut = this.doc.duration;
+            this.syncBbsLoopToDocument();
+            CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+            this.filmPanel.forceSave();
+            this.save();
+            this.refreshSheets();
+            this.setStatus("导出时长 / 合成 / BBS 时间轴 = "
+                + String.format(java.util.Locale.ROOT, "%.2fs", this.doc.duration));
+        });
+        applyExportDuration.relative(this.modalBox).x(18).y(330).w(250).h(22);
+        applyExportDuration.tooltip(IKey.constant("三个地方使用同一时长，BBS 原版录制按钮也不会再截断"));
+
         this.modalBox.add(durationLabel, duration, durationHint, external, schemeLabel, scheme,
             autoSave, safeArea, grid, previewLabel, background, resetLayout, openProjects, shortcuts, note,
+            exportLabel, exportDuration, exportHint, applyExportDuration,
             this.modalButton("关闭", 18, 380, 484, this::closeModal));
     }
 
