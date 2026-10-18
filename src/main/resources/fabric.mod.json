@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "bbsae",
+  "version": "${version}",
+  "name": "BBS Compositor",
+  "description": "A screen-space compositor for BBS FS films.",
+  "authors": ["bbsae contributors"],
+  "contact": {
+    "homepage": "https://github.com/zhongend/bbsae",
+    "sources": "https://github.com/zhongend/bbsae",
+    "issues": "https://github.com/zhongend/bbsae/issues"
+  },
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "bbs-addon": ["dev.bbsae.BbsAeAddon"],
+    "bbs-client-addon": ["dev.bbsae.client.BbsAeClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.20.1",
+    "java": ">=17",
+    "bbs": ">=2.7-1.20.1"
+  }
+}

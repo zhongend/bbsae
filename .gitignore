@@ -1,0 +1,36 @@
+# Build and local caches
+build/
+.gradle/
+.gradle-home/
+.tmp/
+.lwjgl/
+logs/
+run/
+_tools/
+_research/
+
+# Local BBS dependency and build artifacts
+libs/*.jar
+!libs/.gitkeep
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local logs and crash reports
+*.log
+hs_err_pid*
+replay_pid*
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Generated screenshots: keep only the documented ones
+docs/*.png
+docs/screenshots/
+!docs/export-frame3.png
+!docs/ui-final1.png
+!docs/ui-preview-frame2.png
+!docs/ui-preview-standalone3.png
