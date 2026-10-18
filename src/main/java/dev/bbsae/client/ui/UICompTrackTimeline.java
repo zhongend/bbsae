@@ -51,6 +51,9 @@ public class UICompTrackTimeline extends UIElement
     private static final int MODE_MOVE = 3;
     private static final int MODE_SCRUB = 4;
     private static final int MODE_NAVIGATE = 5;
+    private static final int MODE_REORDER = 6;
+    /** Width of the drag grip at the left edge of a track header. */
+    private static final int REORDER_GRIP = 14;
 
     private final UICompositorPanel panel;
     private final Scale xAxis = new Scale(new Area(), ScrollDirection.HORIZONTAL);
@@ -69,6 +72,7 @@ public class UICompTrackTimeline extends UIElement
     private String dragId;
     private int dragStartX;
     private int dragStartY;
+    private int dragReorderTarget = -1;
     private float dragIn;
     private float dragOut;
     private double dragShift;
@@ -185,6 +189,38 @@ public class UICompTrackTimeline extends UIElement
         int size = this.rows().size();
 
         return index >= 0 && index < size ? index : -1;
+    }
+
+    /**
+     * Insertion slot for a reorder drag: 0 = above the first (top) row, rows.size() = below the
+     * last (bottom) row. The half-row rule is what makes dropping between two tracks predictable.
+     */
+    private int reorderTarget(int mouseY)
+    {
+        int size = this.rows().size();
+
+        if (size <= 0)
+        {
+            return 0;
+        }
+
+        if (mouseY < this.laneArea.y)
+        {
+            return 0;
+        }
+
+        if (mouseY >= this.laneArea.ey())
+        {
+            return size;
+        }
+
+        int index = (mouseY - this.laneArea.y + this.scrollY) / Math.max(1, this.rowHeight);
+
+        index = Math.max(0, Math.min(size - 1, index));
+
+        int rowTop = this.rowY(index);
+
+        return index + (mouseY >= rowTop + this.rowHeight / 2 ? 1 : 0);
     }
 
     private int toX(float seconds)
@@ -479,6 +515,18 @@ public class UICompTrackTimeline extends UIElement
             this.renderHeaderRow(context, layer, y, selected, context.mouseX < this.headerArea.ex());
             this.renderLaneRow(context, layer, y, selected);
         }
+
+        if (this.dragMode == MODE_REORDER && this.dragReorderTarget >= 0)
+        {
+            int lineY = this.laneArea.y + this.dragReorderTarget * this.rowHeight - this.scrollY;
+
+            lineY = Math.max(this.laneArea.y, Math.min(this.laneArea.ey() - 2, lineY));
+
+            int color = BBSSettings.primaryColor();
+
+            context.batcher.box(this.headerArea.x + 2, lineY, this.laneArea.ex(), lineY + 2, color);
+            context.batcher.box(this.headerArea.x + 2, lineY - 2, this.headerArea.x + 8, lineY + 4, color);
+        }
     }
 
     private void renderHeaderRow(UIContext context, CompLayer layer, int y, boolean selected, boolean hover)
@@ -503,9 +551,19 @@ public class UICompTrackTimeline extends UIElement
 
             context.batcher.box(this.headerArea.x, bottom - 1, this.headerArea.ex(), bottom, Colors.setA(BBSSettings.dividerColor(), 0.55F));
 
-            context.batcher.icon(this.typeIcon(layer), Colors.setA(Colors.WHITE, layer.visible ? 0.86F : 0.35F), this.headerArea.x + 8, y + (this.rowHeight - 16) / 2);
+            /* Drag grip: the user grabs the left edge of a track header and moves it vertically.
+             * Keeping it separate from the eye/lock/3D/parent icons means those still click. */
+            int gripX = this.headerArea.x + 3;
+            int gripColor = selected ? BBSSettings.primaryColor() : Colors.setA(Colors.WHITE, hover ? 0.55F : 0.28F);
 
-            int nameX = this.headerArea.x + 27;
+            for (int line = 0; line < 3; line++)
+            {
+                context.batcher.box(gripX, y + (this.rowHeight - 10) / 2 + line * 4, gripX + 6, y + (this.rowHeight - 10) / 2 + line * 4 + 1, gripColor);
+            }
+
+            context.batcher.icon(this.typeIcon(layer), Colors.setA(Colors.WHITE, layer.visible ? 0.86F : 0.35F), this.headerArea.x + 15, y + (this.rowHeight - 16) / 2);
+
+            int nameX = this.headerArea.x + 34;
             int nameW = this.headerArea.ex() - 92 - nameX;
 
             if (nameW > 8)
@@ -839,6 +897,17 @@ public class UICompTrackTimeline extends UIElement
         int parentX = this.headerArea.ex() - 53;
         int threeDX = this.headerArea.ex() - 70;
 
+        if (context.mouseX < this.headerArea.x + REORDER_GRIP)
+        {
+            this.panel.selectLayer(layer);
+            this.dragMode = MODE_REORDER;
+            this.dragId = layer.id;
+            this.dragStartY = context.mouseY;
+            this.dragReorderTarget = row;
+
+            return;
+        }
+
         if (context.mouseX >= eyeX && context.mouseX < eyeX + 16)
         {
             this.panel.toggleLayerVisible(layer);
@@ -1012,6 +1081,13 @@ public class UICompTrackTimeline extends UIElement
             return;
         }
 
+        if (this.dragMode == MODE_REORDER)
+        {
+            this.dragReorderTarget = this.reorderTarget(context.mouseY);
+
+            return;
+        }
+
         CompLayer layer = this.findLayer(this.dragId);
 
         if (layer == null)
@@ -1094,10 +1170,22 @@ public class UICompTrackTimeline extends UIElement
 
     private void endDrag()
     {
+        boolean reorder = this.dragMode == MODE_REORDER;
         boolean edited = this.dragMode == MODE_MOVE || this.dragMode == MODE_TRIM_IN || this.dragMode == MODE_TRIM_OUT;
+
+        if (reorder)
+        {
+            CompLayer layer = this.findLayer(this.dragId);
+
+            if (layer != null)
+            {
+                this.panel.moveLayerToDisplayIndex(layer, this.dragReorderTarget);
+            }
+        }
 
         this.dragMode = MODE_NONE;
         this.dragId = null;
+        this.dragReorderTarget = -1;
         this.snapGuide = Float.NaN;
 
         if (edited)
@@ -1320,6 +1408,24 @@ public class UICompTrackTimeline extends UIElement
         if (this.dragMode == MODE_MOVE)
         {
             context.requestCursor(GLFW.GLFW_HAND_CURSOR);
+
+            return;
+        }
+
+        if (this.dragMode == MODE_REORDER)
+        {
+            context.requestCursor(GLFW.GLFW_VRESIZE_CURSOR);
+
+            return;
+        }
+
+        if (this.area.isInside(context)
+            && context.mouseY >= this.laneArea.y
+            && context.mouseX >= this.headerArea.x
+            && context.mouseX < this.headerArea.x + REORDER_GRIP
+            && this.rowAt(context.mouseY) >= 0)
+        {
+            context.requestCursor(GLFW.GLFW_VRESIZE_CURSOR);
 
             return;
         }

@@ -131,6 +131,54 @@ public class CompDocument
         return true;
     }
 
+    /**
+     * Move a layer in the timeline's visual row space (row 0 is the top-most layer, i.e. the last
+     * entry in {@link #layers}). Returns true when the order actually changed.
+     */
+    public boolean moveLayerToDisplayIndex(CompLayer layer, int displayIndex)
+    {
+        if (layer == null)
+        {
+            return false;
+        }
+
+        List<CompLayer> display = new ArrayList<>(this.layers);
+
+        java.util.Collections.reverse(display);
+
+        int from = display.indexOf(layer);
+
+        if (from < 0)
+        {
+            return false;
+        }
+
+        int to = Math.max(0, Math.min(display.size(), displayIndex));
+
+        display.remove(from);
+
+        if (to > from)
+        {
+            to--;
+        }
+
+        if (to == from)
+        {
+            return false;
+        }
+
+        display.add(to, layer);
+
+        this.layers.clear();
+
+        for (int i = display.size() - 1; i >= 0; i--)
+        {
+            this.layers.add(display.get(i));
+        }
+
+        return true;
+    }
+
     public CompMarker markerAt(float seconds)
     {
         for (CompMarker marker : this.markers)

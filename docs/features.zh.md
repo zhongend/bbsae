@@ -78,12 +78,12 @@
 ## 验证状态
 
 - `compileJava`：通过。
-- `test`：**63** 个测试通过（模型 23 + 效果空间 5 + 摄像机 9 + shader 2 + 扭曲像素 1 + PIXEL 计划 5 + PIXEL 像素 12 + 覆盖/数据 5 + 图标 1）。模型测试覆盖时间映射、BBS keyframe 往返、蒙版/形状/文字/时间重映射动画、表达式读取当前帧图层属性、动画预设、JSON、示例工程、轨道 move/trim/split 语义、导出时长，以及新增的 10 个运动模板。第八轮的 PIXEL 像素测试包含层空间、恒等性、颜色和万花筒对称性断言，并输出 `docs/verify/round8-pixel-effects.png`。
+- `test`：**64** 个测试通过（模型 24 + 效果空间 5 + 摄像机 9 + shader 2 + 扭曲像素 1 + PIXEL 计划 5 + PIXEL 像素 12 + 覆盖/数据 5 + 图标 1）。模型测试覆盖时间映射、BBS keyframe 往返、蒙版/形状/文字/时间重映射动画、表达式读取当前帧图层属性、动画预设、JSON、示例工程、轨道 move/trim/split 语义、导出时长，以及新增的 10 个运动模板。第八轮的 PIXEL 像素测试包含层空间、恒等性、颜色和万花筒对称性断言，并输出 `docs/verify/round8-pixel-effects.png`。
 - 真实导出：`1920x1080 @ 60 fps`、494 帧、8.23 s；`docs/verify/round6-export-1080p60.png` 抽帧含合成器面板/标题/进度条。扭曲 shader 有真实 GL 像素断言（`ShaderDistortTest`，未跳过）。
 - 开发客户端：Fabric Loader 0.16.14 + BBS 2.7-1.20.1 下启动成功，BBS Compositor 面板注册成功；预览能显示合成内容，布局为 效果库 / 预览 / Effect Controls / 轨道时间轴，无重叠；轨道头、可移动/裁剪 bar、秒刻度、播放头、工作区、FX 徽章可见；关键帧抽屉与轨道播放头对齐。截图见 `docs/ui-track-redesign.png`。
 - 真实导出：使用 BBS 自带 recorder 生成了 `320x180@20fps`、39 帧的 H.264 MP4；抽帧确认合成层（面板、标题、HUD）进入视频，不只是屏幕预览。
-- 最终 `bbsae-0.1.0.jar`（**403148** 字节，SHA-256 `B93B70D8F98F4E020C769F1A711EA4381B052C0CD7EE6FC4D8260913926AABD7`）由 `gradlew build` 的 `remapJar` 将 Minecraft 引用重映射到 intermediary，BBS 类名保留；产物在项目根目录和 `build/libs/`。
-- 第九轮新增真实 20 秒 1920×1080@60 导出（1202 帧、20.033 秒），并验证 `BBS 预览` 图层在导出路径中正常出现；证据见 `docs/verify/round9-export-20s.mp4`、`round9-bbs-preview-layer.png`。
+- 最终 `bbsae-0.1.0.jar`（**405489** 字节，SHA-256 `023FFEC6510EB779F98BC8BCE42B3664615DC7D3AC4895F1E8DD10CAED7057A6`）由 `gradlew build` 的 `remapJar` 将 Minecraft 引用重映射到 intermediary，BBS 类名保留；产物在项目根目录和 `build/libs/`。
+- 第九轮新增真实 20 秒（1202 帧、20.033 秒）、25 秒（1502 帧、25.033 秒）和 **40 秒（2402 帧、40.033 秒）** 1920×1080@60 导出；导出对话框的“导出时长（秒）”直接传给 BBS 原生录像器，不再受相机 12 秒或 loop 20 秒限制。证据见 `docs/verify/round9-export-40s-ffprobe.txt`、`round9-export-40s-35s.png`、`round9-bbs-preview-layer.png`。
 
 ## 已知技术风险
 

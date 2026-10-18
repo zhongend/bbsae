@@ -132,8 +132,11 @@ public static int exportDurationTicks(int filmTicks, float compDurationSeconds)
 - `ensureForFilm(film, project, comp, compDurationSeconds)` 用这个值设置 clip 时长；
 - `prepareForExport` 在导出前把 clip 再正规化一次：
   `tick=0`、`duration=exportDurationTicks(...)`、`opacity=1`、`timeScale=1`、`offset=0`、`hold=true`；
-- `UICompositorPanel.startBbsExport` 在切回影片面板前调用
-  `CompositionClip.prepareForExport(..., this.doc.duration)`，并 `filmPanel.forceSave()`，
+- 导出对话框新增 **“导出时长（秒）”**（`CompProject.CompSettings.exportDuration`，
+  0 = 使用合成时长）和 **“同步到 BBS 时间轴”** 按钮；不再要求用户只能改 composition
+  duration 来试出一个能导出的长度；
+- `startBbsExport` 用 `exportSeconds = settings.exportDuration > 0 ? 设置值 : doc.duration`，
+  调用 `CompositionClip.prepareForExport(..., exportSeconds)`，并 `filmPanel.forceSave()`，
   把 clip 真正写进影片数据；
 - **不再点击 BBS 的 `recordVideo` 按钮**。那个按钮内部用
   `camera.calculateDuration()` 作为时长，而且 BBS 的 `editorLoop` 为 true 时
@@ -142,12 +145,14 @@ public static int exportDurationTicks(int filmTicks, float compDurationSeconds)
   ```java
   recorder.startRecording(exportTicks, texture.id, videoWidth, videoHeight);
   ```
-  其中 `exportTicks = round(doc.duration * 20F) + 1`，并在导出期间关闭
-  `BBSSettings.editorLoop`、结束后通过 `setFinishedListener` 恢复。
+  其中 `exportTicks = round(exportSeconds * 20F) + 1`，并在导出期间关闭
+  `BBSSettings.editorLoop`、结束后通过 `setFinishedListener` 恢复；
+- `syncBbsLoop(exportTicks)` 同时把 BBS 的 `loopMin/loopMax` 设成导出长度，
+  这样 BBS 原版录制按钮也不会再用旧的 20 秒 loop。
 
-**根因不是“上限 12/20 秒”，而是导出时长曾经由 BBS 相机/loop 决定。** 现在时长只由
-composition 自己的 duration 决定；把 composition 设为 45 秒，导出就是 45 秒，不需要改任何
-常量。
+**根因不是“上限 12/20 秒”，而是导出时长曾经由 BBS 相机/loop 决定。** 现在时长由
+“导出时长”字段（或 composition duration）决定；在对话框里填 45 秒，导出就是 45 秒，
+不需要改任何常量，也不依赖 BBS 相机/loop。
 
 ### 3.2 工作区：`normalizeWorkArea`
 
@@ -270,7 +275,33 @@ duration=25.033333
 
 这条验证的意义是：**不再有 12 秒或 20 秒常量**，导出长度完全由 `doc.duration` 决定。
 
-### 4.3 `BBS 预览` 图层导出验证
+### 4.3 40 秒：导出对话框的显式时长
+
+导出对话框新增 **“导出时长（秒）”** 字段（写入 `CompProject.CompSettings.exportDuration`，
+0 = 使用合成时长），并新增 **“同步到 BBS 时间轴”** 按钮。
+
+把工程设置为 `exportDuration = 40` 后走同一套 Debug Export：
+
+```
+Debug export started: 1920x1080 @60fps film=export_test duration=801 ticks
+```
+
+`801 ticks = 40.05s`。导出结果：
+
+```
+width=1920
+height=1080
+nb_frames=2402
+duration=40.033333
+```
+
+35 秒抽帧：`docs/verify/round9-export-40s-35s.png`，画面仍有 BBS 预览层 + scanlines。
+ffprobe 记录：`docs/verify/round9-export-40s-ffprobe.txt`。
+
+这证明即使 20 秒被某处卡住，用户也可以直接在导出对话框输入 40/60/120 秒，
+导出器收到的是这个值，而不是相机/loop 的值。
+
+### 4.4 `BBS 预览` 图层导出验证
 
 用一个只包含 `bbs_preview` 图层（1920×1080，加 `scanlines` 效果）的 composition 走同一套
 真实客户端导出，抽 1 秒帧：
@@ -280,16 +311,16 @@ duration=25.033333
 画面是**整幅世界 + 扫描线**，不是黑屏、不是 BBS 原版，也不是上一帧合成残影。说明
 `bbs` 图层在 F6 导出路径里真的采样到了干净的世界帧。
 
-### 4.4 自动化测试
+### 4.5 自动化测试
 
 - `CompModelTest.compositionExportDurationExtendsPastTheTwelveSecondFilmDefault`：
   - 240 ticks + 20s → 401 ticks；
   - 240 ticks + 8s → 240 ticks；
   - 600 ticks + 8s → 600 ticks。
 - `IconResourceTest.compositorIconIsPackagedAtButtonSize`：图标存在、16×16、保留 alpha。
-- 全量 **63 / 63** 通过。
+- 全量 **64 / 64** 通过。
 
-### 4.5 图标
+### 4.6 图标
 
 - 用户提供的 32×32 图标缩到 16×16：`docs/verify/round9-compositor-icon.png`；
 - BBS dashboard 页签和 `bbsae:composition` clip 工厂都使用 `BbsAeAddon.ICON`；

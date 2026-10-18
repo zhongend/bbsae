@@ -4,6 +4,8 @@ import com.google.gson.Gson;
 import mchorse.bbs_mod.utils.pose.Transform;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -36,6 +38,24 @@ public class CompModelTest
         assertEquals(240, CompositionClip.exportDurationTicks(240, 8F));
         assertEquals(600, CompositionClip.exportDurationTicks(600, 8F));
         assertEquals(20, CompositionClip.exportDurationTicks(0, 0F));
+    }
+
+    @Test
+    public void layerReorderUsesVisualRowsInsteadOfDocumentOrder()
+    {
+        CompDocument doc = new CompDocument();
+        CompLayer a = doc.addLayer(new CompLayer("a", "A", "solid"));
+        CompLayer b = doc.addLayer(new CompLayer("b", "B", "solid"));
+        CompLayer c = doc.addLayer(new CompLayer("c", "C", "solid"));
+
+        /* doc order is bottom-to-top: [A, B, C]. Visual rows are [C, B, A]. */
+        assertTrue(doc.moveLayerToDisplayIndex(c, 2));
+        assertEquals(List.of("a", "c", "b"), doc.layers.stream().map((l) -> l.id).toList());
+
+        assertTrue(doc.moveLayerToDisplayIndex(a, 0));
+        assertEquals(List.of("c", "b", "a"), doc.layers.stream().map((l) -> l.id).toList());
+
+        assertFalse(doc.moveLayerToDisplayIndex(a, 0));
     }
 
     @Test

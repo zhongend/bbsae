@@ -10,7 +10,9 @@
 > - 第六轮（扭曲 / 调色 / 引导页 / 素材音效 / 快捷键 / 1080p60 导出）：第 16 节 + [`docs/ROUND6-2026-10-18.zh.md`](ROUND6-2026-10-18.zh.md)
 > - 第七轮（交互手柄 / 3D / 调整层 / 预合成）：第 17 节 + [`docs/ROUND7-2026-10-18.zh.md`](ROUND7-2026-10-18.zh.md)
 > - 第八轮（Alight Motion PIXEL 效果 / 第一性原理审计）：第 18 节 + [`docs/ROUND8-01-AUDIT.zh.md`](ROUND8-01-AUDIT.zh.md)、[`docs/ROUND8-02-PIXEL.zh.md`](ROUND8-02-PIXEL.zh.md)、[`docs/ROUND8-03-VERIFY.zh.md`](ROUND8-03-VERIFY.zh.md)
-> - 第九轮（导出画面同步 / 12 秒时长 / 合成器图标）：第 19 节 + [`docs/ROUND9-EXPORT-SYNC.zh.md`](ROUND9-EXPORT-SYNC.zh.md)
+> - 第九轮（导出画面同步 / 时长 / 合成器图标）：第 19 节 + [`docs/ROUND9-EXPORT-SYNC.zh.md`](ROUND9-EXPORT-SYNC.zh.md)
+> - 第十轮（图层左侧拖拽排序）：[`docs/ROUND10-LAYER-REORDER.zh.md`](ROUND10-LAYER-REORDER.zh.md)
+> - Photon 引用声明（仅研究思想，未包含 Photon 代码/着色器/素材）：[`PHOTON-NOTICE.md`](../PHOTON-NOTICE.md)
 
 ---
 
@@ -33,8 +35,8 @@
 
 - 根目录 `bbsae-0.1.0.jar`
 - `build/libs/bbsae-0.1.0.jar`
-- SHA-256：`B93B70D8F98F4E020C769F1A711EA4381B052C0CD7EE6FC4D8260913926AABD7`
-- 大小：`403148` 字节
+- SHA-256：`023FFEC6510EB779F98BC8BCE42B3664615DC7D3AC4895F1E8DD10CAED7057A6`
+- 大小：`405489` 字节
 
 ---
 
@@ -605,14 +607,14 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 ## 9. 当前最终产物
 
 - `/bbsae-0.1.0.jar`
-- SHA-256 `B93B70D8F98F4E020C769F1A711EA4381B052C0CD7EE6FC4D8260913926AABD7`
-- 大小 `403148`
+- SHA-256 `023FFEC6510EB779F98BC8BCE42B3664615DC7D3AC4895F1E8DD10CAED7057A6`
+- 大小 `405489`
 - 构建时间 2026-10-18 21:53
 - 构建方式：`gradle build --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
 
 当前源码最后一次验证：
 
-- `test` **63/63** 通过；`jar` 由 `remapJar` 重新打包；
+- `test` **64/64** 通过；`jar` 由 `remapJar` 重新打包；
 - 第八轮新增 `EffectRenderer.PixelPlan`、7 个 PIXEL 效果、`PixelPlanTest`、
   `ShaderPixelTest` 12 个真实 GL 像素断言；
 - 第九轮新增 20 秒导出、`BBS 预览` 图层导出、`IconResourceTest`；
@@ -1031,8 +1033,8 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 7. **镜像对齐 AM**：叠半透明镜像副本，而不是整幅折叠丢一半。
 8. **测试**：61/61 通过；`ShaderPixelTest` 用真实 GL 3.2 上下文做像素断言并输出
    `docs/verify/round8-pixel-effects.png`。
-9. **产物**：`bbsae-0.1.0.jar`，403148 字节，
-   SHA-256 `B93B70D8F98F4E020C769F1A711EA4381B052C0CD7EE6FC4D8260913926AABD7`。
+9. **产物**：`bbsae-0.1.0.jar`，405489 字节，
+   SHA-256 `023FFEC6510EB779F98BC8BCE42B3664615DC7D3AC4895F1E8DD10CAED7057A6`。
 10. **新增 `PixelPlan`**：参数解析与 GL 分离；`supports()` 改为 `SUPPORTED` 集合，
     `EffectCoverageTest` 同时检查“注册表→渲染器”和“渲染器→注册表”。
 
@@ -1070,8 +1072,11 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 
 ### 19.2 修复
 
+- 导出对话框新增 **“导出时长（秒）”**（`CompSettings.exportDuration`，0 = 合成时长）和
+  **“同步到 BBS 时间轴”** 按钮；用户可以直接输入 40/60/120 秒；
 - **compositor Export 直接调用 BBS 原生 `UIFilmRecorder.startRecording`**，传入
-  `round(doc.duration * 20) + 1` ticks；导出期间关闭 `BBSSettings.editorLoop`，结束后恢复。
+  `round(exportSeconds * 20) + 1` ticks；导出期间关闭 `BBSSettings.editorLoop`，结束后恢复，
+  同时把 BBS `loopMin/loopMax` 同步到导出长度。
   **不再点击 BBS 的 recordVideo 按钮，也不再依赖相机/loop 的时长。**
 - `CompositionClip.ensureForFilm(..., compDuration)` 把 clip 固定到 tick 0、覆盖 comp；
   `prepareForExport` 正规化 opacity/timeScale/offset/hold 并 `forceSave()`；
@@ -1094,8 +1099,11 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 - **25 秒 comp：501 ticks，1502 帧 / 25.033 秒**，22 秒帧仍有 `BBS 预览`+scanlines
   （`docs/verify/round9-export-25s-22s.png`、`round9-export-25s-ffprobe.txt`）——
   证明没有 12/20 秒常量；
+- **导出时长字段 = 40 秒：801 ticks，2402 帧 / 40.033 秒**，35 秒帧仍有画面
+  （`docs/verify/round9-export-40s-35s.png`、`round9-export-40s-ffprobe.txt`）——
+  这是用户可直接操作的、绕过 20 秒的入口；
 - 只含 `bbs` 图层的 comp 导出：`docs/verify/round9-bbs-preview-layer.png`；
-- 测试 **63/63**（新增导出时长 + 图标资源测试）。
+- 测试 **64/64**（新增导出时长 + 图标资源测试）。
 
 ### 19.4 仍要注意
 

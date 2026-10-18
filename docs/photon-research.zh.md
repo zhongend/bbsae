@@ -1,5 +1,10 @@
 # Photon 研究与合成器改造结论
 
+> **引用声明：** [Photon](https://github.com/Low-Drag-MC/Photon) by **KilaBash** 使用
+> **CC BY-NC-SA 4.0**。本项目只研究其 UI 组织与渲染管线思想，**不包含/不链接 Photon 的
+> 源代码、着色器、素材或数据文件**，也不是 Photon 的移植版。完整声明见
+> [`PHOTON-NOTICE.md`](../PHOTON-NOTICE.md)。
+
 ## 0. 结论先行
 
 1. **合成器必须是独立编辑器，不能覆盖 BBS 影片编辑器。** BBS 影片编辑器有自己的世界预览、镜头、replay 列表、camera/replay 轨道和属性 dock；把合成器 full overlay 盖上去会同时遮住这些内容，还会产生两套时间线/输入焦点。上一版 overlay 是错误方向，已经撤掉。

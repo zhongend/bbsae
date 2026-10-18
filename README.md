@@ -13,7 +13,9 @@
   [`docs/ROUND8-02-PIXEL.zh.md`](docs/ROUND8-02-PIXEL.zh.md),
   [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md),
   [`docs/ROUND8-04-PUBLISH.zh.md`](docs/ROUND8-04-PUBLISH.zh.md)
-- **Round 9 (export fidelity / 12 s duration / icon):** [`docs/ROUND9-EXPORT-SYNC.zh.md`](docs/ROUND9-EXPORT-SYNC.zh.md)
+- **Round 9 (export fidelity / duration / icon):** [`docs/ROUND9-EXPORT-SYNC.zh.md`](docs/ROUND9-EXPORT-SYNC.zh.md)
+- **Round 10 (drag layer reorder):** [`docs/ROUND10-LAYER-REORDER.zh.md`](docs/ROUND10-LAYER-REORDER.zh.md)
+- **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
   <img src="docs/gallery/hero.png" alt="BBS Compositor — editor, effects and export" width="100%">
@@ -59,7 +61,8 @@ film editor. The layout follows a Premiere-style information architecture:
 3. **Effect Controls** — motion, opacity, blend mode, the applied-effect stack, layer styles,
    masks, text, grade, and the context-sensitive Layer/Comp/Output pages.
 4. **Track timeline** — one row per layer, movable/trimable clips, frame snapping, work-area
-   shading, markers and a BBS-native keyframe drawer.
+   shading, markers and a BBS-native keyframe drawer. Drag the **left grip** of a track header
+   to reorder layers vertically (blue insertion line), without hunting through the context menu.
 
 <p align="center">
   <img src="docs/gallery/timeline.png" alt="Track timeline with per-layer clips, snapping and markers" width="100%">
@@ -114,7 +117,7 @@ what is and is not implemented.
 
 Verified in this iteration:
 
-- `compileJava` and all **63** tests pass (headless model + real hidden-window OpenGL 3.2 pixel
+- `compileJava` and all **64** tests pass (headless model + real hidden-window OpenGL 3.2 pixel
   tests + export-duration/icon checks);
 - the addon loads in a Fabric 1.20.1 + BBS 2.7 development client;
 - the compositor preview renders the composition (not a blank frame) after fixing projection,
@@ -123,8 +126,8 @@ Verified in this iteration:
   frame contains the compositor layers, proving the frame-overlay path reaches the video file;
 - the final jar has Minecraft references remapped to intermediary and keeps BBS class names.
 
-Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **403148** bytes,
-SHA-256 `B93B70D8F98F4E020C769F1A711EA4381B052C0CD7EE6FC4D8260913926AABD7` (check the file if it is
+Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **405489** bytes,
+SHA-256 `023FFEC6510EB779F98BC8BCE42B3664615DC7D3AC4895F1E8DD10CAED7057A6` (check the file if it is
 repacked). The jar is produced by `gradlew build`; `remapJar` writes it directly and the class
 entries are intermediary-remapped.
 
@@ -141,14 +144,16 @@ entries are intermediary-remapped.
   default), so preview playback no longer loops at 12 s;
 - added the user-provided compositor icon as `assets/bbsae/assets/textures/gui/compositor_icon.png`
   (16×16), used by the dashboard tab and the `bbsae:composition` clip;
-- export length is now passed to BBS's native recorder directly as
-  `round(doc.duration * 20) + 1` ticks; the camera's 12-second default and the film panel's
-  20-second loop can no longer cap it. A 25-second composition produced **1502 frames /
-  25.033 s** (`docs/verify/round9-export-25s-22s.png`, `round9-export-25s-ffprobe.txt`); a
-  20-second run is also kept at `docs/verify/round9-export-20s-15s.png`;
+- the export dialog has an explicit **Export duration (seconds)** field (persisted as
+  `CompSettings.exportDuration`, 0 = composition duration) and a **Sync to BBS timeline** button;
+  the value is passed to BBS's native recorder directly as `round(seconds * 20) + 1` ticks, and
+  `editorLoop` is disabled for the export. A 40-second setting produced **2402 frames /
+  40.033 s** (`docs/verify/round9-export-40s-35s.png`, `round9-export-40s-ffprobe.txt`), a
+  25-second composition produced 1502 frames / 25.033 s, and a 20-second run is kept at
+  `docs/verify/round9-export-20s-15s.png`;
 - a BBS-preview-layer-only export at `docs/verify/round9-bbs-preview-layer.png` proves the
   `bbs` layer now samples the clean world frame in the export path;
-- tests now **63 / 63** (added `compositionExportDurationExtendsPastTheTwelveSecondFilmDefault`
+- tests now **64 / 64** (added `compositionExportDurationExtendsPastTheTwelveSecondFilmDefault`
   and `IconResourceTest`). Details: [`docs/ROUND9-EXPORT-SYNC.zh.md`](docs/ROUND9-EXPORT-SYNC.zh.md).
 
 2026-10-18 eighth pass (Alight Motion PIXEL effects, first-principles bug audit):
@@ -422,6 +427,9 @@ sheet. An older exported MP4 frame is still available at
 - **Compositor icon:** 超级大布叮 — original 32×32 at
   [`docs/gallery/compositor-icon.png`](docs/gallery/compositor-icon.png), UI copy at 16×16
 - **Runtime:** Minecraft 1.20.1 + Fabric + BBS FS 2.7-1.20.1
+- **Photon (research only):** [Photon](https://github.com/Low-Drag-MC/Photon) by **KilaBash**,
+  licensed **CC BY-NC-SA 4.0**. Only editor/rendering ideas were studied; no Photon source,
+  shaders or assets are included. See [PHOTON-NOTICE.md](PHOTON-NOTICE.md).
 
 See [CREDITS.md](CREDITS.md) for the full list.
 

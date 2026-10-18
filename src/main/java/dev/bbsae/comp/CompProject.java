@@ -113,6 +113,13 @@ public class CompProject
         /** Default duration for newly created layers, in seconds. 0 = whole composition. */
         public float defaultLayerDuration = 0F;
 
+        /**
+         * Explicit compositor export duration in seconds. 0 means "use the composition duration".
+         * The value is passed straight to BBS's native recorder, so it is independent of the BBS
+         * camera timeline and the film panel's loop range.
+         */
+        public float exportDuration = 0F;
+
         /** Show composition effects when a film is played outside the BBS editors. */
         public boolean showDuringExternalPlayback = true;
 

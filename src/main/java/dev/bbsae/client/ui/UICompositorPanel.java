@@ -155,6 +155,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private int exportWidth = 1920;
     private int exportHeight = 1080;
     private int exportFps = 30;
+    private UITrackpad exportDurationField;
     private int primedWidth = -1;
     private final java.util.ArrayDeque<String> undoStack = new java.util.ArrayDeque<>();
     private final java.util.ArrayDeque<String> redoStack = new java.util.ArrayDeque<>();
@@ -2174,16 +2175,22 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     private void syncBbsLoopToDocument()
     {
-        if (this.filmPanel == null || this.doc == null
+        if (this.doc != null)
+        {
+            this.syncBbsLoop(Math.max(20, Math.round(this.doc.duration * 20F) + 1));
+        }
+    }
+
+    private void syncBbsLoop(int ticks)
+    {
+        if (this.filmPanel == null
             || this.filmPanel.cameraEditor == null || this.filmPanel.cameraEditor.clips == null)
         {
             return;
         }
 
-        int ticks = Math.max(20, Math.round(this.doc.duration * 20F) + 1);
-
         this.filmPanel.cameraEditor.clips.loopMin = 0;
-        this.filmPanel.cameraEditor.clips.loopMax = ticks;
+        this.filmPanel.cameraEditor.clips.loopMax = Math.max(20, ticks);
     }
 
     private static void normalizeWorkArea(CompDocument doc)
@@ -3060,7 +3067,73 @@ public class UICompositorPanel extends UIDashboardPanel
         warning.color(0xFF8A94A6, false);
         warning.relative(this.modalBox).x(16).y(238).w(1F, -32).h(18);
 
-        this.modalBox.add(customLabel, times, customWidth, customHeight, customRatio, applyRatio, summary, warning);
+        if (this.project != null && this.project.settings == null)
+        {
+            this.project.settings = new CompProject.CompSettings();
+        }
+
+        CompProject.CompSettings settings = this.project == null ? new CompProject.CompSettings() : this.project.settings;
+        float compositionDuration = this.doc == null ? 12F : Math.max(0.1F, this.doc.duration);
+        float exportDuration = settings.exportDuration > 0F ? settings.exportDuration : compositionDuration;
+
+        UILabel durationLabel = new UILabel(IKey.constant("导出时长（秒）"));
+        durationLabel.relative(this.modalBox).x(16).y(262).w(116).h(18);
+
+        UITrackpad duration = new UITrackpad((value) ->
+        {
+            if (this.project == null)
+            {
+                return;
+            }
+
+            this.project.settings.exportDuration = Math.max(0F, Math.min(3600F, value.floatValue()));
+            this.save();
+        });
+        duration.limit(0.1F, 3600F).setValue(exportDuration);
+        duration.relative(this.modalBox).x(136).y(260).w(100).h(20);
+        duration.tooltip(IKey.constant("直接传给 BBS 原生录像器的秒数；不再受相机/loop 限制"));
+        this.exportDurationField = duration;
+
+        UIButton useComposition = new UIButton(IKey.constant("使用合成时长"), (button) ->
+        {
+            if (this.project != null)
+            {
+                this.project.settings.exportDuration = 0F;
+                this.save();
+            }
+
+            this.buildExportDialog();
+        });
+        useComposition.relative(this.modalBox).x(244).y(260).w(124).h(20);
+        useComposition.tooltip(IKey.constant("把导出时长重置为当前 composition 的 duration"));
+
+        UILabel durationHint = new UILabel(IKey.constant("20s / 25s / 45s 直接填；0 即合成时长。"));
+        durationHint.color(0xFF8A94A6, false);
+        durationHint.relative(this.modalBox).x(376).y(264).w(148).h(16);
+
+        UIButton syncTimeline = new UIButton(IKey.constant("同步到 BBS 时间轴（原版录制按钮也用这个长度）"), (button) ->
+        {
+            if (this.doc == null || this.film == null || this.filmPanel == null)
+            {
+                return;
+            }
+
+            float seconds = settings.exportDuration > 0F ? settings.exportDuration : this.doc.duration;
+
+            this.doc.duration = Math.max(0.1F, seconds);
+            this.doc.workAreaOut = this.doc.duration;
+            this.syncBbsLoopToDocument();
+            CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+            this.filmPanel.forceSave();
+            this.save();
+            this.refreshSheets();
+            this.setStatus("已同步 BBS 时间轴：" + String.format(java.util.Locale.ROOT, "%.2fs", this.doc.duration));
+        });
+        syncTimeline.relative(this.modalBox).x(16).y(286).w(1F, -32).h(20);
+        syncTimeline.tooltip(IKey.constant("把导出时长写入 composition 和 BBS composition clip；然后 BBS 原版导出也一致"));
+
+        this.modalBox.add(customLabel, times, customWidth, customHeight, customRatio, applyRatio, summary, warning,
+            durationLabel, duration, useComposition, durationHint, syncTimeline);
         this.modalBox.add(this.modalButton("取消", 16, 350, 240, this::closeModal));
         this.modalBox.add(this.modalButton("开始导出（1080p60 一键）", 268, 350, 256, () ->
         {
@@ -3089,7 +3162,31 @@ public class UICompositorPanel extends UIDashboardPanel
         mchorse.bbs_mod.ui.film.UIFilmPanel.applyExportSizeToBBS();
 
         this.save();
-        this.syncBbsLoopToDocument();
+
+        /* Read the live trackpad first. A user who types 40 and immediately clicks "Start" must
+         * not lose the value if the field has not fired its blur/commit callback yet. */
+        float exportSeconds = this.exportDurationField == null
+            ? 0F
+            : (float) this.exportDurationField.getValue();
+
+        if (exportSeconds <= 0F && this.project != null && this.project.settings != null
+            && this.project.settings.exportDuration > 0F)
+        {
+            exportSeconds = this.project.settings.exportDuration;
+        }
+
+        if (exportSeconds <= 0F)
+        {
+            exportSeconds = this.doc == null ? 0F : this.doc.duration;
+        }
+
+        if (exportSeconds <= 0F)
+        {
+            this.closeModal();
+            this.setStatus("导出时长必须大于 0；可在导出对话框里设置或使用合成时长");
+
+            return;
+        }
 
         /* Make the physical film agree with this panel before BBS starts recording. A clip
          * trimmed to a few seconds used to leave the rest of the export as the raw BBS frame,
@@ -3099,8 +3196,7 @@ public class UICompositorPanel extends UIDashboardPanel
         String compId = this.doc == null ? null : this.doc.id;
         CompositionClip exportClip = projectId == null || compId == null
             ? null
-            : CompositionClip.prepareForExport(exportFilm, projectId, compId,
-                this.doc == null ? 0F : this.doc.duration);
+            : CompositionClip.prepareForExport(exportFilm, projectId, compId, exportSeconds);
 
         if (exportClip != null)
         {
@@ -3122,9 +3218,10 @@ public class UICompositorPanel extends UIDashboardPanel
          * can shorten that further (the reported "stops at 20 seconds" was the loop/camera
          * duration, not the composition). Start the same native VideoRecorder session directly
          * with the composition's tick count instead of patching a larger camera clip. */
-        int exportTicks = this.doc == null
-            ? 20
-            : Math.max(20, Math.round(this.doc.duration * 20F) + 1);
+        int exportTicks = Math.max(20, Math.round(exportSeconds * 20F) + 1);
+
+        this.syncBbsLoop(exportTicks);
+
         final boolean previousLoop = mchorse.bbs_mod.BBSSettings.editorLoop.get();
 
         mchorse.bbs_mod.BBSSettings.editorLoop.set(false);
@@ -3478,7 +3575,14 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 CompProject debugProject = CompStore.load(projectId);
                 CompDocument debugComp = debugProject == null ? null : debugProject.getComp(compId);
-                CompositionClip.prepareForExport(film, projectId, compId, debugComp == null ? 0F : debugComp.duration);
+                float debugSeconds = debugComp == null ? 0F : debugComp.duration;
+
+                if (debugProject != null && debugProject.settings != null && debugProject.settings.exportDuration > 0F)
+                {
+                    debugSeconds = debugProject.settings.exportDuration;
+                }
+
+                CompositionClip.prepareForExport(film, projectId, compId, debugSeconds);
 
                 mchorse.bbs_mod.ui.film.UIFilmPanel panel = this.dashboard.getPanel(mchorse.bbs_mod.ui.film.UIFilmPanel.class);
 
@@ -3501,7 +3605,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 mchorse.bbs_mod.BBSSettings.editorLoop.set(false);
                 mchorse.bbs_mod.ui.film.UIFilmPanel.applyExportSizeToBBS();
 
-                int debugTicks = debugComp == null ? 20 : Math.max(20, Math.round(debugComp.duration * 20F) + 1);
+                int debugTicks = debugSeconds <= 0F ? 20 : Math.max(20, Math.round(debugSeconds * 20F) + 1);
 
                 mchorse.bbs_mod.client.BBSRendering.scheduleAfterNextExportFrame(() ->
                 {
@@ -3726,6 +3830,29 @@ public class UICompositorPanel extends UIDashboardPanel
         this.selectedLayer = this.doc.layers.isEmpty()
             ? null
             : this.doc.layers.get(Math.max(0, Math.min(index, this.doc.layers.size() - 1)));
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.save();
+    }
+
+    /**
+     * Reorder from the timeline's visual row space: row 0 is the top-most layer, i.e. the last
+     * entry in {@code doc.layers}. The timeline reverse-maps its rows before calling this.
+     */
+    public void moveLayerToDisplayIndex(CompLayer layer, int displayIndex)
+    {
+        if (this.doc == null || layer == null)
+        {
+            return;
+        }
+
+        if (!this.doc.moveLayerToDisplayIndex(layer, displayIndex))
+        {
+            return;
+        }
+
+        this.selectedLayer = layer;
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
