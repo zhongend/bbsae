@@ -2,12 +2,14 @@
 
 > 给接手本项目的 AI / 开发者。  
 > 项目目录：`C:\Users\Administrator\Desktop\bbsae`（当前工作副本：`bbsae - 副本 (3) - 副本 - 副本`）  
-> 最后更新：2026-10-18 17:30（本地时间）
+> 最后更新：2026-10-18 20:30（本地时间）
 >
 > **先读这个**：
 > - 第四轮（效果空间 V 轴 / 摄像机基础 / BBS 预览）：第 14 节 + [`docs/ROUND4-2026-10-18.zh.md`](ROUND4-2026-10-18.zh.md)
 > - 第五轮（混合模式 / 效果 alpha / 摄像机交互 / 预览折叠 / 添加图层）：第 15 节 + [`docs/ROUND5-2026-10-18.zh.md`](ROUND5-2026-10-18.zh.md)
 > - 第六轮（扭曲 / 调色 / 引导页 / 素材音效 / 快捷键 / 1080p60 导出）：第 16 节 + [`docs/ROUND6-2026-10-18.zh.md`](ROUND6-2026-10-18.zh.md)
+> - 第七轮（交互手柄 / 3D / 调整层 / 预合成）：第 17 节 + [`docs/ROUND7-2026-10-18.zh.md`](ROUND7-2026-10-18.zh.md)
+> - 第八轮（Alight Motion PIXEL 效果 / 第一性原理审计）：第 18 节 + [`docs/ROUND8-01-AUDIT.zh.md`](ROUND8-01-AUDIT.zh.md)、[`docs/ROUND8-02-PIXEL.zh.md`](ROUND8-02-PIXEL.zh.md)、[`docs/ROUND8-03-VERIFY.zh.md`](ROUND8-03-VERIFY.zh.md)
 
 ---
 
@@ -30,8 +32,8 @@
 
 - 根目录 `bbsae-0.1.0.jar`
 - `build/libs/bbsae-0.1.0.jar`
-- SHA-256：`DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`
-- 大小：`386929` 字节
+- SHA-256：`1CC9F7F8827B5926A2A9C005A9D1FFDC8B946C276C796C8D4415E87EF6DBA00C`
+- 大小：`396510` 字节
 
 ---
 
@@ -602,18 +604,17 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 ## 9. 当前最终产物
 
 - `/bbsae-0.1.0.jar`
-- SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`
-- 大小 `386929`
-- 构建时间 2026-10-18 15:00
+- SHA-256 `1CC9F7F8827B5926A2A9C005A9D1FFDC8B946C276C796C8D4415E87EF6DBA00C`
+- 大小 `396510`
+- 构建时间 2026-10-18 20:19
+- 构建方式：`gradle build --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
 
-当前源码最后一次编译：
+当前源码最后一次验证：
 
-- `UICompositorPanel.java` 2026-10-18 13:42:00
-- `UICompTrackTimeline.java` 2026-10-18 12:58:29
-- `UIEffectLibrary.java` 2026-10-18 13:36:06
-- `CompLayer.java` 2026-10-18 12:42:38
-- class 2026-10-18 13:42:15
-- `test` 19/19 通过；`jar` 13:42 重新打包。
+- `test` **61/61** 通过；`jar` 由 `remapJar` 重新打包；
+- 第八轮新增 `EffectRenderer.PixelPlan`、7 个 PIXEL 效果、`PixelPlanTest`、
+  `ShaderPixelTest` 12 个真实 GL 像素断言；
+- 证据：`docs/verify/round8-pixel-effects.png`。
 
 **如果接手后改源码，记得重新编译、重映射、重新打包，并更新 README hash。**
 
