@@ -10,7 +10,8 @@
 - **Developer handoff:** [`docs/HANDOFF.zh.md`](docs/HANDOFF.zh.md)
 - **Round 8 (Alight Motion PIXEL effects):** [`docs/ROUND8-01-AUDIT.zh.md`](docs/ROUND8-01-AUDIT.zh.md),
   [`docs/ROUND8-02-PIXEL.zh.md`](docs/ROUND8-02-PIXEL.zh.md),
-  [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md)
+  [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md),
+  [`docs/ROUND8-04-PUBLISH.zh.md`](docs/ROUND8-04-PUBLISH.zh.md)
 
 > This repository does **not** redistribute the BBS FS jar. Download BBS FS 2.7-1.20.1 from its
 > official Modrinth page and put `bbs-2.7-1.20.1.jar` in `libs/` before building.
@@ -73,7 +74,8 @@ entries are intermediary-remapped.
   and symmetry. Evidence: `docs/verify/round8-pixel-effects.png`.
 - details: [`docs/ROUND8-01-AUDIT.zh.md`](docs/ROUND8-01-AUDIT.zh.md),
   [`docs/ROUND8-02-PIXEL.zh.md`](docs/ROUND8-02-PIXEL.zh.md),
-  [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md).
+  [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md),
+  [`docs/ROUND8-04-PUBLISH.zh.md`](docs/ROUND8-04-PUBLISH.zh.md).
 
 2026-10-18 sixth pass (distortion, grading, landing screen, media/sound, export):
 

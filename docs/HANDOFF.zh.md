@@ -1010,7 +1010,8 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 
 - [`ROUND8-01-AUDIT.zh.md`](ROUND8-01-AUDIT.zh.md)：第一性原理、审计方法、12 个问题；
 - [`ROUND8-02-PIXEL.zh.md`](ROUND8-02-PIXEL.zh.md)：PIXEL shader 公式、层空间、参数映射；
-- [`ROUND8-03-VERIFY.zh.md`](ROUND8-03-VERIFY.zh.md)：61 个测试、构建、联系表、剩余风险。
+- [`ROUND8-03-VERIFY.zh.md`](ROUND8-03-VERIFY.zh.md)：61 个测试、构建、联系表、剩余风险；
+- [`ROUND8-04-PUBLISH.zh.md`](ROUND8-04-PUBLISH.zh.md)：GitHub 仓库、提交、release 资产。
 
 一句话版本：
 
