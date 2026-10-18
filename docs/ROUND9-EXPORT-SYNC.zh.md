@@ -202,7 +202,7 @@ if (doc.workAreaOut <= 0F
 - `src/main/java/dev/bbsae/client/render/LayerContentRenderer.java`
 - `src/main/java/dev/bbsae/client/render/SceneColor.java`
 - `src/main/java/dev/bbsae/BbsAeAddon.java`
-- `src/main/resources/assets/bbsae/textures/gui/compositor_icon.png`
+- `src/main/resources/assets/bbsae/assets/textures/gui/compositor_icon.png`
 - `src/test/java/dev/bbsae/comp/CompModelTest.java`
 - `src/test/java/dev/bbsae/IconResourceTest.java`
 
@@ -210,7 +210,7 @@ if (doc.workAreaOut <= 0F
 
 用户提供的 32×32 白色合成器图标被缩到 BBS 按钮的 16×16：
 
-- 资源：`assets/bbsae/textures/gui/compositor_icon.png`；
+- 资源：`assets/bbsae/assets/textures/gui/compositor_icon.png`；
 - `BbsAeAddon.ICON` 用 `Link` 指向它，`textureW/H = 16`；
 - dashboard 面板注册和 `bbsae:composition` clip 工厂都用这个图标，替换了原来的
   `Icons.FILM`；
@@ -293,7 +293,7 @@ duration=25.033333
 
 - 用户提供的 32×32 图标缩到 16×16：`docs/verify/round9-compositor-icon.png`；
 - BBS dashboard 页签和 `bbsae:composition` clip 工厂都使用 `BbsAeAddon.ICON`；
-- 资源路径 `assets/bbsae/textures/gui/compositor_icon.png`。
+- 资源路径 `assets/bbsae/assets/textures/gui/compositor_icon.png`。
 
 ## 5. 已知边界
 

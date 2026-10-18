@@ -123,8 +123,8 @@ Verified in this iteration:
   frame contains the compositor layers, proving the frame-overlay path reaches the video file;
 - the final jar has Minecraft references remapped to intermediary and keeps BBS class names.
 
-Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **402706** bytes,
-SHA-256 `2856C0590099208A1D4BF4336922320945DF9FC92CA4EC21BE1C4CEAA1867E4F` (check the file if it is
+Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **402882** bytes,
+SHA-256 `4540BA5CF5EAF3DBEDEF2DAB54F11BD7B2602A56EB5FFB5DB23CD2E05CEBBEBC` (check the file if it is
 repacked). The jar is produced by `gradlew build`; `remapJar` writes it directly and the class
 entries are intermediary-remapped.
 
@@ -139,7 +139,7 @@ entries are intermediary-remapped.
   UI scissor, so the export cannot inherit a stale composition/frame state;
 - `workAreaOut` follows the composition duration (including migration of the old 12-second
   default), so preview playback no longer loops at 12 s;
-- added the user-provided compositor icon as `assets/bbsae/textures/gui/compositor_icon.png`
+- added the user-provided compositor icon as `assets/bbsae/assets/textures/gui/compositor_icon.png`
   (16×16), used by the dashboard tab and the `bbsae:composition` clip;
 - export length is now passed to BBS's native recorder directly as
   `round(doc.duration * 20) + 1` ticks; the camera's 12-second default and the film panel's

@@ -157,7 +157,7 @@ framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器�
 - 合成器图标原作者：**超级大布叮**；
 - 项目维护者：**终end**（[@zhongend](https://github.com/zhongend)）；
 - 32×32 原图：`docs/gallery/compositor-icon.png`；
-- BBS 界面使用的 16×16 版本：`src/main/resources/assets/bbsae/textures/gui/compositor_icon.png`；
+- BBS 界面使用的 16×16 版本：`src/main/resources/assets/bbsae/assets/textures/gui/compositor_icon.png`；
 - 图标同时用于 BBS dashboard 页签和 `bbsae:composition` 影片 clip。
 
 ## 13. 已知限制

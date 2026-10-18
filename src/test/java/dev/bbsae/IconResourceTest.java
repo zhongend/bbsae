@@ -20,7 +20,7 @@ public class IconResourceTest
     @Test
     public void compositorIconIsPackagedAtButtonSize() throws Exception
     {
-        try (InputStream input = getClass().getResourceAsStream("/assets/bbsae/textures/gui/compositor_icon.png"))
+        try (InputStream input = getClass().getResourceAsStream("/assets/bbsae/assets/textures/gui/compositor_icon.png"))
         {
             assertNotNull(input, "compositor_icon.png is missing from the addon resources");
 
