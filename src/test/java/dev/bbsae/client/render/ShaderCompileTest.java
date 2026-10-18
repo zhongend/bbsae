@@ -45,7 +45,7 @@ public class ShaderCompileTest
             String[] names = {
                 "composite", "premultiply", "unpremultiply", "inner", "gradient", "blur",
                 "sharpen", "radial", "color", "key", "generate", "distort", "pixel",
-                "stroke", "transition", "depth"
+                "stroke", "transition", "depth", "shatter", "grade", "rgb_split"
             };
             String[] fragments = {
                 ShaderSources.COMPOSITE,
@@ -63,7 +63,10 @@ public class ShaderCompileTest
                 ShaderSources.PIXEL,
                 ShaderSources.STROKE,
                 ShaderSources.TRANSITION,
-                ShaderSources.DEPTH
+                ShaderSources.DEPTH,
+                ShaderSources.SHATTER,
+                ShaderSources.GRADE,
+                ShaderSources.RGB_SPLIT
             };
 
             for (int i = 0; i < fragments.length; i++)

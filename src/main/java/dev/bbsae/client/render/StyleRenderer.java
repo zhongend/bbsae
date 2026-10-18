@@ -2,6 +2,7 @@ package dev.bbsae.client.render;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import dev.bbsae.comp.CompEffect;
+import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompStyle;
 import mchorse.bbs_mod.utils.colors.Colors;
 import org.lwjgl.opengl.GL11;
@@ -12,7 +13,7 @@ public final class StyleRenderer
     private StyleRenderer()
     {}
 
-    public static GlFramebuffer apply(CompStyle style, GlFramebuffer content, CompRenderContext context)
+    public static GlFramebuffer apply(CompStyle style, GlFramebuffer content, CompRenderContext context, CompLayer layer, org.joml.Matrix4f world)
     {
         switch (style.type)
         {
@@ -64,7 +65,7 @@ public final class StyleRenderer
                 return tint(content, style.color, style.opacity);
 
             case CompStyle.GRADIENT_OVERLAY:
-                return gradient(content, style.color, style.color2, style.angle, style.opacity);
+                return gradient(content, style.color, style.color2, style.angle, style.opacity, EffectSpace.of(layer, world, context));
 
             case CompStyle.BEVEL:
             {
@@ -84,7 +85,7 @@ public final class StyleRenderer
         }
     }
 
-    private static GlFramebuffer gradient(GlFramebuffer content, int colorA, int colorB, float angle, float opacity)
+    private static GlFramebuffer gradient(GlFramebuffer content, int colorA, int colorB, float angle, float opacity, EffectSpace space)
     {
         GlslProgram program = CompShaders.gradient;
         GlFramebuffer output = FboPool.acquire(content.width, content.height);
@@ -99,6 +100,7 @@ public final class StyleRenderer
         GlStateManager._disableBlend();
         program.use();
         PassRenderer.bind(program, "Source", 0, content);
+        space.bind(program);
         program.set("ColorA", Colors.getR(colorA), Colors.getG(colorA), Colors.getB(colorA), 1F);
         program.set("ColorB", Colors.getR(colorB), Colors.getG(colorB), Colors.getB(colorB), 1F);
         program.set("Angle", angle);

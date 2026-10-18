@@ -1,6 +1,7 @@
 package dev.bbsae.client.render;
 
 import dev.bbsae.comp.CompDocument;
+import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompProject;
 import net.minecraft.client.render.Camera;
 import org.joml.Matrix4f;
@@ -21,6 +22,17 @@ public final class CompRenderContext
     public final Camera camera;
     public final SceneDepth depth;
     public final Set<String> stack = new HashSet<>();
+
+    /** 3D camera view/projection, prepared once per composition (not per layer). */
+    public Matrix4f view3D = new Matrix4f();
+    public Matrix4f projection3D = new Matrix4f();
+    public float focal3D = 1000F;
+    public CompLayer camera3DLayer;
+    public boolean camera3DMode;
+    /** 2D camera view computed once per frame; worldMatrix() used to re-evaluate it per layer. */
+    public Matrix4f view2D = new Matrix4f();
+    public CompLayer camera2DLayer;
+    public boolean view2DPrepared;
 
     public CompRenderContext(CompProject project, CompDocument comp, float time, Matrix4f projection, Camera camera, SceneDepth depth)
     {

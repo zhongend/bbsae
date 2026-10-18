@@ -1,5 +1,6 @@
 package dev.bbsae.client.ui;
 
+import dev.bbsae.BbsAeAddon;
 import dev.bbsae.client.export.CompExportManager;
 import dev.bbsae.client.render.CompRenderer;
 import dev.bbsae.comp.CompBinding;
@@ -10,6 +11,7 @@ import dev.bbsae.comp.CompEffectRegistry;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompMarker;
 import dev.bbsae.comp.CompMask;
+import dev.bbsae.comp.CompMotion;
 import dev.bbsae.comp.CompOutputPreset;
 import dev.bbsae.comp.CompParameter;
 import dev.bbsae.comp.CompProject;
@@ -21,32 +23,36 @@ import dev.bbsae.comp.CompTextAnimator;
 import dev.bbsae.comp.CompTime;
 import dev.bbsae.comp.CompositionClip;
 import dev.bbsae.client.render.CompRenderContext;
+import mchorse.bbs_mod.camera.utils.TimeUtils;
 import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.dashboard.UIDashboard;
 import mchorse.bbs_mod.ui.dashboard.panels.UIDashboardPanel;
 import mchorse.bbs_mod.ui.framework.UIContext;
+import mchorse.bbs_mod.ui.framework.elements.IFocusedUIElement;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.UIScrollView;
 import mchorse.bbs_mod.ui.framework.elements.UISection;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
+import mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIToggle;
 import mchorse.bbs_mod.ui.framework.elements.input.UIColor;
+import mchorse.bbs_mod.ui.framework.elements.input.UISliderTrackpad;
 import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeEditor;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeSheet;
-import mchorse.bbs_mod.ui.framework.elements.input.list.UIList;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIListOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
+import mchorse.bbs_mod.ui.framework.elements.overlay.UIPromptOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
-import mchorse.bbs_mod.ui.framework.elements.utils.UITabStrip;
-import mchorse.bbs_mod.ui.framework.elements.utils.UITextTab;
 import mchorse.bbs_mod.ui.utils.ScrollDirection;
 import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.context.ContextMenuManager;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
+import mchorse.bbs_mod.ui.utils.keys.KeyAction;
+import mchorse.bbs_mod.ui.utils.renderers.TimelineRulerRenderer;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
 import mchorse.bbs_mod.utils.pose.Transform;
@@ -54,9 +60,13 @@ import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -71,7 +81,6 @@ import java.util.function.Consumer;
 public class UICompositorPanel extends UIDashboardPanel
 {
     private final UILabel title;
-    private final UILabel info;
     private final UILabel timecode;
     private final UILabel status;
     private final UILabel renderStatus;
@@ -82,6 +91,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIButton exportFilm;
     private final UIButton replaySelector;
     private final UIIcon focusButton;
+    private final UIIcon settingsButton;
     private final UIIcon prevFrame;
     private final UIIcon nextFrame;
     private final UIIcon addLayer;
@@ -90,16 +100,28 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIElement body;
     private final UIElement timeline;
     private final UIElement timelineHeader;
-    private final UICompositorScrubber scrubber;
-    private final UICompLayerList layers;
+    private final UIElement effectColumn;
+    private final UICompTabBar leftTabs;
+    private final UIEffectLibrary effectLibrary;
+    private final UIScrollView assetPanel;
     private final UIElement preview;
     private final UIElement previewBar;
     private final UILabel previewInfo;
     private final UIElement inspectorColumn;
-    private final UITabStrip inspectorTabs;
+    private final UICompTabBar inspectorTabs;
     private final UIScrollView inspector;
     private final UIKeyframeEditor keyframeEditor;
+    private final UICompTrackTimeline trackTimeline;
+    private final UIElement keyframeDrawer;
+    private final UILabel keyframeTitle;
+    private final UIButton snapButton;
+    private final UIButton keyframeButton;
     private final UIElement renderPanel;
+    private UIAssetBrowser assetBrowser;
+    private final UIElement modalLayer;
+    private final UIElement modalBox;
+    private final UILabel modalTitle;
+    private final UILabel modalHint;
 
     private final UICompRenderJobList queue;
     private final UITextbox queuePreset;
@@ -127,44 +149,104 @@ public class UICompositorPanel extends UIDashboardPanel
     private boolean playing;
     private boolean renderView;
     private int presetIndex;
-    private int autoSaveTicks;
+    private long lastAutoSaveMs;
+    private long lastSnapshotMs;
     private boolean resetTimelineView = true;
+    private int exportWidth = 1920;
+    private int exportHeight = 1080;
+    private int exportFps = 30;
+    private int primedWidth = -1;
+    private final java.util.ArrayDeque<String> undoStack = new java.util.ArrayDeque<>();
+    private final java.util.ArrayDeque<String> redoStack = new java.util.ArrayDeque<>();
+    private String lastSnapshot = "";
+    private boolean restoring;
+    private int primedHeight = -1;
     private boolean buildingInspector;
-    private int inspectorPage;
+    private int inspectorPage = PAGE_EFFECTS;
     private boolean focusMode;
     private boolean previewEffects = true;
     private boolean previewMasks = true;
+    private boolean previewControlsCollapsed;
+    /** Look through the active 3D camera instead of the default front view. */
+    private boolean cameraPreviewMode;
+    private UIToggle effectsToggle;
+    private UIToggle masksToggle;
+    private UIToggle bbsBackdropToggle;
+    private UIIcon cameraViewButton;
+    private UIIcon space3DButton;
+    private UIIcon precompBack;
+    private final java.util.ArrayDeque<PrecompReturn> precompStack = new java.util.ArrayDeque<>();
+
+    private static final class PrecompReturn
+    {
+        final CompDocument doc;
+        final String layerId;
+        final float time;
+
+        PrecompReturn(CompDocument doc, String layerId, float time)
+        {
+            this.doc = doc;
+            this.layerId = layerId;
+            this.time = time;
+        }
+    }
+    private UIIcon previewCollapse;
+    private int leftPage;
+    private boolean keyframeOpen;
+    private boolean keyframeViewNeedsFit = true;
+    private float playRate;
+    private String statusMessage = "";
+    private int statusTicks;
+    private float lastInspectorTime = Float.NaN;
+    private final List<Runnable> inspectorBindings = new ArrayList<>();
+    private final Map<String, Boolean> sectionFolds = new HashMap<>();
+    private final LinkedList<String> recentEffects = new LinkedList<>();
+
+    private static final int PAGE_EFFECTS = 0;
+    private static final int PAGE_GRADE = 1;
+    private static final int PAGE_LAYER = 2;
+    private static final int PAGE_MASK = 3;
+    private static final int PAGE_TEXT = 4;
+    private static final int PAGE_COMP = 5;
+    private static final int PAGE_OUTPUT = 6;
+
+    private static final int TIMELINE_HEIGHT = 250;
+
+    private int leftPanelWidth = 190;
+    private int rightPanelWidth = 300;
+    private int timelinePanelHeight = 250;
+    private PanelResizeHandle leftHandle;
+    private PanelResizeHandle rightHandle;
+    private PanelResizeHandle timelineHandle;
+    private PanelResizeHandle keyframeHandle;
+    private int keyframeDrawerHeight = 154;
+    private static final int KEYFRAME_DRAWER_MIN = 96;
+    private UIStartScreen startScreen;
+    private boolean startScreenOpen;
+    private int pendingScheme;
 
     public UICompositorPanel(UIDashboard dashboard)
     {
         super(dashboard);
 
-        this.title = new UILabel(IKey.constant("BBS Compositor"));
+        this.title = new UILabel(IKey.constant("BBS 合成器"));
         this.title.w(92).h(20);
 
-        this.info = new UILabel(IKey.constant("Open this film's replay compositor"));
-        this.info.color(0xFF8A94A6, false);
-        this.info.w(140).h(20);
-        this.info.labelAnchor(0F, 0.5F);
 
-        this.replaySelector = new UIButton(IKey.constant("Replay: -"), (button) -> this.openReplaySelector());
+        this.replaySelector = new UIButton(IKey.constant("回放：-"), (button) -> this.openReplaySelector());
         this.replaySelector.w(132).h(20);
-        this.replaySelector.tooltip(IKey.constant("Choose a replay or another saved film"));
+        this.replaySelector.tooltip(IKey.constant("选择回放或其它影片"));
         this.replaySelector.context(this::replayContextMenu);
 
-        this.save = new UIButton(IKey.constant("Save"), (button) -> this.save());
+        this.save = new UIButton(IKey.constant("保存"), (button) -> this.save());
         this.save.w(44).h(20);
 
         this.addLayer = new UIIcon(Icons.ADD, (icon) -> this.addLayer("solid"));
         this.addLayer.w(20).h(20);
-        this.addLayer.tooltip(IKey.constant("Add layer (right-click for types)"));
+        this.addLayer.tooltip(IKey.constant("新建图层（右键选择类型）"));
         this.addLayerContextMenu(this.addLayer);
 
-        this.play = new UIButton(IKey.constant("Play"), (button) ->
-        {
-            this.playing = !this.playing;
-            this.updatePlayLabel();
-        });
+        this.play = new UIButton(IKey.constant("播放"), (button) -> this.togglePlay());
         this.play.w(44).h(20);
 
         this.prevFrame = new UIIcon(Icons.FRAME_PREV, (icon) -> this.stepFrame(-1));
@@ -175,40 +257,122 @@ public class UICompositorPanel extends UIDashboardPanel
         this.timecode = new UILabel(IKey.constant("00:00:00:00"));
         this.timecode.w(94).h(20);
 
-        this.exportFilm = new UIButton(IKey.constant("Export"), (button) -> this.exportFilm());
+        this.exportFilm = new UIButton(IKey.constant("导出"), (button) -> this.exportFilm());
         this.exportFilm.w(68).h(20);
-        this.exportFilm.tooltip(IKey.constant("Export this film with BBS' own video recorder"));
+        this.exportFilm.tooltip(IKey.constant("用 BBS 原生录像器导出本片"));
 
-        this.renderMode = new UIButton(IKey.constant("Render"), (button) -> this.toggleRenderView());
+        this.renderMode = new UIButton(IKey.constant("渲染"), (button) -> this.toggleRenderView());
         this.renderMode.w(62).h(20);
 
         this.focusButton = new UIIcon(Icons.MAXIMIZE, (icon) -> this.toggleFocusMode());
         this.focusButton.w(20).h(20);
-        this.focusButton.tooltip(IKey.constant("Focus preview"));
+        this.focusButton.tooltip(IKey.constant("聚焦预览（F）"));
+
+        this.settingsButton = new UIIcon(Icons.GEAR, (icon) -> this.showSettings());
+        this.settingsButton.w(20).h(20);
+        this.settingsButton.tooltip(IKey.constant("合成器设置：默认图层时长、快捷键方案、外部播放"));
+
+        this.save.tooltip(IKey.constant("保存工程（Ctrl+S）"));
+        this.play.tooltip(IKey.constant("播放 / 暂停（空格）"));
+        this.renderMode.tooltip(IKey.constant("打开渲染队列"));
 
         this.header = new UIElement();
-        this.header.row(3);
         this.header.h(24);
-        this.header.add(this.title, this.replaySelector, this.save, this.addLayer, this.play,
-            this.prevFrame, this.nextFrame, this.timecode, this.exportFilm, this.renderMode);
 
-        this.layers = new UICompLayerList((selection) ->
+        this.title.relative(this.header).x(8).y(3).w(96).h(18);
+        this.replaySelector.relative(this.header).x(110).y(3).w(154).h(18);
+        this.play.relative(this.header).x(274).y(3).w(48).h(18);
+        this.prevFrame.relative(this.header).x(326).y(3).w(20).h(18);
+        this.nextFrame.relative(this.header).x(350).y(3).w(20).h(18);
+        this.timecode.relative(this.header).x(378).y(3).w(96).h(18);
+        this.save.relative(this.header).x(1F, -240).y(3).w(52).h(18);
+        this.exportFilm.relative(this.header).x(1F, -182).y(3).w(62).h(18);
+        this.renderMode.relative(this.header).x(1F, -114).y(3).w(58).h(18);
+        this.settingsButton.relative(this.header).x(1F, -50).y(3).w(20).h(18);
+        this.focusButton.relative(this.header).x(1F, -24).y(3).w(20).h(18);
+
+        this.header.add(this.title, this.replaySelector, this.play, this.prevFrame, this.nextFrame,
+            this.timecode, this.save, this.exportFilm, this.renderMode, this.settingsButton, this.focusButton);
+
+        /* Left column: the two panels an editor actually browses from - effects and media.
+         * The layer stack lives in the timeline's track headers; keeping a second layer list
+         * here would be a second source of truth for selection and z-order. */
+        this.effectLibrary = new UIEffectLibrary(this);
+        this.effectLibrary.relative(this.effectColumn = new UIElement()).x(0).y(22).w(1F).h(1F, -22);
+
+        this.assetPanel = new UIScrollView(ScrollDirection.VERTICAL);
+        this.assetPanel.relative(this.effectColumn).x(0).y(22).w(1F).h(1F, -22);
+        this.assetPanel.column(4).vertical().stretch().scroll().padding(4);
+        this.assetPanel.setVisible(false);
+
+        UISection assetSection = new UISection(IKey.constant("素材"));
+
+        assetSection.fields.add(UI.label(IKey.constant("按分类、搜索和缩略图浏览项目素材与游戏素材。"), 16));
+        assetSection.fields.add(new UIButton(IKey.constant("打开素材库…"), (button) -> this.openAssetBrowser()));
+        assetSection.fields.add(new UIButton(IKey.constant("导入图片到所选轨道…"), (button) ->
         {
-            this.selectedLayer = selection.isEmpty() ? null : selection.get(0);
-            this.refreshInspector();
-            this.refreshSheets();
+            if (this.selectedLayer == null)
+            {
+                this.setStatus("先在时间轴选择一条轨道");
+                return;
+            }
+
+            this.importImage(this.selectedLayer);
+        }));
+        assetSection.fields.add(new UIButton(IKey.constant("替换所选轨道素材…"), (button) ->
+        {
+            if (this.selectedLayer == null)
+            {
+                this.setStatus("先在时间轴选择一条轨道");
+                return;
+            }
+
+            this.openAssetBrowser();
+        }));
+        this.assetPanel.add(assetSection);
+
+        this.leftTabs = new UICompTabBar();
+        this.leftTabs.relative(this.effectColumn).x(0).y(0).w(1F).h(22);
+        this.leftTabs.addTab("效果库");
+        this.leftTabs.addTab("素材");
+        this.leftTabs.onSelect((index) ->
+        {
+            this.leftPage = index;
+            this.effectLibrary.setVisible(index == 0);
+            this.assetPanel.setVisible(index == 1);
         });
-        this.layers.w(190).h(1F);
-        this.layers.background();
-        this.layers.context(this::layerContextMenu);
+        this.leftTabs.active(() -> this.leftPage);
+
+        this.effectColumn.w(190).h(1F);
+        this.effectColumn.add(this.leftTabs, this.effectLibrary, this.assetPanel);
 
         this.preview = new UIElement()
         {
-            private boolean dragging;
+            private static final int DRAG_NONE = 0;
+            private static final int DRAG_MOVE = 1;
+            private static final int DRAG_CORNER = 2;
+            private static final int DRAG_EDGE = 3;
+            private static final int DRAG_ROTATE = 4;
+
+            private int dragMode = DRAG_NONE;
+            private int dragHandle;
             private int dragStartX;
             private int dragStartY;
             private float layerStartX;
             private float layerStartY;
+            private float targetStartX;
+            private float targetStartY;
+            private float startScaleX;
+            private float startScaleY;
+            private float startRotation;
+            private float startLocalX;
+            private float startLocalY;
+            private float startAngle;
+            private final Matrix4f startInverse = new Matrix4f();
+            private float startScreenCenterX;
+            private float startScreenCenterY;
+            private float startScreenDistance;
+            private float startScreenAngle;
 
             @Override
             public void render(UIContext context)
@@ -216,8 +380,124 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.applyDrag(context);
                 this.renderBackground(context);
                 this.renderSafeArea(context);
+                this.renderGuides(context);
                 this.renderSelection(context);
+                this.updateCursor(context);
                 super.render(context);
+            }
+
+            private void updateCursor(UIContext context)
+            {
+                if (!this.area.isInside(context))
+                {
+                    return;
+                }
+
+                int cursor = -1;
+
+                if (this.dragMode == DRAG_MOVE)
+                {
+                    cursor = org.lwjgl.glfw.GLFW.GLFW_HAND_CURSOR;
+                }
+                else if (this.dragMode != DRAG_NONE)
+                {
+                    cursor = org.lwjgl.glfw.GLFW.GLFW_HRESIZE_CURSOR;
+                }
+                else
+                {
+                    int handle = this.handleAt(context, UICompositorPanel.this.selectedLayer);
+
+                    if (handle == 30)
+                    {
+                        cursor = org.lwjgl.glfw.GLFW.GLFW_HAND_CURSOR;
+                    }
+                    else if (handle >= 0)
+                    {
+                        cursor = org.lwjgl.glfw.GLFW.GLFW_HRESIZE_CURSOR;
+                    }
+                }
+
+                if (cursor >= 0)
+                {
+                    context.requestCursor(cursor);
+                }
+            }
+
+            /**
+             * Model-editor-ish ground grid for the 3D space. It is drawn in screen space from
+             * projected comp-plane points, so it participates in the same camera as the layers
+             * without introducing a second projection path.
+             */
+            private void render3DGrid(UIContext context)
+            {
+                CompProject project = UICompositorPanel.this.project;
+                CompDocument doc = UICompositorPanel.this.doc;
+
+                if (project == null || doc == null || project.settings == null || !project.settings.show3DGrid)
+                {
+                    return;
+                }
+
+                boolean has3D = false;
+
+                for (CompLayer layer : doc.layers)
+                {
+                    if (layer.threeD && layer.visible && !"camera".equals(layer.type))
+                    {
+                        has3D = true;
+                        break;
+                    }
+                }
+
+                if (!has3D)
+                {
+                    return;
+                }
+
+                CompRenderContext renderContext = new CompRenderContext(project, doc, UICompositorPanel.this.time, null, null, null);
+
+                CompRenderer.prepare3D(renderContext, UICompositorPanel.this.cameraPreviewMode);
+
+                float scale = this.fitScale();
+
+                if (scale <= 0F)
+                {
+                    return;
+                }
+
+                float ox = this.area.x + (this.area.w - doc.width * scale) / 2F;
+                float oy = this.area.y + (this.area.h - doc.height * scale) / 2F;
+                /* 200px cells and coarse segments: the grid is a reference, not geometry. The old
+                 * build emitted one 1x1 quad per screen pixel per line, which is what made the
+                 * camera view crawl as soon as a 3D layer existed. */
+                float step = 200F;
+                int lines = (int) Math.ceil(Math.max(doc.width, doc.height) / step) + 2;
+
+                for (int i = -lines; i <= lines; i++)
+                {
+                    float value = i * step;
+                    this.draw3DLine(context, renderContext, ox, oy, scale, value, 0F, value, doc.height, 0x14FFFFFF);
+                    this.draw3DLine(context, renderContext, ox, oy, scale, 0F, value, doc.width, value, 0x14FFFFFF);
+                }
+
+                /* X/Y axes through the composition origin. */
+                this.draw3DLine(context, renderContext, ox, oy, scale, 0F, 0F, doc.width, 0F, 0x55FF6B6B);
+                this.draw3DLine(context, renderContext, ox, oy, scale, 0F, 0F, 0F, doc.height, 0x5555D68A);
+            }
+
+            private void draw3DLine(UIContext context, CompRenderContext renderContext, float ox, float oy, float scale,
+                                    float x1, float y1, float x2, float y2, int color)
+            {
+                Matrix4f world = new Matrix4f(renderContext.view3D).scale(1F, -1F, 1F);
+                org.joml.Vector2f a = CompRenderer.project3D(renderContext, world, x1, y1);
+                org.joml.Vector2f b = CompRenderer.project3D(renderContext, world, x2, y2);
+
+                if (a == null || b == null)
+                {
+                    return;
+                }
+
+                this.coarseLine(context, ox + a.x * scale, oy + a.y * scale, ox + b.x * scale, oy + b.y * scale, color);
             }
 
             private void renderBackground(UIContext context)
@@ -241,7 +521,16 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (UICompositorPanel.this.project != null && UICompositorPanel.this.doc != null)
                 {
+                    /* Keep the BBS camera on the composition playhead even while the panel is
+                     * paused: scrubbing the timeline must move the film frame too. */
+                    dev.bbsae.client.overlay.BbsPreviewBridge.sync(UICompositorPanel.this.time);
+
                     MatrixStack stack = context.batcher.getContext().getMatrices();
+
+                    if (settings != null && settings.previewBackground == 1)
+                    {
+                        this.renderBbsBackdrop(context);
+                    }
 
                     stack.push();
                     stack.translate(this.area.x, this.area.y, 0F);
@@ -261,7 +550,8 @@ public class UICompositorPanel extends UIDashboardPanel
                             UICompositorPanel.this.previewEffects,
                             UICompositorPanel.this.previewMasks,
                             null,
-                            context.batcher
+                            context.batcher,
+                            UICompositorPanel.this.cameraPreviewMode
                         );
                     }
                     catch (RuntimeException e)
@@ -272,10 +562,56 @@ public class UICompositorPanel extends UIDashboardPanel
                     stack.pop();
                 }
 
+                this.render3DGrid(context);
+
                 context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 1F, 0xFF2A303A);
                 context.batcher.box(this.area.x, this.area.ey() - 1F, this.area.ex(), this.area.ey(), 0xFF2A303A);
                 context.batcher.box(this.area.x, this.area.y, this.area.x + 1F, this.area.ey(), 0xFF2A303A);
                 context.batcher.box(this.area.ex() - 1F, this.area.y, this.area.ex(), this.area.ey(), 0xFF2A303A);
+            }
+
+            /**
+             * The live BBS frame behind the composition (Preview → BBS). Cover-scaled into the
+             * composition rectangle, because the window and the comp rarely share an aspect ratio.
+             */
+            private void renderBbsBackdrop(UIContext context)
+            {
+                CompDocument doc = UICompositorPanel.this.doc;
+
+                if (doc == null)
+                {
+                    return;
+                }
+
+                float scale = this.fitScale();
+                float w = doc.width * scale;
+                float h = doc.height * scale;
+                float x = this.area.x + (this.area.w - w) / 2F;
+                float y = this.area.y + (this.area.h - h) / 2F;
+                dev.bbsae.client.render.GlTexture texture = dev.bbsae.client.overlay.BbsPreviewBridge.texture();
+
+                if (texture == null)
+                {
+                    context.batcher.box(x, y, x + w, y + h, 0xFF151A21);
+                    context.batcher.textShadow("BBS 预览不可用（未打开影片或世界未渲染）", x + 8, y + 8, 0xFFFF8A8A);
+                    return;
+                }
+
+                float cover = Math.max(w / texture.width, h / texture.height);
+                float dw = texture.width * cover;
+                float dh = texture.height * cover;
+
+                context.batcher.clip((int) x, (int) y, (int) w, (int) h, context);
+
+                try
+                {
+                    dev.bbsae.client.overlay.BbsPreviewBridge.drawFrame(context.batcher, 0xFFFFFFFF,
+                        x + (w - dw) / 2F, y + (h - dh) / 2F, dw, dh);
+                }
+                finally
+                {
+                    context.batcher.unclip(context);
+                }
             }
 
             private void renderSafeArea(UIContext context)
@@ -287,15 +623,98 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
-                float w = this.area.w * 0.9F;
-                float h = this.area.h * 0.9F;
-                float x = this.area.x + (this.area.w - w) / 2F;
-                float y = this.area.y + (this.area.h - h) / 2F;
+                /* The safe area belongs to the composition rectangle, not to the whole preview
+                 * panel. On a non-matching aspect ratio the old version drew it over the
+                 * letterbox and looked unrelated to the frame. */
+                float scale = this.fitScale();
+
+                if (scale <= 0F)
+                {
+                    return;
+                }
+
+                float compW = UICompositorPanel.this.doc.width * scale;
+                float compH = UICompositorPanel.this.doc.height * scale;
+                float compX = this.area.x + (this.area.w - compW) / 2F;
+                float compY = this.area.y + (this.area.h - compH) / 2F;
+                float w = compW * 0.9F;
+                float h = compH * 0.9F;
+                float x = compX + (compW - w) / 2F;
+                float y = compY + (compH - h) / 2F;
 
                 context.batcher.box(x, y, x + w, y + 1, 0x22FFFFFF);
                 context.batcher.box(x, y + h - 1, x + w, y + h, 0x22FFFFFF);
                 context.batcher.box(x, y, x + 1, y + h, 0x22FFFFFF);
                 context.batcher.box(x + w - 1, y, x + w, y + h, 0x22FFFFFF);
+            }
+
+            private void renderGuides(UIContext context)
+            {
+                if (UICompositorPanel.this.doc == null || UICompositorPanel.this.project == null)
+                {
+                    return;
+                }
+
+                float scale = this.fitScale();
+                float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
+                float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
+                CompRenderContext renderContext = new CompRenderContext(
+                    UICompositorPanel.this.project,
+                    UICompositorPanel.this.doc,
+                    UICompositorPanel.this.time,
+                    null,
+                    null,
+                    null
+                );
+
+                context.batcher.clip(this.area, context);
+
+                try
+                {
+                    for (CompLayer layer : UICompositorPanel.this.doc.layers)
+                    {
+                        if (!layer.activeAt(UICompositorPanel.this.time) || !layer.visible)
+                        {
+                            continue;
+                        }
+
+                        if ("null".equals(layer.type))
+                        {
+                            Matrix4f world = CompRenderer.worldMatrix(UICompositorPanel.this.doc, layer, renderContext, new java.util.HashSet<>());
+                            Vector3f point = new Vector3f(0F, 0F, 0F);
+
+                            world.transformPosition(point);
+
+                            float x = this.area.x + ox + point.x * scale;
+                            float y = this.area.y + oy + point.y * scale;
+                            int color = 0xFF74D6FF;
+
+                            context.batcher.box(x - 7F, y - 1F, x + 7F, y + 1F, color);
+                            context.batcher.box(x - 1F, y - 7F, x + 1F, y + 7F, color);
+                            context.batcher.box(x - 2F, y - 2F, x + 2F, y + 2F, 0xFFFFFFFF);
+                            context.batcher.textShadow("◇ " + UICompositorPanel.this.layerLabel(layer), x + 9F, y - 4F, color);
+                        }
+                        else if ("camera".equals(layer.type))
+                        {
+                            mchorse.bbs_mod.utils.pose.Transform transform = layer.transformAt(UICompositorPanel.this.time * UICompositorPanel.this.doc.fps);
+                            float px = this.area.x + ox + transform.translate.x * scale;
+                            float py = this.area.y + oy + transform.translate.y * scale;
+                            float tx = this.area.x + ox + layer.scalarAt("cameraTargetX", layer.cameraTargetX, renderContext.frame) * scale;
+                            float ty = this.area.y + oy + layer.scalarAt("cameraTargetY", layer.cameraTargetY, renderContext.frame) * scale;
+                            int color = UICompositorPanel.this.doc.activeCameraId.equals(layer.id) ? 0xFFFFC14D : 0x99FFC14D;
+
+                            this.line(context, px, py, tx, ty, 0x66FFC14D);
+                            context.batcher.box(px - 5F, py - 5F, px + 5F, py + 5F, color);
+                            context.batcher.box(px - 3F, py - 3F, px + 3F, py + 3F, 0xFF101014);
+                            context.batcher.box(tx - 3F, ty - 3F, tx + 3F, ty + 3F, color);
+                            context.batcher.textShadow("⌖ " + UICompositorPanel.this.layerLabel(layer), px + 9F, py - 4F, color);
+                        }
+                    }
+                }
+                finally
+                {
+                    context.batcher.unclip(context);
+                }
             }
 
             private void renderSelection(UIContext context)
@@ -321,7 +740,86 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void renderSelectionUnclipped(UIContext context, CompLayer layer)
             {
+                float[] corners = this.selectionCorners(layer);
+
+                if (corners == null)
+                {
+                    return;
+                }
+
+                int color = layer.locked ? 0xFF8A6A6A : 0xFF55AAFF;
+
+                for (int i = 0; i < 4; i++)
+                {
+                    int j = (i + 1) % 4;
+
+                    this.line(context, corners[i * 2], corners[i * 2 + 1], corners[j * 2], corners[j * 2 + 1], color);
+                }
+
+                /* Small corner grips + edge grips + a rotation stem. These are the hit targets
+                 * used by handleAt() below; drawing them without hit testing was the reason the
+                 * old selection box looked like decoration. */
+                for (int i = 0; i < 4; i++)
+                {
+                    float x = corners[i * 2];
+                    float y = corners[i * 2 + 1];
+
+                    context.batcher.box(x - 5F, y - 5F, x + 5F, y + 5F, 0xFF101418);
+                    context.batcher.box(x - 4F, y - 4F, x + 4F, y + 4F, 0xFFFFFFFF);
+                }
+
+                for (int i = 0; i < 4; i++)
+                {
+                    int j = (i + 1) % 4;
+                    float mx = (corners[i * 2] + corners[j * 2]) * 0.5F;
+                    float my = (corners[i * 2 + 1] + corners[j * 2 + 1]) * 0.5F;
+
+                    context.batcher.box(mx - 3F, my - 3F, mx + 3F, my + 3F, 0xFF101418);
+                    context.batcher.box(mx - 2F, my - 2F, mx + 2F, my + 2F, 0xFFFFFFFF);
+                }
+
+                float rx = (corners[0] + corners[2]) * 0.5F;
+                float ry = (corners[1] + corners[3]) * 0.5F;
+                float bx = (corners[6] + corners[4]) * 0.5F;
+                float by = (corners[7] + corners[5]) * 0.5F;
+                float dx = rx - bx;
+                float dy = ry - by;
+                float length = (float) Math.sqrt(dx * dx + dy * dy);
+
+                if (length > 0.001F)
+                {
+                    dx /= length;
+                    dy /= length;
+                }
+                else
+                {
+                    dx = 0F;
+                    dy = -1F;
+                }
+
+                float hx = rx + dx * 26F;
+                float hy = ry + dy * 26F;
+
+                this.line(context, rx, ry, hx, hy, color);
+                context.batcher.box(hx - 4F, hy - 4F, hx + 4F, hy + 4F, 0xFF101418);
+                context.batcher.box(hx - 3F, hy - 3F, hx + 3F, hy + 3F, 0xFFFFD27A);
+            }
+
+            /** Four screen-space corners in TL, TR, BR, BL order. */
+            private float[] selectionCorners(CompLayer layer)
+            {
+                if (layer == null || UICompositorPanel.this.doc == null)
+                {
+                    return null;
+                }
+
                 float scale = this.fitScale();
+
+                if (scale <= 0F)
+                {
+                    return null;
+                }
+
                 float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
                 float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
                 CompRenderContext renderContext = new CompRenderContext(
@@ -332,54 +830,250 @@ public class UICompositorPanel extends UIDashboardPanel
                     null,
                     null
                 );
-                Matrix4f world;
+                float x = -layer.width * layer.anchorX;
+                float y = -layer.height * layer.anchorY;
+                float[] result = new float[8];
+
+                /* Nulls and cameras have no content rectangle. Drawing a 100x100 "content" box
+                 * made their selection look decorative; use a fixed screen-space gizmo around
+                 * the anchor instead, so the same scale/rotate handles stay usable. */
+                boolean pointGizmo = "null".equals(layer.type) || "camera".equals(layer.type);
 
                 try
                 {
-                    world = CompRenderer.worldMatrix(UICompositorPanel.this.doc, layer, renderContext, new java.util.HashSet<>());
+                    if (layer.threeD)
+                    {
+                        CompRenderer.prepare3D(renderContext, UICompositorPanel.this.cameraPreviewMode);
+
+                        Matrix4f world = CompRenderer.world3D(UICompositorPanel.this.doc, layer, renderContext);
+
+                        if (pointGizmo)
+                        {
+                            org.joml.Vector2f anchor = CompRenderer.project3D(renderContext, world, 0F, 0F);
+
+                            if (anchor == null)
+                            {
+                                return null;
+                            }
+
+                            float cx = this.area.x + ox + anchor.x * scale;
+                            float cy = this.area.y + oy + anchor.y * scale;
+                            float r = 26F;
+
+                            return new float[] {cx - r, cy - r, cx + r, cy - r, cx + r, cy + r, cx - r, cy + r};
+                        }
+
+                        for (int i = 0; i < 4; i++)
+                        {
+                            float lx = (i == 0 || i == 3) ? x : x + layer.width;
+                            float ly = (i == 0 || i == 1) ? y : y + layer.height;
+                            org.joml.Vector2f projected = CompRenderer.project3D(renderContext, world, lx, ly);
+
+                            if (projected == null)
+                            {
+                                return null;
+                            }
+
+                            result[i * 2] = this.area.x + ox + projected.x * scale;
+                            result[i * 2 + 1] = this.area.y + oy + projected.y * scale;
+                        }
+
+                        return result;
+                    }
+
+                    Matrix4f world = CompRenderer.worldMatrix(UICompositorPanel.this.doc, layer, renderContext, new java.util.HashSet<>());
+
+                    if (pointGizmo)
+                    {
+                        Vector3f anchor = new Vector3f(0F, 0F, 0F);
+
+                        world.transformPosition(anchor);
+
+                        float cx = this.area.x + ox + anchor.x * scale;
+                        float cy = this.area.y + oy + anchor.y * scale;
+                        float r = 26F;
+
+                        return new float[] {cx - r, cy - r, cx + r, cy - r, cx + r, cy + r, cx - r, cy + r};
+                    }
+
+                    Vector3f[] points = new Vector3f[]
+                    {
+                        new Vector3f(x, y, 0F),
+                        new Vector3f(x + layer.width, y, 0F),
+                        new Vector3f(x + layer.width, y + layer.height, 0F),
+                        new Vector3f(x, y + layer.height, 0F)
+                    };
+
+                    for (int i = 0; i < 4; i++)
+                    {
+                        Vector3f point = points[i];
+
+                        world.transformPosition(point);
+
+                        result[i * 2] = this.area.x + ox + point.x * scale;
+                        result[i * 2 + 1] = this.area.y + oy + point.y * scale;
+                    }
                 }
                 catch (RuntimeException e)
                 {
-                    return;
-                }
-                float x = -layer.width * layer.anchorX;
-                float y = -layer.height * layer.anchorY;
-                Vector3f[] corners = new Vector3f[]
-                {
-                    new Vector3f(x, y, 0F),
-                    new Vector3f(x + layer.width, y, 0F),
-                    new Vector3f(x + layer.width, y + layer.height, 0F),
-                    new Vector3f(x, y + layer.height, 0F)
-                };
-
-                for (Vector3f corner : corners)
-                {
-                    world.transformPosition(corner);
-
-                    corner.x = this.area.x + ox + corner.x * scale;
-                    corner.y = this.area.y + oy + corner.y * scale;
+                    return null;
                 }
 
-                int color = 0xFF55AAFF;
+                return result;
+            }
+
+            /** 10 + corner, 20 + edge, 30 = rotate handle. */
+            private int handleAt(UIContext context, CompLayer layer)
+            {
+                if (layer == null || layer.locked)
+                {
+                    return -1;
+                }
+
+                float[] corners = this.selectionCorners(layer);
+
+                if (corners == null)
+                {
+                    return -1;
+                }
+
+                float mx = context.mouseX;
+                float my = context.mouseY;
+                float hit = 12F;
 
                 for (int i = 0; i < 4; i++)
                 {
-                    Vector3f a = corners[i];
-                    Vector3f b = corners[(i + 1) % 4];
-
-                    this.line(context, a.x, a.y, b.x, b.y, color);
+                    if (Math.abs(mx - corners[i * 2]) <= hit && Math.abs(my - corners[i * 2 + 1]) <= hit)
+                    {
+                        return 10 + i;
+                    }
                 }
 
-                for (Vector3f corner : corners)
+                for (int i = 0; i < 4; i++)
                 {
-                    context.batcher.box(corner.x - 2F, corner.y - 2F, corner.x + 2F, corner.y + 2F, 0xFFFFFFFF);
-                    context.batcher.box(corner.x - 1F, corner.y - 1F, corner.x + 1F, corner.y + 1F, color);
+                    int j = (i + 1) % 4;
+                    float ex = (corners[i * 2] + corners[j * 2]) * 0.5F;
+                    float ey = (corners[i * 2 + 1] + corners[j * 2 + 1]) * 0.5F;
+
+                    if (Math.abs(mx - ex) <= hit && Math.abs(my - ey) <= hit)
+                    {
+                        return 20 + i;
+                    }
                 }
+
+                float rx = (corners[0] + corners[2]) * 0.5F;
+                float ry = (corners[1] + corners[3]) * 0.5F;
+                float bx = (corners[6] + corners[4]) * 0.5F;
+                float by = (corners[7] + corners[5]) * 0.5F;
+                float dx = rx - bx;
+                float dy = ry - by;
+                float length = (float) Math.sqrt(dx * dx + dy * dy);
+
+                if (length > 0.001F)
+                {
+                    dx /= length;
+                    dy /= length;
+                }
+
+                float hx = rx + dx * 26F;
+                float hy = ry + dy * 26F;
+
+                if (Math.abs(mx - hx) <= 10F && Math.abs(my - hy) <= 10F)
+                {
+                    return 30;
+                }
+
+                return -1;
+            }
+
+            /** Mouse position in the layer's local pixel space (anchor at 0,0). */
+            private float[] localPoint(UIContext context, CompLayer layer)
+            {
+                float scale = this.fitScale();
+
+                if (scale <= 0F)
+                {
+                    return new float[] {0F, 0F};
+                }
+
+                float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
+                float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
+                float compX = (context.mouseX - this.area.x - ox) / scale;
+                float compY = (context.mouseY - this.area.y - oy) / scale;
+                CompRenderContext renderContext = new CompRenderContext(
+                    UICompositorPanel.this.project,
+                    UICompositorPanel.this.doc,
+                    UICompositorPanel.this.time,
+                    null,
+                    null,
+                    null
+                );
+
+                try
+                {
+                    Matrix4f world = CompRenderer.worldMatrix(UICompositorPanel.this.doc, layer, renderContext, new java.util.HashSet<>());
+                    Vector3f point = new Vector3f(compX, compY, 0F);
+
+                    new Matrix4f(world).invert().transformPosition(point);
+
+                    return new float[] {point.x, point.y};
+                }
+                catch (RuntimeException e)
+                {
+                    return new float[] {0F, 0F};
+                }
+            }
+
+            /**
+             * Mouse in the transform space captured when the handle drag started. Using the live
+             * matrix here would feed the scale change back into the ratio and make the handle run
+             * away from the cursor.
+             */
+            private float[] startLocalPoint(UIContext context)
+            {
+                float scale = this.fitScale();
+
+                if (scale <= 0F)
+                {
+                    return new float[] {this.startLocalX, this.startLocalY};
+                }
+
+                float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
+                float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
+                float compX = (context.mouseX - this.area.x - ox) / scale;
+                float compY = (context.mouseY - this.area.y - oy) / scale;
+                Vector3f point = new Vector3f(compX, compY, 0F);
+
+                this.startInverse.transformPosition(point);
+
+                return new float[] {point.x, point.y};
+            }
+
+            /** Ray-casting point-in-quad for the projected 3D selection box. */
+            private boolean pointInQuad(float x, float y, float[] corners)
+            {
+                boolean inside = false;
+
+                for (int i = 0, j = 3; i < 4; j = i++)
+                {
+                    float xi = corners[i * 2];
+                    float yi = corners[i * 2 + 1];
+                    float xj = corners[j * 2];
+                    float yj = corners[j * 2 + 1];
+
+                    if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+                    {
+                        inside = !inside;
+                    }
+                }
+
+                return inside;
             }
 
             private void line(UIContext context, float x1, float y1, float x2, float y2, int color)
             {
-                int steps = Math.max(1, (int) Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1)));
+                float length = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+                int steps = Math.max(1, (int) (length / 2F));
 
                 for (int i = 0; i <= steps; i++)
                 {
@@ -387,7 +1081,23 @@ public class UICompositorPanel extends UIDashboardPanel
                     float x = x1 + (x2 - x1) * t;
                     float y = y1 + (y2 - y1) * t;
 
-                    context.batcher.box(x, y, x + 1F, y + 1F, color);
+                    context.batcher.box(x, y, x + 2F, y + 2F, color);
+                }
+            }
+
+            /** Faint reference lines (3D grid): fewer, slightly thicker segments. */
+            private void coarseLine(UIContext context, float x1, float y1, float x2, float y2, int color)
+            {
+                float length = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+                int steps = Math.max(1, (int) (length / 6F));
+
+                for (int i = 0; i <= steps; i++)
+                {
+                    float t = i / (float) steps;
+                    float x = x1 + (x2 - x1) * t;
+                    float y = y1 + (y2 - y1) * t;
+
+                    context.batcher.box(x, y, x + 3F, y + 1.5F, color);
                 }
             }
 
@@ -398,16 +1108,14 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void applyDrag(UIContext context)
             {
-                if (!this.dragging)
+                if (this.dragMode == DRAG_NONE)
                 {
                     return;
                 }
 
                 if (!Window.isMouseButtonPressed(0) || UICompositorPanel.this.selectedLayer == null || UICompositorPanel.this.doc == null)
                 {
-                    this.dragging = false;
-                    UICompositorPanel.this.refreshInspector();
-                    UICompositorPanel.this.save();
+                    this.endDrag();
                     return;
                 }
 
@@ -415,6 +1123,93 @@ public class UICompositorPanel extends UIDashboardPanel
                 float scale = Math.max(0.0001F, this.fitScale());
                 float dx = (context.mouseX - this.dragStartX) / scale;
                 float dy = (context.mouseY - this.dragStartY) / scale;
+                float[] local = this.startLocalPoint(context);
+
+                if (layer.threeD)
+                {
+                    float nowX = context.mouseX - this.startScreenCenterX;
+                    float nowY = context.mouseY - this.startScreenCenterY;
+                    float distance = (float) Math.sqrt(nowX * nowX + nowY * nowY);
+                    float angle = (float) Math.toDegrees(Math.atan2(nowY, nowX));
+
+                    if (this.dragMode == DRAG_ROTATE)
+                    {
+                        float delta = angle - this.startScreenAngle;
+
+                        while (delta > 180F) delta -= 360F;
+                        while (delta < -180F) delta += 360F;
+
+                        this.writeTransform(layer, null, null, this.startRotation + delta);
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "旋转 %.1f°", this.startRotation + delta));
+                    }
+                    else
+                    {
+                        float ratio = Math.max(0.01F, this.startScreenDistance <= 0.001F ? 1F : distance / this.startScreenDistance);
+                        float sx = Math.max(0.01F, Math.min(100F, this.startScaleX * ratio));
+                        float sy = Math.max(0.01F, Math.min(100F, this.startScaleY * ratio));
+
+                        this.writeTransform(layer, sx, sy, null);
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "缩放 X %.0f%%   Y %.0f%%", sx * 100F, sy * 100F));
+                    }
+
+                    return;
+                }
+
+                if (this.dragMode == DRAG_ROTATE)
+                {
+                    float angle = (float) Math.toDegrees(Math.atan2(local[1], local[0]));
+                    float delta = angle - this.startAngle;
+
+                    while (delta > 180F) delta -= 360F;
+                    while (delta < -180F) delta += 360F;
+
+                    float rotation = this.startRotation + delta;
+
+                    if (Window.isShiftPressed())
+                    {
+                        rotation = Math.round(rotation / 15F) * 15F;
+                    }
+
+                    this.writeTransform(layer, null, null, rotation);
+
+                    return;
+                }
+
+                if (this.dragMode == DRAG_CORNER || this.dragMode == DRAG_EDGE)
+                {
+                    float sx = Math.abs(this.startLocalX) < 0.001F ? this.startScaleX : this.startScaleX * (local[0] / this.startLocalX);
+                    float sy = Math.abs(this.startLocalY) < 0.001F ? this.startScaleY : this.startScaleY * (local[1] / this.startLocalY);
+
+                    if (this.dragMode == DRAG_CORNER && !Window.isShiftPressed())
+                    {
+                        /* Corner = proportional scale (AE). Shift frees the axes, edge handles
+                         * are always single-axis. */
+                        float uniform = (sx / Math.max(0.0001F, this.startScaleX) + sy / Math.max(0.0001F, this.startScaleY)) * 0.5F;
+
+                        sx = this.startScaleX * uniform;
+                        sy = this.startScaleY * uniform;
+                    }
+                    else if (this.dragMode == DRAG_EDGE)
+                    {
+                        if (this.dragHandle == 20 || this.dragHandle == 22)
+                        {
+                            sy = this.startScaleY;
+                        }
+                        else
+                        {
+                            sx = this.startScaleX;
+                        }
+                    }
+
+                    sx = Math.max(0.01F, Math.min(100F, sx));
+                    sy = Math.max(0.01F, Math.min(100F, sy));
+                    this.writeTransform(layer, sx, sy, null);
+                    UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                        "缩放 X %.0f%%   Y %.0f%%%s", sx * 100F, sy * 100F,
+                        this.dragMode == DRAG_CORNER ? "（Shift 单轴）" : ""));
+
+                    return;
+                }
 
                 if (Math.abs(dx) < 0.01F && Math.abs(dy) < 0.01F)
                 {
@@ -424,51 +1219,392 @@ public class UICompositorPanel extends UIDashboardPanel
                 float x = this.layerStartX + dx;
                 float y = this.layerStartY + dy;
 
+                this.writeTransform(layer, null, null, null, x, y);
+
+                if ("camera".equals(layer.type) && layer.cameraLookAt)
+                {
+                    /* Dragging a two-node camera must pan, not spin: the point of interest keeps
+                     * its offset from the camera instead of staying nailed to the comp centre. */
+                    float tx = this.targetStartX + dx;
+                    float ty = this.targetStartY + dy;
+
+                    layer.cameraTargetX = tx;
+                    layer.cameraTargetY = ty;
+                    UICompositorPanel.this.setScalar(layer, "cameraTargetX", tx);
+                    UICompositorPanel.this.setScalar(layer, "cameraTargetY", ty);
+                }
+            }
+
+            /** Writes translation/scale/rotation either into the base fields or the native channel. */
+            private void writeTransform(CompLayer layer, Float scaleX, Float scaleY, Float rotation)
+            {
+                this.writeTransform(layer, scaleX, scaleY, rotation, null, null);
+            }
+
+            private void writeTransform(CompLayer layer, Float scaleX, Float scaleY, Float rotation, Float translateX, Float translateY)
+            {
                 if (!layer.transformChannel().getKeyframes().isEmpty())
                 {
                     Transform transform = layer.transformAt(UICompositorPanel.this.getFrame()).copy();
 
-                    transform.translate.x = x;
-                    transform.translate.y = y;
+                    if (scaleX != null) transform.scale.x = scaleX;
+                    if (scaleY != null) transform.scale.y = scaleY;
+                    if (rotation != null) transform.rotate.z = rotation;
+                    if (translateX != null) transform.translate.x = translateX;
+                    if (translateY != null) transform.translate.y = translateY;
+
                     layer.transformChannel().insert(UICompositorPanel.this.getFrame(), transform);
                 }
                 else
                 {
-                    layer.x = x;
-                    layer.y = y;
+                    if (scaleX != null) layer.scaleX = scaleX;
+                    if (scaleY != null) layer.scaleY = scaleY;
+                    if (rotation != null) layer.rotation = rotation;
+                    if (translateX != null) layer.x = translateX;
+                    if (translateY != null) layer.y = translateY;
                 }
+            }
+
+            private void endDrag()
+            {
+                if (this.dragMode == DRAG_NONE)
+                {
+                    return;
+                }
+
+                this.dragMode = DRAG_NONE;
+                UICompositorPanel.this.refreshInspector();
+                UICompositorPanel.this.save();
+            }
+
+            /**
+             * Topmost visible layer whose content rectangle contains the cursor. Shapes use their
+             * raster bounds, everything else its anchor-adjusted box; the world matrix (parents and
+             * camera included) is inverted instead of approximating.
+             */
+            private CompLayer layerAt(UIContext context)
+            {
+                CompDocument doc = UICompositorPanel.this.doc;
+                CompProject project = UICompositorPanel.this.project;
+
+                if (doc == null || project == null)
+                {
+                    return null;
+                }
+
+                float scale = this.fitScale();
+
+                if (scale <= 0F)
+                {
+                    return null;
+                }
+
+                float ox = (this.area.w - doc.width * scale) / 2F;
+                float oy = (this.area.h - doc.height * scale) / 2F;
+                float compX = (context.mouseX - this.area.x - ox) / scale;
+                float compY = (context.mouseY - this.area.y - oy) / scale;
+                CompRenderContext renderContext = new CompRenderContext(project, doc, UICompositorPanel.this.time, null, null, null);
+
+                for (int i = doc.layers.size() - 1; i >= 0; i--)
+                {
+                    CompLayer layer = doc.layers.get(i);
+
+                    if (!layer.visible || !layer.activeAt(UICompositorPanel.this.time))
+                    {
+                        continue;
+                    }
+
+                    /* Cameras have no content rectangle. In camera view the camera is the eye, so
+                     * its own gizmo would project behind the near plane; treat the view centre as
+                     * its handle instead, which is what makes dragging inside the camera view pan
+                     * the camera. */
+                    if ("camera".equals(layer.type))
+                    {
+                        if (UICompositorPanel.this.cameraPreviewMode
+                            && layer.id.equals(doc.activeCameraId))
+                        {
+                            float cx = this.area.x + this.area.w * 0.5F;
+                            float cy = this.area.y + this.area.h * 0.5F;
+
+                            if (Math.abs(context.mouseX - cx) <= 40F && Math.abs(context.mouseY - cy) <= 40F)
+                            {
+                                return layer;
+                            }
+
+                            continue;
+                        }
+
+                        Matrix4f world;
+
+                        try
+                        {
+                            world = CompRenderer.worldMatrix(doc, layer, renderContext, new java.util.HashSet<>());
+                        }
+                        catch (RuntimeException e)
+                        {
+                            continue;
+                        }
+
+                        Vector3f origin = new Vector3f(0F, 0F, 0F);
+
+                        world.transformPosition(origin);
+
+                        if (Math.abs(origin.x - compX) * scale <= 18F && Math.abs(origin.y - compY) * scale <= 18F)
+                        {
+                            return layer;
+                        }
+
+                        continue;
+                    }
+
+                    if (layer.threeD)
+                    {
+                        float[] corners = this.selectionCorners(layer);
+
+                        if (corners != null && this.pointInQuad(context.mouseX, context.mouseY, corners))
+                        {
+                            return layer;
+                        }
+
+                        continue;
+                    }
+
+                    Matrix4f world;
+
+                    try
+                    {
+                        world = CompRenderer.worldMatrix(doc, layer, renderContext, new java.util.HashSet<>());
+                    }
+                    catch (RuntimeException e)
+                    {
+                        continue;
+                    }
+
+                    Vector3f point = new Vector3f(compX, compY, 0F);
+
+                    new Matrix4f(world).invert().transformPosition(point);
+
+                    float bw;
+                    float bh;
+                    float bx;
+                    float by;
+
+                    if ("shape".equals(layer.type))
+                    {
+                        dev.bbsae.client.render.ShapeCache.Raster raster = dev.bbsae.client.render.ShapeCache.get(layer, renderContext.frame);
+
+                        if (raster == null)
+                        {
+                            continue;
+                        }
+
+                        bx = raster.originX;
+                        by = raster.originY;
+                        bw = raster.width;
+                        bh = raster.height;
+                    }
+                    else
+                    {
+                        bw = Math.max(1F, layer.width);
+                        bh = Math.max(1F, layer.height);
+                        bx = -bw * layer.anchorX;
+                        by = -bh * layer.anchorY;
+                    }
+
+                    if (point.x >= bx && point.x <= bx + bw && point.y >= by && point.y <= by + bh)
+                    {
+                        return layer;
+                    }
+                }
+
+                return null;
             }
 
             @Override
             protected boolean subMouseClicked(UIContext context)
             {
-                if (context.mouseButton == 0 && this.area.isInside(context) && UICompositorPanel.this.selectedLayer != null)
+                if (context.mouseButton != 0 || !this.area.isInside(context))
                 {
-                    this.dragging = true;
-                    this.dragStartX = context.mouseX;
-                    this.dragStartY = context.mouseY;
-                    Transform start = UICompositorPanel.this.selectedLayer.transformAt(UICompositorPanel.this.getFrame());
+                    return super.subMouseClicked(context);
+                }
 
-                    this.layerStartX = start.translate.x;
-                    this.layerStartY = start.translate.y;
+                CompLayer selected = UICompositorPanel.this.selectedLayer;
+                int handle = this.handleAt(context, selected);
+
+                if (handle >= 0)
+                {
+                    this.beginHandleDrag(context, selected, handle);
 
                     return true;
                 }
 
-                return super.subMouseClicked(context);
+                CompLayer hit = this.layerAt(context);
+
+                if (hit == null)
+                {
+                    /* Empty space: deselect. Dragging whatever happened to be selected made the
+                     * preview feel like it ignored where the mouse actually was. */
+                    UICompositorPanel.this.clearSelection();
+
+                    return true;
+                }
+
+                UICompositorPanel.this.selectLayer(hit);
+
+                if (hit.locked)
+                {
+                    UICompositorPanel.this.setStatus("图层已锁定，解锁后才能拖动");
+
+                    return true;
+                }
+
+                this.dragMode = DRAG_MOVE;
+                this.dragStartX = context.mouseX;
+                this.dragStartY = context.mouseY;
+
+                Transform start = hit.transformAt(UICompositorPanel.this.getFrame());
+
+                this.layerStartX = start.translate.x;
+                this.layerStartY = start.translate.y;
+                this.startScaleX = start.scale.x;
+                this.startScaleY = start.scale.y;
+                this.startRotation = start.rotate.z;
+                this.targetStartX = hit.scalarAt("cameraTargetX", hit.cameraTargetX, UICompositorPanel.this.getFrame());
+                this.targetStartY = hit.scalarAt("cameraTargetY", hit.cameraTargetY, UICompositorPanel.this.getFrame());
+
+                return true;
+            }
+
+            private void beginHandleDrag(UIContext context, CompLayer layer, int handle)
+            {
+                if (layer == null)
+                {
+                    return;
+                }
+
+                Transform start = layer.transformAt(UICompositorPanel.this.getFrame());
+
+                this.dragMode = handle == 30 ? DRAG_ROTATE : handle >= 20 ? DRAG_EDGE : DRAG_CORNER;
+                this.dragHandle = handle;
+                this.dragStartX = context.mouseX;
+                this.dragStartY = context.mouseY;
+                this.startScaleX = start.scale.x;
+                this.startScaleY = start.scale.y;
+                this.startRotation = start.rotate.z;
+                this.layerStartX = start.translate.x;
+                this.layerStartY = start.translate.y;
+
+                CompRenderContext renderContext = new CompRenderContext(
+                    UICompositorPanel.this.project,
+                    UICompositorPanel.this.doc,
+                    UICompositorPanel.this.time,
+                    null,
+                    null,
+                    null
+                );
+
+                try
+                {
+                    Matrix4f world = CompRenderer.worldMatrix(UICompositorPanel.this.doc, layer, renderContext, new java.util.HashSet<>());
+
+                    this.startInverse.set(world).invert();
+                }
+                catch (RuntimeException e)
+                {
+                    this.startInverse.identity();
+                }
+
+                float[] local = this.localPoint(context, layer);
+
+                this.startLocalX = local[0];
+                this.startLocalY = local[1];
+                this.startAngle = (float) Math.toDegrees(Math.atan2(local[1], local[0]));
+
+                float[] corners = this.selectionCorners(layer);
+
+                if (corners != null)
+                {
+                    this.startScreenCenterX = (corners[0] + corners[2] + corners[4] + corners[6]) * 0.25F;
+                    this.startScreenCenterY = (corners[1] + corners[3] + corners[5] + corners[7]) * 0.25F;
+                    float sx = context.mouseX - this.startScreenCenterX;
+                    float sy = context.mouseY - this.startScreenCenterY;
+
+                    this.startScreenDistance = (float) Math.sqrt(sx * sx + sy * sy);
+                    this.startScreenAngle = (float) Math.toDegrees(Math.atan2(sy, sx));
+                }
+
+                UICompositorPanel.this.setStatus(handle == 30
+                    ? "拖动旋转；Shift 15° 吸附"
+                    : "拖动缩放；角点默认等比，Shift 可单独改 X/Y");
             }
 
             @Override
             protected boolean subMouseReleased(UIContext context)
             {
-                if (this.dragging)
-                {
-                    this.dragging = false;
-                    UICompositorPanel.this.refreshInspector();
-                    UICompositorPanel.this.save();
-                }
+                this.endDrag();
 
                 return super.subMouseReleased(context);
+            }
+
+            /**
+             * Camera-view navigation: the wheel dollies the active camera along Z, Alt+wheel
+             * changes its field of view. Both write the same scalar channels the inspector edits,
+             * so the value stays animatable and visible in the camera section.
+             */
+            @Override
+            protected boolean subMouseScrolled(UIContext context)
+            {
+                if (!this.area.isInside(context) || !UICompositorPanel.this.cameraPreviewMode
+                    || UICompositorPanel.this.doc == null)
+                {
+                    return super.subMouseScrolled(context);
+                }
+
+                CompLayer camera = UICompositorPanel.this.doc.activeCamera(UICompositorPanel.this.time);
+
+                if (camera == null)
+                {
+                    return false;
+                }
+
+                double wheel = context.mouseWheel;
+
+                if (Math.abs(wheel) < 0.0001D)
+                {
+                    return false;
+                }
+
+                if (Window.isAltPressed())
+                {
+                    float fov = camera.scalarAt("cameraFov", camera.cameraFov, UICompositorPanel.this.getFrame());
+                    float value = Math.max(1F, Math.min(179F, fov + (float) wheel * 2F));
+
+                    camera.cameraFov = value;
+                    UICompositorPanel.this.setScalar(camera, "cameraFov", value);
+                    UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "摄像机视场 %.0f°", value));
+                }
+                else
+                {
+                    float z = camera.scalarAt("cameraZ", camera.cameraZ, UICompositorPanel.this.getFrame());
+
+                    if (Math.abs(z) < 0.001F)
+                    {
+                        z = UICompositorPanel.this.defaultCameraZ();
+                    }
+
+                    float value = Math.max(camera.cameraNear + 10F, Math.min(camera.cameraFar - 10F,
+                        z + (float) wheel * 60F));
+
+                    camera.cameraZ = value;
+                    camera.z = value;
+                    UICompositorPanel.this.setScalar(camera, "cameraZ", value);
+                    UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "摄像机 Z %.0f", value));
+                }
+
+                UICompositorPanel.this.refreshInspector();
+                UICompositorPanel.this.save();
+
+                return true;
             }
         };
         this.preview.h(1F);
@@ -482,20 +1618,77 @@ public class UICompositorPanel extends UIDashboardPanel
                 super.render(context);
             }
         };
-        this.previewBar.relative(this.preview).x(6).y(6).w(134).h(20);
-        this.previewBar.row(4);
+        this.previewBar.relative(this.preview).x(6).y(6).w(200).h(20);
+        this.effectsToggle = new UIToggle(IKey.constant("效果"), true, (toggle) -> this.previewEffects = toggle.getValue());
+        this.effectsToggle.relative(this.previewBar).x(4).y(1).w(58).h(18);
+        this.effectsToggle.tooltip(IKey.constant("预览效果与样式"));
+        this.masksToggle = new UIToggle(IKey.constant("蒙版"), true, (toggle) -> this.previewMasks = toggle.getValue());
+        this.masksToggle.relative(this.previewBar).x(64).y(1).w(58).h(18);
+        this.masksToggle.tooltip(IKey.constant("预览蒙版与轨道遮罩"));
 
-        UIToggle effectsToggle = new UIToggle(IKey.constant("FX"), true, (toggle) -> this.previewEffects = toggle.getValue());
-        effectsToggle.w(62).h(18);
-        effectsToggle.tooltip(IKey.constant("Preview effects and styles"));
-        UIToggle masksToggle = new UIToggle(IKey.constant("Mask"), true, (toggle) -> this.previewMasks = toggle.getValue());
-        masksToggle.w(62).h(18);
-        masksToggle.tooltip(IKey.constant("Preview masks and track mattes"));
+        /* Preview → BBS: the live BBS frame behind the composition, exactly what the film editor
+         * shows as its own preview background. */
+        this.bbsBackdropToggle = new UIToggle(IKey.constant("BBS"), false, (toggle) ->
+        {
+            if (this.project != null && this.project.settings != null)
+            {
+                this.project.settings.previewBackground = toggle.getValue() ? 1 : 0;
+                this.save();
+            }
+        });
+        this.bbsBackdropToggle.relative(this.previewBar).x(124).y(1).w(58).h(18);
+        this.bbsBackdropToggle.tooltip(IKey.constant("在合成后面显示 BBS 实时画面"));
 
-        this.previewBar.add(effectsToggle, masksToggle);
+        /* Collapse handle: the toggles cover the top-left of the frame, which is usually where the
+         * composition has content. One click folds them into an arrow. */
+        this.previewCollapse = new UIIcon(
+            () -> this.previewControlsCollapsed ? Icons.ARROW_DOWN : Icons.ARROW_UP,
+            (button) ->
+            {
+                this.previewControlsCollapsed = !this.previewControlsCollapsed;
+
+                if (this.project != null && this.project.settings != null)
+                {
+                    this.project.settings.previewControlsCollapsed = this.previewControlsCollapsed;
+                }
+
+                this.applyPreviewBarState();
+                this.save();
+            });
+        this.previewCollapse.tooltip(IKey.constant("折叠/展开预览开关"));
+        this.previewCollapse.relative(this.previewBar).x(176).y(1).w(20).h(18);
+
+        this.previewBar.add(this.effectsToggle, this.masksToggle, this.bbsBackdropToggle, this.previewCollapse);
+        this.applyPreviewBarState();
         this.preview.add(this.previewBar);
 
-        this.previewInfo = new UILabel(IKey.constant("Preview"));
+        this.cameraViewButton = new UIIcon(
+            () -> this.cameraPreviewMode ? Icons.CAMERA : Icons.FRUSTUM,
+            (button) ->
+            {
+                this.cameraPreviewMode = !this.cameraPreviewMode;
+
+                if (this.cameraPreviewMode && this.doc != null && this.selectedLayer != null && "camera".equals(this.selectedLayer.type))
+                {
+                    this.doc.activeCameraId = this.selectedLayer.id;
+                }
+
+                this.setStatus(this.cameraPreviewMode ? "摄像机视图" : "编辑视图");
+                this.save();
+            });
+
+        this.cameraViewButton.relative(this.preview).x(1F, -28).y(6).w(20).h(20);
+        this.cameraViewButton.tooltip(IKey.constant("切换摄像机视图 / 编辑视图；摄像机视图下 3D 图层按透视渲染"));
+        this.preview.add(this.cameraViewButton);
+
+        /* One-click 3D workspace: live Minecraft frame as the virtual stage, a real perspective
+         * camera, a ground grid and the camera selected for navigation. */
+        this.space3DButton = new UIIcon(Icons.SPHERE, (button) -> this.enter3DSpace());
+        this.space3DButton.relative(this.preview).x(1F, -50).y(6).w(20).h(20);
+        this.space3DButton.tooltip(IKey.constant("进入 3D 空间：世界底图 + 透视摄像机 + 地面网格；滚轮推拉，Alt+滚轮改视场"));
+        this.preview.add(this.space3DButton);
+
+        this.previewInfo = new UILabel(IKey.constant("预览"));
         this.previewInfo.relative(this.preview).x(6).y(1F, -18).w(1F, -12).h(14);
         this.previewInfo.color(0xFF9AA6B8, false);
         this.previewInfo.labelAnchor(0F, 0.5F);
@@ -504,15 +1697,15 @@ public class UICompositorPanel extends UIDashboardPanel
         this.inspectorColumn = new UIElement();
         this.inspectorColumn.w(300).h(1F);
 
-        this.inspectorTabs = new UITabStrip(ScrollDirection.HORIZONTAL);
+        this.inspectorTabs = new UICompTabBar();
         this.inspectorTabs.relative(this.inspectorColumn).x(0).y(0).w(1F).h(22);
-        this.inspectorTabs.fixed();
-        this.inspectorTabs.addTab(new UITextTab(IKey.constant("Comp")).w(42).h(20));
-        this.inspectorTabs.addTab(new UITextTab(IKey.constant("Layer")).w(44).h(20));
-        this.inspectorTabs.addTab(new UITextTab(IKey.constant("FX")).w(34).h(20));
-        this.inspectorTabs.addTab(new UITextTab(IKey.constant("Mask")).w(42).h(20));
-        this.inspectorTabs.addTab(new UITextTab(IKey.constant("Text")).w(40).h(20));
-        this.inspectorTabs.addTab(new UITextTab(IKey.constant("Out")).w(34).h(20));
+        this.inspectorTabs.addTab("效果控件");
+        this.inspectorTabs.addTab("调色");
+        this.inspectorTabs.addTab("图层");
+        this.inspectorTabs.addTab("蒙版");
+        this.inspectorTabs.addTab("文字");
+        this.inspectorTabs.addTab("合成");
+        this.inspectorTabs.addTab("输出");
         this.inspectorTabs.onSelect((index) ->
         {
             this.inspectorPage = index;
@@ -530,26 +1723,81 @@ public class UICompositorPanel extends UIDashboardPanel
         this.keyframeEditor.w(1F).h(1F);
         this.keyframeEditor.view.duration(() -> this.doc == null ? 720 : Math.max(1, Math.round(this.doc.duration * this.doc.fps)));
         this.keyframeEditor.view.getDopeSheet().setEmptyState(
-            IKey.constant("No keyframes"),
-            IKey.constant("Select a layer, then click a stopwatch or add a keyframe at the playhead.")
+            IKey.constant("没有关键帧"),
+            IKey.constant("先选中轨道，再点秒表或在播放头添加关键帧。")
         );
+        this.keyframeEditor.view.rulerRenderer((context) -> TimelineRulerRenderer.render(
+            context,
+            this.keyframeEditor.view.graphArea,
+            (int) this.keyframeEditor.view.fromGraphX(this.keyframeEditor.view.graphArea.x),
+            this.getDurationTicks(),
+            this.keyframeEditor.view::toGraphX,
+            TimeUtils::formatTime
+        ));
         this.keyframeEditor.view.context((menu) ->
         {
-            menu.action(Icons.ADD, IKey.constant("Transform keyframe at playhead"), () -> this.addTransformKey(false));
-            menu.action(Icons.ADD, IKey.constant("Opacity keyframe at playhead"), this::addOpacityKey);
+            menu.action(Icons.ADD, IKey.constant("在播放头添加变换关键帧"), () -> this.addTransformKey(false));
+            menu.action(Icons.ADD, IKey.constant("在播放头添加不透明度关键帧"), this::addOpacityKey);
         });
         this.keyframeEditor.setUndoId("bbsae_compositor_timeline");
         this.keyframeEditor.view.resetView();
+
+        this.keyframeDrawer = new UIElement()
+        {
+            @Override
+            public void render(UIContext context)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF151A22);
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 1, 0xFF2A303A);
+                super.render(context);
+            }
+        };
+        this.keyframeDrawer.setVisible(false);
+
+        this.keyframeTitle = new UILabel(IKey.constant("属性关键帧"));
+        this.keyframeTitle.color(0xFFB8C4D6, false);
+        this.keyframeTitle.relative(this.keyframeDrawer).x(8).y(1).w(1F, -136).h(20);
+
+        UIIcon closeKeyframes = new UIIcon(Icons.CLOSE, (icon) -> this.toggleKeyframes());
+        closeKeyframes.relative(this.keyframeDrawer).x(1F, -24).y(2).w(18).h(18);
+
+        UIIcon prevKey = new UIIcon(Icons.LEFTLOAD, (icon) -> this.navigateKeyframe(-1));
+        prevKey.relative(this.keyframeDrawer).x(1F, -112).y(2).w(18).h(18);
+        prevKey.tooltip(IKey.constant("上一个关键帧（,）"));
+
+        UIIcon addKey = new UIIcon(Icons.ADD, (icon) ->
+        {
+            this.addTransformKey(false);
+            this.addOpacityKey();
+        });
+        addKey.relative(this.keyframeDrawer).x(1F, -90).y(2).w(18).h(18);
+        addKey.tooltip(IKey.constant("在播放头为变换和不透明度打关键帧（Alt+K 只打变换）"));
+
+        UIIcon nextKey = new UIIcon(Icons.RIGHTLOAD, (icon) -> this.navigateKeyframe(1));
+        nextKey.relative(this.keyframeDrawer).x(1F, -68).y(2).w(18).h(18);
+        nextKey.tooltip(IKey.constant("下一个关键帧（.）"));
+
+        UIIcon fitKeys = new UIIcon(Icons.MAXIMIZE, (icon) ->
+        {
+            this.keyframeEditor.view.resize();
+            this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
+        });
+        fitKeys.relative(this.keyframeDrawer).x(1F, -46).y(2).w(18).h(18);
+        fitKeys.tooltip(IKey.constant("关键帧视图适配合成全长"));
+
+        this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(1F, -22);
+
+        this.keyframeDrawer.add(this.keyframeTitle, prevKey, addKey, nextKey, fitKeys, closeKeyframes, this.keyframeEditor);
 
         this.status = new UILabel(IKey.constant(""));
         this.status.color(0xFF8A94A6, false);
         this.status.h(16);
 
         this.renderPanel = new UIElement();
-        this.renderPanel.relative(this).x(0).y(24).w(1F).h(1F, -266);
+        this.renderPanel.relative(this).x(0).y(24).w(1F).h(1F, -292);
         this.renderPanel.setVisible(false);
 
-        UILabel queueTitle = new UILabel(IKey.constant("Render Queue / Output Modules"));
+        UILabel queueTitle = new UILabel(IKey.constant("渲染队列 / 输出模块"));
         queueTitle.relative(this.renderPanel).x(0).y(0).w(1F).h(18);
 
         this.queue = new UICompRenderJobList((list) ->
@@ -572,15 +1820,15 @@ public class UICompositorPanel extends UIDashboardPanel
         queueFields.relative(this.renderPanel).x(0).y(22).w(1F).h(22);
         queueFields.row(4);
         queueFields.add(
-            UI.labelRow(IKey.constant("Preset"), 110, this.queuePreset),
-            UI.labelRow(IKey.constant("Name"), 140, this.queueName),
-            UI.labelRow(IKey.constant("Start"), 60, this.queueStart),
-            UI.labelRow(IKey.constant("End (-1 full)"), 60, this.queueEnd)
+            this.fieldRow("预设", 110, this.queuePreset),
+            this.fieldRow("名称", 140, this.queueName),
+            this.fieldRow("开始", 60, this.queueStart),
+            this.fieldRow("结束（-1 全片）", 60, this.queueEnd)
         );
 
-        this.queueAdd = new UIButton(IKey.constant("Add Job"), (button) -> this.addRenderJob());
+        this.queueAdd = new UIButton(IKey.constant("添加任务"), (button) -> this.addRenderJob());
         this.queueAdd.w(68);
-        this.queueStartButton = new UIButton(IKey.constant("Start"), (button) ->
+        this.queueStartButton = new UIButton(IKey.constant("开始"), (button) ->
         {
             if (this.project != null && this.selectedJob != null)
             {
@@ -588,7 +1836,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         });
         this.queueStartButton.w(56);
-        this.queueStartAll = new UIButton(IKey.constant("Start All"), (button) ->
+        this.queueStartAll = new UIButton(IKey.constant("全部开始"), (button) ->
         {
             if (this.project != null)
             {
@@ -596,13 +1844,13 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         });
         this.queueStartAll.w(68);
-        this.queueCancel = new UIButton(IKey.constant("Cancel"), (button) -> CompExportManager.cancel());
+        this.queueCancel = new UIButton(IKey.constant("取消"), (button) -> CompExportManager.cancel());
         this.queueCancel.w(58);
-        this.queueOpen = new UIButton(IKey.constant("Folder"), (button) -> this.openExportFolder());
+        this.queueOpen = new UIButton(IKey.constant("打开文件夹"), (button) -> this.openExportFolder());
         this.queueOpen.w(56);
-        this.queuePresetCycle = new UIButton(IKey.constant("Preset..."), (button) -> this.cyclePreset());
+        this.queuePresetCycle = new UIButton(IKey.constant("预设…"), (button) -> this.cyclePreset());
         this.queuePresetCycle.w(68);
-        this.queueRemove = new UIButton(IKey.constant("Remove"), (button) ->
+        this.queueRemove = new UIButton(IKey.constant("移除"), (button) ->
         {
             if (this.project != null && this.selectedJob != null)
             {
@@ -613,7 +1861,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         });
         this.queueRemove.w(58);
-        this.queueRetry = new UIButton(IKey.constant("Retry"), (button) ->
+        this.queueRetry = new UIButton(IKey.constant("重试"), (button) ->
         {
             if (this.selectedJob != null)
             {
@@ -631,58 +1879,172 @@ public class UICompositorPanel extends UIDashboardPanel
         queueButtons.add(this.queueAdd, this.queueStartButton, this.queueStartAll, this.queueCancel,
             this.queuePresetCycle, this.queueRetry, this.queueRemove, this.queueOpen);
 
-        this.renderStatus = new UILabel(IKey.constant("Idle"));
+        this.renderStatus = new UILabel(IKey.constant("空闲"));
         this.renderStatus.color(0xFF9AA4B2, false);
         this.renderStatus.relative(this.renderPanel).x(0).y(1F, -20).w(1F).h(16);
 
         this.renderPanel.add(queueTitle, queueFields, this.queue, queueButtons, this.renderStatus);
 
         this.body = new UIElement();
-        this.body.row(6);
-        this.body.add(this.layers, this.preview, this.inspectorColumn);
-        this.body.relative(this).x(0).y(24).w(1F).h(1F, -266);
+        this.body.add(this.effectColumn, this.preview, this.inspectorColumn);
 
-        this.renderPanel.relative(this).x(0).y(24).w(1F).h(1F, -266);
+        this.leftHandle = new PanelResizeHandle(0);
+        this.rightHandle = new PanelResizeHandle(1);
+        this.timelineHandle = new PanelResizeHandle(2);
+        this.body.add(this.leftHandle, this.rightHandle, this.timelineHandle);
+        this.body.relative(this).x(0).y(24).w(1F).h(1F, -292);
+
+        this.renderPanel.relative(this).x(0).y(24).w(1F).h(1F, -292);
 
         this.timeline = new UIElement();
-        this.timeline.relative(this).x(0).y(1F, -242).w(1F).h(224);
+        this.timeline.relative(this).x(0).y(1F, -268).w(1F).h(TIMELINE_HEIGHT);
 
-        this.scrubber = new UICompositorScrubber(this);
-        UIButton zoomOut = new UIButton(IKey.constant("-"), (button) ->
-        {
-            this.keyframeEditor.view.getXAxis().zoomAnchor(0.5F, -1D);
-        });
-        zoomOut.w(20).h(18);
-        UIButton zoomIn = new UIButton(IKey.constant("+"), (button) ->
-        {
-            this.keyframeEditor.view.getXAxis().zoomAnchor(0.5F, 1D);
-        });
-        zoomIn.w(20).h(18);
-        UIButton fitTimeline = new UIButton(IKey.constant("Fit"), (button) ->
-        {
-            this.keyframeEditor.view.resetView();
-            this.resetTimelineView = false;
-        });
-        fitTimeline.w(38).h(18);
+        this.trackTimeline = new UICompTrackTimeline(this);
+        this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
 
-        this.timelineHeader = new UIElement();
-        this.timelineHeader.row(4);
+        this.timelineHeader = new UIElement()
+        {
+            @Override
+            public void render(UIContext context)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF171C24);
+                context.batcher.box(this.area.x, this.area.ey() - 1, this.area.ex(), this.area.ey(), 0xFF2A303A);
+                super.render(context);
+            }
+        };
         this.timelineHeader.relative(this.timeline).x(0).y(0).w(1F).h(26);
-        this.timelineHeader.add(zoomOut, zoomIn, fitTimeline, this.scrubber, this.focusButton);
 
-        this.keyframeEditor.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
-        this.timeline.add(this.timelineHeader, this.keyframeEditor);
+        this.addLayer.relative(this.timelineHeader).x(4).y(3).w(20).h(20);
+
+        UIIcon split = new UIIcon(Icons.CUT, (button) -> this.splitSelectedAtPlayhead());
+        split.relative(this.timelineHeader).x(28).y(3).w(20).h(20);
+        split.tooltip(IKey.constant("在播放头拆分所选轨道（C / Ctrl+K）"));
+
+        UIIcon marker = new UIIcon(Icons.BOOKMARK, (button) -> this.addMarkerAtPlayhead());
+        marker.relative(this.timelineHeader).x(52).y(3).w(20).h(20);
+        marker.tooltip(IKey.constant("在播放头添加合成标记（M）"));
+
+        this.snapButton = new UIButton(IKey.constant("吸附 开"), (button) ->
+        {
+            this.trackTimeline.toggleSnapping();
+            this.updateToolbarLabels();
+        });
+        this.snapButton.relative(this.timelineHeader).x(78).y(3).w(52).h(20);
+        this.snapButton.tooltip(IKey.constant("拖动/裁剪时吸附到播放头、标记和其它轨道（S）"));
+
+        this.keyframeButton = new UIButton(IKey.constant("关键帧"), (button) -> this.toggleKeyframes());
+        this.keyframeButton.relative(this.timelineHeader).x(134).y(3).w(52).h(20);
+        this.keyframeButton.tooltip(IKey.constant("显示所选轨道的属性关键帧"));
+
+        UIButton zoomOut = new UIButton(IKey.constant("-"), (button) -> this.trackTimeline.zoom(-1D));
+        zoomOut.relative(this.timelineHeader).x(190).y(3).w(20).h(20);
+        UIButton zoomIn = new UIButton(IKey.constant("+"), (button) -> this.trackTimeline.zoom(1D));
+        zoomIn.relative(this.timelineHeader).x(212).y(3).w(20).h(20);
+        UIIcon fitTimeline = new UIIcon(Icons.MAXIMIZE, (button) -> this.trackTimeline.fit());
+        fitTimeline.relative(this.timelineHeader).x(234).y(3).w(20).h(20);
+        fitTimeline.tooltip(IKey.constant("时间轴适配全长（\\）"));
+
+        this.precompBack = new UIIcon(Icons.BACKWARD, (button) -> this.exitPrecomp());
+        this.precompBack.relative(this.timelineHeader).x(258).y(3).w(20).h(20);
+        this.precompBack.tooltip(IKey.constant("返回上一层合成"));
+        this.precompBack.setVisible(false);
+
+        UIIcon shortcuts = new UIIcon(Icons.HELP, (button) -> this.showShortcutHelp());
+        shortcuts.relative(this.timelineHeader).x(1F, -24).y(3).w(20).h(20);
+        shortcuts.tooltip(IKey.constant("快捷键（Ctrl+/）"));
+
+        this.timelineHeader.add(this.addLayer, split, marker, this.snapButton, this.keyframeButton,
+            zoomOut, zoomIn, fitTimeline, this.precompBack, shortcuts);
+
+        this.keyframeHandle = new PanelResizeHandle(3);
+        this.keyframeHandle.setVisible(false);
+
+        this.timeline.add(this.timelineHeader, this.trackTimeline, this.keyframeDrawer, this.keyframeHandle);
+        this.applyLayout();
 
         this.header.relative(this).x(0).y(0).w(1F).h(24);
         this.status.relative(this).x(0).y(1F, -18).w(1F).h(16);
 
-        this.add(this.header, this.body, this.renderPanel, this.timeline, this.status);
+        this.modalLayer = new UIElement()
+        {
+            @Override
+            public void render(UIContext context)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xC8101216);
+                super.render(context);
+            }
+
+            @Override
+            protected boolean subMouseClicked(UIContext context)
+            {
+                return this.area.isInside(context);
+            }
+
+            @Override
+            protected boolean subMouseScrolled(UIContext context)
+            {
+                return this.area.isInside(context);
+            }
+        };
+        this.modalLayer.relative(this).x(0).y(0).w(1F).h(1F);
+        this.modalLayer.setVisible(false);
+
+        this.modalBox = new UIElement()
+        {
+            @Override
+            public void render(UIContext context)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF1A1F27);
+                context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF35404F);
+                super.render(context);
+            }
+
+            @Override
+            protected boolean subMouseClicked(UIContext context)
+            {
+                return this.area.isInside(context);
+            }
+        };
+        this.modalBox.relative(this.modalLayer).x(0.5F, -220).y(0.5F, -150).w(440).h(300);
+
+        this.modalTitle = new UILabel(IKey.constant(""));
+        this.modalTitle.relative(this.modalBox).x(16).y(12).w(1F, -32).h(20);
+
+        this.modalHint = new UILabel(IKey.constant(""));
+        this.modalHint.color(0xFF9AA4B2, false);
+        this.modalHint.relative(this.modalBox).x(16).y(34).w(1F, -32).h(16);
+
+        this.modalBox.add(this.modalTitle, this.modalHint);
+        this.modalLayer.add(this.modalBox);
+
+        this.startScreen = new UIStartScreen(this::openProject, this::createProject, this::setShortcutScheme, this::leaveStartScreen);
+        this.startScreen.relative(this).x(0).y(0).w(1F).h(1F);
+        this.startScreen.setVisible(false);
+
+        this.add(this.header, this.body, this.renderPanel, this.timeline, this.status, this.modalLayer, this.startScreen);
 
         this.focusButton.h(18);
 
-        this.onAppear(() -> this.ensureBound());
-        this.onClose(() -> this.save());
-        this.onDisappear(() -> this.save());
+        this.onAppear(() ->
+        {
+            this.ensureBound();
+
+            if (this.project == null)
+            {
+                this.showStartScreen();
+            }
+        });
+        this.onAppear(() -> dev.bbsae.client.overlay.BbsPreviewBridge.attach(this.filmPanel, this.doc));
+        this.onClose(() ->
+        {
+            this.save();
+            dev.bbsae.client.overlay.BbsPreviewBridge.detach();
+        });
+        this.onDisappear(() ->
+        {
+            this.save();
+            dev.bbsae.client.overlay.BbsPreviewBridge.detach();
+        });
     }
 
     /* Film-scoped lifecycle */
@@ -702,6 +2064,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.save();
         }
 
+        this.precompStack.clear();
+
+        if (this.precompBack != null)
+        {
+            this.precompBack.setVisible(false);
+        }
+
         this.filmPanel = filmPanel;
         this.film = film;
         this.replay = replay;
@@ -711,7 +2080,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.replay = film.replays.getList().get(0);
         }
 
-        this.replaySelector.label = IKey.constant("Replay: " + (this.replay == null ? "-" : this.replay.getName()));
+        this.replaySelector.label = IKey.constant("回放：" + (this.replay == null ? "-" : this.replayLabel(this.replay)));
 
         mchorse.bbs_mod.ui.ContentType.FILMS.getRepository().requestKeys((keys) ->
         {
@@ -735,11 +2104,17 @@ public class UICompositorPanel extends UIDashboardPanel
             : CompStore.ensureReplayComp(this.project,
                 replay.getId() == null || replay.getId().isBlank() ? replay.getName() : replay.getId(),
                 replay.getName(), width, height, fps, duration);
+        this.resetHistory();
 
         if (this.doc != null)
         {
             this.doc.duration = Math.max(this.doc.duration, duration);
             this.doc.workAreaOut = Math.max(this.doc.workAreaOut, duration);
+        }
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.fit();
         }
 
         this.time = 0F;
@@ -756,8 +2131,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.playing = false;
         this.resetTimelineView = true;
-        this.selectedLayer = this.doc == null || this.doc.layers.isEmpty() ? null : this.doc.layers.get(0);
-        this.info.label = IKey.constant("Film: " + film.getId() + "  /  Comp: " + (this.doc == null ? "-" : this.doc.id));
+        this.selectedLayer = this.doc == null || this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
 
         if (this.doc != null)
         {
@@ -769,7 +2143,20 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshSheets();
         this.refreshQueue();
         this.updatePlayLabel();
+        dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+
+        if (this.bbsBackdropToggle != null)
+        {
+            this.bbsBackdropToggle.setValue(this.project != null && this.project.settings != null && this.project.settings.previewBackground == 1);
+        }
+
+        this.previewControlsCollapsed = this.project != null && this.project.settings != null && this.project.settings.previewControlsCollapsed;
+        this.applyPreviewBarState();
+        this.loadPanelLayout();
+
         this.save();
+        this.primedWidth = -1;
+        this.showStartScreen();
     }
 
     /** Fallback when the dashboard tab is opened directly: locate the currently open film. */
@@ -788,8 +2175,190 @@ public class UICompositorPanel extends UIDashboardPanel
         }
         else
         {
-            this.info.label = IKey.constant("Open a film's Replay properties and press \"Open Compositor\"");
+            this.showStartScreen();
         }
+    }
+
+    /* Landing screen / project lifecycle */
+
+    public void showStartScreen()
+    {
+        if (this.startScreen == null)
+        {
+            return;
+        }
+
+        this.playing = false;
+        this.playRate = 0F;
+        this.startScreenOpen = true;
+
+        if (this.project != null)
+        {
+            this.startScreen.setCurrentProject(this.project.id);
+            this.startScreen.setScheme(this.getShortcutScheme());
+        }
+        else
+        {
+            this.startScreen.setScheme(this.pendingScheme);
+            this.startScreen.reload();
+        }
+
+        this.startScreen.setVisible(true);
+        this.startScreen.resize();
+        this.updatePlayLabel();
+    }
+
+    private void leaveStartScreen()
+    {
+        if (this.filmPanel != null && this.dashboard != null)
+        {
+            this.startScreenOpen = false;
+            this.startScreen.setVisible(false);
+            this.dashboard.setPanel(this.filmPanel);
+            mchorse.bbs_mod.ui.framework.UIScreen.open(this.dashboard);
+        }
+        else
+        {
+            /* Standalone dashboard tab: keep the landing screen up rather than dropping the user
+             * into an editor with no project behind it. */
+            this.setStatus("请先创建或选择一个工程");
+        }
+    }
+
+    private void openProject(CompStore.ProjectInfo info)
+    {
+        if (info == null)
+        {
+            return;
+        }
+
+        this.startScreenOpen = false;
+        this.startScreen.setVisible(false);
+
+        CompProject project = CompStore.load(info.id);
+
+        if (project == null)
+        {
+            /* Do not leave the user on an editor with no project behind it. */
+            this.startScreenOpen = true;
+            this.startScreen.setVisible(true);
+            this.setStatus("工程加载失败：" + info.id);
+
+            return;
+        }
+
+        CompDocument comp = project.getCompOrFirst(CompStore.DEFAULT_COMP);
+
+        if (comp == null)
+        {
+            comp = project.addComp("Main", info.width, info.height, info.fps, info.duration);
+        }
+
+        if (this.filmPanel != null && this.film != null)
+        {
+            this.bindComposition(this.filmPanel, this.film, project.id, comp.id);
+        }
+        else
+        {
+            this.bindStandalone(project, comp);
+        }
+
+        this.setStatus("已打开工程：" + project.name);
+    }
+
+    private void createProject(String name, int width, int height, float fps, float duration)
+    {
+        String base = CompStore.safe(name).toLowerCase(java.util.Locale.ROOT);
+
+        /* safe() strips non-ASCII, so a Chinese project name would otherwise become "___".
+         * Fall back to a readable prefix plus a stable hash, then de-duplicate below. */
+        if (base.replace("_", "").replace(".", "").isEmpty())
+        {
+            base = "proj_" + Integer.toHexString(name.hashCode() & 0x7FFFFFFF);
+        }
+
+        String id = base;
+        int serial = 2;
+
+        while (CompStore.exists(id))
+        {
+            id = base + "_" + serial;
+            serial += 1;
+        }
+
+        CompProject project = CompStore.newProject(id, name, width, height, fps, duration);
+
+        project.settings.shortcutScheme = this.getShortcutScheme();
+        project.settings.defaultLayerDuration = this.project == null ? 0F : this.project.settings.defaultLayerDuration;
+        project.settings.showDuringExternalPlayback = this.project == null || this.project.settings.showDuringExternalPlayback;
+
+        CompStore.save(project);
+
+        CompStore.ProjectInfo info = new CompStore.ProjectInfo(project.id, project.name, project.comps.size(),
+            width, height, fps, duration, System.currentTimeMillis());
+
+        this.openProject(info);
+    }
+
+    /** Standalone project (no film): editing, grading and the render queue still work. */
+    private void bindStandalone(CompProject project, CompDocument comp)
+    {
+        this.save();
+        this.precompStack.clear();
+
+        if (this.precompBack != null)
+        {
+            this.precompBack.setVisible(false);
+        }
+
+        this.project = project;
+        this.doc = comp;
+        this.resetHistory();
+        this.replay = null;
+        this.filmPanel = null;
+        this.film = null;
+        this.time = 0F;
+        this.playing = false;
+        this.playRate = 0F;
+        this.selectedLayer = comp == null || comp.layers.isEmpty() ? null : comp.layers.get(comp.layers.size() - 1);
+        this.replaySelector.label = IKey.constant("工程：" + (project.name == null ? project.id : project.name));
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.fit();
+        }
+
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.refreshQueue();
+        this.updatePlayLabel();
+        this.loadPanelLayout();
+        this.primedWidth = -1;
+        this.save();
+    }
+
+    public int getShortcutScheme()
+    {
+        if (this.project != null && this.project.settings != null)
+        {
+            return this.project.settings.shortcutScheme == 1 ? 1 : 0;
+        }
+
+        return this.pendingScheme;
+    }
+
+    private void setShortcutScheme(int scheme)
+    {
+        this.pendingScheme = scheme == 1 ? 1 : 0;
+
+        if (this.project != null && this.project.settings != null)
+        {
+            this.project.settings.shortcutScheme = this.pendingScheme;
+            this.save();
+        }
+
+        this.setStatus(this.pendingScheme == 1 ? "快捷键方案：BBS 原版" : "快捷键方案：Premiere");
     }
 
     /** Opens a specific project/comp pair stored on a composition clip. */
@@ -801,13 +2370,22 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.save();
+        this.precompStack.clear();
+
+        if (this.precompBack != null)
+        {
+            this.precompBack.setVisible(false);
+        }
+
         this.filmPanel = filmPanel;
         this.film = film;
         this.replay = null;
 
         CompProject requested = projectId == null || projectId.isBlank() ? null : CompStore.load(projectId);
 
-        if (requested == null || requested.getComp(compId) == null)
+        /* A missing comp must not silently swap the whole project: the clip may point at a
+         * project that exists but whose comp was renamed/deleted. Fall back inside that project. */
+        if (requested == null)
         {
             requested = CompStore.loadFilmProject(film.getId(), film.getId(),
                 Math.max(1, mchorse.bbs_mod.BBSSettings.videoWidth.get()),
@@ -818,6 +2396,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.project = requested;
         this.doc = compId == null ? this.project.getCompOrFirst(CompStore.DEFAULT_COMP) : this.project.getComp(compId);
+        this.resetHistory();
 
         if (this.doc == null)
         {
@@ -826,9 +2405,14 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.time = 0F;
         this.playing = false;
-        this.selectedLayer = this.doc == null || this.doc.layers.isEmpty() ? null : this.doc.layers.get(0);
-        this.replaySelector.label = IKey.constant("Replay: clip");
-        this.info.label = IKey.constant("Film: " + film.getId() + "  /  Comp: " + (this.doc == null ? "-" : this.doc.id));
+        this.playRate = 0F;
+        this.selectedLayer = this.doc == null || this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
+        this.replaySelector.label = IKey.constant("回放：片段");
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.fit();
+        }
 
         if (this.doc != null)
         {
@@ -840,6 +2424,17 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshSheets();
         this.refreshQueue();
         this.updatePlayLabel();
+        dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+
+        if (this.bbsBackdropToggle != null)
+        {
+            this.bbsBackdropToggle.setValue(this.project != null && this.project.settings != null && this.project.settings.previewBackground == 1);
+        }
+
+        this.previewControlsCollapsed = this.project != null && this.project.settings != null && this.project.settings.previewControlsCollapsed;
+        this.applyPreviewBarState();
+        this.loadPanelLayout();
+
         this.save();
     }
 
@@ -852,16 +2447,604 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.filmPanel == null || this.filmPanel.getData() == null)
         {
-            this.status.label = IKey.constant("Open a film before exporting");
+            this.status.label = IKey.constant("请先打开一个影片");
             return;
         }
 
+        this.showExportDialog();
+    }
+
+    /* Modal helpers */
+
+    private void openModal(String title, String hint)
+    {
+        this.modalTitle.label = IKey.constant(title);
+        this.modalHint.label = IKey.constant(hint);
+        this.modalBox.removeAll();
+        this.modalBox.relative(this.modalLayer).x(0.5F, -220).y(0.5F, -150).w(440).h(300);
+        this.modalBox.add(this.modalTitle, this.modalHint);
+        this.modalLayer.setVisible(true);
+        this.modalLayer.resize();
+        this.modalBox.resize();
+    }
+
+    private void closeModal()
+    {
+        this.modalLayer.setVisible(false);
+    }
+
+    private void openModalSized(String title, String hint, int width, int height)
+    {
+        this.openModal(title, hint);
+        this.modalBox.relative(this.modalLayer).x(0.5F, -width / 2).y(0.5F, -height / 2).w(width).h(height);
+        this.modalBox.resize();
+    }
+
+    /**
+     * Project settings. These are stored on the project (not in a global config) because the
+     * shortcut scheme and the external-playback flag are editorial decisions about this film.
+     */
+    private void showSettings()
+    {
+        this.openModalSized("合成器设置", "设置会随当前工程保存；没有工程时先进入工程列表。", 520, 430);
+
+        if (this.project != null && this.project.settings == null)
+        {
+            this.project.settings = new CompProject.CompSettings();
+        }
+
+        CompProject.CompSettings settings = this.project == null ? new CompProject.CompSettings() : this.project.settings;
+
+        UILabel durationLabel = new UILabel(IKey.constant("默认图层初始时长"));
+        durationLabel.relative(this.modalBox).x(18).y(60).w(160).h(18);
+
+        UITrackpad duration = new UITrackpad((value) ->
+        {
+            if (this.project == null)
+            {
+                return;
+            }
+
+            this.project.settings.defaultLayerDuration = Math.max(0F, Math.min(3600F, value.floatValue()));
+            this.save();
+        });
+
+        duration.limit(0, 3600);
+        duration.setValue(settings.defaultLayerDuration);
+        duration.relative(this.modalBox).x(190).y(58).w(120).h(20);
+        duration.tooltip(IKey.constant("新建图层的出点 = 入点 + 该时长；0 表示铺满整个合成"));
+
+        UILabel durationHint = new UILabel(IKey.constant("秒；0 = 铺满合成"));
+        durationHint.color(0xFF8A94A6, false);
+        durationHint.relative(this.modalBox).x(318).y(62).w(170).h(16);
+
+        UIToggle external = new UIToggle(IKey.constant("外部播放回放时显示合成器效果"), settings.showDuringExternalPlayback, (toggle) ->
+        {
+            if (this.project == null)
+            {
+                return;
+            }
+
+            this.project.settings.showDuringExternalPlayback = toggle.getValue();
+            this.save();
+        });
+        external.relative(this.modalBox).x(18).y(92).w(1F, -36).h(20);
+        external.tooltip(IKey.constant("关闭后，在影片编辑器之外播放回放时不叠加合成器"));
+
+        UILabel schemeLabel = new UILabel(IKey.constant("快捷键方案"));
+        schemeLabel.relative(this.modalBox).x(18).y(128).w(160).h(18);
+
+        java.util.List<Integer> schemes = java.util.List.of(0, 1);
+        UIChoiceButton<Integer> scheme = new UIChoiceButton<>(schemes, (value) -> Icons.GEAR,
+            (value) -> IKey.constant(value == 1 ? "BBS 原版" : "Premiere Pro"));
+
+        scheme.callback((value) -> this.setShortcutScheme(value == null ? 0 : value));
+        scheme.setValue(this.getShortcutScheme());
+        scheme.relative(this.modalBox).x(190).y(126).w(140).h(20);
+        scheme.tooltip(IKey.constant("Premiere：Alt+滚轮缩放；BBS：Ctrl+滚轮缩放、Alt+滚轮改行高"));
+
+        UIToggle autoSave = new UIToggle(IKey.constant("自动保存"), settings.autoSave, (toggle) ->
+        {
+            if (this.project != null)
+            {
+                this.project.settings.autoSave = toggle.getValue();
+                this.save();
+            }
+        });
+        autoSave.relative(this.modalBox).x(18).y(160).w(150).h(20);
+
+        UIToggle safeArea = new UIToggle(IKey.constant("显示安全框"), settings.showSafeArea, (toggle) ->
+        {
+            if (this.project != null)
+            {
+                this.project.settings.showSafeArea = toggle.getValue();
+                this.save();
+            }
+        });
+        safeArea.relative(this.modalBox).x(180).y(160).w(140).h(20);
+
+        UIToggle grid = new UIToggle(IKey.constant("显示网格"), settings.showGrid, (toggle) ->
+        {
+            if (this.project != null)
+            {
+                this.project.settings.showGrid = toggle.getValue();
+                this.save();
+            }
+        });
+        grid.relative(this.modalBox).x(334).y(160).w(140).h(20);
+
+        UILabel previewLabel = new UILabel(IKey.constant("预览背景"));
+        previewLabel.relative(this.modalBox).x(18).y(196).w(160).h(18);
+
+        UIChoiceButton<Integer> background = new UIChoiceButton<>(java.util.List.of(0, 1), (value) -> Icons.IMAGE,
+            (value) -> IKey.constant(value == 1 ? "BBS 实时画面" : "纯色"));
+
+        background.callback((value) ->
+        {
+            if (this.project != null)
+            {
+                this.project.settings.previewBackground = value == null ? 0 : value;
+                this.bbsBackdropToggle.setValue(this.project.settings.previewBackground == 1);
+                this.save();
+            }
+        });
+        background.setValue(settings.previewBackground == 1 ? 1 : 0);
+        background.relative(this.modalBox).x(190).y(194).w(140).h(20);
+
+        UIButton resetLayout = new UIButton(IKey.constant("重置面板布局"), (button) ->
+        {
+            this.leftPanelWidth = 190;
+            this.rightPanelWidth = 300;
+            this.timelinePanelHeight = 250;
+            this.keyframeDrawerHeight = 154;
+            this.applyLayout();
+            this.savePanelLayout();
+        });
+        resetLayout.relative(this.modalBox).x(18).y(230).w(150).h(22);
+        resetLayout.tooltip(IKey.constant("恢复 190 / 300 / 250 的默认分栏"));
+
+        UIButton openProjects = new UIButton(IKey.constant("工程列表…"), (button) ->
+        {
+            this.closeModal();
+            this.showStartScreen();
+        });
+        openProjects.relative(this.modalBox).x(176).y(230).w(110).h(22);
+        openProjects.tooltip(IKey.constant("重新打开工程列表（不丢失当前工程）"));
+
+        UIButton shortcuts = new UIButton(IKey.constant("快捷键表"), (button) -> this.showShortcutHelp());
+        shortcuts.relative(this.modalBox).x(294).y(230).w(100).h(22);
+        shortcuts.tooltip(IKey.constant("查看当前快捷键方案"));
+
+        UILabel note = new UILabel(IKey.constant("提示：时间轴空白处拖动 = 框选播放头；轨道两端 7px 内拖动 = 裁剪入/出点。"));
+        note.color(0xFF8A94A6, false);
+        note.relative(this.modalBox).x(18).y(266).w(1F, -36).h(28);
+
+        this.modalBox.add(durationLabel, duration, durationHint, external, schemeLabel, scheme,
+            autoSave, safeArea, grid, previewLabel, background, resetLayout, openProjects, shortcuts, note,
+            this.modalButton("关闭", 18, 380, 484, this::closeModal));
+    }
+
+    private UIButton modalButton(String label, int x, int y, int w, Runnable action)
+    {
+        UIButton button = new UIButton(IKey.constant(label), (b) -> action.run());
+
+        button.relative(this.modalBox).x(x).y(y).w(w).h(22);
+
+        return button;
+    }
+
+    /* Asset library */
+
+    private void openAssetBrowser()
+    {
+        if (this.assetBrowser != null)
+        {
+            this.assetBrowser.removeFromParent();
+            this.assetBrowser = null;
+        }
+
+        this.assetBrowser = new UIAssetBrowser(
+            () -> this.project == null ? CompStore.DEFAULT_PROJECT : this.project.id,
+            (path, replace) ->
+            {
+                if (replace)
+                {
+                    this.replaceLayerImage(path);
+                }
+                else
+                {
+                    this.addImageLayer(path);
+                }
+            },
+            this::importLibraryImage,
+            () ->
+            {
+                if (this.assetBrowser != null)
+                {
+                    this.assetBrowser.setVisible(false);
+                    this.assetBrowser.removeFromParent();
+                    this.assetBrowser = null;
+                }
+            });
+
+        this.assetBrowser.relative(this).x(0).y(0).w(1F).h(1F);
+        this.add(this.assetBrowser);
+        this.resize();
+    }
+
+    /**
+     * Copies a TTF/OTF into BBS's own fonts folder. The text renderer then loads it through
+     * {@code BBSModClient.getFonts()}, so the glyph atlas, fallback and hot reload are all BBS's.
+     */
+    private void importFont(CompLayer layer)
+    {
+        mchorse.bbs_mod.ui.utils.UIFileDialogs.pickFile(
+            IKey.constant("导入字体"),
+            java.nio.file.Path.of(".").toFile(),
+            new String[] {"*.ttf", "*.otf"},
+            IKey.constant("字体"),
+            (file) ->
+            {
+                if (file == null || !file.isFile())
+                {
+                    return;
+                }
+
+                try
+                {
+                    java.io.File folder = mchorse.bbs_mod.fonts.FontManager.getFolder();
+
+                    java.nio.file.Files.createDirectories(folder.toPath());
+
+                    String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+
+                    if (!name.toLowerCase(java.util.Locale.ROOT).endsWith(".ttf") && !name.toLowerCase(java.util.Locale.ROOT).endsWith(".otf"))
+                    {
+                        name = name + ".ttf";
+                    }
+
+                    java.nio.file.Path target = folder.toPath().resolve(name);
+
+                    java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+                    layer.fontName = name;
+                    this.refreshInspector();
+                    this.save();
+                    this.setStatus("已导入字体：" + name);
+                }
+                catch (Exception e)
+                {
+                    this.setStatus("字体导入失败：" + e.getMessage());
+                }
+            });
+    }
+
+    private void importLibraryImage()
+    {
+        if (this.project == null)
+        {
+            return;
+        }
+
+        mchorse.bbs_mod.ui.utils.UIFileDialogs.pickFile(
+            IKey.constant("导入图片"),
+            java.nio.file.Path.of(".").toFile(),
+            new String[] {"*.png", "*.jpg", "*.jpeg", "*.gif"},
+            IKey.constant("图片"),
+            (file) ->
+            {
+                if (file == null || !file.isFile())
+                {
+                    return;
+                }
+
+                try
+                {
+                    java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve("images");
+
+                    java.nio.file.Files.createDirectories(folder);
+
+                    String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+                    java.nio.file.Path target = folder.resolve(name);
+
+                    java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+                    if (this.assetBrowser != null)
+                    {
+                        this.assetBrowser.refresh();
+                    }
+                }
+                catch (Exception e)
+                {
+                    this.status.label = IKey.constant("导入失败：" + e.getMessage());
+                }
+            });
+    }
+
+    private void addImageLayer(String path)
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        CompLayer layer = new CompLayer("image", "图片", "image");
+
+        layer.imagePath = path;
+        layer.x = this.doc.width / 2F;
+        layer.y = this.doc.height / 2F;
+        layer.width = Math.min(480F, this.doc.width * 0.35F);
+        layer.height = layer.width * 0.5625F;
+        layer.out = this.doc.duration;
+        layer.imageFit = 0;
+
+        this.doc.addLayer(layer);
+        this.selectedLayer = layer;
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
         this.save();
+    }
 
-        mchorse.bbs_mod.ui.dashboard.UIDashboard dashboard = this.dashboard;
+    private void replaceLayerImage(String path)
+    {
+        if (this.selectedLayer == null || !"image".equals(this.selectedLayer.type) && !"footage".equals(this.selectedLayer.type))
+        {
+            this.status.label = IKey.constant("请先选中一个图片图层");
 
-        dashboard.setPanel(this.filmPanel);
-        mchorse.bbs_mod.ui.framework.UIScreen.open(dashboard);
+            return;
+        }
+
+        this.selectedLayer.imagePath = path;
+        this.refreshInspector();
+        this.save();
+    }
+
+    private String replayLabel(mchorse.bbs_mod.film.replays.Replay replay)
+    {
+        String name = replay.getName();
+
+        if (name == null || name.isBlank() || "-".equals(name.trim()))
+        {
+            int index = this.film == null ? 0 : this.film.replays.getList().indexOf(replay);
+
+            return "回放 " + (index + 1);
+        }
+
+        return name;
+    }
+
+    private void showReplayPicker()
+    {
+        if (this.film == null)
+        {
+            return;
+        }
+
+        this.openModal("选择回放", "先选择要编辑的回放，再进入合成。");
+
+        List<mchorse.bbs_mod.film.replays.Replay> replays = this.film.replays.getList();
+        int y = 56;
+
+        for (mchorse.bbs_mod.film.replays.Replay replay : replays)
+        {
+            final mchorse.bbs_mod.film.replays.Replay target = replay;
+            UIButton button = this.modalButton(this.replayLabel(replay), 16, y, 408, () ->
+            {
+                this.closeModal();
+                this.selectReplay(target);
+            });
+
+            this.modalBox.add(button);
+            y += 26;
+        }
+
+        if (replays.isEmpty())
+        {
+            UILabel empty = new UILabel(IKey.constant("这个影片还没有回放，请先在 BBS 影片编辑器里添加回放。"));
+            empty.relative(this.modalBox).x(16).y(60).w(1F, -32).h(18);
+            this.modalBox.add(empty);
+        }
+
+        this.modalBox.add(this.modalButton("打开其他影片…", 16, 234, 200, () ->
+        {
+            this.closeModal();
+            this.openReplaySelector();
+        }));
+        this.modalBox.add(this.modalButton("返回影片编辑器", 232, 234, 192, () ->
+        {
+            this.closeModal();
+
+            if (this.filmPanel != null)
+            {
+                this.dashboard.setPanel(this.filmPanel);
+                mchorse.bbs_mod.ui.framework.UIScreen.open(this.dashboard);
+            }
+        }));
+    }
+
+    private void showExportDialog()
+    {
+        int width = Math.max(64, mchorse.bbs_mod.BBSSettings.videoWidth.get());
+        int height = Math.max(64, mchorse.bbs_mod.BBSSettings.videoHeight.get());
+
+        /* Low BBS defaults (e.g. 320x180 preview size) are what made exports look blurry.
+         * Start from at least 1080p and let the user step down. */
+        if (width < 1280 || height < 720)
+        {
+            width = 1920;
+            height = 1080;
+        }
+
+        this.exportWidth = width;
+        this.exportHeight = height;
+        this.exportFps = Math.max(1, mchorse.bbs_mod.BBSSettings.videoFrameRate.get());
+
+        if (this.exportFps < 24)
+        {
+            this.exportFps = 30;
+        }
+
+        this.buildExportDialog();
+    }
+
+    private void buildExportDialog()
+    {
+        this.openModalSized("导出视频", "使用 BBS 原生录像器；宽、高、比例和帧率都会写入 BBS 设置。", 540, 400);
+
+        int[] widths = {1280, 1920, 2560, 3840};
+
+        for (int i = 0; i < widths.length; i++)
+        {
+            final int width = widths[i];
+            this.modalBox.add(this.modalButton(String.valueOf(width), 110 + i * 96, 58, 88, () ->
+            {
+                this.exportWidth = width;
+                this.exportHeight = Math.max(2, Math.round(width * 9F / 16F));
+                this.buildExportDialog();
+            }));
+        }
+
+        UILabel resolutionLabel = new UILabel(IKey.constant("常用宽度"));
+        resolutionLabel.relative(this.modalBox).x(16).y(60).w(88).h(18);
+        this.modalBox.add(resolutionLabel);
+
+        String[] aspects = {"16:9", "9:16", "1:1", "4:3", "21:9", "2.35:1"};
+        float[] ratios = {9F / 16F, 16F / 9F, 1F, 3F / 4F, 9F / 21F, 1F / 2.35F};
+
+        for (int i = 0; i < aspects.length; i++)
+        {
+            final float ratio = ratios[i];
+            this.modalBox.add(this.modalButton(aspects[i], 110 + (i % 3) * 96, 86 + (i / 3) * 26, 88, () ->
+            {
+                /* Keep the long edge, derive the short edge from the chosen ratio. */
+                int base = Math.max(this.exportWidth, this.exportHeight);
+
+                if (ratio <= 1F)
+                {
+                    this.exportWidth = base;
+                    this.exportHeight = Math.max(2, Math.round(base * ratio));
+                }
+                else
+                {
+                    this.exportHeight = base;
+                    this.exportWidth = Math.max(2, Math.round(base / ratio));
+                }
+
+                this.buildExportDialog();
+            }));
+        }
+
+        UILabel aspectLabel = new UILabel(IKey.constant("画面比例"));
+        aspectLabel.relative(this.modalBox).x(16).y(88).w(88).h(18);
+        this.modalBox.add(aspectLabel);
+
+        int[] rates = {24, 30, 60, 120};
+
+        for (int i = 0; i < rates.length; i++)
+        {
+            final int fps = rates[i];
+            this.modalBox.add(this.modalButton(fps + " fps", 110 + i * 96, 146, 88, () ->
+            {
+                this.exportFps = fps;
+                this.buildExportDialog();
+            }));
+        }
+
+        UILabel fpsLabel = new UILabel(IKey.constant("帧率"));
+        fpsLabel.relative(this.modalBox).x(16).y(148).w(88).h(18);
+        this.modalBox.add(fpsLabel);
+
+        /* Custom numeric size + ratio: the two things a fixed preset list always gets wrong. */
+        UILabel customLabel = new UILabel(IKey.constant("自定义"));
+        customLabel.relative(this.modalBox).x(16).y(186).w(88).h(18);
+
+        UITrackpad customWidth = new UITrackpad((value) ->
+        {
+            this.exportWidth = Math.max(16, Math.min(7680, value.intValue()));
+        });
+
+        customWidth.limit(16, 7680).integer().setValue(this.exportWidth);
+        customWidth.relative(this.modalBox).x(110).y(184).w(96).h(20);
+        customWidth.tooltip(IKey.constant("导出宽度（像素）"));
+
+        UITrackpad customHeight = new UITrackpad((value) ->
+        {
+            this.exportHeight = Math.max(16, Math.min(4320, value.intValue()));
+        });
+
+        customHeight.limit(16, 4320).integer().setValue(this.exportHeight);
+        customHeight.relative(this.modalBox).x(216).y(184).w(96).h(20);
+        customHeight.tooltip(IKey.constant("导出高度（像素）"));
+
+        UILabel times = new UILabel(IKey.constant("×"));
+        times.relative(this.modalBox).x(198).y(186).w(16).h(18);
+
+        float currentRatio = this.exportWidth / (float) Math.max(1, this.exportHeight);
+        UITrackpad customRatio = new UITrackpad();
+        customRatio.setValue(currentRatio);
+        customRatio.relative(this.modalBox).x(330).y(184).w(78).h(20);
+        customRatio.tooltip(IKey.constant("比例 = 宽 / 高，例如 2.35 表示 2.35:1"));
+
+        UIButton applyRatio = new UIButton(IKey.constant("应用比例"), (button) ->
+        {
+            double ratio = customRatio.getValue();
+
+            if (ratio <= 0.01D)
+            {
+                return;
+            }
+
+            this.exportHeight = Math.max(16, Math.min(4320, (int) Math.round(this.exportWidth / ratio)));
+
+            this.buildExportDialog();
+        });
+
+        applyRatio.relative(this.modalBox).x(416).y(184).w(104).h(20);
+        applyRatio.tooltip(IKey.constant("按当前宽度重算高度"));
+
+        UILabel summary = new UILabel(IKey.constant("当前：" + this.exportWidth + " × " + this.exportHeight + "   "
+            + this.exportFps + " fps   " + String.format(java.util.Locale.ROOT, "%.3f:1", currentRatio)));
+        summary.color(0xFFB8C4D6, false);
+        summary.relative(this.modalBox).x(16).y(216).w(1F, -32).h(18);
+
+        UILabel warning = new UILabel(IKey.constant("导出由 BBS 录像器执行；1080p60 需要客户端能稳定跑满 60 fps。"));
+        warning.color(0xFF8A94A6, false);
+        warning.relative(this.modalBox).x(16).y(238).w(1F, -32).h(18);
+
+        this.modalBox.add(customLabel, times, customWidth, customHeight, customRatio, applyRatio, summary, warning);
+        this.modalBox.add(this.modalButton("取消", 16, 350, 240, this::closeModal));
+        this.modalBox.add(this.modalButton("开始导出（1080p60 一键）", 268, 350, 256, () ->
+        {
+            this.exportWidth = 1920;
+            this.exportHeight = 1080;
+            this.exportFps = 60;
+            this.startBbsExport();
+        }));
+        this.modalBox.add(this.modalButton("开始导出", 268, 316, 256, this::startBbsExport));
+    }
+
+    private void startBbsExport()
+    {
+        if (this.filmPanel == null || this.filmPanel.getData() == null)
+        {
+            this.closeModal();
+            this.setStatus("导出需要先打开一个影片；独立工程请用渲染队列或 BBS 影片编辑器导出");
+
+            return;
+        }
+
+        mchorse.bbs_mod.BBSSettings.videoWidth.set(this.exportWidth);
+        mchorse.bbs_mod.BBSSettings.videoHeight.set(this.exportHeight);
+        mchorse.bbs_mod.BBSSettings.videoFrameRate.set(this.exportFps);
+
+        mchorse.bbs_mod.ui.film.UIFilmPanel.applyExportSizeToBBS();
+
+        this.save();
+        this.closeModal();
+
+        this.dashboard.setPanel(this.filmPanel);
+        mchorse.bbs_mod.ui.framework.UIScreen.open(this.dashboard);
         this.filmPanel.preview.recordVideo.clickItself();
     }
 
@@ -898,7 +3081,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         }
 
-        UIListOverlayPanel panel = new UIListOverlayPanel(IKey.constant("Replay / Film"), (value) ->
+        UIListOverlayPanel panel = new UIListOverlayPanel(IKey.constant("回放 / 影片"), (value) ->
         {
             if (value.startsWith("Replay · ") && this.film != null)
             {
@@ -942,7 +3125,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 continue;
             }
 
-            manager.action(Icons.FILM, IKey.constant("Film: " + filmId), () -> this.loadFilm(filmId));
+            manager.action(Icons.FILM, IKey.constant("影片：" + filmId), () -> this.loadFilm(filmId));
         }
     }
 
@@ -985,8 +3168,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.doc.duration = Math.max(this.doc.duration, duration);
             this.doc.workAreaOut = Math.max(this.doc.workAreaOut, duration);
             this.time = 0F;
-            this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(0);
+            this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
             this.resetTimelineView = true;
+
+            if (this.trackTimeline != null)
+            {
+                this.trackTimeline.fit();
+            }
 
             if (this.film != null)
             {
@@ -998,8 +3186,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.refreshSheets();
         }
 
-        this.replaySelector.label = IKey.constant("Replay: " + (replay == null ? "-" : replay.getName()));
-        this.info.label = IKey.constant("Film: " + (this.film == null ? "-" : this.film.getId()) + "  /  Comp: " + (this.doc == null ? "-" : this.doc.id));
+        this.replaySelector.label = IKey.constant("回放：" + (replay == null ? "-" : this.replayLabel(replay)));
         this.save();
     }
 
@@ -1020,8 +3207,15 @@ public class UICompositorPanel extends UIDashboardPanel
         this.doc = next;
         this.time = 0F;
         this.playing = false;
+        this.playRate = 0F;
         this.resetTimelineView = true;
-        this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(0);
+        this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.fit();
+        }
+
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -1032,25 +3226,592 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         if (this.doc == null)
         {
-            this.layers.setList(List.of());
-            return;
+            this.selectedLayer = null;
+        }
+        else if (this.selectedLayer != null && !this.doc.layers.contains(this.selectedLayer))
+        {
+            this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
         }
 
-        this.layers.setList(this.doc.layers);
-
-        if (this.selectedLayer != null)
+        if (this.trackTimeline != null)
         {
-            this.layers.setCurrent(this.selectedLayer);
+            this.trackTimeline.refresh();
+        }
+
+        if (this.effectLibrary != null)
+        {
+            this.effectLibrary.refreshStatus();
         }
     }
 
-    private void save()
+    void save()
     {
         if (this.project != null)
         {
             CompStore.save(this.project);
-            this.info.label = IKey.constant("Saved " + CompStore.file(this.project.id).getFileName());
         }
+    }
+
+    /**
+     * Undo history is per project. Without this, opening another project left the previous
+     * project's snapshots on the stack and Ctrl+Z could replace the new project with an old one.
+     */
+    private void resetHistory()
+    {
+        this.undoStack.clear();
+        this.redoStack.clear();
+        this.lastSnapshot = "";
+        this.lastSnapshotMs = 0L;
+        this.restoring = false;
+    }
+
+    public CompProject getProject()
+    {
+        return this.project;
+    }
+
+    /** Temporary verification hook: a clean comp with BBS preview, a gradient shape and a null. */
+    public void debugDemoEffects()
+    {
+        this.project = CompStore.demo("dev-effects");
+        this.doc = this.project.getComp(CompStore.DEFAULT_COMP);
+        this.doc.layers.clear();
+
+        CompLayer bbs = new CompLayer("bbs_preview", "BBS 预览", "bbs");
+        bbs.width = this.doc.width;
+        bbs.height = this.doc.height;
+        bbs.out = this.doc.duration;
+        this.doc.layers.add(bbs);
+
+        CompLayer shape = new CompLayer("gradient_shape", "Gradient Shape", "shape");
+        shape.x = this.doc.width / 2F;
+        shape.y = this.doc.height / 2F;
+        shape.width = 520F;
+        shape.height = 320F;
+        shape.shapes.add(CompShape.rect("grad_shape", 0F, 0F, 360F, 220F, 0xFFFFFFFF));
+        CompEffect gradient = CompEffectRegistry.create("gradient_ramp", 1);
+        gradient.putColor("start", 0xFFFF3366);
+        gradient.putColor("end", 0xFF33CCFF);
+        gradient.put("angle", 90D);
+        shape.effects.add(gradient);
+        this.doc.layers.add(shape);
+
+        CompLayer nullLayer = new CompLayer("null_ctrl", "Null Controller", "null");
+        nullLayer.x = this.doc.width / 2F - 300F;
+        nullLayer.y = this.doc.height / 2F - 200F;
+        nullLayer.out = this.doc.duration;
+        this.doc.layers.add(nullLayer);
+
+        CompLayer card3D = new CompLayer("card_3d", "3D Card", "shape");
+        card3D.x = this.doc.width / 2F + 160F;
+        card3D.y = this.doc.height / 2F + 60F;
+        card3D.width = 420F;
+        card3D.height = 260F;
+        card3D.threeD = true;
+        card3D.z = 180F;
+        card3D.rotationY = 28F;
+        card3D.rotationX = -10F;
+        card3D.shapes.add(CompShape.rect("card_shape", 0F, 0F, 340F, 200F, 0xFFFFFFFF));
+        CompEffect cardGradient = CompEffectRegistry.create("gradient_ramp", 1);
+        cardGradient.putColor("start", 0xFF7C3AED);
+        cardGradient.putColor("end", 0xFF06B6D4);
+        cardGradient.put("angle", 45D);
+        card3D.effects.add(cardGradient);
+        this.doc.layers.add(card3D);
+
+        CompLayer camera = new CompLayer("camera_3d", "3D Camera", "camera");
+        camera.width = 100F;
+        camera.height = 100F;
+        camera.threeD = true;
+        camera.camera3D = true;
+        camera.z = this.defaultCameraZ();
+        camera.cameraZ = camera.z;
+        camera.cameraTargetX = this.doc.width / 2F;
+        camera.cameraTargetY = this.doc.height / 2F;
+        camera.cameraTargetZ = 0F;
+        this.doc.layers.add(camera);
+        this.doc.activeCameraId = camera.id;
+        this.project.settings.cameraPreviewMode = true;
+        this.cameraPreviewMode = true;
+
+        this.selectedLayer = card3D;
+        this.time = 2F;
+        this.startScreenOpen = false;
+
+        if (this.startScreen != null)
+        {
+            this.startScreen.setVisible(false);
+        }
+
+        dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.trackTimeline.fit();
+        this.updatePlayLabel();
+    }
+
+    /**
+     * Development-only: load a film, attach a composition clip and start BBS's own recorder at an
+     * explicit size. It is the same path the Export button uses, but reachable from a headless test
+     * run so a 1080p60 export can be verified without clicking through the UI.
+     */
+    public void debugExportFilm(String filmId, String projectId, String compId, int width, int height, int fps)
+    {
+        mchorse.bbs_mod.ui.ContentType.FILMS.getRepository().load(filmId, (data) ->
+        {
+            net.minecraft.client.MinecraftClient.getInstance().execute(() ->
+            {
+                if (!(data instanceof mchorse.bbs_mod.film.Film film))
+                {
+                    BbsAeAddon.LOGGER.error("Debug export: film {} not found", filmId);
+
+                    return;
+                }
+
+                CompositionClip.ensureForFilm(film, projectId, compId);
+
+                mchorse.bbs_mod.ui.film.UIFilmPanel panel = this.dashboard.getPanel(mchorse.bbs_mod.ui.film.UIFilmPanel.class);
+
+                if (panel == null)
+                {
+                    BbsAeAddon.LOGGER.error("Debug export: film panel missing");
+
+                    return;
+                }
+
+                this.filmPanel = panel;
+                this.film = film;
+                this.dashboard.setPanel(panel);
+                mchorse.bbs_mod.ui.framework.UIScreen.open(this.dashboard);
+                panel.fill(film);
+
+                mchorse.bbs_mod.BBSSettings.videoWidth.set(width);
+                mchorse.bbs_mod.BBSSettings.videoHeight.set(height);
+                mchorse.bbs_mod.BBSSettings.videoFrameRate.set(fps);
+                mchorse.bbs_mod.ui.film.UIFilmPanel.applyExportSizeToBBS();
+                panel.preview.recordVideo.clickItself();
+
+                BbsAeAddon.LOGGER.info("Debug export started: {}x{} @{}fps film={}", width, height, fps, filmId);
+            });
+        });
+    }
+
+    public CompLayer getSelectedLayer()
+    {
+        return this.selectedLayer;
+    }
+
+    public void selectLayer(CompLayer layer)
+    {
+        if (layer == this.selectedLayer)
+        {
+            return;
+        }
+
+        this.selectedLayer = layer;
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.ensureSelectionVisible();
+        }
+
+        if (this.effectLibrary != null)
+        {
+            this.effectLibrary.refreshStatus();
+        }
+
+        this.refreshInspector();
+        this.refreshSheets();
+    }
+
+    public void clearSelection()
+    {
+        if (this.selectedLayer == null)
+        {
+            return;
+        }
+
+        this.selectedLayer = null;
+
+        if (this.effectLibrary != null)
+        {
+            this.effectLibrary.refreshStatus();
+        }
+
+        this.refreshInspector();
+        this.refreshSheets();
+    }
+
+    public void setStatus(String message)
+    {
+        this.statusMessage = message == null ? "" : message;
+        this.statusTicks = 80;
+    }
+
+    /** Timing edits do not rebuild the inspector: that would destroy the field the user is typing in. */
+    private void commitLayerTiming()
+    {
+        this.save();
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.refresh();
+        }
+
+        this.refreshSheets();
+    }
+
+    public void onTrackEdited()
+    {
+        this.resetTimelineView = false;
+        this.refreshInspector();
+        this.refreshSheets();
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.refresh();
+        }
+
+        this.save();
+    }
+
+    public void toggleLayerVisible(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return;
+        }
+
+        layer.visible = !layer.visible;
+        this.refreshInspector();
+        this.save();
+        this.setStatus(layer.visible ? "轨道已显示" : "轨道已隐藏");
+    }
+
+    /** 50° camera at this distance maps the z=0 plane 1:1 to the composition. */
+    private float defaultCameraZ()
+    {
+        return (this.doc == null ? 540F : this.doc.height * 0.5F) / (float) Math.tan(Math.toRadians(25D));
+    }
+
+    /** Track-header 3D switch. 2D layers stay screen-attached; 3D layers go through the camera. */
+    public void toggleLayer3D(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return;
+        }
+
+        layer.threeD = !layer.threeD;
+
+        if (layer.threeD && "camera".equals(layer.type))
+        {
+            layer.camera3D = true;
+        }
+
+        this.refreshInspector();
+        this.refreshSheets();
+        this.save();
+
+        if (layer.threeD)
+        {
+            boolean hasCamera = this.doc != null && this.doc.activeCamera(this.time) != null;
+
+            this.setStatus(hasCamera
+                ? "已开启 3D：" + this.layerLabel(layer) + "（跟随摄像机；可在图层页调 Z / 旋转 X/Y）"
+                : "已开启 3D：" + this.layerLabel(layer) + "（还没有摄像机，点预览左下角球体进入 3D 空间）");
+        }
+        else
+        {
+            this.setStatus("已关闭 3D：" + this.layerLabel(layer));
+        }
+    }
+
+    public void toggleLayerLocked(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return;
+        }
+
+        layer.locked = !layer.locked;
+        this.refreshInspector();
+        this.save();
+        this.setStatus(layer.locked ? "轨道已锁定" : "轨道已解锁");
+    }
+
+    public void renameLayer(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return;
+        }
+
+        UIPromptOverlayPanel prompt = new UIPromptOverlayPanel(
+            IKey.constant("重命名轨道"),
+            IKey.constant("输入新的轨道名称"),
+            (text) ->
+            {
+                if (text == null || text.isBlank())
+                {
+                    return;
+                }
+
+                layer.name = text.trim();
+                this.refreshInspector();
+                this.save();
+            }
+        );
+
+        prompt.text.setText(layer.name);
+        UIOverlay.addOverlay(this.getContext(), prompt, 320, 110);
+    }
+
+    public void duplicateLayer(CompLayer layer)
+    {
+        if (this.doc == null || layer == null)
+        {
+            return;
+        }
+
+        CompLayer copy = layer.duplicate();
+
+        copy.id = CompStore.uniqueId(layer.id + "_copy", this.doc.layers, (candidate) -> candidate.id);
+        copy.name = this.layerLabel(layer) + " 副本";
+        copy.x += 24F;
+        copy.y += 24F;
+        this.doc.layers.add(this.doc.layers.indexOf(layer) + 1, copy);
+        this.selectedLayer = copy;
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.save();
+    }
+
+    public void deleteLayer(CompLayer layer)
+    {
+        if (this.doc == null || layer == null)
+        {
+            return;
+        }
+
+        int index = this.doc.layers.indexOf(layer);
+
+        this.doc.removeLayer(layer.id);
+        this.selectedLayer = this.doc.layers.isEmpty()
+            ? null
+            : this.doc.layers.get(Math.max(0, Math.min(index, this.doc.layers.size() - 1)));
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.save();
+    }
+
+    public void moveLayerOrder(CompLayer layer, int direction)
+    {
+        if (this.doc == null || layer == null || direction == 0)
+        {
+            return;
+        }
+
+        int index = this.doc.layers.indexOf(layer);
+        int target = Math.max(0, Math.min(this.doc.layers.size() - 1, index + direction));
+
+        if (index < 0 || target == index)
+        {
+            return;
+        }
+
+        this.doc.layers.remove(index);
+        this.doc.layers.add(target, layer);
+        this.refreshLayers();
+        this.refreshInspector();
+        this.save();
+    }
+
+    public void splitSelectedAtPlayhead()
+    {
+        if (this.doc == null || this.selectedLayer == null)
+        {
+            this.setStatus("先在时间轴选择一条轨道");
+
+            return;
+        }
+
+        CompLayer layer = this.selectedLayer;
+        float fps = Math.max(1F, this.doc.fps);
+        String id = CompStore.uniqueId(layer.id + "_b", this.doc.layers, (candidate) -> candidate.id);
+        CompLayer right = layer.splitAt(this.time, fps, id, this.layerLabel(layer) + " · B");
+
+        if (right == null)
+        {
+            this.setStatus("播放头不在所选轨道的范围内");
+
+            return;
+        }
+
+        this.doc.layers.add(this.doc.layers.indexOf(layer) + 1, right);
+        this.selectedLayer = right;
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.save();
+        this.setStatus("已在播放头拆分轨道");
+    }
+
+    public void nudgeSelected(int frames)
+    {
+        if (this.doc == null || this.selectedLayer == null || frames == 0)
+        {
+            return;
+        }
+
+        CompLayer layer = this.selectedLayer;
+
+        if (layer.locked)
+        {
+            this.setStatus("轨道已锁定：先解锁再移动");
+
+            return;
+        }
+
+        layer.moveTo(layer.in + frames / Math.max(1F, this.doc.fps), Math.max(1F, this.doc.fps), this.doc.duration);
+        this.refreshInspector();
+        this.save();
+    }
+
+    public void applyEffect(String type)
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        if (this.selectedLayer == null)
+        {
+            this.setStatus("先在时间轴选择一条轨道，再应用效果");
+
+            return;
+        }
+
+        CompEffect effect = CompEffectRegistry.create(type, this.selectedLayer.effects.size() + 1);
+
+        effect.id = CompStore.uniqueEffectId(this.selectedLayer);
+        this.selectedLayer.effects.add(effect);
+        this.recentEffects.remove(type);
+        this.recentEffects.addFirst(type);
+
+        while (this.recentEffects.size() > 6)
+        {
+            this.recentEffects.removeLast();
+        }
+
+        if (this.inspectorPage != PAGE_EFFECTS)
+        {
+            this.setInspectorPage(PAGE_EFFECTS);
+        }
+        else
+        {
+            this.refreshInspector();
+        }
+
+        this.save();
+        this.setStatus("已添加效果：" + CompEffectRegistry.displayName(type));
+    }
+
+    public List<String> getRecentEffects()
+    {
+        return this.recentEffects;
+    }
+
+    public void focusEffectLibrary()
+    {
+        this.leftPage = 0;
+        this.leftTabs.select(0);
+        this.effectLibrary.setVisible(true);
+        this.assetPanel.setVisible(false);
+        this.setStatus("在左侧效果库中双击效果，或选中后点“应用效果”");
+    }
+
+    public void setInspectorPage(int page)
+    {
+        this.inspectorTabs.select(page);
+    }
+
+    public void openKeyframes()
+    {
+        this.setKeyframeOpen(true);
+    }
+
+    public void toggleKeyframes()
+    {
+        this.setKeyframeOpen(!this.keyframeOpen);
+    }
+
+    private void setKeyframeOpen(boolean open)
+    {
+        if (this.keyframeOpen == open)
+        {
+            return;
+        }
+
+        this.keyframeOpen = open;
+        this.keyframeDrawer.setVisible(open);
+
+        this.layoutKeyframeDrawer();
+
+        if (open)
+        {
+            this.primedWidth = -1;
+            this.keyframeEditor.resize();
+            this.primeTimeline();
+        }
+
+        this.updateToolbarLabels();
+        this.timeline.resize();
+        this.resize();
+
+        if (open && this.keyframeViewNeedsFit && this.keyframeEditor.area.w > 0)
+        {
+            this.keyframeEditor.view.resize();
+            this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
+            this.keyframeViewNeedsFit = false;
+        }
+    }
+
+    private void layoutKeyframeDrawer()
+    {
+        if (this.timeline == null || this.trackTimeline == null || this.keyframeHandle == null)
+        {
+            return;
+        }
+
+        int max = Math.max(KEYFRAME_DRAWER_MIN, this.timelinePanelHeight - 96);
+
+        this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.keyframeDrawerHeight));
+
+        if (this.keyframeOpen)
+        {
+            this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26 - this.keyframeDrawerHeight);
+            this.keyframeDrawer.relative(this.timeline).x(0).y(1F, -this.keyframeDrawerHeight).w(1F).h(this.keyframeDrawerHeight);
+            this.keyframeHandle.relative(this.timeline).x(0).y(1F, -this.keyframeDrawerHeight - 2).w(1F).h(5);
+            this.keyframeHandle.setVisible(true);
+        }
+        else
+        {
+            this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
+            this.keyframeHandle.setVisible(false);
+        }
+
+        this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(1F, -22);
+    }
+
+    private void updateToolbarLabels()
+    {
+        this.snapButton.label = IKey.constant(this.trackTimeline.isSnapping() ? "吸附 开" : "吸附 关");
+        this.keyframeButton.label = IKey.constant(this.keyframeOpen ? "关键帧 ▾" : "关键帧 ▸");
+        this.keyframeTitle.label = IKey.constant("属性关键帧" + (this.selectedLayer == null ? "" : " · " + this.layerLabel(this.selectedLayer)));
     }
 
     private void toggleRenderView()
@@ -1061,18 +3822,193 @@ public class UICompositorPanel extends UIDashboardPanel
         this.body.setVisible(!this.renderView);
         this.timeline.setVisible(!this.renderView);
         this.renderPanel.setVisible(this.renderView);
-        this.layers.setVisible(!this.renderView && !this.focusMode);
+        this.effectColumn.setVisible(!this.renderView && !this.focusMode);
         this.inspectorColumn.setVisible(!this.renderView && !this.focusMode);
         this.renderPanel.resize();
-        this.resize();
+        this.applyLayout();
     }
 
     private void toggleFocusMode()
     {
         this.focusMode = !this.focusMode;
-        this.layers.setVisible(!this.focusMode && !this.renderView);
+        this.effectColumn.setVisible(!this.focusMode && !this.renderView);
         this.inspectorColumn.setVisible(!this.focusMode && !this.renderView);
+        this.applyLayout();
+    }
+
+    /** Absolute three-column layout; the old row(6) divided the width equally and ignored w(). */
+    private void applyLayout()
+    {
+        if (this.body == null || this.preview == null || this.timeline == null)
+        {
+            return;
+        }
+
+        boolean left = this.effectColumn.isVisible();
+        boolean right = this.inspectorColumn.isVisible();
+        int lw = left ? this.leftPanelWidth : 0;
+        int rw = right ? this.rightPanelWidth : 0;
+        int gapL = left ? 6 : 0;
+        int gapR = right ? 6 : 0;
+
+        /* Keep the preview and the timeline from colliding on a short window. Without this the
+         * body's 160 px minimum ran underneath the timeline as soon as the panel was < 430 px. */
+        if (this.area.h > 200 && this.area.w > 300)
+        {
+            int maxTimeline = Math.max(140, this.area.h - 24 - 160 - 18);
+            int maxSide = Math.max(160, this.area.w - 220 - 80);
+
+            this.timelinePanelHeight = Math.min(this.timelinePanelHeight, maxTimeline);
+            this.leftPanelWidth = Math.min(this.leftPanelWidth, maxSide);
+            this.rightPanelWidth = Math.min(this.rightPanelWidth, maxSide);
+        }
+
+        this.effectColumn.relative(this.body).x(0).y(0).w(lw).h(1F);
+        this.preview.relative(this.body).x(lw + gapL).y(0).w(1F, -(lw + rw + gapL + gapR)).h(1F);
+        this.inspectorColumn.relative(this.body).x(1F, -rw).y(0).w(rw).h(1F);
+
+        int bodyHeight = Math.max(160, this.area.h - 24 - this.timelinePanelHeight - 18);
+
+        this.body.relative(this).x(0).y(24).w(1F).h(bodyHeight);
+        this.timeline.relative(this).x(0).y(1F, -(this.timelinePanelHeight + 18)).w(1F).h(this.timelinePanelHeight);
+        this.renderPanel.relative(this).x(0).y(24).w(1F).h(bodyHeight);
+
+        if (this.leftHandle != null)
+        {
+            this.leftHandle.relative(this.body).x(lw + 2).y(0).w(4).h(1F);
+            this.leftHandle.setVisible(left);
+            this.rightHandle.relative(this.body).x(1F, -rw - 6).y(0).w(4).h(1F);
+            this.rightHandle.setVisible(right);
+            this.timelineHandle.relative(this.body).x(0).y(1F, -4).w(1F).h(4);
+            this.timelineHandle.setVisible(true);
+        }
+
+        this.layoutKeyframeDrawer();
         this.resize();
+    }
+
+    private void savePanelLayout()
+    {
+        if (this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        this.project.settings.leftPanelWidth = this.leftPanelWidth;
+        this.project.settings.rightPanelWidth = this.rightPanelWidth;
+        this.project.settings.timelineHeight = this.timelinePanelHeight;
+        this.project.settings.keyframeDrawerHeight = this.keyframeDrawerHeight;
+        this.project.settings.cameraPreviewMode = this.cameraPreviewMode;
+        this.save();
+    }
+
+    private void loadPanelLayout()
+    {
+        if (this.project != null && this.project.settings != null)
+        {
+            this.leftPanelWidth = Math.max(140, this.project.settings.leftPanelWidth);
+            this.rightPanelWidth = Math.max(220, this.project.settings.rightPanelWidth);
+            this.timelinePanelHeight = Math.max(140, this.project.settings.timelineHeight);
+            this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, this.project.settings.keyframeDrawerHeight);
+            this.cameraPreviewMode = this.project.settings.cameraPreviewMode;
+        }
+
+        this.applyLayout();
+    }
+
+    /** A 4px splitter. Drag updates one of the three layout sizes and persists on release. */
+    private class PanelResizeHandle extends UIElement
+    {
+        private final int mode;
+        private boolean dragging;
+        private int startX;
+        private int startY;
+        private int startLeft;
+        private int startRight;
+        private int startHeight;
+
+        PanelResizeHandle(int mode)
+        {
+            this.mode = mode;
+        }
+
+        @Override
+        public void render(UIContext context)
+        {
+            boolean hot = this.dragging || this.area.isInside(context);
+            int color = hot ? 0xFF4C9AFF : 0x1AFFFFFF;
+
+            context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), color);
+            this.drag(context);
+            super.render(context);
+        }
+
+        private void drag(UIContext context)
+        {
+            if (!this.dragging)
+            {
+                return;
+            }
+
+            if (!Window.isMouseButtonPressed(0))
+            {
+                this.dragging = false;
+                UICompositorPanel.this.savePanelLayout();
+
+                return;
+            }
+
+            int dx = context.mouseX - this.startX;
+            int dy = context.mouseY - this.startY;
+            int width = UICompositorPanel.this.body.area.w;
+            int height = UICompositorPanel.this.area.h;
+
+            if (this.mode == 0)
+            {
+                UICompositorPanel.this.leftPanelWidth = Math.max(140, Math.min(this.startLeft + dx, Math.max(160, width - UICompositorPanel.this.rightPanelWidth - 220)));
+            }
+            else if (this.mode == 1)
+            {
+                UICompositorPanel.this.rightPanelWidth = Math.max(220, Math.min(this.startRight - dx, Math.max(240, width - UICompositorPanel.this.leftPanelWidth - 220)));
+            }
+            else if (this.mode == 3)
+            {
+                int max = Math.max(KEYFRAME_DRAWER_MIN, UICompositorPanel.this.timelinePanelHeight - 96);
+
+                UICompositorPanel.this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.startHeight - dy));
+                UICompositorPanel.this.layoutKeyframeDrawer();
+                UICompositorPanel.this.timeline.resize();
+                UICompositorPanel.this.primedWidth = -1;
+
+                return;
+            }
+            else
+            {
+                UICompositorPanel.this.timelinePanelHeight = Math.max(140, Math.min(this.startHeight - dy, Math.max(160, height - 24 - 160 - 18)));
+            }
+
+            UICompositorPanel.this.applyLayout();
+        }
+
+        @Override
+        protected boolean subMouseClicked(UIContext context)
+        {
+            if (context.mouseButton == 0 && this.area.isInside(context))
+            {
+                this.dragging = true;
+                this.startX = context.mouseX;
+                this.startY = context.mouseY;
+                this.startLeft = UICompositorPanel.this.leftPanelWidth;
+                this.startRight = UICompositorPanel.this.rightPanelWidth;
+                this.startHeight = this.mode == 3
+                    ? UICompositorPanel.this.keyframeDrawerHeight
+                    : UICompositorPanel.this.timelinePanelHeight;
+
+                return true;
+            }
+
+            return super.subMouseClicked(context);
+        }
     }
 
     /* Layer actions */
@@ -1120,10 +4056,10 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         mchorse.bbs_mod.ui.utils.UIFileDialogs.pickFile(
-            IKey.constant("Import Image"),
+            IKey.constant("导入图片"),
             java.nio.file.Path.of(".").toFile(),
             new String[] {"*.png", "*.jpg", "*.jpeg", "*.gif"},
-            IKey.constant("Image"),
+            IKey.constant("图片"),
             (file) ->
             {
                 if (file == null || !file.isFile())
@@ -1144,6 +4080,14 @@ public class UICompositorPanel extends UIDashboardPanel
                         java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                     }
 
+                    /* Importing into a text/shape/solid layer used to write imagePath that the
+                     * renderer ignored, so the button looked dead. Promote the layer to an image
+                     * layer; transform, effects and timing are preserved. */
+                    if (!"image".equals(layer.type) && !"footage".equals(layer.type))
+                    {
+                        layer.type = "image";
+                    }
+
                     layer.imagePath = "assets/images/" + name;
 
                     java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(target.toFile());
@@ -1162,7 +4106,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 catch (Exception e)
                 {
                     dev.bbsae.BbsAeAddon.LOGGER.error("Could not import image {}", file, e);
-                    this.status.label = IKey.constant("Image import failed: " + e.getMessage());
+                    this.status.label = IKey.constant("图片导入失败：" + e.getMessage());
                 }
             }
         );
@@ -1177,56 +4121,205 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         element.context((manager) ->
         {
-            manager.action(Icons.SQUARE, IKey.constant("Solid"), () -> this.addLayer("solid"));
-            manager.action(Icons.FONT, IKey.constant("Text"), () -> this.addLayer("text"));
-            manager.action(Icons.SHAPES, IKey.constant("Shape"), () -> this.addLayer("shape"));
-            manager.action(Icons.IMAGE, IKey.constant("Image"), () -> this.addLayer("image"));
-            manager.action(Icons.FILM, IKey.constant("Footage Sequence"), () -> this.addLayer("footage"));
-            manager.action(Icons.FILM, IKey.constant("Precomp"), () -> this.addLayer("precomp"));
-            manager.action(Icons.SPHERE, IKey.constant("Null"), () -> this.addLayer("null"));
-            manager.action(Icons.SUN, IKey.constant("Adjustment"), () -> this.addLayer("adjustment"));
+            manager.action(Icons.ADD, IKey.constant("添加图层…"), this::showAddLayerMenu);
+            manager.action(Icons.SQUARE, IKey.constant("纯色"), () -> this.addLayer("solid"));
+            manager.action(Icons.SQUARE, IKey.constant("渐变"), () -> this.addLayer("gradient"));
+            manager.action(Icons.SQUARE, IKey.constant("棋盘格"), () -> this.addLayer("checker"));
+            manager.action(Icons.SQUARE, IKey.constant("网格"), () -> this.addLayer("grid"));
+            manager.action(Icons.SQUARE, IKey.constant("分形杂色"), () -> this.addLayer("noise"));
+            manager.action(Icons.FONT, IKey.constant("文字"), () -> this.addLayer("text"));
+            manager.action(Icons.SHAPES, IKey.constant("矩形"), () -> this.addLayer("shape"));
+            manager.action(Icons.SHAPES, IKey.constant("椭圆"), () -> this.addLayer("ellipse"));
+            manager.action(Icons.SHAPES, IKey.constant("星形"), () -> this.addLayer("star"));
+            manager.action(Icons.SHAPES, IKey.constant("多边形"), () -> this.addLayer("polygon"));
+            manager.action(Icons.SHAPES, IKey.constant("贝塞尔路径"), () -> this.addLayer("path"));
+            manager.action(Icons.IMAGE, IKey.constant("图片"), () -> this.addLayer("image"));
+            manager.action(Icons.FILM, IKey.constant("图片序列"), () -> this.addLayer("footage"));
+            manager.action(Icons.FILM, IKey.constant("预合成"), () -> this.addLayer("precomp"));
+            manager.action(Icons.FILM, IKey.constant("BBS 预览层"), () -> this.addLayer("bbs"));
+            manager.action(Icons.SPHERE, IKey.constant("空对象"), () -> this.addLayer("null"));
+            manager.action(Icons.CAMERA, IKey.constant("摄像机"), () -> this.addLayer("camera"));
+            manager.action(Icons.SUN, IKey.constant("调整图层"), () -> this.addLayer("adjustment"));
+            manager.action(Icons.SQUARE, IKey.constant("HUD 面板"), () -> this.addLayer("panel"));
+            manager.action(Icons.SQUARE, IKey.constant("进度条"), () -> this.addLayer("bar"));
         });
     }
 
     private void layerContextMenu(ContextMenuManager manager)
     {
-        manager.action(Icons.ADD, IKey.constant("Add Layer"), () -> this.addLayer("solid"));
-        manager.action(Icons.COPY, IKey.constant("Duplicate"), this::duplicateSelected);
-        manager.action(Icons.TRASH, IKey.constant("Delete"), this::deleteSelected);
-        manager.action(Icons.FILM, IKey.constant("Precompose Selected"), this::precomposeSelected);
-        manager.action(Icons.STOPWATCH, IKey.constant("Add Transform Key"), () -> this.addTransformKey(true));
-        manager.action(Icons.STOPWATCH, IKey.constant("Add Opacity Key"), () -> this.addOpacityKey());
+        manager.action(Icons.ADD, IKey.constant("添加图层…"), this::showAddLayerMenu);
+        manager.action(Icons.COPY, IKey.constant("复制图层"), this::duplicateSelected);
+        manager.action(Icons.TRASH, IKey.constant("删除"), this::deleteSelected);
+        manager.action(Icons.FILM, IKey.constant("预合成所选图层"), this::precomposeSelected);
+        manager.action(Icons.STOPWATCH, IKey.constant("变换关键帧"), () -> this.addTransformKey(true));
+        manager.action(Icons.STOPWATCH, IKey.constant("不透明度关键帧"), () -> this.addOpacityKey());
     }
 
-    private void addLayer(String type)
+    /** Every type offered by the "add layer" chooser, in the order it is shown. */
+    private static final String[][] LAYER_TYPES = {
+        {"solid", "纯色"}, {"gradient", "渐变"}, {"checker", "棋盘格"},
+        {"grid", "网格"}, {"noise", "分形杂色"}, {"shape", "矩形"},
+        {"ellipse", "椭圆"}, {"star", "星形"}, {"polygon", "多边形"},
+        {"path", "贝塞尔"}, {"text", "文字"}, {"image", "图片"},
+        {"footage", "序列"}, {"precomp", "预合成"}, {"null", "空对象"},
+        {"camera", "摄像机"}, {"adjustment", "调整层"}, {"bbs", "BBS 预览"},
+        {"panel", "HUD 面板"}, {"bar", "进度条"}
+    };
+
+    /** Grouped chooser: 20 flat buttons in one grid were impossible to scan. */
+    private static final String[][] LAYER_GROUPS = {
+        {"常用", "solid", "text", "image", "shape", "null", "adjustment"},
+        {"生成", "gradient", "checker", "grid", "noise"},
+        {"形状", "ellipse", "star", "polygon", "path"},
+        {"媒体", "footage", "precomp", "bbs"},
+        {"界面", "panel", "bar"},
+        {"摄像机", "camera"}
+    };
+
+    private int addLayerGroup;
+
+    /** Layer-type chooser, opened from the track and track-head context menus. */
+    public void showAddLayerMenu()
+    {
+        if (this.doc == null)
+        {
+            this.setStatus("请先在影片编辑器里选择回放");
+            return;
+        }
+
+        this.openModal("添加图层", "先选分类，再点类型；所有类型都会在时间轴上创建一条真实轨道");
+        this.addLayerGroup = 0;
+        this.buildAddLayerMenu();
+    }
+
+    private void buildAddLayerMenu()
+    {
+        this.modalBox.removeAll();
+        this.modalBox.add(this.modalTitle, this.modalHint);
+
+        UICompTabBar tabs = new UICompTabBar();
+
+        for (String[] group : LAYER_GROUPS)
+        {
+            tabs.addTab(group[0]);
+        }
+
+        tabs.active(() -> this.addLayerGroup);
+        tabs.onSelect((index) ->
+        {
+            this.addLayerGroup = index;
+            this.buildAddLayerMenu();
+        });
+        tabs.relative(this.modalBox).x(16).y(30).w(1F, -32).h(22);
+        this.modalBox.add(tabs);
+
+        String[] group = LAYER_GROUPS[Math.max(0, Math.min(LAYER_GROUPS.length - 1, this.addLayerGroup))];
+
+        for (int i = 1; i < group.length; i++)
+        {
+            String preset = group[i];
+            String label = this.layerPresetLabel(preset);
+            int index = i - 1;
+            int x = 16 + (index % 3) * 138;
+            int y = 62 + (index / 3) * 28;
+
+            UIButton button = this.modalButton(label, x, y, 128, () ->
+            {
+                this.closeModal();
+                this.addLayer(preset);
+            });
+
+            button.tooltip(IKey.constant("创建「" + label + "」图层"));
+            this.modalBox.add(button);
+        }
+
+        this.modalBox.add(this.modalButton("取消", 16, 262, 408, this::closeModal));
+    }
+
+    private String layerPresetLabel(String preset)
+    {
+        for (String[] type : LAYER_TYPES)
+        {
+            if (type[0].equals(preset))
+            {
+                return type[1];
+            }
+        }
+
+        return preset;
+    }
+
+    /**
+     * Creates a layer from a preset name. Presets that are the same renderer with a different
+     * starting configuration (gradient / checker / grid / noise are solids with a generator
+     * effect, ellipse / star / polygon / path are shapes) map onto the small set of real types,
+     * so the renderer does not need a class per preset.
+     */
+    public void addLayer(String preset)
     {
         if (this.doc == null)
         {
             return;
         }
 
-        CompLayer layer = new CompLayer(type, switch (type)
+        String type = switch (preset)
         {
-            case "text" -> "Text";
-            case "shape" -> "Shape";
-            case "image" -> "Image";
-            case "footage" -> "Footage";
-            case "precomp" -> "Precomp";
-            case "null" -> "Null";
-            case "adjustment" -> "Adjustment";
-            default -> "Solid";
-        }, type);
+            case "gradient", "checker", "grid", "noise" -> "solid";
+            case "ellipse", "star", "polygon", "path" -> "shape";
+            default -> preset;
+        };
+        String name = switch (preset)
+        {
+            case "text" -> "文字";
+            case "shape" -> "矩形";
+            case "ellipse" -> "椭圆";
+            case "star" -> "星形";
+            case "polygon" -> "多边形";
+            case "path" -> "贝塞尔路径";
+            case "image" -> "图片";
+            case "footage" -> "图片序列";
+            case "precomp" -> "预合成";
+            case "null" -> "空对象";
+            case "adjustment" -> "调整层";
+            case "bbs" -> "BBS 预览";
+            case "camera" -> "摄像机";
+            case "panel" -> "HUD 面板";
+            case "bar" -> "进度条";
+            case "gradient" -> "渐变";
+            case "checker" -> "棋盘格";
+            case "grid" -> "网格";
+            case "noise" -> "分形杂色";
+            default -> "纯色";
+        };
+
+        CompLayer layer = new CompLayer(preset, name, type);
 
         layer.x = this.doc.width / 2F;
         layer.y = this.doc.height / 2F;
         layer.width = Math.min(640F, this.doc.width * 0.4F);
         layer.height = Math.min(360F, this.doc.height * 0.3F);
-        layer.out = this.doc.duration;
 
-        switch (type)
+        /* New layers start at the playhead (AE/PR behaviour). The initial duration is a project
+         * setting: 0 means "fill the rest of the composition". */
+        float frame = 1F / Math.max(1F, this.doc.fps);
+        float preferred = this.project != null && this.project.settings != null
+            ? Math.max(0F, this.project.settings.defaultLayerDuration) : 0F;
+        float start = Math.max(0F, Math.min(this.doc.duration - frame, Math.round(this.time / frame) * frame));
+
+        layer.in = start;
+        layer.out = preferred > 0F
+            ? Math.min(this.doc.duration, start + Math.max(frame, preferred))
+            : this.doc.duration;
+
+        if (layer.out <= layer.in)
+        {
+            layer.out = Math.min(this.doc.duration, layer.in + frame);
+        }
+
+        switch (preset)
         {
             case "text":
-                layer.text = "New Text";
+                layer.text = "新建文字";
                 layer.fontSize = 72F;
                 layer.color = 0xFFFFFFFF;
                 layer.width = 900F;
@@ -1237,6 +4330,51 @@ public class UICompositorPanel extends UIDashboardPanel
                 layer.width = 360F;
                 layer.height = 220F;
                 break;
+            case "ellipse":
+                layer.shapes.add(CompShape.ellipse("shape_1", 0F, 0F, 360F, 240F, 0xFF55AAFF));
+                layer.width = 360F;
+                layer.height = 240F;
+                break;
+            case "star":
+            {
+                CompShape star = new CompShape("shape_1", CompShape.STAR);
+
+                star.width = 320F;
+                star.height = 320F;
+                star.sides = 5;
+                star.innerRadius = 0.45F;
+                star.fillColor = 0xFFFFC14D;
+                layer.shapes.add(star);
+                layer.width = 320F;
+                layer.height = 320F;
+                break;
+            }
+            case "polygon":
+            {
+                CompShape polygon = new CompShape("shape_1", CompShape.POLYGON);
+
+                polygon.width = 320F;
+                polygon.height = 320F;
+                polygon.sides = 6;
+                polygon.fillColor = 0xFF55D68A;
+                layer.shapes.add(polygon);
+                layer.width = 320F;
+                layer.height = 320F;
+                break;
+            }
+            case "path":
+            {
+                CompShape path = new CompShape("shape_1", CompShape.PATH);
+
+                path.fillColor = 0xFF55D68A;
+                path.add(-140F, 90F);
+                path.add(0F, -120F);
+                path.add(140F, 90F);
+                layer.shapes.add(path);
+                layer.width = 300F;
+                layer.height = 240F;
+                break;
+            }
             case "image":
                 layer.imagePath = "assets/image.png";
                 layer.width = 480F;
@@ -1248,31 +4386,154 @@ public class UICompositorPanel extends UIDashboardPanel
                 layer.height = 270F;
                 break;
             case "precomp":
-                if (this.project.comps.size() > 1)
-                {
-                    CompDocument other = this.project.comps.get(0) == this.doc ? this.project.comps.get(1) : this.project.comps.get(0);
+            {
+                /* A precomp layer without a target renders nothing, which is exactly why the
+                 * old "预合成" button felt like a name-only feature. Always create a real,
+                 * empty composition and point the layer at it; the inspector can retarget it
+                 * to any other composition afterwards. */
+                int subIndex = this.project.comps.size() + 1;
+                CompDocument sub = this.project.addComp("precomp_" + subIndex,
+                    this.doc.width, this.doc.height, this.doc.fps, this.doc.duration);
 
-                    layer.precompId = other.id;
-                }
+                sub.name = "预合成 " + subIndex;
+                sub.workAreaOut = sub.duration;
+                layer.precompId = sub.id;
+                layer.name = sub.name;
                 layer.width = this.doc.width;
                 layer.height = this.doc.height;
                 break;
+            }
             case "adjustment":
+                /* Adjustment layers are comp-wide by definition: their effects run on the
+                 * accumulated image below them. A 640x324 default made them look broken. */
+                layer.width = this.doc.width;
+                layer.height = this.doc.height;
+                layer.name = "调整层";
                 layer.effects.add(CompEffectRegistry.create("vignette", 1));
                 break;
             case "null":
                 layer.width = 100F;
                 layer.height = 100F;
                 break;
+            case "bbs":
+                layer.width = this.doc.width;
+                layer.height = this.doc.height;
+                layer.imageFit = 0;
+                layer.name = "BBS 预览";
+                break;
+            case "camera":
+                layer.width = 100F;
+                layer.height = 100F;
+                layer.cameraTargetX = this.doc.width / 2F;
+                layer.cameraTargetY = this.doc.height / 2F;
+                layer.cameraZ = this.defaultCameraZ();
+                layer.z = layer.cameraZ;
+                layer.camera3D = true;
+                layer.threeD = true;
+                /* A new camera starts as a plain pan/zoom view. With look-at on and the target
+                 * sitting exactly on the camera, the first pan would rotate the frame 180°. */
+                layer.cameraLookAt = false;
+                layer.name = "摄像机";
+                break;
+            case "gradient":
+            {
+                layer.width = this.doc.width;
+                layer.height = this.doc.height;
+                layer.color = 0xFFFFFFFF;
+
+                CompEffect gradient = CompEffectRegistry.create("gradient_ramp", 1);
+
+                gradient.putColor("start", 0xFF2563EB);
+                gradient.putColor("end", 0xFFDB2777);
+                gradient.put("angle", 90D);
+                layer.effects.add(gradient);
+                break;
+            }
+            case "checker":
+            {
+                layer.width = this.doc.width;
+                layer.height = this.doc.height;
+                layer.color = 0xFFFFFFFF;
+
+                CompEffect checker = CompEffectRegistry.create("checkerboard", 1);
+
+                checker.putColor("a", 0xFF1E293B);
+                checker.putColor("b", 0xFF334155);
+                checker.put("size", 64D);
+                layer.effects.add(checker);
+                break;
+            }
+            case "grid":
+            {
+                layer.width = this.doc.width;
+                layer.height = this.doc.height;
+                layer.color = 0xFFFFFFFF;
+
+                CompEffect grid = CompEffectRegistry.create("grid", 1);
+
+                grid.putColor("color", 0x8055AAFF);
+                grid.put("size", 80D);
+                grid.put("thickness", 2D);
+                layer.effects.add(grid);
+                break;
+            }
+            case "noise":
+            {
+                layer.width = this.doc.width;
+                layer.height = this.doc.height;
+                layer.color = 0xFFFFFFFF;
+
+                CompEffect noise = CompEffectRegistry.create("noise_gradient", 1);
+
+                noise.putColor("start", 0xFF0F172A);
+                noise.putColor("end", 0xFF64748B);
+                noise.put("scale", 80D);
+                noise.put("contrast", 1.2D);
+                noise.put("seed", 7D);
+                layer.effects.add(noise);
+                break;
+            }
+            case "panel":
+                layer.color = 0xCC0E1218;
+                layer.width = 640F;
+                layer.height = 360F;
+                break;
+            case "bar":
+                layer.color = 0xFF55AAFF;
+                layer.fill = 0.65F;
+                layer.width = 420F;
+                layer.height = 24F;
+                break;
             default:
                 layer.color = 0xFF335577;
                 break;
         }
 
-        this.doc.addLayer(layer);
+        if ("bbs".equals(preset))
+        {
+            /* One BBS preview per comp, and it belongs at the bottom: it is the background the
+             * rest of the composition is drawn over. Appending it (the old behaviour) put a
+             * stale/black full-frame layer on top of everything. */
+            for (CompLayer existing : this.doc.layers)
+            {
+                if ("bbs".equals(existing.type))
+                {
+                    this.selectLayer(existing);
+                    this.setStatus("BBS 预览层已在最底层，直接拖动/裁剪它即可");
+                    return;
+                }
+            }
+
+            layer.id = CompStore.uniqueId("bbs_preview", this.doc.layers, (existing) -> existing.id);
+            this.doc.layers.add(0, layer);
+        }
+        else
+        {
+            this.doc.addLayer(layer);
+        }
+
         this.selectedLayer = layer;
         this.refreshLayers();
-        this.layers.setCurrent(layer);
         this.refreshInspector();
         this.refreshSheets();
         this.save();
@@ -1280,39 +4541,149 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void duplicateSelected()
     {
-        if (this.doc == null || this.selectedLayer == null)
-        {
-            return;
-        }
-
-        CompLayer copy = this.selectedLayer.duplicate();
-
-        copy.id = CompStore.uniqueId(this.selectedLayer.id + "_copy", this.doc.layers, (layer) -> layer.id);
-        copy.name = this.selectedLayer.name + " Copy";
-        copy.x += 24F;
-        copy.y += 24F;
-        this.doc.layers.add(copy);
-        this.selectedLayer = copy;
-        this.refreshLayers();
-        this.layers.setCurrent(copy);
-        this.refreshInspector();
-        this.refreshSheets();
-        this.save();
+        this.duplicateLayer(this.selectedLayer);
     }
 
     private void deleteSelected()
     {
-        if (this.doc == null || this.selectedLayer == null)
+        this.deleteLayer(this.selectedLayer);
+    }
+
+    /** Opens a precomp as the edited document, keeping a breadcrumb to return. */
+    public void enterPrecomp(CompLayer layer)
+    {
+        if (layer == null || this.project == null || this.doc == null)
         {
             return;
         }
 
-        this.doc.removeLayer(this.selectedLayer.id);
-        this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(0);
+        if (layer.precompId == null || layer.precompId.isEmpty())
+        {
+            this.setStatus("这个预合成图层还没有目标；先在图层检查器里选择或新建一个预合成");
+            return;
+        }
+
+        CompDocument sub = this.project.getComp(layer.precompId);
+
+        if (sub == null)
+        {
+            this.setStatus("预合成目标不存在；请选择或新建一个预合成");
+            return;
+        }
+
+        this.precompStack.push(new PrecompReturn(this.doc,
+            this.selectedLayer == null ? "" : this.selectedLayer.id, this.time));
+        this.doc = sub;
+        this.time = 0F;
+        this.selectedLayer = sub.layers.isEmpty() ? null : sub.layers.get(sub.layers.size() - 1);
+        this.precompBack.setVisible(true);
+        this.primedWidth = -1;
+        this.trackTimeline.fit();
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.refreshQueue();
+        this.updatePlayLabel();
+        dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+        this.setStatus("已进入预合成：" + sub.name);
+    }
+
+    public void exitPrecomp()
+    {
+        PrecompReturn state = this.precompStack.poll();
+
+        if (state == null)
+        {
+            return;
+        }
+
+        this.doc = state.doc;
+        this.time = state.time;
+        this.selectedLayer = state.layerId == null || state.layerId.isEmpty() ? null : this.doc.getLayer(state.layerId);
+
+        if (this.selectedLayer == null && !this.doc.layers.isEmpty())
+        {
+            this.selectedLayer = this.doc.layers.get(this.doc.layers.size() - 1);
+        }
+
+        this.precompBack.setVisible(!this.precompStack.isEmpty());
+        this.primedWidth = -1;
+        this.trackTimeline.fit();
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.refreshQueue();
+        this.updatePlayLabel();
+        dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+        this.setStatus("已返回：" + this.doc.name);
+    }
+
+    /**
+     * 3D workspace. The Minecraft frame is the stage: the BBS world already gives real 3D
+     * geometry, lighting and depth, so the compositor only has to add a perspective camera,
+     * 3D-projected layers and a ground grid. If the comp has no camera yet, one is created at
+     * the focal distance so the switch is non-destructive.
+     */
+    public void enter3DSpace()
+    {
+        if (this.doc == null || this.project == null)
+        {
+            return;
+        }
+
+        CompLayer camera = this.doc.activeCamera(this.time);
+
+        if (camera == null)
+        {
+            this.addLayer("camera");
+            camera = this.selectedLayer;
+        }
+
+        if (camera == null)
+        {
+            return;
+        }
+
+        this.doc.activeCameraId = camera.id;
+        this.cameraPreviewMode = true;
+        this.project.settings.cameraPreviewMode = true;
+        this.project.settings.previewBackground = 1;
+        this.project.settings.show3DGrid = true;
+        this.bbsBackdropToggle.setValue(true);
+        this.selectLayer(camera);
+        this.refreshInspector();
+        this.save();
+        this.setStatus("3D 空间：拖动摄像机平移，滚轮推拉，Alt+滚轮改视场；图层开启 3D 后才会跟随透视");
+    }
+
+    /**
+     * Comp-wide grade: an adjustment layer at the top of the stack with a neutral color_grade
+     * effect. It affects every layer below it (the renderer applies adjustment effects to the
+     * accumulation), which is what "调色整个合成" means without duplicating an effect per layer.
+     */
+    public void addGradeAdjustment()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        CompLayer adjustment = new CompLayer("adjustment", "调色调整层", "adjustment");
+
+        adjustment.x = this.doc.width / 2F;
+        adjustment.y = this.doc.height / 2F;
+        adjustment.width = this.doc.width;
+        adjustment.height = this.doc.height;
+        adjustment.in = 0F;
+        adjustment.out = this.doc.duration;
+        adjustment.effects.add(CompEffectRegistry.create("color_grade", 1));
+        this.doc.addLayer(adjustment);
+        this.selectedLayer = adjustment;
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
         this.save();
+        this.setStatus("已添加调色调整层：影响其下所有图层");
     }
 
     private void precomposeSelected()
@@ -1322,38 +4693,43 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        CompDocument sub = this.project.addComp("Precomp", this.doc.width, this.doc.height, this.doc.fps, this.doc.duration);
+        int subIndex = this.project.comps.size() + 1;
+        CompDocument sub = this.project.addComp("precomp_" + subIndex, this.doc.width, this.doc.height, this.doc.fps, this.doc.duration);
 
+        sub.name = "预合成 " + subIndex;
         sub.duration = this.doc.duration;
         sub.workAreaOut = this.doc.duration;
 
-        for (CompLayer layer : new ArrayList<>(this.doc.layers))
-        {
-            if (layer == this.selectedLayer || layer.solo)
-            {
-                CompLayer copy = layer.duplicate();
+        CompLayer source = this.selectedLayer;
+        float in = source.in;
+        float out = source.out;
 
-                copy.parentId = "";
-                sub.layers.add(copy);
-                this.doc.removeLayer(layer.id);
-            }
-        }
+        /* Move exactly the selected layer, like AE's "Pre-compose". The old code also grabbed
+         * every soloed layer and left the selection pointing at a layer that no longer existed. */
+        CompLayer copy = source.duplicate();
 
-        CompLayer precomp = new CompLayer("precomp", "Precomp " + sub.name, "precomp");
+        copy.parentId = "";
+        copy.trackMatteId = "";
+        sub.layers.add(copy);
+        this.doc.removeLayer(source.id);
+
+        CompLayer precomp = new CompLayer("precomp", "预合成 " + subIndex, "precomp");
 
         precomp.precompId = sub.id;
         precomp.x = this.doc.width / 2F;
         precomp.y = this.doc.height / 2F;
         precomp.width = this.doc.width;
         precomp.height = this.doc.height;
-        precomp.out = this.doc.duration;
+        precomp.in = in;
+        precomp.out = out > in ? out : this.doc.duration;
+        precomp.startTime = 0F;
         this.doc.addLayer(precomp);
         this.selectedLayer = precomp;
         this.refreshLayers();
-        this.layers.setCurrent(precomp);
         this.refreshInspector();
         this.refreshSheets();
         this.save();
+        this.setStatus("已预合成：" + copy.name + " → " + sub.name);
     }
 
     /* Inspector */
@@ -1362,6 +4738,7 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         this.buildingInspector = true;
         this.inspector.removeAll();
+        this.inspectorBindings.clear();
 
         if (this.doc == null)
         {
@@ -1372,17 +4749,12 @@ public class UICompositorPanel extends UIDashboardPanel
 
         switch (this.inspectorPage)
         {
-            case 0 ->
-            {
-                this.inspector.add(this.compSection());
-                this.inspector.add(this.markerSection());
-                this.inspector.add(this.parameterSection());
-            }
-            case 1 ->
+            case PAGE_EFFECTS -> this.addEffectControls();
+            case PAGE_GRADE -> this.inspector.add(this.gradeSection(this.selectedLayer));
+            case PAGE_LAYER ->
             {
                 this.inspector.add(this.layerSection());
                 this.inspector.add(this.bindingSection(this.selectedLayer));
-                this.inspector.add(this.styleSection(this.selectedLayer));
                 this.inspector.add(this.layerMarkerSection(this.selectedLayer));
                 this.inspector.add(this.animationPresetSection(this.selectedLayer));
 
@@ -1391,9 +4763,8 @@ public class UICompositorPanel extends UIDashboardPanel
                     this.inspector.add(this.shapeSection(this.selectedLayer));
                 }
             }
-            case 2 -> this.inspector.add(this.effectSection(this.selectedLayer));
-            case 3 -> this.inspector.add(this.maskSection(this.selectedLayer));
-            case 4 ->
+            case PAGE_MASK -> this.inspector.add(this.maskSection(this.selectedLayer));
+            case PAGE_TEXT ->
             {
                 if (this.selectedLayer != null && "text".equals(this.selectedLayer.type))
                 {
@@ -1402,23 +4773,905 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
                 else
                 {
-                    UISection hint = new UISection(IKey.constant("Text"));
-
-                    hint.fields.add(UI.label(IKey.constant("Select a text layer to edit typography."), 16));
-                    this.inspector.add(hint);
+                    this.inspector.add(this.emptySelectionSection("文字", "选中文字轨道后可编辑排版。"));
                 }
             }
-            case 5 -> this.inspector.add(this.outputPresetSection());
-            default -> this.inspector.add(this.compSection());
+            case PAGE_COMP ->
+            {
+                this.inspector.add(this.compSection());
+                this.inspector.add(this.markerSection());
+                this.inspector.add(this.parameterSection());
+            }
+            case PAGE_OUTPUT -> this.inspector.add(this.outputPresetSection());
+            default -> this.addEffectControls();
         }
 
         this.inspector.resize();
         this.buildingInspector = false;
+        this.lastInspectorTime = this.time;
+        this.updateToolbarLabels();
+    }
+
+    private UISection emptySelectionSection(String title, String hint)
+    {
+        UISection section = new UISection(IKey.constant(title));
+
+        section.fields.add(UI.label(IKey.constant(hint), 16));
+        section.fields.add(new UIButton(IKey.constant("选择最上层轨道"), (button) ->
+        {
+            if (this.doc != null && !this.doc.layers.isEmpty())
+            {
+                this.selectLayer(this.doc.layers.get(this.doc.layers.size() - 1));
+            }
+        }));
+
+        return section;
+    }
+
+    private void addEffectControls()
+    {
+        CompLayer layer = this.selectedLayer;
+
+        if (layer == null)
+        {
+            this.inspector.add(this.quickStartSection());
+            return;
+        }
+
+        this.inspector.add(this.fragmentSection(layer));
+
+        if ("camera".equals(layer.type))
+        {
+            this.inspector.add(this.cameraSection(layer));
+            return;
+        }
+
+        if ("adjustment".equals(layer.type))
+        {
+            int below = this.doc == null ? 0 : Math.max(0, this.doc.indexOfLayer(layer.id));
+
+            this.inspector.add(UI.label(IKey.constant("调整层：下面的 " + below + " 个图层会被本层效果处理；本层自身不产生像素。"), 14));
+        }
+
+        this.inspector.add(this.motionSection(layer));
+        this.inspector.add(this.motionTemplateSection(layer));
+        this.inspector.add(this.opacitySection(layer));
+        this.inspector.add(this.effectHeaderSection(layer));
+
+        for (CompEffect effect : layer.effects)
+        {
+            this.inspector.add(this.effectControlSection(layer, effect));
+        }
+
+        this.inspector.add(this.styleHeaderSection(layer));
+
+        for (CompStyle style : layer.styles)
+        {
+            this.inspector.add(this.styleControlSection(layer, style));
+        }
+    }
+
+    private void applyPreviewBarState()
+    {
+        if (this.previewBar == null || this.effectsToggle == null)
+        {
+            return;
+        }
+
+        boolean collapsed = this.previewControlsCollapsed;
+
+        this.previewBar.w(collapsed ? 24 : 200);
+        this.effectsToggle.setVisible(!collapsed);
+        this.masksToggle.setVisible(!collapsed);
+        this.bbsBackdropToggle.setVisible(!collapsed);
+        this.previewCollapse.relative(this.previewBar).x(collapsed ? 2 : 176).y(1).w(20).h(18);
+        this.previewBar.resize();
+    }
+
+    private UISection quickStartSection()
+    {
+        UISection section = new UISection(IKey.constant("快速开始"));
+
+        section.fields.add(UI.label(IKey.constant("① 添加或选择一条轨道"), 16));
+        section.fields.add(UI.label(IKey.constant("② 在右侧调整运动、不透明度和效果"), 14));
+        section.fields.add(UI.label(IKey.constant("③ 在底部时间轴拖动或裁剪片段"), 14));
+        section.fields.add(UI.label(IKey.constant("不确定怎么操作？点时间轴右端的 ? 看快捷键。"), 14));
+
+        section.fields.add(new UIButton(IKey.constant("＋ 新建形状"), (button) -> this.addLayer("shape")));
+        section.fields.add(new UIButton(IKey.constant("＋ 添加 BBS 预览层"), (button) -> this.addLayer("bbs")));
+        section.fields.add(new UIButton(IKey.constant("＋ 添加空对象"), (button) -> this.addLayer("null")));
+        section.fields.add(new UIButton(IKey.constant("打开效果库"), (button) -> this.focusEffectLibrary()));
+
+        if (this.doc != null && !this.doc.layers.isEmpty())
+        {
+            section.fields.add(this.smallButton("选择最上层轨道", () -> this.selectLayer(this.doc.layers.get(this.doc.layers.size() - 1))));
+        }
+
+        return section;
+    }
+
+    private UISection fragmentSection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("片段"));
+
+        section.remember(this.sectionFolds, "fragment", false);
+        section.fields.add(UI.label(IKey.constant(this.layerLabel(layer) + "  ·  " + layer.type), 16));
+
+        float frame = 1F / Math.max(1F, this.doc.fps);
+        float max = this.doc.duration;
+
+        /* Direct numeric editing. Dragging the bar edges is fast, but "make this exactly 3 s"
+         * was previously impossible without arithmetic on the ruler. */
+        section.fields.add(this.numberRow("入点（秒）", layer.in, 0F, max, false, (value) ->
+        {
+            layer.trimInTo((float) Math.max(0D, Math.min(layer.out - frame, value)), this.doc.fps);
+            this.commitLayerTiming();
+        }));
+        section.fields.add(this.numberRow("出点（秒）", layer.out, 0, max, false, (value) ->
+        {
+            layer.trimOutTo((float) Math.max(layer.in + frame, Math.min(max, value)), this.doc.fps, max);
+            this.commitLayerTiming();
+        }));
+        section.fields.add(this.numberRow("时长（秒）", Math.max(frame, layer.out - layer.in), frame, max, false, (value) ->
+        {
+            float duration = Math.max(frame, (float) value.doubleValue());
+
+            layer.trimOutTo(Math.min(max, layer.in + duration), this.doc.fps, max);
+            this.commitLayerTiming();
+        }));
+
+        UIElement quick = new UIElement();
+
+        quick.w(1F).h(18);
+
+        String[] labels = {"1s", "2s", "5s", "整段"};
+        float[] durations = {1F, 2F, 5F, -1F};
+
+        for (int i = 0; i < labels.length; i++)
+        {
+            final float duration = durations[i];
+            UIButton button = new UIButton(IKey.constant(labels[i]), (b) ->
+            {
+                if (duration < 0F)
+                {
+                    layer.trimInTo(0F, this.doc.fps);
+                    layer.trimOutTo(this.doc.duration, this.doc.fps, this.doc.duration);
+                }
+                else
+                {
+                    layer.trimOutTo(Math.min(this.doc.duration, layer.in + duration), this.doc.fps, this.doc.duration);
+                }
+
+                this.commitLayerTiming();
+            });
+
+            button.relative(quick).x(i / 4F, 1).y(0).w(1F / 4F, -4).h(18);
+            button.tooltip(IKey.constant(duration < 0F ? "让片段铺满整个合成" : "把时长设为 " + labels[i]));
+            quick.add(button);
+        }
+
+        section.fields.add(quick);
+
+        UIButton toIn = this.smallButton("入点=播放头", () ->
+        {
+            layer.trimInTo(this.time, this.doc.fps);
+            this.commitLayerTiming();
+        });
+        UIButton toOut = this.smallButton("出点=播放头", () ->
+        {
+            layer.trimOutTo(this.time, this.doc.fps, this.doc.duration);
+            this.commitLayerTiming();
+        });
+        UIButton jump = this.smallButton("跳到入点", () ->
+        {
+            this.setFrame(Math.round(layer.in * Math.max(1F, this.doc.fps)));
+            this.trackTimeline.revealTime(layer.in);
+        });
+        UIButton duplicate = this.smallButton("复制", () -> this.duplicateLayer(layer));
+        UIButton delete = this.smallButton("删除", () -> this.deleteLayer(layer));
+
+        UIElement row2 = new UIElement();
+
+        row2.w(1F).h(18);
+        toIn.relative(row2).x(0).y(0).w(0.5F, -2).h(18);
+        toOut.relative(row2).x(0.5F, 2).y(0).w(0.5F, -4).h(18);
+        row2.add(toIn, toOut);
+
+        UIElement row3 = new UIElement();
+
+        row3.w(1F).h(18);
+        jump.relative(row3).x(0).y(0).w(1F / 3F, -2).h(18);
+        duplicate.relative(row3).x(1F / 3F, 1).y(0).w(1F / 3F, -3).h(18);
+        delete.relative(row3).x(2F / 3F, 2).y(0).w(1F / 3F, -4).h(18);
+        row3.add(jump, duplicate, delete);
+
+        section.fields.add(row2);
+        section.fields.add(row3);
+
+        return section;
+    }
+
+    private UISection motionSection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("运动"));
+
+        section.remember(this.sectionFolds, "motion", true);
+
+        Transform transform = layer.transformAt(this.getFrame());
+
+        section.fields.add(this.animatedNumberRow("位置 X", layer, "x", transform.translate.x, (value) -> this.setTransformX(value)));
+        section.fields.add(this.animatedNumberRow("位置 Y", layer, "y", transform.translate.y, (value) -> this.setTransformY(value)));
+        section.fields.add(this.animatedNumberRow("缩放 X", layer, "scaleX", transform.scale.x, (value) -> this.setTransformScaleX(value)));
+        section.fields.add(this.animatedNumberRow("缩放 Y", layer, "scaleY", transform.scale.y, (value) -> this.setTransformScaleY(value)));
+        section.fields.add(this.animatedNumberRow("挤压 / 拉伸", layer, "squash", layer.scalarAt("squash", layer.squash, this.getFrame()), (value) ->
+        {
+            layer.squash = Math.max(-0.9F, Math.min(0.9F, value.floatValue()));
+            this.setScalar(layer, "squash", layer.squash);
+        }, -0.9F, 0.9F));
+        section.fields.add(this.animatedNumberRow("旋转", layer, "rotation", transform.rotate.z, (value) -> this.setTransformRotation(value)));
+
+        UIToggle threeD = new UIToggle(IKey.constant("3D 图层（跟随摄像机）"), layer.threeD, (toggle) ->
+        {
+            layer.threeD = toggle.getValue();
+
+            if (layer.threeD && "camera".equals(layer.type))
+            {
+                layer.camera3D = true;
+            }
+
+            this.refreshInspector();
+            this.save();
+        });
+        section.fields.add(threeD);
+
+        if (layer.threeD)
+        {
+            section.fields.add(this.animatedNumberRow("Z 深度", layer, "z", layer.scalarAt("z", layer.z, this.getFrame()), (value) ->
+            {
+                layer.z = value.floatValue();
+                this.setScalar(layer, "z", layer.z);
+            }, -100000F, 100000F));
+            section.fields.add(this.animatedNumberRow("旋转 X", layer, "rotationX", layer.scalarAt("rotationX", layer.rotationX, this.getFrame()), (value) ->
+            {
+                layer.rotationX = value.floatValue();
+                this.setScalar(layer, "rotationX", layer.rotationX);
+            }, -720F, 720F));
+            section.fields.add(this.animatedNumberRow("旋转 Y", layer, "rotationY", layer.scalarAt("rotationY", layer.rotationY, this.getFrame()), (value) ->
+            {
+                layer.rotationY = value.floatValue();
+                this.setScalar(layer, "rotationY", layer.rotationY);
+            }, -720F, 720F));
+            section.fields.add(this.animatedNumberRow("缩放 Z", layer, "scaleZ", layer.scalarAt("scaleZ", layer.scaleZ, this.getFrame()), (value) ->
+            {
+                layer.scaleZ = value.floatValue();
+                this.setScalar(layer, "scaleZ", layer.scaleZ);
+            }, 0.01F, 100F));
+        }
+        section.fields.add(this.numberRow("锚点 X", layer.anchorX, 0F, 1F, false, (value) -> layer.anchorX = value.floatValue()));
+        section.fields.add(this.numberRow("锚点 Y", layer.anchorY, 0F, 1F, false, (value) -> layer.anchorY = value.floatValue()));
+        section.fields.add(this.smallButton("重置变换", () ->
+        {
+            layer.x = this.doc.width / 2F;
+            layer.y = this.doc.height / 2F;
+            layer.rotation = 0F;
+            layer.scaleX = 1F;
+            layer.scaleY = 1F;
+            this.refreshInspector();
+            this.save();
+        }));
+
+        return section;
+    }
+
+    /**
+     * One-click motion presets. They write transform/opacity keys at the layer's in point, so a
+     * preset still fits after the clip is moved or trimmed. Content and effects are untouched.
+     */
+    private UISection motionTemplateSection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("运动模板"));
+
+        section.remember(this.sectionFolds, "motion_templates", true);
+        section.fields.add(UI.label(IKey.constant("在片段入点写入关键帧；可再手动微调。"), 13));
+
+        List<CompMotion.Template> templates = CompMotion.all();
+        int rows = (templates.size() + 2) / 3;
+
+        UIElement grid = new UIElement();
+
+        grid.w(1F).h(rows * 22);
+
+        for (int i = 0; i < templates.size(); i++)
+        {
+            CompMotion.Template template = templates.get(i);
+            UIButton button = new UIButton(IKey.constant(template.name), (b) ->
+            {
+                if (CompMotion.apply(layer, this.doc, template.id))
+                {
+                    this.openKeyframes();
+                    this.onTrackEdited();
+                    this.refreshInspector();
+                    this.setStatus("已应用运动模板：" + template.name);
+                }
+                else
+                {
+                    this.setStatus("片段时长为 0，无法写入运动关键帧");
+                }
+            });
+
+            button.relative(grid).x((i % 3) / 3F, 1).y((i / 3) * 22).w(1F / 3F, -4).h(20);
+            button.tooltip(IKey.constant(template.description));
+            grid.add(button);
+        }
+
+        section.fields.add(grid);
+
+        return section;
+    }
+
+    private UISection cameraSection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("摄像机"));
+
+        section.remember(this.sectionFolds, "camera", true);
+
+        mchorse.bbs_mod.utils.pose.Transform transform = layer.transformAt(this.getFrame());
+        float targetX = layer.scalarAt("cameraTargetX", layer.cameraTargetX, this.getFrame());
+        float targetY = layer.scalarAt("cameraTargetY", layer.cameraTargetY, this.getFrame());
+
+        UIToggle threeD = new UIToggle(IKey.constant("3D 摄像机（透视投影）"), layer.camera3D, (toggle) ->
+        {
+            layer.camera3D = toggle.getValue();
+
+            if (layer.camera3D)
+            {
+                layer.threeD = true;
+
+                if (Math.abs(layer.z) < 0.001F)
+                {
+                    layer.z = this.defaultCameraZ();
+                }
+            }
+
+            this.refreshInspector();
+            this.save();
+        });
+        section.fields.add(threeD);
+
+        section.fields.add(this.animatedNumberRow("位置 X", layer, "x", transform.translate.x, this::setTransformX, -100000F, 100000F));
+        section.fields.add(this.animatedNumberRow("位置 Y", layer, "y", transform.translate.y, this::setTransformY, -100000F, 100000F));
+        section.fields.add(this.animatedNumberRow("目标 X", layer, "cameraTargetX", targetX, (value) ->
+        {
+            layer.cameraTargetX = value.floatValue();
+            this.setScalar(layer, "cameraTargetX", value.floatValue());
+        }, -100000F, 100000F));
+        section.fields.add(this.animatedNumberRow("目标 Y", layer, "cameraTargetY", targetY, (value) ->
+        {
+            layer.cameraTargetY = value.floatValue();
+            this.setScalar(layer, "cameraTargetY", value.floatValue());
+        }, -100000F, 100000F));
+
+        if (layer.camera3D)
+        {
+            float defaultZ = Math.abs(layer.cameraZ) < 0.001F ? layer.z : layer.cameraZ;
+
+            section.fields.add(this.animatedNumberRow("摄像机 Z", layer, "cameraZ", layer.scalarAt("cameraZ", defaultZ, this.getFrame()), (value) ->
+            {
+                layer.cameraZ = value.floatValue();
+                layer.z = layer.cameraZ;
+                this.setScalar(layer, "cameraZ", layer.cameraZ);
+            }, -100000F, 100000F));
+            section.fields.add(this.animatedNumberRow("目标 Z", layer, "cameraTargetZ", layer.scalarAt("cameraTargetZ", layer.cameraTargetZ, this.getFrame()), (value) ->
+            {
+                layer.cameraTargetZ = value.floatValue();
+                this.setScalar(layer, "cameraTargetZ", layer.cameraTargetZ);
+            }, -100000F, 100000F));
+            section.fields.add(this.animatedNumberRow("视场 FOV", layer, "cameraFov", layer.scalarAt("cameraFov", layer.cameraFov, this.getFrame()), (value) ->
+            {
+                layer.cameraFov = Math.max(1F, Math.min(179F, value.floatValue()));
+                this.setScalar(layer, "cameraFov", layer.cameraFov);
+            }, 1F, 179F));
+            section.fields.add(this.animatedNumberRow("俯仰 X", layer, "rotationX", layer.scalarAt("rotationX", layer.rotationX, this.getFrame()), (value) ->
+            {
+                layer.rotationX = value.floatValue();
+                this.setScalar(layer, "rotationX", layer.rotationX);
+            }, -180F, 180F));
+            section.fields.add(this.animatedNumberRow("偏航 Y", layer, "rotationY", layer.scalarAt("rotationY", layer.rotationY, this.getFrame()), (value) ->
+            {
+                layer.rotationY = value.floatValue();
+                this.setScalar(layer, "rotationY", layer.rotationY);
+            }, -180F, 180F));
+            section.fields.add(this.numberRow("近裁剪", layer.cameraNear, 0.1F, 10000F, false, (value) -> layer.cameraNear = Math.max(0.1F, value.floatValue())));
+            section.fields.add(this.numberRow("远裁剪", layer.cameraFar, 100F, 1000000F, false, (value) -> layer.cameraFar = Math.max(layer.cameraNear + 1F, value.floatValue())));
+            section.fields.add(new UIButton(IKey.constant(this.cameraPreviewMode ? "退出摄像机视图" : "进入摄像机视图"), (button) ->
+            {
+                this.cameraPreviewMode = !this.cameraPreviewMode;
+                this.doc.activeCameraId = layer.id;
+                this.refreshInspector();
+                this.save();
+                this.setStatus(this.cameraPreviewMode ? "摄像机视图：3D 图层按该摄像机透视渲染" : "编辑视图：3D 图层使用默认正面视角");
+            }));
+            section.fields.add(new UIButton(IKey.constant("进入 3D 空间（世界底图 + 网格）"), (button) -> this.enter3DSpace()));
+            section.fields.add(UI.label(IKey.constant("提示：2D 图层始终贴在屏幕上；只有开启 3D 的图层会跟随摄像机。"), 13));
+        }
+
+        section.fields.add(this.animatedNumberRow("缩放", layer, "scaleX", transform.scale.x, (value) ->
+        {
+            /* Cameras zoom uniformly: keep both channels in sync so the value follows whichever
+             * one a future tool reads. */
+            this.setTransformScaleX(value);
+            this.setTransformScaleY(value);
+        }, 0.01F, 20F));
+        section.fields.add(this.animatedNumberRow("旋转", layer, "rotation", transform.rotate.z, this::setTransformRotation, -360F, 360F));
+
+        UIToggle lookAt = new UIToggle(IKey.constant("看向目标"), layer.cameraLookAt, (toggle) ->
+        {
+            layer.cameraLookAt = toggle.getValue();
+            this.save();
+        });
+        section.fields.add(lookAt);
+
+        section.fields.add(this.smallButton("重置摄像机", () ->
+        {
+            layer.x = this.doc.width / 2F;
+            layer.y = this.doc.height / 2F;
+            layer.scaleX = 1F;
+            layer.scaleY = 1F;
+            layer.rotation = 0F;
+            layer.cameraTargetX = this.doc.width / 2F;
+            layer.cameraTargetY = this.doc.height / 2F;
+            layer.cameraLookAt = false;
+            this.refreshInspector();
+            this.save();
+        }));
+
+        UIButton active = new UIButton(IKey.constant(this.doc.activeCameraId.equals(layer.id) ? "当前活动摄像机" : "设为活动摄像机"), (button) ->
+        {
+            this.doc.activeCameraId = layer.id;
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已切换到摄像机：" + this.layerLabel(layer));
+        });
+        section.fields.add(active);
+
+        if (!this.doc.activeCameraId.isEmpty())
+        {
+            section.fields.add(this.smallButton("自动选择摄像机（最上层）", () ->
+            {
+                this.doc.activeCameraId = "";
+                this.refreshInspector();
+                this.save();
+            }));
+        }
+
+        section.fields.add(this.smallButton("重置摄像机", () ->
+        {
+            layer.x = this.doc.width / 2F;
+            layer.y = this.doc.height / 2F;
+            layer.rotation = 0F;
+            layer.scaleX = 1F;
+            layer.scaleY = 1F;
+            layer.cameraTargetX = this.doc.width / 2F;
+            layer.cameraTargetY = this.doc.height / 2F;
+            this.refreshInspector();
+            this.save();
+        }));
+
+        return section;
+    }
+
+    private UISection opacitySection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("不透明度"));
+
+        section.remember(this.sectionFolds, "opacity", true);
+        section.fields.add(this.animatedSliderRow("不透明度", layer, "opacity", layer.opacityFrame(this.getFrame()), (value) -> this.setOpacity(layer, value.floatValue()), 0F, 1F));
+
+        /* A dropdown instead of a click-to-cycle button: 13 modes are impossible to aim at by
+         * clicking through them, and the user needs to see what the modes are called. */
+        java.util.List<Integer> blendModes = new java.util.ArrayList<>();
+
+        for (int i = 0; i < 13; i++)
+        {
+            blendModes.add(i);
+        }
+
+        UIChoiceButton<Integer> blend = new UIChoiceButton<>(blendModes, (mode) -> Icons.NONE, (mode) -> IKey.constant(blendName(mode)));
+
+        blend.setValue(layer.blendMode);
+        blend.callback((mode) ->
+        {
+            layer.blendMode = mode;
+            this.save();
+        });
+
+        section.fields.add(this.fieldRow("混合模式", blend));
+
+        return section;
+    }
+
+    private UISection effectHeaderSection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("效果"));
+
+        section.remember(this.sectionFolds, "effects", true);
+        section.fields.add(UI.label(IKey.constant("已应用 " + layer.effects.size() + " 个效果，按从上到下顺序渲染。"), 16));
+        section.fields.add(new UIButton(IKey.constant("打开效果库（添加）"), (button) -> this.focusEffectLibrary()));
+
+        return section;
+    }
+
+    private CompEffect findEffect(CompLayer layer, String type)
+    {
+        if (layer == null)
+        {
+            return null;
+        }
+
+        for (CompEffect effect : layer.effects)
+        {
+            if (effect != null && type.equals(effect.type))
+            {
+                return effect;
+            }
+        }
+
+        return null;
+    }
+
+    private UIElement gradeRow(CompLayer layer, CompEffect effect, String label, String key, float min, float max)
+    {
+        String path = CompLayer.effectPath(effect.id, key);
+        float fallback = effect.valueF(key, "saturation".equals(key) ? 1F : 0F);
+
+        fallback = layer.scalarAt(path, fallback, this.getFrame());
+
+        return this.animatedNumberRow(label, layer, path, fallback, (value) -> effect.put(key, value), min, max);
+    }
+
+    private static final String[] CURVE_KEYS = {
+        "curve_black", "curve_shadow", "curve_mid", "curve_highlight", "curve_white"
+    };
+
+    private static final String[] CURVE_LABELS = {"黑", "阴影", "中间调", "高光", "白"};
+
+    /**
+     * Graphical grade page: three colour wheels (lift / gamma / gain), a master tone curve and the
+     * numeric controls below. Values live on a real {@code color_grade} effect, so the grade sits
+     * in the normal effect stack and can be reordered or keyframed like every other effect.
+     */
+    private UISection gradeSection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("调色"));
+
+        if (layer == null)
+        {
+            section.fields.add(UI.label(IKey.constant("选中一条轨道后添加调色效果。"), 14));
+            section.fields.add(new UIButton(IKey.constant("＋ 为整个合成添加调色调整层"), (button) -> this.addGradeAdjustment()));
+            section.fields.add(UI.label(IKey.constant("调整层只影响它下面的所有图层，等价于 AE 的调整图层。"), 13));
+            section.fields.add(new UIButton(IKey.constant("选择最上层轨道"), (button) ->
+            {
+                if (this.doc != null && !this.doc.layers.isEmpty())
+                {
+                    this.selectLayer(this.doc.layers.get(this.doc.layers.size() - 1));
+                }
+            }));
+
+            return section;
+        }
+
+        CompEffect grade = this.findEffect(layer, "color_grade");
+
+        if (grade == null)
+        {
+            section.fields.add(UI.label(IKey.constant("三段色轮 + 主曲线 + 曝光/对比度/饱和度/色温。参数都能打关键帧。"), 14));
+            section.fields.add(new UIButton(IKey.constant("＋ 添加调色效果"), (button) ->
+            {
+                layer.effects.add(CompEffectRegistry.create("color_grade", layer.effects.size() + 1));
+                this.refreshInspector();
+                this.save();
+            }));
+
+            return section;
+        }
+
+        section.fields.add(UI.label(IKey.constant("色轮中心为中性；拖出色彩，下方滑条调亮度。"), 13));
+        section.fields.add(this.gradeWheels(grade));
+        section.fields.add(UI.label(IKey.constant("主曲线（横轴：输入亮度　纵轴：输出亮度）"), 13));
+        section.fields.add(this.gradeCurve(grade));
+        section.fields.add(this.gradePresetRow(layer, grade));
+
+        section.fields.add(this.gradeRow(layer, grade, "曝光", "exposure", -3F, 3F));
+        section.fields.add(this.gradeRow(layer, grade, "对比度", "contrast", -1F, 1F));
+        section.fields.add(this.gradeRow(layer, grade, "饱和度", "saturation", 0F, 2F));
+        section.fields.add(this.gradeRow(layer, grade, "自然饱和度", "vibrance", -1F, 1F));
+        section.fields.add(this.gradeRow(layer, grade, "色温", "temperature", -1F, 1F));
+        section.fields.add(this.gradeRow(layer, grade, "色调", "tint", -1F, 1F));
+        section.fields.add(this.gradeRow(layer, grade, "色相旋转", "hue", -180F, 180F));
+        section.fields.add(this.gradeRow(layer, grade, "褪色 / 胶片", "fade", 0F, 1F));
+
+        section.fields.add(this.smallButton("重置调色", () ->
+        {
+            applyGradePreset(grade, "neutral");
+            this.refreshInspector();
+            this.save();
+        }));
+        section.fields.add(this.smallButton("移除调色", () ->
+        {
+            layer.effects.remove(grade);
+            this.refreshInspector();
+            this.save();
+        }));
+
+        return section;
+    }
+
+    private UIElement gradeWheels(CompEffect grade)
+    {
+        UIElement row = new UIElement();
+
+        row.w(1F).h(116);
+
+        String[] labels = {"阴影 Lift", "中间调 Gamma", "高光 Gain"};
+        String[] keys = {"lift", "gamma", "gain"};
+
+        for (int i = 0; i < 3; i++)
+        {
+            final String key = keys[i];
+            UIColorWheel wheel = new UIColorWheel(labels[i], grade.color(key, 0xFF808080), (value) ->
+                grade.putColor(key, value)).commit(this::save);
+
+            wheel.relative(row).x(i / 3F, i == 0 ? 0 : 2).y(0).w(1F / 3F, -6).h(116);
+            row.add(wheel);
+        }
+
+        return row;
+    }
+
+    private UIElement gradeCurve(CompEffect grade)
+    {
+        float[] values = new float[CURVE_KEYS.length];
+
+        for (int i = 0; i < CURVE_KEYS.length; i++)
+        {
+            values[i] = grade.valueF(CURVE_KEYS[i], 0F);
+        }
+
+        UICurveEditor curve = new UICurveEditor(values, (index, value) ->
+        {
+            grade.put(CURVE_KEYS[index], value.doubleValue());
+        }, this::save);
+
+        curve.w(1F).h(112);
+
+        return curve;
+    }
+
+    private UIElement gradePresetRow(CompLayer layer, CompEffect grade)
+    {
+        UIElement row = new UIElement();
+
+        row.w(1F).h(18);
+
+        String[] labels = {"中性", "电影", "暖阳", "冷峻", "黑白"};
+        String[] ids = {"neutral", "cinematic", "warm", "cool", "mono"};
+
+        for (int i = 0; i < labels.length; i++)
+        {
+            final String id = ids[i];
+            UIButton button = new UIButton(IKey.constant(labels[i]), (b) ->
+            {
+                applyGradePreset(grade, id);
+                this.refreshInspector();
+                this.save();
+            });
+
+            button.relative(row).x(i / 5F, 1).y(0).w(1F / 5F, -4).h(18);
+            button.tooltip(IKey.constant("应用调色预设：" + labels[i]));
+            row.add(button);
+        }
+
+        return row;
+    }
+
+    private static void applyGradePreset(CompEffect grade, String id)
+    {
+        grade.put("exposure", 0D).put("contrast", 0D).put("saturation", 1D)
+            .put("vibrance", 0D).put("temperature", 0D).put("tint", 0D)
+            .put("hue", 0D).put("fade", 0D);
+        grade.putColor("lift", 0xFF808080).putColor("gamma", 0xFF808080).putColor("gain", 0xFF808080);
+
+        for (String key : CURVE_KEYS)
+        {
+            grade.put(key, 0D);
+        }
+
+        switch (id)
+        {
+            case "cinematic" ->
+            {
+                grade.putColor("lift", 0xFF74808F).putColor("gain", 0xFFFFE2C0);
+                grade.put("contrast", 0.12D).put("saturation", 1.06D).put("temperature", 0.06D);
+                grade.put("curve_shadow", -0.03D).put("curve_highlight", 0.04D);
+            }
+            case "warm" ->
+            {
+                grade.putColor("lift", 0xFF8A7B6C).putColor("gain", 0xFFFFD7A6);
+                grade.put("temperature", 0.18D).put("saturation", 1.08D);
+            }
+            case "cool" ->
+            {
+                grade.putColor("lift", 0xFF6C7C90).putColor("gain", 0xFFC6DAFF);
+                grade.put("temperature", -0.16D).put("saturation", 0.92D).put("contrast", 0.08D);
+            }
+            case "mono" ->
+            {
+                grade.put("saturation", 0D).put("contrast", 0.16D);
+                grade.put("curve_shadow", -0.02D).put("curve_highlight", 0.03D);
+            }
+            default ->
+            {}
+        }
+    }
+
+    private UISection effectControlSection(CompLayer layer, CompEffect effect)
+    {
+        CompEffectRegistry.Definition definition = CompEffectRegistry.get(effect.type);
+        String name = definition == null ? effect.type : definition.name;
+        int index = layer.effects.indexOf(effect) + 1;
+        UISection section = new UISection(IKey.constant(index + ". " + name));
+
+        section.remember(this.sectionFolds, "fx:" + effect.id, true);
+
+        UIToggle enabled = new UIToggle(IKey.constant("启用"), effect.enabled, (toggle) ->
+        {
+            effect.enabled = toggle.getValue();
+            this.save();
+        });
+        UIIcon up = new UIIcon(Icons.MOVE_UP, (icon) -> this.moveEffect(layer, effect, -1));
+        UIIcon down = new UIIcon(Icons.MOVE_DOWN, (icon) -> this.moveEffect(layer, effect, 1));
+        UIIcon remove = new UIIcon(Icons.TRASH, (icon) ->
+        {
+            layer.effects.remove(effect);
+            this.refreshInspector();
+            this.save();
+        });
+
+        UIElement controls = new UIElement();
+
+        controls.w(1F).h(18);
+        enabled.relative(controls).x(0).y(1).w(Math.max(46, 64)).h(16);
+        up.relative(controls).x(1F, -56).y(1).w(16).h(16);
+        down.relative(controls).x(1F, -38).y(1).w(16).h(16);
+        remove.relative(controls).x(1F, -20).y(1).w(16).h(16);
+        controls.add(enabled, up, down, remove);
+        section.fields.add(controls);
+
+        if (definition == null)
+        {
+            section.fields.add(UI.label(IKey.constant("未知效果：" + effect.type), 16));
+            return section;
+        }
+
+        if (definition.params.isEmpty() && definition.colorParams.isEmpty())
+        {
+            section.fields.add(UI.label(IKey.constant("这个效果没有可调参数。"), 16));
+        }
+
+        if (effect.type != null && effect.type.startsWith("depth_"))
+        {
+            section.fields.add(UI.label(IKey.constant("提示：深度类效果需要影片深度通道；纯合成预览没有真实世界深度，可能看不到变化。"), 13));
+        }
+        else if ("brightness_contrast".equals(effect.type) || "hue_saturation".equals(effect.type)
+            || "exposure".equals(effect.type) || "levels".equals(effect.type) || "curves".equals(effect.type))
+        {
+            section.fields.add(UI.label(IKey.constant("提示：这些是中性校正效果，参数为 0 时画面不变；拖动滑块或打关键帧后才可见。"), 13));
+        }
+
+        for (CompEffectRegistry.Param param : definition.params)
+        {
+            float fallback = (float) effect.value(param.key, param.defaultValue);
+            String path = CompLayer.effectPath(effect.id, param.key);
+
+            fallback = layer.scalarAt(path, fallback, this.getFrame());
+            section.fields.add(this.animatedNumberRow(param.label, layer, path, fallback, (value) -> effect.put(param.key, value), param.min, param.max));
+        }
+
+        for (CompEffectRegistry.ColorParam param : definition.colorParams)
+        {
+            int color = effect.color(param.key, param.defaultValue);
+
+            section.fields.add(this.colorRow(param.label, color, (value) ->
+            {
+                effect.putColor(param.key, value);
+                this.save();
+            }));
+        }
+
+        return section;
+    }
+
+    private void moveEffect(CompLayer layer, CompEffect effect, int direction)
+    {
+        int index = layer.effects.indexOf(effect);
+        int target = Math.max(0, Math.min(layer.effects.size() - 1, index + direction));
+
+        if (index < 0 || target == index)
+        {
+            return;
+        }
+
+        layer.effects.remove(index);
+        layer.effects.add(target, effect);
+        this.refreshInspector();
+        this.save();
+    }
+
+    private UISection styleHeaderSection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("图层样式"));
+
+        section.remember(this.sectionFolds, "styles", false);
+
+        UIButton add = new UIButton(IKey.constant("添加样式（右键）"), (button) -> {});
+
+        add.context((manager) ->
+        {
+            manager.action(Icons.FADING, IKey.constant("投影"), () -> this.addStyle(layer, CompStyle.DROP_SHADOW));
+            manager.action(Icons.FADING, IKey.constant("内阴影"), () -> this.addStyle(layer, CompStyle.INNER_SHADOW));
+            manager.action(Icons.LIGHT, IKey.constant("外发光"), () -> this.addStyle(layer, CompStyle.OUTER_GLOW));
+            manager.action(Icons.LIGHT, IKey.constant("内发光"), () -> this.addStyle(layer, CompStyle.INNER_GLOW));
+            manager.action(Icons.SUN, IKey.constant("斜面和浮雕"), () -> this.addStyle(layer, CompStyle.BEVEL));
+            manager.action(Icons.COLOR, IKey.constant("颜色叠加"), () -> this.addStyle(layer, CompStyle.COLOR_OVERLAY));
+            manager.action(Icons.COLOR, IKey.constant("渐变叠加"), () -> this.addStyle(layer, CompStyle.GRADIENT_OVERLAY));
+            manager.action(Icons.LIGHT, IKey.constant("光泽"), () -> this.addStyle(layer, CompStyle.SATIN));
+            manager.action(Icons.OUTLINE, IKey.constant("描边"), () -> this.addStyle(layer, CompStyle.STROKE));
+        });
+        section.fields.add(add);
+
+        return section;
+    }
+
+    private UISection styleControlSection(CompLayer layer, CompStyle style)
+    {
+        UISection section = new UISection(IKey.constant(style.type));
+
+        section.remember(this.sectionFolds, "style:" + style.type + ":" + layer.styles.indexOf(style), false);
+
+        UIToggle enabled = new UIToggle(IKey.constant("启用"), style.enabled, (toggle) ->
+        {
+            style.enabled = toggle.getValue();
+            this.save();
+        });
+        UIIcon remove = new UIIcon(Icons.TRASH, (icon) ->
+        {
+            layer.styles.remove(style);
+            this.refreshInspector();
+            this.save();
+        });
+
+        UIElement controls = new UIElement();
+
+        controls.w(1F).h(18);
+        enabled.relative(controls).x(0).y(1).w(64).h(16);
+        remove.relative(controls).x(1F, -20).y(1).w(16).h(16);
+        controls.add(enabled, remove);
+        section.fields.add(controls);
+
+        section.fields.add(this.colorRow("颜色", style.color, (color) -> style.color = color));
+        section.fields.add(this.colorRow("颜色 2", style.color2, (color) -> style.color2 = color));
+        section.fields.add(this.numberRow("不透明度", style.opacity, 0F, 1F, false, (value) -> style.opacity = value.floatValue()));
+        section.fields.add(this.numberRow("大小", style.size, 0F, 200F, false, (value) -> style.size = value.floatValue()));
+        section.fields.add(this.numberRow("距离", style.distance, -300F, 300F, false, (value) -> style.distance = value.floatValue()));
+        section.fields.add(this.numberRow("角度", style.angle, -180F, 180F, false, (value) -> style.angle = value.floatValue()));
+        section.fields.add(this.numberRow("模糊", style.blur, 0F, 100F, false, (value) -> style.blur = value.floatValue()));
+
+        return section;
     }
 
     private UISection outputPresetSection()
     {
-        UISection section = new UISection(IKey.constant("Output Modules"));
+        UISection section = new UISection(IKey.constant("输出模块"));
 
         if (this.project == null)
         {
@@ -1456,21 +5709,21 @@ public class UICompositorPanel extends UIDashboardPanel
         for (CompOutputPreset preset : this.project.outputPresets)
         {
             section.fields.add(UI.label(IKey.constant("[" + preset.id + "]"), 14));
-            section.fields.add(this.textRow("Name", preset.name, (value) -> preset.name = value));
-            section.fields.add(this.textRow("Container", preset.container, (value) -> preset.container = value));
-            section.fields.add(this.textRow("Codec", preset.codec, (value) -> preset.codec = value));
-            section.fields.add(this.textRow("Extension", preset.extension, (value) -> preset.extension = value));
-            section.fields.add(new UIToggle(IKey.constant("Alpha"), preset.alpha, (toggle) -> preset.alpha = toggle.getValue()));
-            section.fields.add(this.numberRow("CRF", preset.crf, 0, 63, true, (value) -> preset.crf = value.intValue()));
-            section.fields.add(this.textRow("Bitrate", preset.bitrate, (value) -> preset.bitrate = value));
-            section.fields.add(this.textRow("Pixel Format", preset.pixelFormat, (value) -> preset.pixelFormat = value));
-            section.fields.add(this.numberRow("Width (0 = comp)", preset.width, 0, 16384, true, (value) -> preset.width = value.intValue()));
-            section.fields.add(this.numberRow("Height (0 = comp)", preset.height, 0, 16384, true, (value) -> preset.height = value.intValue()));
-            section.fields.add(this.numberRow("Scale", preset.scale, 0.05F, 4F, false, (value) -> preset.scale = value.floatValue()));
-            section.fields.add(this.numberRow("FPS (0 = comp)", preset.fps, 0, 240, true, (value) -> preset.fps = value.intValue()));
-            section.fields.add(this.textRow("Post Action", preset.postAction, (value) -> preset.postAction = value));
-            section.fields.add(new UIToggle(IKey.constant("Keep Frames"), preset.keepFrames, (toggle) -> preset.keepFrames = toggle.getValue()));
-            section.fields.add(new UIButton(IKey.constant("Remove Preset"), (button) ->
+            section.fields.add(this.textRow("名称", preset.name, (value) -> preset.name = value));
+            section.fields.add(this.textRow("容器", preset.container, (value) -> preset.container = value));
+            section.fields.add(this.textRow("编码器", preset.codec, (value) -> preset.codec = value));
+            section.fields.add(this.textRow("扩展名", preset.extension, (value) -> preset.extension = value));
+            section.fields.add(new UIToggle(IKey.constant("通明度"), preset.alpha, (toggle) -> preset.alpha = toggle.getValue()));
+            section.fields.add(this.numberRow("画质 CRF", preset.crf, 0, 63, true, (value) -> preset.crf = value.intValue()));
+            section.fields.add(this.textRow("码率", preset.bitrate, (value) -> preset.bitrate = value));
+            section.fields.add(this.textRow("像素格式", preset.pixelFormat, (value) -> preset.pixelFormat = value));
+            section.fields.add(this.numberRow("宽度（0 = 跟随合成）", preset.width, 0, 16384, true, (value) -> preset.width = value.intValue()));
+            section.fields.add(this.numberRow("高度（0 = 跟随合成）", preset.height, 0, 16384, true, (value) -> preset.height = value.intValue()));
+            section.fields.add(this.numberRow("缩放", preset.scale, 0.05F, 4F, false, (value) -> preset.scale = value.floatValue()));
+            section.fields.add(this.numberRow("帧率（0 = 跟随合成）", preset.fps, 0, 240, true, (value) -> preset.fps = value.intValue()));
+            section.fields.add(this.textRow("完成后动作", preset.postAction, (value) -> preset.postAction = value));
+            section.fields.add(new UIToggle(IKey.constant("保留帧"), preset.keepFrames, (toggle) -> preset.keepFrames = toggle.getValue()));
+            section.fields.add(new UIButton(IKey.constant("移除预设"), (button) ->
             {
                 this.project.outputPresets.remove(preset);
                 this.presetIndex = Math.min(this.presetIndex, Math.max(0, this.project.outputPresets.size() - 1));
@@ -1483,24 +5736,24 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private UISection compSection()
     {
-        UISection section = new UISection(IKey.constant("Composition"));
+        UISection section = new UISection(IKey.constant("合成"));
         CompDocument comp = this.doc;
 
-        section.fields.add(this.numberRow("Width", comp.width, 1, 16384, true, (value) -> comp.width = value.intValue()));
-        section.fields.add(this.numberRow("Height", comp.height, 1, 16384, true, (value) -> comp.height = value.intValue()));
-        section.fields.add(this.numberRow("FPS", comp.fps, 1, 240, false, (value) -> comp.fps = value.floatValue()));
-        section.fields.add(this.numberRow("Duration", comp.duration, 0.1F, 36000F, false, (value) -> comp.duration = value.floatValue()));
-        section.fields.add(this.colorRow("Background", comp.background, (color) -> comp.background = color));
+        section.fields.add(this.numberRow("宽度", comp.width, 1, 16384, true, (value) -> comp.width = value.intValue()));
+        section.fields.add(this.numberRow("高度", comp.height, 1, 16384, true, (value) -> comp.height = value.intValue()));
+        section.fields.add(this.numberRow("帧率", comp.fps, 1, 240, false, (value) -> comp.fps = value.floatValue()));
+        section.fields.add(this.numberRow("时长", comp.duration, 0.1F, 36000F, false, (value) -> comp.duration = value.floatValue()));
+        section.fields.add(this.colorRow("背景", comp.background, (color) -> comp.background = color));
 
         if (this.project != null && this.project.settings != null)
         {
             CompProject.CompSettings settings = this.project.settings;
 
-            section.fields.add(new UIToggle(IKey.constant("Grid"), settings.showGrid, (toggle) -> settings.showGrid = toggle.getValue()));
-            section.fields.add(this.numberRow("Grid Size", settings.gridSize, 8, 512, true, (value) -> settings.gridSize = value.intValue()));
-            section.fields.add(new UIToggle(IKey.constant("Safe Area"), settings.showSafeArea, (toggle) -> settings.showSafeArea = toggle.getValue()));
-            section.fields.add(new UIToggle(IKey.constant("Depth Effects"), settings.depthEnabled, (toggle) -> settings.depthEnabled = toggle.getValue()));
-            section.fields.add(new UIToggle(IKey.constant("Auto Save"), settings.autoSave, (toggle) -> settings.autoSave = toggle.getValue()));
+            section.fields.add(new UIToggle(IKey.constant("网格"), settings.showGrid, (toggle) -> settings.showGrid = toggle.getValue()));
+            section.fields.add(this.numberRow("网格大小", settings.gridSize, 8, 512, true, (value) -> settings.gridSize = value.intValue()));
+            section.fields.add(new UIToggle(IKey.constant("安全框"), settings.showSafeArea, (toggle) -> settings.showSafeArea = toggle.getValue()));
+            section.fields.add(new UIToggle(IKey.constant("景深效果"), settings.depthEnabled, (toggle) -> settings.depthEnabled = toggle.getValue()));
+            section.fields.add(new UIToggle(IKey.constant("自动保存"), settings.autoSave, (toggle) -> settings.autoSave = toggle.getValue()));
         }
 
         return section;
@@ -1508,40 +5761,44 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private UISection layerSection()
     {
-        UISection section = new UISection(IKey.constant("Layer"));
+        UISection section = new UISection(IKey.constant("图层"));
+
+        section.remember(this.sectionFolds, "layer", true);
+
         CompLayer layer = this.selectedLayer;
 
         if (layer == null)
         {
-            section.fields.add(UI.label(IKey.constant("Select a layer in the stack"), 16));
+            section.fields.add(UI.label(IKey.constant("请在时间轴中选择一条轨道"), 16));
             return section;
         }
 
         CompLayer l = layer;
 
         section.fields.add(UI.label(IKey.constant(l.type + " · " + l.id), 16));
+        section.fields.add(UI.label(IKey.constant("变换、不透明度与效果在“效果控件”页。"), 14));
 
         UITextbox name = new UITextbox(64, (text) -> l.name = text);
 
         name.setText(l.name);
-        section.fields.add(UI.labelRow(IKey.constant("Name"), name));
+        section.fields.add(this.fieldRow("名称", name));
 
-        UIToggle visible = new UIToggle(IKey.constant("Visible"), l.visible, (toggle) -> l.visible = toggle.getValue());
-        UIToggle locked = new UIToggle(IKey.constant("Locked"), l.locked, (toggle) -> l.locked = toggle.getValue());
-        UIToggle solo = new UIToggle(IKey.constant("Solo"), l.solo, (toggle) -> l.solo = toggle.getValue());
-        UIToggle guide = new UIToggle(IKey.constant("Guide"), l.guide, (toggle) -> l.guide = toggle.getValue());
+        UIToggle visible = new UIToggle(IKey.constant("可见"), l.visible, (toggle) -> l.visible = toggle.getValue());
+        UIToggle locked = new UIToggle(IKey.constant("锁定"), l.locked, (toggle) -> l.locked = toggle.getValue());
+        UIToggle solo = new UIToggle(IKey.constant("独显"), l.solo, (toggle) -> l.solo = toggle.getValue());
+        UIToggle guide = new UIToggle(IKey.constant("参考层"), l.guide, (toggle) -> l.guide = toggle.getValue());
         section.fields.add(UI.row(visible, locked));
         section.fields.add(UI.row(solo, guide));
 
-        section.fields.add(this.numberRow("In", l.in, 0F, 36000F, false, (value) -> l.in = value.floatValue()));
-        section.fields.add(this.numberRow("Out", l.out, 0F, 36000F, false, (value) -> l.out = value.floatValue()));
-        section.fields.add(this.numberRow("Start", l.startTime, -36000F, 36000F, false, (value) -> l.startTime = value.floatValue()));
-        section.fields.add(this.numberRow("Time Scale", l.timeScale, -10F, 10F, false, (value) -> l.timeScale = value.floatValue()));
+        section.fields.add(this.numberRow("入点", l.in, 0F, 36000F, false, (value) -> l.in = value.floatValue()));
+        section.fields.add(this.numberRow("出点", l.out, 0F, 36000F, false, (value) -> l.out = value.floatValue()));
+        section.fields.add(this.numberRow("起点", l.startTime, -36000F, 36000F, false, (value) -> l.startTime = value.floatValue()));
+        section.fields.add(this.numberRow("时间缩放", l.timeScale, -10F, 10F, false, (value) -> l.timeScale = value.floatValue()));
 
-        UIToggle freeze = new UIToggle(IKey.constant("Freeze Frame"), l.freeze, (toggle) -> l.freeze = toggle.getValue());
+        UIToggle freeze = new UIToggle(IKey.constant("冻结帧"), l.freeze, (toggle) -> l.freeze = toggle.getValue());
         section.fields.add(freeze);
 
-        UIToggle timeRemap = new UIToggle(IKey.constant("Time Remap"), l.timeRemap, (toggle) ->
+        UIToggle timeRemap = new UIToggle(IKey.constant("时间重映射"), l.timeRemap, (toggle) ->
         {
             l.timeRemap = toggle.getValue();
             this.refreshInspector();
@@ -1558,34 +5815,17 @@ public class UICompositorPanel extends UIDashboardPanel
             ));
         }
 
-        UIButton blend = new UIButton(IKey.constant(blendName(l.blendMode)), (button) ->
-        {
-            l.blendMode = (l.blendMode + 1) % 13;
-            button.label = IKey.constant(blendName(l.blendMode));
-        });
-        section.fields.add(UI.labelRow(IKey.constant("Blend"), blend));
+        CompLayer parentLayer = this.doc == null || l.parentId == null || l.parentId.isEmpty() ? null : this.doc.getLayer(l.parentId);
+        UIButton parent = new UIButton(IKey.constant(parentLayer == null ? "无（根）" : this.layerLabel(parentLayer) + "  ·  " + parentLayer.id), (button) -> this.chooseParent(l));
+        parent.tooltip(IKey.constant("选择一个空对象或其它图层作为父级；子级会继承父级的移动、缩放、旋转"));
+        section.fields.add(this.fieldRow("父级", parent));
 
-        Transform transform = l.transformAt(this.getFrame());
-        section.fields.add(this.animatedNumberRow("Position X", l, "x", transform.translate.x, (value) -> this.setTransformX(value)));
-        section.fields.add(this.animatedNumberRow("Position Y", l, "y", transform.translate.y, (value) -> this.setTransformY(value)));
-        section.fields.add(this.animatedNumberRow("Rotation", l, "rotation", transform.rotate.z, (value) -> this.setTransformRotation(value)));
-        section.fields.add(this.animatedNumberRow("Scale X", l, "scaleX", transform.scale.x, (value) -> this.setTransformScaleX(value)));
-        section.fields.add(this.animatedNumberRow("Scale Y", l, "scaleY", transform.scale.y, (value) -> this.setTransformScaleY(value)));
-        section.fields.add(this.animatedNumberRow("Opacity", l, "opacity", l.opacityFrame(this.getFrame()), (value) -> this.setOpacity(l, value.floatValue())));
-        section.fields.add(this.numberRow("Anchor X", l.anchorX, 0F, 1F, false, (value) -> l.anchorX = value.floatValue()));
-        section.fields.add(this.numberRow("Anchor Y", l.anchorY, 0F, 1F, false, (value) -> l.anchorY = value.floatValue()));
+        CompLayer matteLayer = this.doc == null || l.trackMatteId == null || l.trackMatteId.isEmpty() ? null : this.doc.getLayer(l.trackMatteId);
+        UIButton matte = new UIButton(IKey.constant(matteLayer == null ? "无" : this.layerLabel(matteLayer) + "  ·  " + matteLayer.id), (button) -> this.chooseMatte(l));
+        matte.tooltip(IKey.constant("选择作为遮罩的图层；开启下面的“使用遮罩”后生效"));
+        section.fields.add(this.fieldRow("轨道遮罩", matte));
 
-        UITextbox parent = new UITextbox(64, (text) -> l.parentId = text);
-
-        parent.setText(l.parentId);
-        section.fields.add(UI.labelRow(IKey.constant("Parent"), parent));
-
-        UITextbox matte = new UITextbox(64, (text) -> l.trackMatteId = text);
-
-        matte.setText(l.trackMatteId);
-        section.fields.add(UI.labelRow(IKey.constant("Track Matte"), matte));
-
-        UIToggle matteEnabled = new UIToggle(IKey.constant("Use Matte"), l.trackMatteEnabled, (toggle) -> l.trackMatteEnabled = toggle.getValue());
+        UIToggle matteEnabled = new UIToggle(IKey.constant("使用遮罩"), l.trackMatteEnabled, (toggle) -> l.trackMatteEnabled = toggle.getValue());
         UIButton matteMode = new UIButton(IKey.constant(matteName(l.trackMatteMode)), (button) ->
         {
             l.trackMatteMode = (l.trackMatteMode + 1) % 4;
@@ -1593,30 +5833,180 @@ public class UICompositorPanel extends UIDashboardPanel
         });
         section.fields.add(UI.row(matteEnabled, matteMode));
 
-        section.fields.add(this.textRow("Expression Position X", l.expressionX, (text) -> l.expressionX = text));
-        section.fields.add(this.textRow("Expression Position Y", l.expressionY, (text) -> l.expressionY = text));
-        section.fields.add(this.textRow("Expression Rotation", l.expressionRotation, (text) -> l.expressionRotation = text));
-        section.fields.add(this.textRow("Expression Opacity", l.expressionOpacity, (text) -> l.expressionOpacity = text));
+        section.fields.add(this.textRow("表达式：位置 X", l.expressionX, (text) -> l.expressionX = text));
+        section.fields.add(this.textRow("表达式：位置 Y", l.expressionY, (text) -> l.expressionY = text));
+        section.fields.add(this.textRow("表达式：旋转", l.expressionRotation, (text) -> l.expressionRotation = text));
+        section.fields.add(this.textRow("表达式：不透明度", l.expressionOpacity, (text) -> l.expressionOpacity = text));
 
         if ("image".equals(l.type) || "footage".equals(l.type))
         {
-            section.fields.add(this.textRow("footage".equals(l.type) ? "Image Sequence (%04d)" : "Image Path", l.imagePath, (text) -> l.imagePath = text));
+            section.fields.add(this.textRow("序列".equals(l.type) ? "Image Sequence (%04d)" : "Image Path", l.imagePath, (text) -> l.imagePath = text));
             section.fields.add(this.smallButton("Import Image...", () -> this.importImage(l)));
-            section.fields.add(this.numberRow("Image Fit (0 contain, 1 cover, 2 stretch)", l.imageFit, 0, 2, true, (value) -> l.imageFit = value.intValue()));
+            section.fields.add(this.numberRow("图片适配（0 包含 1 覆盖 2 拉伸）", l.imageFit, 0, 2, true, (value) -> l.imageFit = value.intValue()));
+        }
+        if ("bbs".equals(l.type))
+        {
+            section.fields.add(UI.label(IKey.constant("显示 BBS 影片编辑器当前的预览帧；可作为底层参考或与合成混合。"), 14));
+            section.fields.add(this.numberRow("适配（0 包含 1 覆盖 2 拉伸）", l.imageFit, 0, 2, true, (value) -> l.imageFit = value.intValue()));
         }
         if ("precomp".equals(l.type))
         {
-            section.fields.add(this.textRow("Precomp Id", l.precompId, (text) -> l.precompId = text));
-            section.fields.add(this.numberRow("Precomp Time Offset", l.precompTimeOffset, -36000F, 36000F, false, (value) -> l.precompTimeOffset = value.floatValue()));
-            section.fields.add(this.numberRow("Precomp Time Scale", l.precompTimeScale, -10F, 10F, false, (value) -> l.precompTimeScale = value.floatValue()));
+            java.util.List<String> compLabels = new java.util.ArrayList<>();
+            java.util.Map<String, String> compIds = new java.util.LinkedHashMap<>();
+            String currentLabel = "（未选择）";
+
+            for (CompDocument candidate : this.project.comps)
+            {
+                String label = candidate.name + "  ·  " + candidate.id + "  (" + candidate.width + "×" + candidate.height + ")";
+
+                compLabels.add(label);
+                compIds.put(label, candidate.id);
+
+                if (candidate.id.equals(l.precompId))
+                {
+                    currentLabel = label;
+                }
+            }
+
+            UIChoiceButton<String> precompChoice = new UIChoiceButton<>(compLabels, (value) -> Icons.STRUCTURE, IKey::constant);
+
+            precompChoice.setValue(currentLabel);
+            precompChoice.callback((value) ->
+            {
+                l.precompId = compIds.getOrDefault(value, "");
+                this.refreshInspector();
+                this.save();
+            });
+            section.fields.add(this.fieldRow("预合成目标", precompChoice));
+            section.fields.add(this.smallButton("＋ 新建预合成（当前尺寸）", () ->
+            {
+                int index = this.project.comps.size() + 1;
+                CompDocument sub = this.project.addComp("precomp_" + index, this.doc.width, this.doc.height, this.doc.fps, this.doc.duration);
+
+                sub.name = "预合成 " + index;
+                sub.duration = this.doc.duration;
+                sub.workAreaOut = this.doc.duration;
+                l.precompId = sub.id;
+                this.refreshInspector();
+                this.save();
+                this.setStatus("已创建预合成：" + sub.name);
+            }));
+            section.fields.add(this.smallButton("进入预合成", () -> this.enterPrecomp(l)));
+            section.fields.add(this.numberRow("预合成时间偏移", l.precompTimeOffset, -36000F, 36000F, false, (value) -> l.precompTimeOffset = value.floatValue()));
+            section.fields.add(this.numberRow("预合成时间缩放", l.precompTimeScale, -10F, 10F, false, (value) -> l.precompTimeScale = value.floatValue()));
         }
 
         return section;
     }
 
+    /** Matte picker: a list of layer ids instead of asking the user to type an id by hand. */
+    public void chooseMatte(CompLayer layer)
+    {
+        if (this.doc == null || layer == null)
+        {
+            return;
+        }
+
+        java.util.List<String> values = new java.util.ArrayList<>();
+        java.util.Map<String, String> ids = new java.util.LinkedHashMap<>();
+
+        values.add("无");
+        ids.put("无", "");
+
+        for (CompLayer candidate : this.doc.layers)
+        {
+            if (candidate == layer)
+            {
+                continue;
+            }
+
+            String label = this.layerLabel(candidate) + "  ·  " + candidate.id;
+
+            values.add(label);
+            ids.put(label, candidate.id);
+        }
+
+        UIListOverlayPanel panel = new UIListOverlayPanel(IKey.constant("选择轨道遮罩"), (value) ->
+        {
+            if (value == null)
+            {
+                return;
+            }
+
+            layer.trackMatteId = ids.getOrDefault(value, "");
+            layer.trackMatteEnabled = !layer.trackMatteId.isEmpty();
+            this.refreshInspector();
+            this.save();
+        });
+
+        panel.addValues(values);
+        UIOverlay.addOverlay(this.getContext(), panel, 320, 340);
+    }
+
+    public void chooseParent(CompLayer layer)
+    {
+        if (this.doc == null || layer == null)
+        {
+            return;
+        }
+
+        java.util.List<String> values = new java.util.ArrayList<>();
+        java.util.Map<String, String> ids = new java.util.LinkedHashMap<>();
+
+        values.add("无（根）");
+        ids.put("无（根）", "");
+
+        for (CompLayer candidate : this.doc.layers)
+        {
+            if (candidate == layer || "camera".equals(candidate.type) || this.isDescendant(candidate, layer))
+            {
+                continue;
+            }
+
+            String label = this.layerLabel(candidate) + "  ·  " + candidate.id + "  [" + candidate.type + "]";
+
+            values.add(label);
+            ids.put(label, candidate.id);
+        }
+
+        UIListOverlayPanel panel = new UIListOverlayPanel(IKey.constant("选择父级"), (value) ->
+        {
+            if (value == null)
+            {
+                return;
+            }
+
+            layer.parentId = ids.getOrDefault(value, "");
+            this.refreshInspector();
+            this.refreshSheets();
+            this.save();
+        });
+
+        panel.addValues(values);
+        UIOverlay.addOverlay(this.getContext(), panel, 300, 320);
+    }
+
+    private boolean isDescendant(CompLayer candidate, CompLayer ancestor)
+    {
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        CompLayer current = candidate;
+
+        while (current != null && current.parentId != null && !current.parentId.isEmpty() && seen.add(current.id))
+        {
+            if (current.parentId.equals(ancestor.id))
+            {
+                return true;
+            }
+
+            current = this.doc.getLayer(current.parentId);
+        }
+
+        return false;
+    }
+
     private UISection bindingSection(CompLayer layer)
     {
-        UISection section = new UISection(IKey.constant("Binding / Tracking"));
+        UISection section = new UISection(IKey.constant("绑定 / 跟踪"));
 
         if (layer == null)
         {
@@ -1625,7 +6015,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         CompBinding binding = layer.binding;
 
-        UIToggle enabled = new UIToggle(IKey.constant("Enabled"), binding.enabled, (toggle) -> binding.enabled = toggle.getValue());
+        UIToggle enabled = new UIToggle(IKey.constant("启用"), binding.enabled, (toggle) -> binding.enabled = toggle.getValue());
         UIButton type = new UIButton(IKey.constant(binding.type), (button) ->
         {
             binding.type = switch (binding.type)
@@ -1642,38 +6032,65 @@ public class UICompositorPanel extends UIDashboardPanel
         UITextbox target = new UITextbox(64, (text) -> binding.target = text);
 
         target.setText(binding.target);
-        section.fields.add(UI.labelRow(IKey.constant("Replay / Layer Target"), target));
-        section.fields.add(this.numberRow("Offset X", binding.offsetX, -10000F, 10000F, false, (value) -> binding.offsetX = value.floatValue()));
-        section.fields.add(this.numberRow("Offset Y", binding.offsetY, -10000F, 10000F, false, (value) -> binding.offsetY = value.floatValue()));
-        section.fields.add(this.numberRow("World Y Offset", binding.worldOffsetY, -16F, 16F, false, (value) -> binding.worldOffsetY = value.floatValue()));
-        section.fields.add(this.numberRow("Smoothing", binding.smoothing, 0F, 0.99F, false, (value) -> binding.smoothing = value.floatValue()));
+        section.fields.add(this.fieldRow("回放 / 图层目标", target));
+        section.fields.add(this.numberRow("偏移 X", binding.offsetX, -10000F, 10000F, false, (value) -> binding.offsetX = value.floatValue()));
+        section.fields.add(this.numberRow("偏移 Y", binding.offsetY, -10000F, 10000F, false, (value) -> binding.offsetY = value.floatValue()));
+        section.fields.add(this.numberRow("世界 Y 偏移", binding.worldOffsetY, -16F, 16F, false, (value) -> binding.worldOffsetY = value.floatValue()));
+        section.fields.add(this.numberRow("平滑", binding.smoothing, 0F, 0.99F, false, (value) -> binding.smoothing = value.floatValue()));
 
         return section;
     }
 
     private UISection textSection(CompLayer layer)
     {
-        UISection section = new UISection(IKey.constant("Text"));
+        UISection section = new UISection(IKey.constant("文字"));
         UITextbox text = new UITextbox(2048, (value) -> layer.text = value);
 
         text.setText(layer.text);
         section.fields.add(text);
-        section.fields.add(this.animatedNumberRow("Font Size", layer, "text/fontSize", layer.fontSizeAt(this.getFrame()), (value) -> layer.fontSize = (float) Math.max(1D, value), 1F, 2000F));
-        section.fields.add(this.animatedNumberRow("Tracking", layer, "text/tracking", layer.trackingAt(this.getFrame()), (value) -> layer.tracking = value.floatValue(), -200F, 500F));
-        section.fields.add(this.animatedNumberRow("Line Height", layer, "text/lineHeight", layer.lineHeightAt(this.getFrame()), (value) -> layer.lineHeight = (float) Math.max(0.1D, value), 0.1F, 5F));
-        section.fields.add(this.colorRow("Color", layer.color, (color) -> layer.color = color));
-        section.fields.add(this.colorRow("Stroke", layer.strokeColor, (color) -> layer.strokeColor = color));
-        section.fields.add(this.animatedNumberRow("Stroke Width", layer, "text/strokeWidth", layer.textStrokeAt(this.getFrame()), (value) -> layer.strokeWidth = (float) Math.max(0D, value), 0F, 40F));
-        section.fields.add(this.numberRow("Align (0 left, 1 center, 2 right)", layer.align, 0, 2, true, (value) -> layer.align = value.intValue()));
-        section.fields.add(new UIToggle(IKey.constant("Wrap"), layer.wrap, (toggle) -> layer.wrap = toggle.getValue()));
-        section.fields.add(this.numberRow("Wrap Width", layer.textBoxWidth, 10F, 10000F, false, (value) -> layer.textBoxWidth = value.floatValue()));
+
+        java.util.List<String> fontLabels = new java.util.ArrayList<>();
+        java.util.Map<String, String> fontFiles = new java.util.LinkedHashMap<>();
+
+        fontLabels.add("默认（BBS）");
+        fontFiles.put("默认（BBS）", "");
+
+        for (mchorse.bbs_mod.resources.Link link : mchorse.bbs_mod.fonts.FontManager.getFontLinks())
+        {
+            String name = link.path.substring(link.path.lastIndexOf('/') + 1);
+
+            fontLabels.add(name);
+            fontFiles.put(name, name);
+        }
+
+        String currentFont = layer.fontName == null || layer.fontName.isBlank() ? "默认（BBS）" : layer.fontName;
+        UIChoiceButton<String> fontChoice = new UIChoiceButton<>(fontLabels, (value) -> Icons.FONT, IKey::constant);
+
+        fontChoice.setValue(fontLabels.contains(currentFont) ? currentFont : "默认（BBS）");
+        fontChoice.callback((value) ->
+        {
+            layer.fontName = fontFiles.getOrDefault(value, "");
+            this.save();
+        });
+        section.fields.add(this.fieldRow("字体", fontChoice));
+        section.fields.add(this.smallButton("导入字体（ttf / otf）…", () -> this.importFont(layer)));
+
+        section.fields.add(this.animatedNumberRow("字号", layer, "text/fontSize", layer.fontSizeAt(this.getFrame()), (value) -> layer.fontSize = (float) Math.max(1D, value), 1F, 2000F));
+        section.fields.add(this.animatedNumberRow("字距", layer, "text/tracking", layer.trackingAt(this.getFrame()), (value) -> layer.tracking = value.floatValue(), -200F, 500F));
+        section.fields.add(this.animatedNumberRow("行高", layer, "text/lineHeight", layer.lineHeightAt(this.getFrame()), (value) -> layer.lineHeight = (float) Math.max(0.1D, value), 0.1F, 5F));
+        section.fields.add(this.colorRow("颜色", layer.color, (color) -> layer.color = color));
+        section.fields.add(this.colorRow("描边", layer.strokeColor, (color) -> layer.strokeColor = color));
+        section.fields.add(this.animatedNumberRow("描边宽度", layer, "text/strokeWidth", layer.textStrokeAt(this.getFrame()), (value) -> layer.strokeWidth = (float) Math.max(0D, value), 0F, 40F));
+        section.fields.add(this.numberRow("对齐（0 左 1 中 2 右）", layer.align, 0, 2, true, (value) -> layer.align = value.intValue()));
+        section.fields.add(new UIToggle(IKey.constant("自动换行"), layer.wrap, (toggle) -> layer.wrap = toggle.getValue()));
+        section.fields.add(this.numberRow("换行宽度", layer.textBoxWidth, 10F, 10000F, false, (value) -> layer.textBoxWidth = value.floatValue()));
 
         return section;
     }
 
     private UISection textAnimatorSection(CompLayer layer)
     {
-        UISection section = new UISection(IKey.constant("Text Animators"));
+        UISection section = new UISection(IKey.constant("文字动画器"));
 
         section.fields.add(this.smallButton("Add Text Animator", () ->
         {
@@ -1688,17 +6105,17 @@ public class UICompositorPanel extends UIDashboardPanel
         for (CompTextAnimator animator : layer.textAnimators)
         {
             section.fields.add(UI.label(IKey.constant(animator.name), 16));
-            section.fields.add(new UIToggle(IKey.constant("Enabled"), animator.enabled, (toggle) -> animator.enabled = toggle.getValue()));
-            section.fields.add(this.numberRow("Start", animator.start, 0F, 1F, false, (value) -> animator.start = value.floatValue()));
-            section.fields.add(this.numberRow("End", animator.end, 0F, 1F, false, (value) -> animator.end = value.floatValue()));
-            section.fields.add(this.numberRow("Offset", animator.offset, -1F, 1F, false, (value) -> animator.offset = value.floatValue()));
-            section.fields.add(new UIToggle(IKey.constant("Wiggle"), animator.wiggle, (toggle) -> animator.wiggle = toggle.getValue()));
-            section.fields.add(this.numberRow("Randomness", animator.randomness, 0F, 200F, false, (value) -> animator.randomness = value.floatValue()));
-            section.fields.add(this.numberRow("Position X", animator.positionX, -500F, 500F, false, (value) -> animator.positionX = value.floatValue()));
-            section.fields.add(this.numberRow("Position Y", animator.positionY, -500F, 500F, false, (value) -> animator.positionY = value.floatValue()));
-            section.fields.add(this.numberRow("Scale", animator.scale, 0.01F, 8F, false, (value) -> animator.scale = value.floatValue()));
-            section.fields.add(this.numberRow("Rotation", animator.rotation, -720F, 720F, false, (value) -> animator.rotation = value.floatValue()));
-            section.fields.add(this.numberRow("Opacity", animator.opacity, 0F, 1F, false, (value) -> animator.opacity = value.floatValue()));
+            section.fields.add(new UIToggle(IKey.constant("启用"), animator.enabled, (toggle) -> animator.enabled = toggle.getValue()));
+            section.fields.add(this.numberRow("起点", animator.start, 0F, 1F, false, (value) -> animator.start = value.floatValue()));
+            section.fields.add(this.numberRow("结束", animator.end, 0F, 1F, false, (value) -> animator.end = value.floatValue()));
+            section.fields.add(this.numberRow("偏移", animator.offset, -1F, 1F, false, (value) -> animator.offset = value.floatValue()));
+            section.fields.add(new UIToggle(IKey.constant("摆动"), animator.wiggle, (toggle) -> animator.wiggle = toggle.getValue()));
+            section.fields.add(this.numberRow("随机度", animator.randomness, 0F, 200F, false, (value) -> animator.randomness = value.floatValue()));
+            section.fields.add(this.numberRow("位置 X", animator.positionX, -500F, 500F, false, (value) -> animator.positionX = value.floatValue()));
+            section.fields.add(this.numberRow("位置 Y", animator.positionY, -500F, 500F, false, (value) -> animator.positionY = value.floatValue()));
+            section.fields.add(this.numberRow("缩放", animator.scale, 0.01F, 8F, false, (value) -> animator.scale = value.floatValue()));
+            section.fields.add(this.numberRow("旋转", animator.rotation, -720F, 720F, false, (value) -> animator.rotation = value.floatValue()));
+            section.fields.add(this.numberRow("不透明度", animator.opacity, 0F, 1F, false, (value) -> animator.opacity = value.floatValue()));
         }
 
         return section;
@@ -1706,7 +6123,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private UISection shapeSection(CompLayer layer)
     {
-        UISection section = new UISection(IKey.constant("Shapes"));
+        UISection section = new UISection(IKey.constant("形状"));
 
         section.fields.add(this.smallButton("Add Shape", () ->
         {
@@ -1755,23 +6172,30 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(UI.label(IKey.constant(shape.id + " (" + shape.type + ")"), 16));
             section.fields.add(this.animatedNumberRow("X", layer, CompLayer.shapePath(shape.id, "x"), animValue(layer, CompLayer.shapePath(shape.id, "x"), shape.x), (value) -> shape.x = value.floatValue(), -5000F, 5000F));
             section.fields.add(this.animatedNumberRow("Y", layer, CompLayer.shapePath(shape.id, "y"), animValue(layer, CompLayer.shapePath(shape.id, "y"), shape.y), (value) -> shape.y = value.floatValue(), -5000F, 5000F));
-            section.fields.add(this.animatedNumberRow("Width", layer, CompLayer.shapePath(shape.id, "width"), animValue(layer, CompLayer.shapePath(shape.id, "width"), shape.width), (value) -> shape.width = value.floatValue(), 1F, 5000F));
-            section.fields.add(this.animatedNumberRow("Height", layer, CompLayer.shapePath(shape.id, "height"), animValue(layer, CompLayer.shapePath(shape.id, "height"), shape.height), (value) -> shape.height = value.floatValue(), 1F, 5000F));
-            section.fields.add(this.animatedNumberRow("Roundness", layer, CompLayer.shapePath(shape.id, "roundness"), animValue(layer, CompLayer.shapePath(shape.id, "roundness"), shape.roundness), (value) -> shape.roundness = (float) Math.max(0D, Math.min(1D, value)), 0F, 500F));
-            section.fields.add(this.numberRow("Sides", shape.sides, 3, 64, true, (value) -> shape.sides = value.intValue()));
-            section.fields.add(this.numberRow("Inner Radius", shape.innerRadius, 0.01F, 1F, false, (value) -> shape.innerRadius = value.floatValue()));
-            section.fields.add(this.colorRow("Fill", shape.fillColor, (color) -> shape.fillColor = color));
-            section.fields.add(this.colorRow("Stroke", shape.strokeColor, (color) -> shape.strokeColor = color));
-            section.fields.add(this.numberRow("Stroke Width", shape.strokeWidth, 0F, 80F, false, (value) -> shape.strokeWidth = value.floatValue()));
-            section.fields.add(this.animatedNumberRow("Rotation", layer, CompLayer.shapePath(shape.id, "rotation"), animValue(layer, CompLayer.shapePath(shape.id, "rotation"), shape.rotation), (value) -> shape.rotation = value.floatValue(), -720F, 720F));
-            section.fields.add(this.animatedNumberRow("Trim Start", layer, CompLayer.shapePath(shape.id, "trimStart"), animValue(layer, CompLayer.shapePath(shape.id, "trimStart"), shape.trimStart), (value) -> shape.trimStart = value.floatValue(), 0F, 1F));
-            section.fields.add(this.animatedNumberRow("Trim End", layer, CompLayer.shapePath(shape.id, "trimEnd"), animValue(layer, CompLayer.shapePath(shape.id, "trimEnd"), shape.trimEnd), (value) -> shape.trimEnd = value.floatValue(), 0F, 1F));
-            section.fields.add(this.animatedNumberRow("Trim Offset", layer, CompLayer.shapePath(shape.id, "trimOffset"), animValue(layer, CompLayer.shapePath(shape.id, "trimOffset"), shape.trimOffset), (value) -> shape.trimOffset = value.floatValue(), -1F, 1F));
-            section.fields.add(this.animatedNumberRow("Repeater", layer, CompLayer.shapePath(shape.id, "repeaterCount"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterCount"), shape.repeaterCount), (value) -> shape.repeaterCount = (int) Math.max(0, Math.round(value)), 0F, 64F));
-            section.fields.add(this.animatedNumberRow("Repeater Offset X", layer, CompLayer.shapePath(shape.id, "repeaterOffsetX"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterOffsetX"), shape.repeaterOffsetX), (value) -> shape.repeaterOffsetX = value.floatValue(), -1000F, 1000F));
-            section.fields.add(this.animatedNumberRow("Repeater Offset Y", layer, CompLayer.shapePath(shape.id, "repeaterOffsetY"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterOffsetY"), shape.repeaterOffsetY), (value) -> shape.repeaterOffsetY = value.floatValue(), -1000F, 1000F));
-            section.fields.add(this.animatedNumberRow("Repeater Scale", layer, CompLayer.shapePath(shape.id, "repeaterScale"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterScale"), shape.repeaterScale), (value) -> shape.repeaterScale = value.floatValue(), 0.01F, 4F));
-            section.fields.add(this.animatedNumberRow("Repeater Rotation", layer, CompLayer.shapePath(shape.id, "repeaterRotation"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterRotation"), shape.repeaterRotation), (value) -> shape.repeaterRotation = value.floatValue(), -720F, 720F));
+            section.fields.add(this.animatedNumberRow("宽度", layer, CompLayer.shapePath(shape.id, "width"), animValue(layer, CompLayer.shapePath(shape.id, "width"), shape.width), (value) -> shape.width = value.floatValue(), 1F, 5000F));
+            section.fields.add(this.animatedNumberRow("高度", layer, CompLayer.shapePath(shape.id, "height"), animValue(layer, CompLayer.shapePath(shape.id, "height"), shape.height), (value) -> shape.height = value.floatValue(), 1F, 5000F));
+            section.fields.add(this.animatedNumberRow("圆角", layer, CompLayer.shapePath(shape.id, "roundness"), animValue(layer, CompLayer.shapePath(shape.id, "roundness"), shape.roundness), (value) -> shape.roundness = (float) Math.max(0D, Math.min(1D, value)), 0F, 500F));
+            section.fields.add(this.numberRow("边数", shape.sides, 3, 64, true, (value) -> shape.sides = value.intValue()));
+            section.fields.add(this.numberRow("内半径", shape.innerRadius, 0.01F, 1F, false, (value) -> shape.innerRadius = value.floatValue()));
+            section.fields.add(this.colorRow("填充", shape.fillColor, (color) -> shape.fillColor = color));
+            section.fields.add(new UIToggle(IKey.constant("填充渐变"), shape.fillGradient, (toggle) ->
+            {
+                shape.fillGradient = toggle.getValue();
+                this.save();
+            }));
+            section.fields.add(this.colorRow("渐变颜色 2", shape.fillColor2, (color) -> shape.fillColor2 = color));
+            section.fields.add(this.animatedNumberRow("渐变角度", layer, CompLayer.shapePath(shape.id, "fillGradientAngle"), animValue(layer, CompLayer.shapePath(shape.id, "fillGradientAngle"), shape.fillGradientAngle), (value) -> shape.fillGradientAngle = value.floatValue(), -720F, 720F));
+            section.fields.add(this.colorRow("描边", shape.strokeColor, (color) -> shape.strokeColor = color));
+            section.fields.add(this.numberRow("描边宽度", shape.strokeWidth, 0F, 80F, false, (value) -> shape.strokeWidth = value.floatValue()));
+            section.fields.add(this.animatedNumberRow("旋转", layer, CompLayer.shapePath(shape.id, "rotation"), animValue(layer, CompLayer.shapePath(shape.id, "rotation"), shape.rotation), (value) -> shape.rotation = value.floatValue(), -720F, 720F));
+            section.fields.add(this.animatedNumberRow("修剪开始", layer, CompLayer.shapePath(shape.id, "trimStart"), animValue(layer, CompLayer.shapePath(shape.id, "trimStart"), shape.trimStart), (value) -> shape.trimStart = value.floatValue(), 0F, 1F));
+            section.fields.add(this.animatedNumberRow("修剪结束", layer, CompLayer.shapePath(shape.id, "trimEnd"), animValue(layer, CompLayer.shapePath(shape.id, "trimEnd"), shape.trimEnd), (value) -> shape.trimEnd = value.floatValue(), 0F, 1F));
+            section.fields.add(this.animatedNumberRow("修剪偏移", layer, CompLayer.shapePath(shape.id, "trimOffset"), animValue(layer, CompLayer.shapePath(shape.id, "trimOffset"), shape.trimOffset), (value) -> shape.trimOffset = value.floatValue(), -1F, 1F));
+            section.fields.add(this.animatedNumberRow("重复", layer, CompLayer.shapePath(shape.id, "repeaterCount"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterCount"), shape.repeaterCount), (value) -> shape.repeaterCount = (int) Math.max(0, Math.round(value)), 0F, 64F));
+            section.fields.add(this.animatedNumberRow("重复偏移 X", layer, CompLayer.shapePath(shape.id, "repeaterOffsetX"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterOffsetX"), shape.repeaterOffsetX), (value) -> shape.repeaterOffsetX = value.floatValue(), -1000F, 1000F));
+            section.fields.add(this.animatedNumberRow("重复偏移 Y", layer, CompLayer.shapePath(shape.id, "repeaterOffsetY"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterOffsetY"), shape.repeaterOffsetY), (value) -> shape.repeaterOffsetY = value.floatValue(), -1000F, 1000F));
+            section.fields.add(this.animatedNumberRow("重复缩放", layer, CompLayer.shapePath(shape.id, "repeaterScale"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterScale"), shape.repeaterScale), (value) -> shape.repeaterScale = value.floatValue(), 0.01F, 4F));
+            section.fields.add(this.animatedNumberRow("重复旋转", layer, CompLayer.shapePath(shape.id, "repeaterRotation"), animValue(layer, CompLayer.shapePath(shape.id, "repeaterRotation"), shape.repeaterRotation), (value) -> shape.repeaterRotation = value.floatValue(), -720F, 720F));
 
             if (CompShape.PATH.equals(shape.type))
             {
@@ -1781,12 +6205,12 @@ public class UICompositorPanel extends UIDashboardPanel
                     int index = i + 1;
                     String base = CompLayer.shapePath(shape.id, "p/" + i + "/");
 
-                    section.fields.add(this.animatedNumberRow("Path " + index + " X", layer, base + "x", animValue(layer, base + "x", point.x), (value) -> point.x = value.floatValue(), -5000F, 5000F));
-                    section.fields.add(this.animatedNumberRow("Path " + index + " Y", layer, base + "y", animValue(layer, base + "y", point.y), (value) -> point.y = value.floatValue(), -5000F, 5000F));
-                    section.fields.add(this.animatedNumberRow("Path " + index + " In X", layer, base + "inX", animValue(layer, base + "inX", point.inX), (value) -> point.inX = value.floatValue(), -5000F, 5000F));
-                    section.fields.add(this.animatedNumberRow("Path " + index + " In Y", layer, base + "inY", animValue(layer, base + "inY", point.inY), (value) -> point.inY = value.floatValue(), -5000F, 5000F));
-                    section.fields.add(this.animatedNumberRow("Path " + index + " Out X", layer, base + "outX", animValue(layer, base + "outX", point.outX), (value) -> point.outX = value.floatValue(), -5000F, 5000F));
-                    section.fields.add(this.animatedNumberRow("Path " + index + " Out Y", layer, base + "outY", animValue(layer, base + "outY", point.outY), (value) -> point.outY = value.floatValue(), -5000F, 5000F));
+                    section.fields.add(this.animatedNumberRow("路径" + index + " X", layer, base + "x", animValue(layer, base + "x", point.x), (value) -> point.x = value.floatValue(), -5000F, 5000F));
+                    section.fields.add(this.animatedNumberRow("路径" + index + " Y", layer, base + "y", animValue(layer, base + "y", point.y), (value) -> point.y = value.floatValue(), -5000F, 5000F));
+                    section.fields.add(this.animatedNumberRow("路径" + index + " In X", layer, base + "inX", animValue(layer, base + "inX", point.inX), (value) -> point.inX = value.floatValue(), -5000F, 5000F));
+                    section.fields.add(this.animatedNumberRow("路径" + index + " In Y", layer, base + "inY", animValue(layer, base + "inY", point.inY), (value) -> point.inY = value.floatValue(), -5000F, 5000F));
+                    section.fields.add(this.animatedNumberRow("路径" + index + " Out X", layer, base + "outX", animValue(layer, base + "outX", point.outX), (value) -> point.outX = value.floatValue(), -5000F, 5000F));
+                    section.fields.add(this.animatedNumberRow("路径" + index + " Out Y", layer, base + "outY", animValue(layer, base + "outY", point.outY), (value) -> point.outY = value.floatValue(), -5000F, 5000F));
                 }
 
                 section.fields.add(UI.row(
@@ -1810,89 +6234,21 @@ public class UICompositorPanel extends UIDashboardPanel
         return section;
     }
 
-    private UISection effectSection(CompLayer layer)
-    {
-        UISection section = new UISection(IKey.constant("Effects"));
-
-        if (layer == null)
-        {
-            return section;
-        }
-
-        section.fields.add(this.smallButton("Add Blur", () ->
-        {
-            CompEffect effect = CompEffectRegistry.create("blur", layer.effects.size() + 1);
-
-            effect.id = CompStore.uniqueEffectId(layer);
-            layer.effects.add(effect);
-            this.refreshInspector();
-        }));
-
-        UIButton add = new UIButton(IKey.constant("Effect Catalogue (right click)"), (button) -> {});
-
-        add.context((manager) ->
-        {
-            for (CompEffectRegistry.Definition definition : CompEffectRegistry.all())
-            {
-                manager.action(Icons.ADD, IKey.constant(definition.category + " / " + definition.name), () ->
-                {
-                    CompEffect effect = CompEffectRegistry.create(definition.id, layer.effects.size() + 1);
-
-                    effect.id = CompStore.uniqueEffectId(layer);
-                    layer.effects.add(effect);
-                    this.refreshInspector();
-                });
-            }
-        });
-        section.fields.add(add);
-
-        for (CompEffect effect : layer.effects)
-        {
-            CompEffectRegistry.Definition definition = CompEffectRegistry.get(effect.type);
-
-            if (definition == null)
-            {
-                continue;
-            }
-
-            section.fields.add(UI.label(IKey.constant(definition.name + " [" + effect.id + "]"), 16));
-
-            UIToggle enabled = new UIToggle(IKey.constant("Enabled"), effect.enabled, (toggle) -> effect.enabled = toggle.getValue());
-            UIButton remove = new UIButton(IKey.constant("Remove"), (button) ->
-            {
-                layer.effects.remove(effect);
-                this.refreshInspector();
-            });
-            section.fields.add(UI.row(enabled, remove));
-
-            for (CompEffectRegistry.Param param : definition.params)
-            {
-                float fallback = (float) effect.value(param.key, param.defaultValue);
-                String path = CompLayer.effectPath(effect.id, param.key);
-
-                fallback = layer.scalarAt(path, fallback, this.getFrame());
-
-                section.fields.add(this.animatedNumberRow(param.label, layer, path, fallback, (value) -> effect.put(param.key, value), param.min, param.max));
-            }
-
-            for (CompEffectRegistry.ColorParam param : definition.colorParams)
-            {
-                int color = effect.color(param.key, param.defaultValue);
-
-                section.fields.add(this.colorRow(param.label, color, (value) -> effect.putColor(param.key, value)));
-            }
-        }
-
-        return section;
-    }
-
     private UISection maskSection(CompLayer layer)
     {
-        UISection section = new UISection(IKey.constant("Masks"));
+        UISection section = new UISection(IKey.constant("蒙版"));
 
         if (layer == null)
         {
             return section;
+        }
+
+        if (layer.threeD)
+        {
+            /* Masks and track mattes are rasterised in composition space; a 3D layer's pixels
+             * only exist after the perspective projection. Saying so is better than offering
+             * controls that the renderer intentionally skips. */
+            section.fields.add(UI.label(IKey.constant("3D 图层暂不支持蒙版/轨道遮罩：蒙版在屏幕空间栅格化，3D 图层在透视投影后才合成。"), 13));
         }
 
         section.fields.add(this.smallButton("Add Rect Mask", () -> this.addMask(layer, false)));
@@ -1902,16 +6258,16 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             section.fields.add(UI.label(IKey.constant(mask.name), 16));
 
-            UIToggle enabled = new UIToggle(IKey.constant("Enabled"), mask.enabled, (toggle) -> mask.enabled = toggle.getValue());
-            UIButton remove = new UIButton(IKey.constant("Remove"), (button) ->
+            UIToggle enabled = new UIToggle(IKey.constant("启用"), mask.enabled, (toggle) -> mask.enabled = toggle.getValue());
+            UIButton remove = new UIButton(IKey.constant("移除"), (button) ->
             {
                 layer.masks.remove(mask);
                 this.refreshInspector();
             });
             section.fields.add(UI.row(enabled, remove));
-            section.fields.add(this.animatedNumberRow("Feather", layer, CompLayer.maskPath(mask.id, "feather"), layer.scalarAt(CompLayer.maskPath(mask.id, "feather"), mask.feather, this.getFrame()), (value) -> mask.feather = (float) Math.max(0D, value), 0F, 200F));
-            section.fields.add(this.animatedNumberRow("Opacity", layer, CompLayer.maskPath(mask.id, "opacity"), layer.scalarAt(CompLayer.maskPath(mask.id, "opacity"), mask.opacity, this.getFrame()), (value) -> mask.opacity = (float) Math.max(0D, Math.min(1D, value)), 0F, 1F));
-            section.fields.add(this.animatedNumberRow("Expansion", layer, CompLayer.maskPath(mask.id, "expansion"), layer.scalarAt(CompLayer.maskPath(mask.id, "expansion"), mask.expansion, this.getFrame()), (value) -> mask.expansion = value.floatValue(), -100F, 100F));
+            section.fields.add(this.animatedNumberRow("羽化", layer, CompLayer.maskPath(mask.id, "feather"), layer.scalarAt(CompLayer.maskPath(mask.id, "feather"), mask.feather, this.getFrame()), (value) -> mask.feather = (float) Math.max(0D, value), 0F, 200F));
+            section.fields.add(this.animatedNumberRow("不透明度", layer, CompLayer.maskPath(mask.id, "opacity"), layer.scalarAt(CompLayer.maskPath(mask.id, "opacity"), mask.opacity, this.getFrame()), (value) -> mask.opacity = (float) Math.max(0D, Math.min(1D, value)), 0F, 1F));
+            section.fields.add(this.animatedNumberRow("扩展", layer, CompLayer.maskPath(mask.id, "expansion"), layer.scalarAt(CompLayer.maskPath(mask.id, "expansion"), mask.expansion, this.getFrame()), (value) -> mask.expansion = value.floatValue(), -100F, 100F));
 
             for (int i = 0; i < mask.points.size(); i++)
             {
@@ -1920,18 +6276,18 @@ public class UICompositorPanel extends UIDashboardPanel
                 String xPath = "mask/" + mask.id + "/p/" + i + "/x";
                 String yPath = "mask/" + mask.id + "/p/" + i + "/y";
 
-                section.fields.add(this.animatedNumberRow("Point " + index + " X", layer, xPath, layer.scalarAt(xPath, point.x, this.getFrame()), (value) -> point.x = value.floatValue(), -10000F, 10000F));
-                section.fields.add(this.animatedNumberRow("Point " + index + " Y", layer, yPath, layer.scalarAt(yPath, point.y, this.getFrame()), (value) -> point.y = value.floatValue(), -10000F, 10000F));
+                section.fields.add(this.animatedNumberRow("点" + index + " X", layer, xPath, layer.scalarAt(xPath, point.x, this.getFrame()), (value) -> point.x = value.floatValue(), -10000F, 10000F));
+                section.fields.add(this.animatedNumberRow("点" + index + " Y", layer, yPath, layer.scalarAt(yPath, point.y, this.getFrame()), (value) -> point.y = value.floatValue(), -10000F, 10000F));
 
                 String inXPath = "mask/" + mask.id + "/p/" + i + "/inX";
                 String inYPath = "mask/" + mask.id + "/p/" + i + "/inY";
                 String outXPath = "mask/" + mask.id + "/p/" + i + "/outX";
                 String outYPath = "mask/" + mask.id + "/p/" + i + "/outY";
 
-                section.fields.add(this.animatedNumberRow("In " + index + " X", layer, inXPath, layer.scalarAt(inXPath, point.inX, this.getFrame()), (value) -> point.inX = value.floatValue(), -5000F, 5000F));
-                section.fields.add(this.animatedNumberRow("In " + index + " Y", layer, inYPath, layer.scalarAt(inYPath, point.inY, this.getFrame()), (value) -> point.inY = value.floatValue(), -5000F, 5000F));
-                section.fields.add(this.animatedNumberRow("Out " + index + " X", layer, outXPath, layer.scalarAt(outXPath, point.outX, this.getFrame()), (value) -> point.outX = value.floatValue(), -5000F, 5000F));
-                section.fields.add(this.animatedNumberRow("Out " + index + " Y", layer, outYPath, layer.scalarAt(outYPath, point.outY, this.getFrame()), (value) -> point.outY = value.floatValue(), -5000F, 5000F));
+                section.fields.add(this.animatedNumberRow("入点" + index + " X", layer, inXPath, layer.scalarAt(inXPath, point.inX, this.getFrame()), (value) -> point.inX = value.floatValue(), -5000F, 5000F));
+                section.fields.add(this.animatedNumberRow("入点" + index + " Y", layer, inYPath, layer.scalarAt(inYPath, point.inY, this.getFrame()), (value) -> point.inY = value.floatValue(), -5000F, 5000F));
+                section.fields.add(this.animatedNumberRow("出点" + index + " X", layer, outXPath, layer.scalarAt(outXPath, point.outX, this.getFrame()), (value) -> point.outX = value.floatValue(), -5000F, 5000F));
+                section.fields.add(this.animatedNumberRow("出点" + index + " Y", layer, outYPath, layer.scalarAt(outYPath, point.outY, this.getFrame()), (value) -> point.outY = value.floatValue(), -5000F, 5000F));
             }
 
             UIButton mode = new UIButton(IKey.constant(maskModeName(mask.mode)), (button) ->
@@ -1939,8 +6295,8 @@ public class UICompositorPanel extends UIDashboardPanel
                 mask.mode = (mask.mode + 1) % 4;
                 button.label = IKey.constant(maskModeName(mask.mode));
             });
-            section.fields.add(UI.labelRow(IKey.constant("Mode"), mode));
-            section.fields.add(new UIToggle(IKey.constant("Inverted"), mask.inverted, (toggle) -> mask.inverted = toggle.getValue()));
+            section.fields.add(this.fieldRow("模式", mode));
+            section.fields.add(new UIToggle(IKey.constant("反转"), mask.inverted, (toggle) -> mask.inverted = toggle.getValue()));
             section.fields.add(UI.row(
                 this.smallButton("Add Point", () ->
                 {
@@ -1963,7 +6319,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private UISection layerMarkerSection(CompLayer layer)
     {
-        UISection section = new UISection(IKey.constant("Layer Markers"));
+        UISection section = new UISection(IKey.constant("图层标记"));
 
         if (layer == null)
         {
@@ -1983,10 +6339,10 @@ public class UICompositorPanel extends UIDashboardPanel
             UITextbox name = new UITextbox(128, (value) -> marker.name = value);
 
             name.setText(marker.name);
-            section.fields.add(UI.labelRow(IKey.constant("Name"), name));
-            section.fields.add(this.numberRow("Time", marker.time, 0F, 36000F, false, (value) -> marker.time = value.floatValue()));
+            section.fields.add(this.fieldRow("名称", name));
+            section.fields.add(this.numberRow("时间", marker.time, 0F, 36000F, false, (value) -> marker.time = value.floatValue()));
 
-            UIButton remove = new UIButton(IKey.constant("Remove"), (button) ->
+            UIButton remove = new UIButton(IKey.constant("移除"), (button) ->
             {
                 layer.markers.remove(marker);
                 this.refreshInspector();
@@ -2000,7 +6356,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private UISection animationPresetSection(CompLayer layer)
     {
-        UISection section = new UISection(IKey.constant("Animation Presets"));
+        UISection section = new UISection(IKey.constant("动画预设"));
 
         if (layer == null || this.project == null)
         {
@@ -2023,7 +6379,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         for (CompAnimationPreset preset : this.project.animationPresets)
         {
-            UIButton apply = new UIButton(IKey.constant("Apply " + preset.name), (button) ->
+            UIButton apply = new UIButton(IKey.constant("应用 " + preset.name), (button) ->
             {
                 if (preset.applyTo(layer))
                 {
@@ -2033,7 +6389,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
             });
 
-            section.fields.add(UI.row(apply, new UIButton(IKey.constant("Remove"), (button) ->
+            section.fields.add(UI.row(apply, new UIButton(IKey.constant("移除"), (button) ->
             {
                 this.project.animationPresets.remove(preset);
                 this.refreshInspector();
@@ -2043,60 +6399,9 @@ public class UICompositorPanel extends UIDashboardPanel
         return section;
     }
 
-    private UISection styleSection(CompLayer layer)
-    {
-        UISection section = new UISection(IKey.constant("Layer Styles"));
-
-        if (layer == null)
-        {
-            return section;
-        }
-
-        UIButton shadow = this.smallButton("Add Drop Shadow", () -> this.addStyle(layer, CompStyle.DROP_SHADOW));
-
-        shadow.context((manager) ->
-        {
-            manager.action(Icons.FADING, IKey.constant("Drop Shadow"), () -> this.addStyle(layer, CompStyle.DROP_SHADOW));
-            manager.action(Icons.FADING, IKey.constant("Inner Shadow"), () -> this.addStyle(layer, CompStyle.INNER_SHADOW));
-            manager.action(Icons.LIGHT, IKey.constant("Outer Glow"), () -> this.addStyle(layer, CompStyle.OUTER_GLOW));
-            manager.action(Icons.LIGHT, IKey.constant("Inner Glow"), () -> this.addStyle(layer, CompStyle.INNER_GLOW));
-            manager.action(Icons.SUN, IKey.constant("Bevel & Emboss"), () -> this.addStyle(layer, CompStyle.BEVEL));
-            manager.action(Icons.COLOR, IKey.constant("Color Overlay"), () -> this.addStyle(layer, CompStyle.COLOR_OVERLAY));
-            manager.action(Icons.COLOR, IKey.constant("Gradient Overlay"), () -> this.addStyle(layer, CompStyle.GRADIENT_OVERLAY));
-            manager.action(Icons.LIGHT, IKey.constant("Satin"), () -> this.addStyle(layer, CompStyle.SATIN));
-            manager.action(Icons.OUTLINE, IKey.constant("Stroke"), () -> this.addStyle(layer, CompStyle.STROKE));
-        });
-        section.fields.add(shadow);
-        section.fields.add(this.smallButton("Add Outer Glow", () -> this.addStyle(layer, CompStyle.OUTER_GLOW)));
-        section.fields.add(this.smallButton("Add Stroke", () -> this.addStyle(layer, CompStyle.STROKE)));
-        section.fields.add(this.smallButton("Add Color Overlay", () -> this.addStyle(layer, CompStyle.COLOR_OVERLAY)));
-
-        for (CompStyle style : layer.styles)
-        {
-            section.fields.add(UI.label(IKey.constant(style.type), 16));
-
-            UIToggle enabled = new UIToggle(IKey.constant("Enabled"), style.enabled, (toggle) -> style.enabled = toggle.getValue());
-            UIButton remove = new UIButton(IKey.constant("Remove"), (button) ->
-            {
-                layer.styles.remove(style);
-                this.refreshInspector();
-            });
-            section.fields.add(UI.row(enabled, remove));
-            section.fields.add(this.colorRow("Color", style.color, (color) -> style.color = color));
-            section.fields.add(this.colorRow("Color 2", style.color2, (color) -> style.color2 = color));
-            section.fields.add(this.numberRow("Opacity", style.opacity, 0F, 1F, false, (value) -> style.opacity = value.floatValue()));
-            section.fields.add(this.numberRow("Size", style.size, 0F, 200F, false, (value) -> style.size = value.floatValue()));
-            section.fields.add(this.numberRow("Distance", style.distance, -300F, 300F, false, (value) -> style.distance = value.floatValue()));
-            section.fields.add(this.numberRow("Angle", style.angle, -180F, 180F, false, (value) -> style.angle = value.floatValue()));
-            section.fields.add(this.numberRow("Blur", style.blur, 0F, 100F, false, (value) -> style.blur = value.floatValue()));
-        }
-
-        return section;
-    }
-
     private UISection markerSection()
     {
-        UISection section = new UISection(IKey.constant("Composition Markers"));
+        UISection section = new UISection(IKey.constant("合成标记"));
 
         section.fields.add(this.smallButton("Add Marker at Playhead", () ->
         {
@@ -2122,7 +6427,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private UISection parameterSection()
     {
-        UISection section = new UISection(IKey.constant("Master Properties"));
+        UISection section = new UISection(IKey.constant("主属性"));
 
         section.fields.add(this.smallButton("Add Parameter", () ->
         {
@@ -2134,7 +6439,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         for (CompParameter parameter : this.doc.parameters)
         {
-            section.fields.add(this.textRow("Name", parameter.name, (value) ->
+            section.fields.add(this.textRow("名称", parameter.name, (value) ->
             {
                 if (value != null && !value.isBlank())
                 {
@@ -2143,9 +6448,9 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
             }));
             section.fields.add(this.numberRow(parameter.label, parameter.value, parameter.min, parameter.max, false, (value) -> parameter.value = value.floatValue()));
-            section.fields.add(this.numberRow("Min", parameter.min, -100000F, 100000F, false, (value) -> parameter.min = value.floatValue()));
-            section.fields.add(this.numberRow("Max", parameter.max, -100000F, 100000F, false, (value) -> parameter.max = value.floatValue()));
-            section.fields.add(new UIButton(IKey.constant("Remove"), (button) ->
+            section.fields.add(this.numberRow("最小", parameter.min, -100000F, 100000F, false, (value) -> parameter.min = value.floatValue()));
+            section.fields.add(this.numberRow("最大", parameter.max, -100000F, 100000F, false, (value) -> parameter.max = value.floatValue()));
+            section.fields.add(new UIButton(IKey.constant("移除"), (button) ->
             {
                 this.doc.parameters.remove(parameter);
                 this.refreshInspector();
@@ -2157,6 +6462,24 @@ public class UICompositorPanel extends UIDashboardPanel
 
     /* Reusable rows (all BBS controls) */
 
+    private UIElement fieldRow(String label, UIElement field)
+    {
+        return this.fieldRow(label, 90, field);
+    }
+
+    private UIElement fieldRow(String label, int labelWidth, UIElement field)
+    {
+        UIElement row = new UIElement();
+        UILabel text = new UILabel(IKey.constant(label));
+
+        row.w(1F).h(18);
+        text.relative(row).x(0).y(0).w(labelWidth).h(18);
+        field.relative(row).x(labelWidth + 6).y(0).w(1F, -labelWidth - 6).h(18);
+        row.add(text, field);
+
+        return row;
+    }
+
     private UIElement numberRow(String label, double value, double min, double max, boolean integer, Consumer<Double> callback)
     {
         UITrackpad trackpad = new UITrackpad(callback);
@@ -2164,7 +6487,7 @@ public class UICompositorPanel extends UIDashboardPanel
         trackpad.limit(min, max, integer);
         trackpad.setValue(value);
 
-        return UI.labelRow(IKey.constant(label), trackpad);
+        return this.fieldRow(label, trackpad);
     }
 
     private UIElement animatedNumberRow(String label, CompLayer layer, String path, float value, Consumer<Double> setter, float min, float max)
@@ -2181,7 +6504,7 @@ public class UICompositorPanel extends UIDashboardPanel
         trackpad.limit(min, max, false);
         trackpad.setValue(value);
 
-        UIIcon key = new UIIcon(Icons.STOPWATCH, (icon) ->
+        UIIcon key = this.keyButton(layer, path, () ->
         {
             if (transformPath)
             {
@@ -2199,16 +6522,103 @@ public class UICompositorPanel extends UIDashboardPanel
             this.addScalarKey(layer, path);
         });
 
-        key.wh(16, 16);
-        key.tooltip(IKey.constant("Add keyframe at playhead"));
-        key.active(layer.hasScalarChannel(path) || "opacity".equals(path) || transformPath && !layer.transformChannel().getKeyframes().isEmpty());
+        if (transformPath || "opacity".equals(path) || layer.hasScalarChannel(path))
+        {
+            this.inspectorBindings.add(() -> trackpad.setValue(this.readAnimatedValue(layer, path, value)));
+        }
+
+        UILabel labelWidget = new UILabel(IKey.constant(label));
+
+        labelWidget.color(0xFFB8C4D6, false);
 
         UIElement row = new UIElement();
 
-        row.row(2).height(20);
-        row.add(UI.label(IKey.constant(label), 16), key, trackpad.w(82));
+        row.w(1F).h(20);
+        labelWidget.relative(row).x(0).y(2).w(80).h(16);
+        trackpad.relative(row).x(84).y(1).w(1F, -106).h(18);
+        key.relative(row).x(1F, -18).y(2).w(16).h(16);
+        row.add(labelWidget, trackpad, key);
 
         return row;
+    }
+
+    private UIElement animatedSliderRow(String label, CompLayer layer, String path, float value, Consumer<Double> setter, float min, float max)
+    {
+        UISliderTrackpad slider = new UISliderTrackpad((next) ->
+        {
+            setter.accept(next);
+            this.setScalar(layer, path, next.floatValue());
+        });
+
+        slider.limit(min, max, false);
+        slider.setValue(value);
+
+        UIIcon key = this.keyButton(layer, path, () ->
+        {
+            this.setScalar(layer, path, (float) slider.getValue());
+            this.addScalarKey(layer, path);
+        });
+
+        this.inspectorBindings.add(() -> slider.setValue(this.readAnimatedValue(layer, path, value)));
+
+        UILabel labelWidget = new UILabel(IKey.constant(label));
+
+        labelWidget.color(0xFFB8C4D6, false);
+
+        UIElement row = new UIElement();
+
+        row.w(1F).h(20);
+        labelWidget.relative(row).x(0).y(2).w(80).h(16);
+        slider.relative(row).x(84).y(1).w(1F, -106).h(18);
+        key.relative(row).x(1F, -18).y(2).w(16).h(16);
+        row.add(labelWidget, slider, key);
+
+        return row;
+    }
+
+    private UIIcon keyButton(CompLayer layer, String path, Runnable action)
+    {
+        UIIcon key = new UIIcon(Icons.STOPWATCH, (icon) -> action.run());
+
+        key.wh(16, 16);
+        key.tooltip(IKey.constant("在播放头添加关键帧"));
+        key.active(layer.hasScalarChannel(path)
+            || "opacity".equals(path)
+            || ("x".equals(path) || "y".equals(path) || "rotation".equals(path) || "scaleX".equals(path) || "scaleY".equals(path)) && !layer.transformChannel().getKeyframes().isEmpty());
+
+        return key;
+    }
+
+    private float readAnimatedValue(CompLayer layer, String path, float fallback)
+    {
+        if ("opacity".equals(path))
+        {
+            return layer.opacityFrame(this.getFrame());
+        }
+
+        if ("timeRemap".equals(path))
+        {
+            return layer.scalarAt(path, layer.sourceTimeAt(this.time, this.getFrame()), this.getFrame());
+        }
+
+        Transform transform;
+
+        switch (path)
+        {
+            case "x", "y", "rotation", "scaleX", "scaleY":
+                transform = layer.transformAt(this.getFrame());
+
+                return switch (path)
+                {
+                    case "x" -> transform.translate.x;
+                    case "y" -> transform.translate.y;
+                    case "rotation" -> transform.rotate.z;
+                    case "scaleX" -> transform.scale.x;
+                    default -> transform.scale.y;
+                };
+            default:
+                return layer.scalarAt(path, fallback, this.getFrame());
+        }
     }
 
     private UIElement animatedNumberRow(String label, CompLayer layer, String path, float value, Consumer<Double> setter)
@@ -2218,7 +6628,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private float animValue(CompLayer layer, String path, float fallback)
     {
-        return layer.scalarAt(path, fallback, this.getFrame());
+        return this.readAnimatedValue(layer, path, fallback);
     }
 
     private UIElement textRow(String label, String value, Consumer<String> callback)
@@ -2226,7 +6636,7 @@ public class UICompositorPanel extends UIDashboardPanel
         UITextbox box = new UITextbox(2048, callback);
 
         box.setText(value);
-        return UI.labelRow(IKey.constant(label), box);
+        return this.fieldRow(label, box);
     }
 
     private UIElement colorRow(String label, int value, Consumer<Integer> callback)
@@ -2242,7 +6652,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }).withAlpha();
 
         color.setColor(value);
-        return UI.labelRow(IKey.constant(label), color);
+        return this.fieldRow(label, color);
     }
 
     private UIButton smallButton(String label, Runnable callback)
@@ -2270,7 +6680,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.keyframeEditor.view.addSheet(new UIKeyframeSheet(
             "transform",
-            IKey.constant("Transform"),
+            IKey.constant("变换"),
             Colors.BLUE,
             layer.transformChannel(),
             null
@@ -2278,7 +6688,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.keyframeEditor.view.addSheet(new UIKeyframeSheet(
             "opacity",
-            IKey.constant("Opacity"),
+            IKey.constant("不透明度"),
             Colors.GREEN,
             layer.opacityChannel(),
             null
@@ -2308,7 +6718,18 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.resetTimelineView)
         {
             this.resetTimelineView = false;
-            this.keyframeEditor.view.resetView();
+
+            /* Reset to the composition's full duration, not to the keyframes' bounding box:
+             * the property editor belongs to the same timeline as the track lanes. */
+            if (this.keyframeOpen && this.keyframeEditor.area.w > 0)
+            {
+                this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
+                this.keyframeViewNeedsFit = false;
+            }
+            else
+            {
+                this.keyframeViewNeedsFit = true;
+            }
         }
     }
 
@@ -2394,6 +6815,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.refreshSheets();
         this.refreshInspector();
+        this.openKeyframes();
+        this.save();
     }
 
     private float scalarValue(CompLayer layer, String path)
@@ -2406,6 +6829,16 @@ public class UICompositorPanel extends UIDashboardPanel
         if ("timeRemap".equals(path))
         {
             return layer.scalarAt(path, layer.sourceTimeAt(this.time, this.getFrame()), this.getFrame());
+        }
+
+        if ("cameraTargetX".equals(path))
+        {
+            return layer.scalarAt(path, layer.cameraTargetX, this.getFrame());
+        }
+
+        if ("cameraTargetY".equals(path))
+        {
+            return layer.scalarAt(path, layer.cameraTargetY, this.getFrame());
         }
 
         if (path.startsWith("fx/"))
@@ -2435,6 +6868,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.selectedLayer.transformChannel().insert(this.getFrame(), this.selectedLayer.transformAt(this.getFrame()).copy());
         this.refreshSheets();
+        this.openKeyframes();
+        this.save();
     }
 
     private void addOpacityKey()
@@ -2446,6 +6881,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.selectedLayer.opacityChannel().insert(this.getFrame(), this.selectedLayer.opacityFrame(this.getFrame()));
         this.refreshSheets();
+        this.openKeyframes();
+        this.save();
     }
 
     private void setTransformX(double value) { this.setTransformComponent(0, (float) value); }
@@ -2574,7 +7011,718 @@ public class UICompositorPanel extends UIDashboardPanel
 
     /* Host lifecycle */
 
+    /** The keyframe editor is built before the panel is laid out: adding sheets at 0x0 leaves its
+     *  dope sheet cache empty, which is why the timeline looked blank until something was clicked.
+     *  Prime it again on the first frame that has a real size. */
+    private void primeTimeline()
+    {
+        int w = this.keyframeEditor.area.w;
+        int h = this.keyframeEditor.area.h;
+
+        if (w <= 0 || h <= 0 || (w == this.primedWidth && h == this.primedHeight))
+        {
+            return;
+        }
+
+        boolean first = this.primedWidth < 0;
+
+        this.primedWidth = w;
+        this.primedHeight = h;
+
+        if (first || this.resetTimelineView)
+        {
+            this.resetTimelineView = true;
+            this.refreshSheets();
+        }
+    }
+
+    /** Periodic snapshot: every mutation ends up in the project JSON, so a 1-second sampler gives
+     *  a real undo history without hooking every widget. */
+    private void captureSnapshot()
+    {
+        long now = System.currentTimeMillis();
+
+        /* Time-based, not frame-based: render() runs at the display refresh rate, so counting
+         * frames made the undo history fill in ~0.3 s instead of 1 s. */
+        if (now - this.lastSnapshotMs < 1000L || this.restoring || this.project == null
+            || (this.trackTimeline != null && this.trackTimeline.isInteracting()))
+        {
+            return;
+        }
+
+        this.lastSnapshotMs = now;
+
+        String json = CompStore.snapshot(this.project);
+
+        if (json.isEmpty() || json.equals(this.lastSnapshot))
+        {
+            return;
+        }
+
+        if (!this.lastSnapshot.isEmpty())
+        {
+            this.undoStack.push(this.lastSnapshot);
+
+            while (this.undoStack.size() > 50)
+            {
+                this.undoStack.removeLast();
+            }
+        }
+
+        this.lastSnapshot = json;
+        this.redoStack.clear();
+    }
+
+    public void undo()
+    {
+        if (this.undoStack.isEmpty())
+        {
+            this.status.label = IKey.constant("没有可撤销的操作");
+
+            return;
+        }
+
+        this.redoStack.push(CompStore.snapshot(this.project));
+        this.applySnapshot(this.undoStack.pop());
+    }
+
+    public void redo()
+    {
+        if (this.redoStack.isEmpty())
+        {
+            this.status.label = IKey.constant("没有可重做的操作");
+
+            return;
+        }
+
+        this.undoStack.push(CompStore.snapshot(this.project));
+        this.applySnapshot(this.redoStack.pop());
+    }
+
+    private void applySnapshot(String json)
+    {
+        CompProject restored = CompStore.restore(json);
+
+        if (restored == null)
+        {
+            return;
+        }
+
+        String compId = this.doc == null ? null : this.doc.id;
+        String layerId = this.selectedLayer == null ? null : this.selectedLayer.id;
+
+        this.restoring = true;
+
+        try
+        {
+            this.project = restored;
+            this.doc = compId == null ? restored.getCompOrFirst(CompStore.DEFAULT_COMP) : restored.getComp(compId);
+
+            if (this.doc == null)
+            {
+                this.doc = restored.getCompOrFirst(CompStore.DEFAULT_COMP);
+            }
+
+            this.selectedLayer = null;
+
+            if (layerId != null && this.doc != null)
+            {
+                this.selectedLayer = this.doc.getLayer(layerId);
+            }
+
+            if (this.selectedLayer == null && this.doc != null && !this.doc.layers.isEmpty())
+            {
+                this.selectedLayer = this.doc.layers.get(this.doc.layers.size() - 1);
+            }
+
+            this.lastSnapshot = json;
+            this.primedWidth = -1;
+
+            if (this.trackTimeline != null)
+            {
+                this.trackTimeline.refresh();
+            }
+
+            this.refreshLayers();
+            this.refreshInspector();
+            this.refreshSheets();
+            this.refreshQueue();
+            /* The bridge caches the document it renders; without this an undo leaves the BBS
+             * preview/backdrop pointing at the pre-undo object graph. */
+            dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+            this.save();
+        }
+        finally
+        {
+            this.restoring = false;
+        }
+    }
+
     @Override
+    protected boolean subMouseScrolled(UIContext context)
+    {
+        /* Alt+wheel must work over the preview as well as over the timeline. The timeline
+         * consumes it when the cursor is there; this is the fallback for the rest of the panel. */
+        if (!this.startScreenOpen && !this.modalLayer.isVisible() && this.doc != null
+            && CompInput.altDown() && Math.abs(context.mouseWheel) > 0.001D)
+        {
+            this.trackTimeline.zoom(context.mouseWheel > 0D ? 1D : -1D);
+
+            return true;
+        }
+
+        return super.subMouseScrolled(context);
+    }
+
+    @Override
+    protected boolean subKeyPressed(UIContext context)
+    {
+        int key = context.getKeyCode();
+        KeyAction action = context.getKeyAction();
+        boolean pressed = action == KeyAction.PRESSED;
+        boolean repeat = action == KeyAction.REPEAT;
+        boolean typing = context.activeElement instanceof IFocusedUIElement;
+
+        if (this.startScreenOpen)
+        {
+            if (pressed && !typing && key == GLFW.GLFW_KEY_ESCAPE)
+            {
+                this.leaveStartScreen();
+
+                return true;
+            }
+
+            /* Text fields inside the landing screen still need their keystrokes; editor
+             * shortcuts must not fire while the project chooser is up. */
+            return super.subKeyPressed(context);
+        }
+
+        if (key == GLFW.GLFW_KEY_ESCAPE && pressed)
+        {
+            if (this.assetBrowser != null)
+            {
+                this.assetBrowser.removeFromParent();
+                this.assetBrowser = null;
+
+                return true;
+            }
+
+            if (this.modalLayer.isVisible())
+            {
+                this.closeModal();
+
+                return true;
+            }
+
+            if (typing)
+            {
+                return super.subKeyPressed(context);
+            }
+
+            if (this.keyframeOpen)
+            {
+                this.setKeyframeOpen(false);
+
+                return true;
+            }
+
+            if (this.selectedLayer != null)
+            {
+                this.clearSelection();
+
+                return true;
+            }
+        }
+
+        if (this.assetBrowser != null || this.modalLayer.isVisible())
+        {
+            return super.subKeyPressed(context);
+        }
+        boolean repeatable = key == GLFW.GLFW_KEY_LEFT || key == GLFW.GLFW_KEY_RIGHT
+            || key == GLFW.GLFW_KEY_UP || key == GLFW.GLFW_KEY_DOWN;
+
+        if ((!pressed && !(repeat && repeatable)) || typing)
+        {
+            return super.subKeyPressed(context);
+        }
+
+        boolean ctrl = CompInput.ctrlDown();
+        boolean shift = CompInput.shiftDown();
+        boolean alt = CompInput.altDown();
+        int scheme = this.getShortcutScheme();
+        boolean premiere = scheme == 0;
+
+        if (pressed && !ctrl)
+        {
+            if (key == GLFW.GLFW_KEY_SPACE) { this.togglePlay(); return true; }
+            if (key == GLFW.GLFW_KEY_J) { this.shuttle(-1); return true; }
+            if (key == GLFW.GLFW_KEY_K && alt) { this.addTransformKey(false); this.openKeyframes(); return true; }
+            if (key == GLFW.GLFW_KEY_K && !alt) { this.pause(); return true; }
+            if (key == GLFW.GLFW_KEY_L) { this.shuttle(1); return true; }
+            if (key == GLFW.GLFW_KEY_S && !alt) { this.trackTimeline.toggleSnapping(); this.updateToolbarLabels(); return true; }
+            if (key == GLFW.GLFW_KEY_F) { this.toggleFocusMode(); return true; }
+            if (key == GLFW.GLFW_KEY_M && !shift && !alt) { this.addMarkerAtPlayhead(); return true; }
+            if (key == GLFW.GLFW_KEY_M && shift) { this.jumpMarker(1); return true; }
+            if (key == GLFW.GLFW_KEY_C && !alt) { this.splitSelectedAtPlayhead(); return true; }
+            if (key == GLFW.GLFW_KEY_BACKSLASH) { this.trackTimeline.fit(); return true; }
+            if (key == GLFW.GLFW_KEY_EQUAL || key == GLFW.GLFW_KEY_KP_ADD) { this.trackTimeline.zoom(1D); return true; }
+            if (key == GLFW.GLFW_KEY_MINUS || key == GLFW.GLFW_KEY_KP_SUBTRACT) { this.trackTimeline.zoom(-1D); return true; }
+            if (key == GLFW.GLFW_KEY_LEFT_BRACKET && !alt) { this.trimSelectedToPlayhead(true); return true; }
+            if (key == GLFW.GLFW_KEY_RIGHT_BRACKET && !alt) { this.trimSelectedToPlayhead(false); return true; }
+            if (key == GLFW.GLFW_KEY_COMMA) { this.navigateKeyframe(-1); return true; }
+            if (key == GLFW.GLFW_KEY_PERIOD) { this.navigateKeyframe(1); return true; }
+
+            if (premiere)
+            {
+                /* Premiere's mark-in/out and trim-to-playhead vocabulary. */
+                if (key == GLFW.GLFW_KEY_I && alt) { this.setWorkAreaIn(); return true; }
+                if (key == GLFW.GLFW_KEY_O && alt) { this.setWorkAreaOut(); return true; }
+                if (key == GLFW.GLFW_KEY_E) { this.trimSelectedToPlayhead(false); return true; }
+                if (key == GLFW.GLFW_KEY_V || key == GLFW.GLFW_KEY_A)
+                {
+                    this.setStatus("已切换到选择工具（本合成器始终为选择模式）");
+                    return true;
+                }
+            }
+            else
+            {
+                if (key == GLFW.GLFW_KEY_I && !alt) { this.setWorkAreaIn(); return true; }
+                if (key == GLFW.GLFW_KEY_O && !alt) { this.setWorkAreaOut(); return true; }
+            }
+
+            if (key == GLFW.GLFW_KEY_HOME) { this.setFrame(0F); return true; }
+            if (key == GLFW.GLFW_KEY_END) { this.setFrame(this.getDurationTicks()); return true; }
+            if (key == GLFW.GLFW_KEY_DELETE || key == GLFW.GLFW_KEY_BACKSPACE) { this.deleteSelected(); return true; }
+        }
+
+        if (pressed && ctrl)
+        {
+            if (key == GLFW.GLFW_KEY_Z)
+            {
+                if (shift) this.redo(); else this.undo();
+
+                return true;
+            }
+
+            if (key == GLFW.GLFW_KEY_Y) { this.redo(); return true; }
+            if (key == GLFW.GLFW_KEY_S) { this.save(); this.setStatus("工程已保存"); return true; }
+            if (key == GLFW.GLFW_KEY_D && (!premiere || shift)) { this.duplicateSelected(); return true; }
+            if (key == GLFW.GLFW_KEY_K && alt) { this.showShortcutHelp(); return true; }
+            if (key == GLFW.GLFW_KEY_K) { this.splitSelectedAtPlayhead(); return true; }
+            if (key == GLFW.GLFW_KEY_M && shift) { this.jumpMarker(-1); return true; }
+            if (key == GLFW.GLFW_KEY_M) { this.showExportDialog(); return true; }
+            if (key == GLFW.GLFW_KEY_SLASH) { this.showShortcutHelp(); return true; }
+            if (key == GLFW.GLFW_KEY_I && shift && !premiere) { this.clearWorkAreaIn(); return true; }
+            if (key == GLFW.GLFW_KEY_O && shift && !premiere) { this.clearWorkAreaOut(); return true; }
+        }
+
+        if (key == GLFW.GLFW_KEY_LEFT || key == GLFW.GLFW_KEY_RIGHT)
+        {
+            int direction = key == GLFW.GLFW_KEY_RIGHT ? 1 : -1;
+            int amount = direction * (shift ? 5 : 1);
+
+            if (alt && !ctrl) this.nudgeSelected(amount); else this.stepFrame(amount);
+
+            return true;
+        }
+
+        if (key == GLFW.GLFW_KEY_UP || key == GLFW.GLFW_KEY_DOWN)
+        {
+            int direction = key == GLFW.GLFW_KEY_UP ? -1 : 1;
+
+            if (ctrl) this.selectRelative(direction);
+            else if (alt) this.moveLayerOrder(this.selectedLayer, key == GLFW.GLFW_KEY_UP ? 1 : -1);
+            else this.jumpToEditPoint(direction);
+
+            return true;
+        }
+
+        return super.subKeyPressed(context);
+    }
+
+    private void togglePlay()
+    {
+        if (this.playing)
+        {
+            this.pause();
+
+            return;
+        }
+
+        this.playing = true;
+        this.playRate = 1F;
+        this.updatePlayLabel();
+    }
+
+    private void pause()
+    {
+        this.playing = false;
+        this.playRate = 0F;
+        this.updatePlayLabel();
+    }
+
+    private void shuttle(int direction)
+    {
+        if (direction > 0)
+        {
+            this.playRate = this.playing && this.playRate > 0F ? Math.min(4F, this.playRate * 2F) : 1F;
+        }
+        else
+        {
+            this.playRate = this.playing && this.playRate < 0F ? Math.max(-4F, this.playRate * 2F) : -1F;
+        }
+
+        this.playing = true;
+        this.updatePlayLabel();
+    }
+
+    private void jumpToEditPoint(int direction)
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        List<Float> times = new ArrayList<>();
+
+        times.add(0F);
+        times.add(this.doc.duration);
+        times.add(this.doc.workAreaIn);
+        times.add(this.doc.workAreaOut);
+
+        for (CompMarker marker : this.doc.markers)
+        {
+            times.add(marker.time);
+        }
+
+        for (CompLayer layer : this.doc.layers)
+        {
+            times.add(layer.in);
+            times.add(layer.out);
+        }
+
+        times.sort(Float::compare);
+        float now = this.time;
+        float epsilon = 1F / Math.max(1F, this.doc.fps);
+        float target = direction > 0 ? this.doc.duration : 0F;
+
+        if (direction > 0)
+        {
+            for (float time : times)
+            {
+                if (time > now + epsilon)
+                {
+                    target = time;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            for (float time : times)
+            {
+                if (time < now - epsilon)
+                {
+                    target = time;
+                }
+            }
+        }
+
+        this.setFrame(Math.round(target * this.doc.fps));
+    }
+
+    private void selectRelative(int direction)
+    {
+        if (this.doc == null || this.doc.layers.isEmpty())
+        {
+            return;
+        }
+
+        List<CompLayer> rows = new ArrayList<>(this.doc.layers);
+
+        java.util.Collections.reverse(rows);
+
+        int index = this.selectedLayer == null ? -1 : rows.indexOf(this.selectedLayer);
+        int next = Math.max(0, Math.min(rows.size() - 1, index + direction));
+
+        this.selectLayer(rows.get(next));
+    }
+
+    private void trimSelectedToPlayhead(boolean in)
+    {
+        if (this.doc == null || this.selectedLayer == null)
+        {
+            this.setStatus("先在时间轴选择一条轨道");
+
+            return;
+        }
+
+        if (this.selectedLayer.locked)
+        {
+            this.setStatus("轨道已锁定：先解锁再裁剪");
+
+            return;
+        }
+
+        if (in)
+        {
+            this.selectedLayer.trimInTo(this.time, this.doc.fps);
+        }
+        else
+        {
+            this.selectedLayer.trimOutTo(this.time, this.doc.fps, this.doc.duration);
+        }
+
+        this.onTrackEdited();
+        this.setStatus(in ? "已裁剪入点到播放头" : "已裁剪出点到播放头");
+    }
+
+    private void setWorkAreaIn()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        this.doc.workAreaIn = Math.max(0F, Math.min(this.doc.workAreaOut - 1F / Math.max(1F, this.doc.fps), this.time));
+        this.setStatus("工作区入点：" + String.format(java.util.Locale.ROOT, "%.2fs", this.doc.workAreaIn));
+        this.save();
+    }
+
+    private void setWorkAreaOut()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        this.doc.workAreaOut = Math.min(this.doc.duration, Math.max(this.doc.workAreaIn + 1F / Math.max(1F, this.doc.fps), this.time));
+        this.setStatus("工作区出点：" + String.format(java.util.Locale.ROOT, "%.2fs", this.doc.workAreaOut));
+        this.save();
+    }
+
+    private void clearWorkAreaIn()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        this.doc.workAreaIn = 0F;
+        this.setStatus("已清除工作区入点");
+        this.save();
+    }
+
+    private void clearWorkAreaOut()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        this.doc.workAreaOut = this.doc.duration;
+        this.setStatus("已清除工作区出点");
+        this.save();
+    }
+
+    private void addMarkerAtPlayhead()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        CompMarker marker = new CompMarker("marker_" + (this.doc.markers.size() + 1), "标记", this.time);
+
+        this.doc.markers.add(marker);
+
+        if (this.inspectorPage == PAGE_COMP)
+        {
+            this.refreshInspector();
+        }
+
+        this.save();
+        this.setStatus("已添加标记");
+    }
+
+    private void jumpMarker(int direction)
+    {
+        if (this.doc == null || this.doc.markers.isEmpty())
+        {
+            return;
+        }
+
+        List<CompMarker> markers = new ArrayList<>(this.doc.markers);
+
+        markers.sort((a, b) -> Float.compare(a.time, b.time));
+
+        CompMarker target = null;
+        float epsilon = 1F / Math.max(1F, this.doc.fps);
+
+        if (direction > 0)
+        {
+            for (CompMarker marker : markers)
+            {
+                if (marker.time > this.time + epsilon)
+                {
+                    target = marker;
+                    break;
+                }
+            }
+
+            if (target == null)
+            {
+                target = markers.get(0);
+            }
+        }
+        else
+        {
+            for (CompMarker marker : markers)
+            {
+                if (marker.time < this.time - epsilon)
+                {
+                    target = marker;
+                }
+            }
+
+            if (target == null)
+            {
+                target = markers.get(markers.size() - 1);
+            }
+        }
+
+        this.setFrame(Math.round(target.time * this.doc.fps));
+    }
+
+    /** Jumps to the previous/next keyframe of the selected layer and selects it in the dope sheet. */
+    public void navigateKeyframe(int direction)
+    {
+        if (this.selectedLayer == null)
+        {
+            this.setStatus("先在时间轴选择一条轨道");
+
+            return;
+        }
+
+        List<mchorse.bbs_mod.utils.keyframes.Keyframe> keyframes = new ArrayList<>(this.selectedLayer.allKeyframes());
+
+        if (keyframes.isEmpty())
+        {
+            this.setStatus("该轨道还没有关键帧；点属性旁的秒表添加");
+
+            return;
+        }
+
+        keyframes.sort((a, b) -> Float.compare(a.getTick(), b.getTick()));
+
+        float now = this.getFrame();
+        float epsilon = 0.01F;
+        mchorse.bbs_mod.utils.keyframes.Keyframe target = null;
+
+        if (direction > 0)
+        {
+            for (mchorse.bbs_mod.utils.keyframes.Keyframe keyframe : keyframes)
+            {
+                if (keyframe.getTick() > now + epsilon)
+                {
+                    target = keyframe;
+                    break;
+                }
+            }
+
+            if (target == null)
+            {
+                target = keyframes.get(0);
+            }
+        }
+        else
+        {
+            for (mchorse.bbs_mod.utils.keyframes.Keyframe keyframe : keyframes)
+            {
+                if (keyframe.getTick() < now - epsilon)
+                {
+                    target = keyframe;
+                }
+            }
+
+            if (target == null)
+            {
+                target = keyframes.get(keyframes.size() - 1);
+            }
+        }
+
+        this.openKeyframes();
+        this.keyframeEditor.view.pickKeyframe(target);
+        this.setFrame(target.getTick());
+        this.trackTimeline.revealTime(this.time);
+    }
+
+    private void showShortcutHelp()
+    {
+        boolean premiere = this.getShortcutScheme() == 0;
+
+        this.openModalSized("快捷键", (premiere ? "Premiere Pro 方案" : "BBS 原版方案")
+            + "；时间轴获得焦点时可用，Esc 关闭。", 520, 430);
+
+        UIScrollView scroll = new UIScrollView(ScrollDirection.VERTICAL);
+
+        scroll.relative(this.modalBox).x(12).y(52).w(1F, -24).h(1F, -104);
+        scroll.column(2).vertical().stretch().scroll().padding(4);
+
+        List<String[]> list = new ArrayList<>();
+
+        list.add(new String[] {"空格", "播放 / 暂停"});
+        list.add(new String[] {"J / K / L", "倒放 / 暂停 / 正放（连按加速）"});
+        list.add(new String[] {"← / →", "上一帧 / 下一帧"});
+        list.add(new String[] {"Shift + ← / →", "前后 5 帧"});
+        list.add(new String[] {"Alt + ← / →", "所选轨道前后挪 1 帧"});
+        list.add(new String[] {"Alt + Shift + ← / →", "前后挪 5 帧"});
+        list.add(new String[] {"Home / End", "合成开头 / 结尾"});
+        list.add(new String[] {"↑ / ↓", "上一个 / 下一个剪辑点"});
+        list.add(new String[] {"Alt + 滚轮", "时间轴缩放（Premiere 习惯）"});
+        list.add(new String[] {"Shift + 滚轮", "时间轴水平平移"});
+        list.add(new String[] {", / .", "上一个 / 下一个关键帧"});
+        list.add(new String[] {"[ / ]", "裁剪所选轨道入点 / 出点到播放头"});
+        list.add(new String[] {premiere ? "Alt + [ / ]" : "I / O", "设置工作区入点 / 出点"});
+        list.add(new String[] {premiere ? "E" : "Ctrl + Shift + I / O", premiere ? "裁剪出点到播放头" : "清除工作区入点 / 出点"});
+        list.add(new String[] {"C 或 Ctrl + K", "在播放头拆分轨道"});
+        list.add(new String[] {"S", "吸附开关"});
+        list.add(new String[] {"M", "添加合成标记"});
+        list.add(new String[] {"Shift + M / Ctrl + Shift + M", "下一个 / 上一个标记"});
+        list.add(new String[] {"= / -", "时间轴放大 / 缩小"});
+        list.add(new String[] {"\\", "时间轴适配全长"});
+        list.add(new String[] {"F", "聚焦预览"});
+        list.add(new String[] {"Alt + K", "在播放头添加变换关键帧"});
+        list.add(new String[] {"Ctrl + ↑ / ↓", "选择上一条 / 下一条轨道"});
+        list.add(new String[] {"Alt + ↑ / ↓", "轨道上移 / 下移一层"});
+        list.add(new String[] {premiere ? "Ctrl + Shift + D" : "Ctrl + D", "复制轨道"});
+        list.add(new String[] {"Delete", "删除轨道"});
+        list.add(new String[] {"Ctrl + Z / Ctrl + Shift + Z", "撤销 / 重做"});
+        list.add(new String[] {"Ctrl + S", "保存工程"});
+        list.add(new String[] {"Ctrl + M", "导出视频"});
+        list.add(new String[] {premiere ? "Ctrl + Alt + K" : "Ctrl + /", "打开这份快捷键表"});
+        list.add(new String[] {"Esc", "关闭弹窗 / 取消选择"});
+
+        String[][] shortcuts = list.toArray(new String[0][]);
+
+        for (String[] pair : shortcuts)
+        {
+            UIElement row = new UIElement();
+            UILabel keys = new UILabel(IKey.constant(pair[0]));
+            UILabel description = new UILabel(IKey.constant(pair[1]));
+
+            row.w(1F).h(14);
+            keys.relative(row).x(0).y(0).w(104).h(14);
+            keys.color(0xFF8FD0FF, false);
+            description.relative(row).x(108).y(0).w(1F, -108).h(14);
+            row.add(keys, description);
+            scroll.add(row);
+        }
+
+        this.modalBox.add(scroll);
+        this.modalBox.add(this.modalButton("关闭", 16, 272, 408, this::closeModal));
+    }
+
     public void startRenderFrame(float tickDelta)
     {
         if (!this.playing || this.doc == null || this.renderView)
@@ -2582,27 +7730,82 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.time += tickDelta / 20F;
+        float rate = this.playRate == 0F ? 1F : this.playRate;
+        float in = Math.max(0F, Math.min(this.doc.duration, this.doc.workAreaIn));
+        float out = Math.max(0F, Math.min(this.doc.duration, this.doc.workAreaOut));
 
-        if (this.time >= this.doc.duration)
+        if (out - in < 0.001F)
         {
-            this.time = 0F;
+            in = 0F;
+            out = this.doc.duration;
+        }
+
+        this.time += tickDelta / 20F * rate;
+
+        if (this.time >= out)
+        {
+            this.time = in + (this.time - out) % Math.max(0.001F, out - in);
+        }
+        else if (this.time < in)
+        {
+            this.time = out - (in - this.time) % Math.max(0.001F, out - in);
+        }
+
+        /* Keep the playhead visible while playing, but never fight a manual pan/zoom: revealTime
+         * only scrolls when the playhead is outside the comfortable centre band. */
+        if (this.trackTimeline != null && !this.trackTimeline.isInteracting())
+        {
+            this.trackTimeline.revealTime(this.time);
         }
     }
 
     @Override
     public void render(UIContext context)
     {
-        this.autoSaveTicks += 1;
-
-        if (this.autoSaveTicks >= 1200 && this.project != null && this.project.settings != null && this.project.settings.autoSave)
+        this.primeTimeline();
+        this.captureSnapshot();
+        if (this.statusTicks > 0)
         {
-            this.autoSaveTicks = 0;
+            this.statusTicks -= 1;
+        }
+
+        long nowMs = System.currentTimeMillis();
+
+        if (nowMs - this.lastAutoSaveMs >= 60000L && this.project != null
+            && this.project.settings != null && this.project.settings.autoSave)
+        {
+            this.lastAutoSaveMs = nowMs;
             this.save();
         }
 
+        if (!this.buildingInspector
+            && !this.inspectorBindings.isEmpty()
+            && this.time != this.lastInspectorTime
+            && context.activeElement == null
+            && !Window.isMouseButtonPressed(0))
+        {
+            this.lastInspectorTime = this.time;
+
+            for (Runnable binding : this.inspectorBindings)
+            {
+                try
+                {
+                    binding.run();
+                }
+                catch (RuntimeException e)
+                {
+                    dev.bbsae.BbsAeAddon.LOGGER.error("Could not refresh an inspector value", e);
+                }
+            }
+        }
+
         this.timecode.label = IKey.constant(this.doc == null ? "00:00:00:00" : CompTime.timecode(this.getTime(), this.doc.fps));
-        this.status.label = IKey.constant(this.doc == null ? "No composition" : this.doc.id + " / " + this.doc.layers.size() + " layers");
+
+        String defaultStatus = this.doc == null
+            ? "未打开合成"
+            : this.doc.id + " / " + this.doc.layers.size() + " 条轨道" + (this.selectedLayer == null ? "" : " / 已选：" + this.layerLabel(this.selectedLayer));
+
+        this.status.label = IKey.constant(this.statusTicks > 0 && !this.statusMessage.isEmpty() ? this.statusMessage : defaultStatus);
 
         if (this.doc != null)
         {
@@ -2623,7 +7826,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
         else
         {
-            this.previewInfo.label = IKey.constant("Preview");
+            this.previewInfo.label = IKey.constant("预览");
         }
 
         if (this.renderView)
@@ -2636,7 +7839,21 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void updatePlayLabel()
     {
-        this.play.label = IKey.constant(this.playing ? "Pause" : "Play");
+        if (!this.playing)
+        {
+            this.play.label = IKey.constant("播放");
+
+            return;
+        }
+
+        if (this.playRate == 0F || this.playRate == 1F)
+        {
+            this.play.label = IKey.constant("暂停");
+
+            return;
+        }
+
+        this.play.label = IKey.constant((this.playRate < 0F ? "◀ " : "▶ ") + (int) Math.abs(this.playRate) + "×");
     }
 
     private void stepFrame(int direction)
@@ -2686,6 +7903,7 @@ public class UICompositorPanel extends UIDashboardPanel
         float fps = Math.max(1F, this.doc.fps);
 
         this.playing = false;
+        this.playRate = 0F;
         this.time = Math.max(0F, Math.min(this.doc.duration, frame / fps));
 
         this.updatePlayLabel();
@@ -2695,6 +7913,16 @@ public class UICompositorPanel extends UIDashboardPanel
     public boolean needsBackground()
     {
         return true;
+    }
+
+    private String layerLabel(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return "";
+        }
+
+        return layer.name == null || layer.name.isBlank() ? layer.id : layer.name;
     }
 
     private static String blendName(int mode)

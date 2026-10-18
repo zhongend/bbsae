@@ -2,6 +2,7 @@ package dev.bbsae.comp;
 
 import com.google.gson.Gson;
 import mchorse.bbs_mod.data.DataToString;
+import mchorse.bbs_mod.utils.keyframes.Keyframe;
 import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
 import mchorse.bbs_mod.utils.keyframes.factories.KeyframeFactories;
 import mchorse.bbs_mod.utils.pose.Transform;
@@ -73,6 +74,23 @@ public class CompLayer
     public float rotation = 0F;
     public float scaleX = 1F;
     public float scaleY = 1F;
+
+    /* --- 3D layer / camera ------------------------------------------------ */
+    /** Only 3D layers are projected through the camera; 2D layers stay screen-attached. */
+    public boolean threeD = false;
+    public float z = 0F;
+    public float rotationX = 0F;
+    public float rotationY = 0F;
+    public float scaleZ = 1F;
+    /** Squash & stretch: scaleX *= 1 + squash, scaleY *= 1 - squash. */
+    public float squash = 0F;
+    /** Vertical field of view for a 3D camera, degrees. */
+    public float cameraFov = 50F;
+    /** Near/far in composition pixels for the perspective camera. */
+    public float cameraNear = 10F;
+    public float cameraFar = 100000F;
+    /** True when the camera should be evaluated with the 3D projection. */
+    public boolean camera3D = false;
     /** Anchor as a fraction of the layer bounds (0.5 = centre). */
     public float anchorX = 0.5F;
     public float anchorY = 0.5F;
@@ -100,6 +118,14 @@ public class CompLayer
     public String precompId = "";
     public float precompTimeOffset = 0F;
     public float precompTimeScale = 1F;
+
+    /** AE-style two-node camera: position comes from the normal transform, this is the look-at point. */
+    public float cameraTargetX = 960F;
+    public float cameraTargetY = 540F;
+    public float cameraTargetZ = 0F;
+    public float cameraZ = 0F;
+    /** When false the camera keeps the transform's rotation instead of looking at the target. */
+    public boolean cameraLookAt = true;
 
     /** Parenting and matte references (stable layer ids). */
     public String parentId = "";
@@ -256,6 +282,14 @@ public class CompLayer
             case "rotation": this.rotation = value; break;
             case "scaleX": this.scaleX = value; break;
             case "scaleY": this.scaleY = value; break;
+            case "z": this.z = value; break;
+            case "rotationX": this.rotationX = value; break;
+            case "rotationY": this.rotationY = value; break;
+            case "scaleZ": this.scaleZ = Math.max(0.0001F, value); break;
+            case "squash": this.squash = Math.max(-0.9F, Math.min(0.9F, value)); break;
+            case "cameraZ": this.cameraZ = value; break;
+            case "cameraTargetZ": this.cameraTargetZ = value; break;
+            case "cameraFov": this.cameraFov = Math.max(1F, Math.min(179F, value)); break;
             case "fontSize": this.fontSize = value; break;
             case "tracking": this.tracking = value; break;
             case "lineHeight": this.lineHeight = value; break;
@@ -622,6 +656,160 @@ public class CompLayer
         return this.freeze ? this.freezeTime : (compTime - this.in + this.startTime) * this.timeScale;
     }
 
+    /* Track editing (timeline bars) */
+
+    /**
+     * Every keyframe that lives on this layer, across the transform, opacity and scalar channels.
+     * The timeline needs this as one list so a bar move can carry the whole animation with it.
+     */
+    public List<Keyframe> allKeyframes()
+    {
+        List<Keyframe> keyframes = new ArrayList<>();
+
+        if (this.transformChannel != null)
+        {
+            keyframes.addAll(this.transformChannel.getKeyframes());
+        }
+        if (this.opacityChannel != null)
+        {
+            keyframes.addAll(this.opacityChannel.getKeyframes());
+        }
+        if (this.scalarChannels != null)
+        {
+            for (KeyframeChannel<Float> channel : this.scalarChannels.values())
+            {
+                keyframes.addAll(channel.getKeyframes());
+            }
+        }
+
+        return keyframes;
+    }
+
+    /** Shift every keyframe by a number of composition frames. Used when a track bar is moved. */
+    public void shiftKeyframes(float deltaFrames)
+    {
+        if (deltaFrames == 0F)
+        {
+            return;
+        }
+
+        for (Keyframe keyframe : this.allKeyframes())
+        {
+            keyframe.setTick(keyframe.getTick() + deltaFrames, false);
+        }
+
+        if (this.transformChannel != null)
+        {
+            this.transformChannel.sort();
+        }
+        if (this.opacityChannel != null)
+        {
+            this.opacityChannel.sort();
+        }
+        if (this.scalarChannels != null)
+        {
+            for (KeyframeChannel<Float> channel : this.scalarChannels.values())
+            {
+                channel.sort();
+            }
+        }
+    }
+
+    /** Shift layer markers in composition seconds. */
+    public void shiftMarkers(float deltaSeconds)
+    {
+        if (deltaSeconds == 0F)
+        {
+            return;
+        }
+
+        if (this.markers == null)
+        {
+            this.markers = new ArrayList<>();
+        }
+
+        for (CompMarker marker : this.markers)
+        {
+            marker.time = Math.max(0F, marker.time + deltaSeconds);
+        }
+    }
+
+    /**
+     * Move the whole bar to a new in point. The duration is preserved, keyframes and markers
+     * travel with the bar, and the source offset stays put so the same frame of footage is shown.
+     */
+    public void moveTo(float newIn, float fps, float compDuration)
+    {
+        float frame = 1F / Math.max(1F, fps);
+        float length = Math.max(frame, this.out - this.in);
+        float maxIn = Math.max(0F, compDuration - length);
+
+        newIn = Math.max(0F, Math.min(maxIn, newIn));
+
+        float delta = newIn - this.in;
+
+        if (Math.abs(delta) < 0.00001F)
+        {
+            return;
+        }
+
+        this.in = newIn;
+        this.out = newIn + length;
+        this.shiftKeyframes(delta * Math.max(1F, fps));
+        this.shiftMarkers(delta);
+    }
+
+    /**
+     * Trim the in point without sliding the footage. The source time at any given composition
+     * time stays where it was, which is what makes trimming feel like Premiere/AE: you reveal or
+     * hide frames, you do not slip the clip.
+     */
+    public void trimInTo(float newIn, float fps)
+    {
+        float frame = 1F / Math.max(1F, fps);
+        float maxIn = this.out - frame;
+
+        newIn = Math.max(0F, Math.min(maxIn, newIn));
+
+        float delta = newIn - this.in;
+
+        this.in = newIn;
+        this.startTime += delta;
+    }
+
+    /** Trim the out point. The in point and the source timing are untouched. */
+    public void trimOutTo(float newOut, float fps, float compDuration)
+    {
+        float frame = 1F / Math.max(1F, fps);
+
+        this.out = Math.max(this.in + frame, Math.min(Math.max(compDuration, this.in + frame), newOut));
+    }
+
+    /**
+     * Split the bar at a composition time. The right half is a full copy (effects, masks, keys)
+     * whose source offset is advanced by the split distance, so footage continues seamlessly.
+     * Returns null when the split point is outside the bar.
+     */
+    public CompLayer splitAt(float time, float fps, String newId, String newName)
+    {
+        float frame = 1F / Math.max(1F, fps);
+
+        if (time <= this.in + frame || time >= this.out - frame)
+        {
+            return null;
+        }
+
+        CompLayer right = this.duplicate();
+
+        right.id = newId;
+        right.name = newName;
+        right.in = time;
+        right.startTime = this.startTime + (time - this.in);
+        this.out = time;
+
+        return right;
+    }
+
     /** Evaluated text metrics for one frame. */
     public float fontSizeAt(float frame) { return Math.max(1F, this.scalarAt("text/fontSize", this.fontSize, frame)); }
     public float trackingAt(float frame) { return this.scalarAt("text/tracking", this.tracking, frame); }
@@ -665,6 +853,7 @@ public class CompLayer
         resolved.height = this.scalarAt(base + "height", shape.height, frame);
         resolved.roundness = clamp01(this.scalarAt(base + "roundness", shape.roundness, frame));
         resolved.rotation = this.scalarAt(base + "rotation", shape.rotation, frame);
+        resolved.fillGradientAngle = this.scalarAt(base + "fillGradientAngle", shape.fillGradientAngle, frame);
         resolved.trimStart = this.scalarAt(base + "trimStart", shape.trimStart, frame);
         resolved.trimEnd = this.scalarAt(base + "trimEnd", shape.trimEnd, frame);
         resolved.trimOffset = this.scalarAt(base + "trimOffset", shape.trimOffset, frame);
@@ -895,6 +1084,39 @@ public class CompLayer
         if (this.textAnimators == null) this.textAnimators = new ArrayList<>();
         if (this.markers == null) this.markers = new ArrayList<>();
         if (this.binding == null) this.binding = new CompBinding();
+
+        /* A hand-edited or older project can contain nulls/partial objects; normalise them here so
+         * the renderer and the inspector never have to null-check every nested field. */
+        this.effects.removeIf(java.util.Objects::isNull);
+        this.styles.removeIf(java.util.Objects::isNull);
+        this.textAnimators.removeIf(java.util.Objects::isNull);
+        this.markers.removeIf(java.util.Objects::isNull);
+
+        for (CompEffect effect : this.effects)
+        {
+            if (effect.params == null) effect.params = new LinkedHashMap<>();
+            if (effect.colors == null) effect.colors = new LinkedHashMap<>();
+        }
+
+        for (CompMask mask : this.masks)
+        {
+            if (mask != null && mask.points == null)
+            {
+                mask.points = new ArrayList<>();
+            }
+        }
+
+        this.masks.removeIf(java.util.Objects::isNull);
+
+        for (CompShape shape : this.shapes)
+        {
+            if (shape != null && shape.points == null)
+            {
+                shape.points = new ArrayList<>();
+            }
+        }
+
+        this.shapes.removeIf(java.util.Objects::isNull);
 
         if (this.transformChannel == null)
         {

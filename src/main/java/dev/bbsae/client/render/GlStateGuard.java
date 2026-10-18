@@ -63,10 +63,16 @@ public final class GlStateGuard implements AutoCloseable
         this.scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
         this.stencil = GL11.glIsEnabled(GL11.GL_STENCIL_TEST);
         this.depthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
-        this.colorMask[0] = GL11.glGetBoolean(GL11.GL_COLOR_WRITEMASK);
-        this.colorMask[1] = GL11.glGetBoolean(GL11.GL_COLOR_WRITEMASK);
-        this.colorMask[2] = GL11.glGetBoolean(GL11.GL_COLOR_WRITEMASK);
-        this.colorMask[3] = GL11.glGetBoolean(GL11.GL_COLOR_WRITEMASK);
+
+        /* glGetBoolean only returns the first component of GL_COLOR_WRITEMASK. Reading it four
+         * times restored (r,r,r,r) and could permanently disable green/blue/alpha writes. */
+        java.nio.ByteBuffer mask = org.lwjgl.BufferUtils.createByteBuffer(4);
+        GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, mask);
+
+        for (int i = 0; i < 4; i++)
+        {
+            this.colorMask[i] = mask.get(i) != 0;
+        }
         this.depthFunc = GL11.glGetInteger(GL11.GL_DEPTH_FUNC);
         GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE, this.clearColor);
         GL11.glGetIntegerv(GL14.GL_BLEND_SRC_RGB, this.blendSrc);

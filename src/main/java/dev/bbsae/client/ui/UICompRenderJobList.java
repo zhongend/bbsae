@@ -29,12 +29,12 @@ public class UICompRenderJobList extends UIList<CompRenderJob>
     {
         String status = switch (element.status)
         {
-            case CompRenderJob.QUEUED -> "Queued";
-            case CompRenderJob.RENDERING -> "Rendering";
-            case CompRenderJob.ENCODING -> "Encoding";
-            case CompRenderJob.DONE -> "Done";
-            case CompRenderJob.FAILED -> "Failed";
-            case CompRenderJob.CANCELLED -> "Cancelled";
+            case CompRenderJob.QUEUED -> "排队中";
+            case CompRenderJob.RENDERING -> "渲染中";
+            case CompRenderJob.ENCODING -> "编码中";
+            case CompRenderJob.DONE -> "已完成";
+            case CompRenderJob.FAILED -> "失败";
+            case CompRenderJob.CANCELLED -> "已取消";
             default -> "?";
         };
 

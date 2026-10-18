@@ -8,6 +8,8 @@ logs/
 run/
 _tools/
 _research/
+.workbuddy/
+.workbuddy-ai/
 
 # Local BBS dependency and build artifacts
 libs/*.jar

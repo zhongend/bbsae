@@ -1,10 +1,8 @@
 package dev.bbsae.client.ui;
 
-import mchorse.bbs_mod.camera.utils.TimeUtils;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframes;
 import mchorse.bbs_mod.ui.framework.elements.utils.UITimelineCanvas;
-import mchorse.bbs_mod.ui.utils.renderers.TimelineRulerRenderer;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
 
 import java.util.Locale;
@@ -63,18 +61,8 @@ public class UICompositorKeyframes extends UIKeyframes
     {
         super.renderOverlay(context);
 
-        /* The generic dope sheet only paints its ruler when its owner supplies a duration.
-         * A compositor timeline is a first-class timeline, so it paints the native BBS ruler
-         * (numbers, notches and second marks) explicitly. */
-        TimelineRulerRenderer.render(
-            context,
-            this.graphArea,
-            Math.max(0, (int) this.fromGraphX(this.graphArea.x)),
-            this.panel.getDurationTicks(),
-            this::toGraphX,
-            TimeUtils::formatTime
-        );
-
+        /* The editor's own ruler is supplied by UICompositorPanel via
+         * UIKeyframes.rulerRenderer(...), so this overlay only draws the shared BBS cursor. */
         float tick = this.getPlayheadTick(context);
         int x = this.toGraphX(tick);
 

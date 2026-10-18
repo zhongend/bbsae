@@ -23,6 +23,8 @@ public class CompDocument
     public float workAreaIn = 0F;
     public float workAreaOut = 12F;
     public float currentTime = 0F;
+    /** Empty means "use the topmost visible camera layer"; otherwise a camera layer id. */
+    public String activeCameraId = "";
 
     public List<CompLayer> layers = new ArrayList<>();
     public List<CompMarker> markers = new ArrayList<>();
@@ -38,6 +40,32 @@ public class CompDocument
         for (CompLayer layer : this.layers)
         {
             if (layerId.equals(layer.id))
+            {
+                return layer;
+            }
+        }
+
+        return null;
+    }
+
+    /** The camera that should drive this comp at the given time, or null for a flat comp. */
+    public CompLayer activeCamera(float time)
+    {
+        if (this.activeCameraId != null && !this.activeCameraId.isEmpty())
+        {
+            CompLayer chosen = this.getLayer(this.activeCameraId);
+
+            if (chosen != null && "camera".equals(chosen.type) && chosen.visible && chosen.activeAt(time))
+            {
+                return chosen;
+            }
+        }
+
+        for (int i = this.layers.size() - 1; i >= 0; i--)
+        {
+            CompLayer layer = this.layers.get(i);
+
+            if ("camera".equals(layer.type) && layer.visible && layer.activeAt(time))
             {
                 return layer;
             }
@@ -93,6 +121,11 @@ public class CompDocument
             {
                 layer.trackMatteId = "";
             }
+        }
+
+        if (layerId.equals(this.activeCameraId))
+        {
+            this.activeCameraId = "";
         }
 
         return true;

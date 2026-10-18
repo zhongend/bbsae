@@ -169,6 +169,72 @@ public class CompModelTest
     }
 
     @Test
+    public void trackMoveCarriesKeyframesAndMarkers()
+    {
+        CompLayer layer = new CompLayer("track", "Track", "rect");
+        Transform first = layer.defaultTransform();
+
+        first.translate.set(10F, 20F, 0F);
+        layer.transformChannel().insert(0F, first);
+        layer.opacityChannel().insert(60F, 0.5F);
+        layer.markers.add(new CompMarker("m", "Cue", 2F));
+        layer.in = 0F;
+        layer.out = 10F;
+
+        layer.moveTo(2F, 20F, 12F);
+
+        assertEquals(2F, layer.in, 0.0001F);
+        assertEquals(12F, layer.out, 0.0001F);
+        assertEquals(40F, layer.transformChannel().getKeyframes().get(0).getTick(), 0.0001F);
+        assertEquals(100F, layer.opacityChannel().getKeyframes().get(0).getTick(), 0.0001F);
+        assertEquals(4F, layer.markers.get(0).time, 0.0001F);
+    }
+
+    @Test
+    public void trimInKeepsFootageInPlaceAndLeavesKeysAbsolute()
+    {
+        CompLayer layer = new CompLayer("footage", "Footage", "image");
+
+        layer.in = 0F;
+        layer.out = 10F;
+        layer.startTime = 1F;
+        layer.timeScale = 1F;
+        layer.transformChannel().insert(60F, layer.defaultTransform());
+
+        assertEquals(4F, layer.sourceTime(3F), 0.0001F);
+
+        layer.trimInTo(2F, 20F);
+
+        assertEquals(2F, layer.in, 0.0001F);
+        assertEquals(3F, layer.startTime, 0.0001F);
+        assertEquals(4F, layer.sourceTime(3F), 0.0001F);
+        assertEquals(60F, layer.transformChannel().getKeyframes().get(0).getTick(), 0.0001F);
+    }
+
+    @Test
+    public void splitAtPlayheadKeepsSourceContinuous()
+    {
+        CompLayer layer = new CompLayer("split", "Split", "image");
+
+        layer.in = 0F;
+        layer.out = 10F;
+        layer.startTime = 1F;
+        layer.timeScale = 1F;
+
+        float before = layer.sourceTime(4F);
+        CompLayer right = layer.splitAt(4F, 20F, "split_b", "Split · B");
+
+        assertNotNull(right);
+        assertEquals(4F, layer.out, 0.0001F);
+        assertEquals(4F, right.in, 0.0001F);
+        assertEquals(10F, right.out, 0.0001F);
+        assertEquals(5F, right.startTime, 0.0001F);
+        assertEquals(before, right.sourceTime(4F), 0.0001F);
+        assertEquals("split_b", right.id);
+        assertEquals("Split · B", right.name);
+    }
+
+    @Test
     public void timecodeUsesFrames()
     {
         assertEquals("00:00:01:00", CompTime.timecode(1F, 60F));
@@ -293,5 +359,27 @@ public class CompModelTest
         assertEquals("Cue", copy.markers.get(1).name);
         assertEquals(2.5F, copy.markers.get(1).time, 0.0001F);
         assertEquals(45F, copy.shapeAt(copy.shapes.get(0), 0F).rotation, 0.0001F);
+    }
+
+    @Test
+    public void shapeGradientFillSurvivesCopyAndKeyframes()
+    {
+        CompLayer layer = new CompLayer("shape", "Shape", "shape");
+        CompShape shape = CompShape.rect("s1", 0F, 0F, 100F, 80F, 0xFFFF0000);
+
+        shape.fillGradient = true;
+        shape.fillColor2 = 0xFF0000FF;
+        shape.fillGradientAngle = 90F;
+        layer.shapes.add(shape);
+
+        CompShape copied = shape.copy();
+
+        assertTrue(copied.fillGradient);
+        assertEquals(0xFF0000FF, copied.fillColor2);
+        assertEquals(90F, copied.fillGradientAngle, 0.0001F);
+
+        layer.scalarChannel(CompLayer.shapePath("s1", "fillGradientAngle")).insert(0F, 180F);
+
+        assertEquals(180F, layer.shapeAt(shape, 0F).fillGradientAngle, 0.0001F);
     }
 }

@@ -39,6 +39,12 @@ loom {
             client()
             programArgs "--quickPlaySingleplayer", "TestWorld"
         }
+
+        clientPreview {
+            client()
+            vmArg "-Dbbsae.debugPreview=true"
+            programArgs "--quickPlaySingleplayer", "TestWorld"
+        }
     }
 }
 

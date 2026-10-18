@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -154,6 +155,7 @@ public final class CompStore
             {
                 for (CompLayer layer : comp.layers)
                 {
+                    layer.ensureInitialized();
                     layer.loadTracks();
                 }
             }
@@ -167,6 +169,81 @@ public final class CompStore
             BbsAeAddon.LOGGER.error("Could not load composition project {}", path, e);
 
             return demo(id);
+        }
+    }
+
+    /**
+     * Serializes a project for the undo stack.
+     *
+     * <p>Keyframe channels are transient and only exist in memory; they reach JSON through
+     * {@link CompLayer#saveTracks()}. Snapshotting without this call silently produced undo
+     * states with no animation at all, so every undo wiped transform/effect keyframes.</p>
+     */
+    public static synchronized String snapshot(CompProject project)
+    {
+        if (project == null)
+        {
+            return "";
+        }
+
+        if (project.comps != null)
+        {
+            for (CompDocument comp : project.comps)
+            {
+                if (comp == null || comp.layers == null)
+                {
+                    continue;
+                }
+
+                for (CompLayer layer : comp.layers)
+                {
+                    if (layer != null)
+                    {
+                        layer.ensureInitialized();
+                        layer.saveTracks();
+                    }
+                }
+            }
+        }
+
+        return GSON.toJson(project);
+    }
+
+    /** Rebuilds a project from an undo snapshot (same migration and track hydration as load). */
+    public static synchronized CompProject restore(String json)
+    {
+        if (json == null || json.isBlank())
+        {
+            return null;
+        }
+
+        try
+        {
+            CompProject project = GSON.fromJson(json, CompProject.class);
+
+            if (project == null || project.comps == null || project.comps.isEmpty())
+            {
+                return null;
+            }
+
+            migrate(project);
+
+            for (CompDocument comp : project.comps)
+            {
+                for (CompLayer layer : comp.layers)
+                {
+                    layer.ensureInitialized();
+                    layer.loadTracks();
+                }
+            }
+
+            return project;
+        }
+        catch (Exception e)
+        {
+            BbsAeAddon.LOGGER.warn("Could not restore composition snapshot", e);
+
+            return null;
         }
     }
 
@@ -224,15 +301,29 @@ public final class CompStore
         try
         {
             Path path = file(id);
+            Path parent = path.getParent();
 
-            Files.createDirectories(path.getParent());
+            Files.createDirectories(parent);
 
             if (Files.isRegularFile(path))
             {
                 Files.copy(path, path.resolveSibling(path.getFileName() + ".bak"), StandardCopyOption.REPLACE_EXISTING);
             }
 
-            Files.writeString(path, GSON.toJson(project), StandardCharsets.UTF_8);
+            /* Write through a temporary file and move it into place: a crash or a full disk in
+             * the middle of a save must not truncate the only copy of the project. */
+            Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
+
+            Files.writeString(temporary, GSON.toJson(project), StandardCharsets.UTF_8);
+
+            try
+            {
+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            }
+            catch (java.nio.file.AtomicMoveNotSupportedException e)
+            {
+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
+            }
 
             CACHE.put(id, new CachedProject(Files.getLastModifiedTime(path).toMillis(), project));
             DOCUMENT_CACHE.clear();
@@ -259,6 +350,16 @@ public final class CompStore
 
     public static CompProject newProject(String projectId, String name)
     {
+        return newProject(projectId, name, 1920, 1080, 60F, 12F);
+    }
+
+    /**
+     * Creates a project with an explicit first composition. The start screen asks for these
+     * values up front, so a new project never opens on a resolution that does not match the film
+     * it is about to be used with.
+     */
+    public static CompProject newProject(String projectId, String name, int width, int height, float fps, float duration)
+    {
         CompProject project = new CompProject();
 
         project.id = safe(projectId);
@@ -267,7 +368,134 @@ public final class CompStore
         project.outputPresets = defaultPresets();
         project.settings = new CompProject.CompSettings();
 
+        CompDocument comp = project.getCompOrFirst(DEFAULT_COMP);
+
+        if (comp != null)
+        {
+            comp.width = Math.max(16, width);
+            comp.height = Math.max(16, height);
+            comp.fps = Math.max(1F, fps);
+            comp.duration = Math.max(0.1F, duration);
+            comp.workAreaOut = comp.duration;
+        }
+
         return project;
+    }
+
+    /** Metadata for the start screen; never returns a project that failed to parse. */
+    public static final class ProjectInfo
+    {
+        public final String id;
+        public final String name;
+        public final int comps;
+        public final int width;
+        public final int height;
+        public final float fps;
+        public final float duration;
+        public final long modified;
+        public final boolean film;
+
+        public ProjectInfo(String id, String name, int comps, int width, int height, float fps, float duration, long modified)
+        {
+            this.id = id;
+            this.name = name;
+            this.comps = comps;
+            this.width = width;
+            this.height = height;
+            this.fps = fps;
+            this.duration = duration;
+            this.modified = modified;
+            this.film = id.startsWith("film_");
+        }
+
+        public String summary()
+        {
+            return this.width + "×" + this.height + "  ·  " + String.format(Locale.ROOT, "%.0f fps", this.fps)
+                + "  ·  " + String.format(Locale.ROOT, "%.1fs", this.duration)
+                + "  ·  " + this.comps + (this.comps == 1 ? " 个合成" : " 个合成");
+        }
+    }
+
+    /** Lists every .bbscomp in the projects folder, newest first. */
+    public static List<ProjectInfo> listProjects()
+    {
+        List<ProjectInfo> list = new ArrayList<>();
+        Path root = root();
+
+        if (!Files.isDirectory(root))
+        {
+            return list;
+        }
+
+        try (java.util.stream.Stream<Path> stream = Files.list(root))
+        {
+            stream.filter((path) -> Files.isRegularFile(path) && path.getFileName().toString().endsWith(EXTENSION))
+                .forEach((path) ->
+                {
+                    try
+                    {
+                        String json = Files.readString(path, StandardCharsets.UTF_8);
+                        CompProject project = GSON.fromJson(json, CompProject.class);
+
+                        if (!isValid(project) || project.comps.isEmpty())
+                        {
+                            return;
+                        }
+
+                        CompDocument comp = project.comps.get(0);
+                        String id = path.getFileName().toString();
+
+                        id = id.substring(0, id.length() - EXTENSION.length());
+                        list.add(new ProjectInfo(id,
+                            project.name == null || project.name.isBlank() ? id : project.name,
+                            project.comps.size(), comp.width, comp.height, comp.fps, comp.duration,
+                            Files.getLastModifiedTime(path).toMillis()));
+                    }
+                    catch (Exception ignored)
+                    {}
+                });
+        }
+        catch (IOException e)
+        {
+            BbsAeAddon.LOGGER.warn("Could not list composition projects", e);
+        }
+
+        list.sort((a, b) -> Long.compare(b.modified, a.modified));
+
+        return list;
+    }
+
+    public static boolean exists(String projectId)
+    {
+        return Files.isRegularFile(file(projectId));
+    }
+
+    /** Deletes a project and its asset folder; only used from the start screen's context menu. */
+    public static synchronized boolean deleteProject(String projectId)
+    {
+        String id = safe(projectId);
+
+        if (DEFAULT_PROJECT.equals(id))
+        {
+            return false;
+        }
+
+        try
+        {
+            boolean removed = Files.deleteIfExists(file(id));
+
+            CACHE.remove(id);
+            DOCUMENT_CACHE.clear();
+            revision += 1;
+
+            return removed;
+        }
+        catch (IOException e)
+        {
+            BbsAeAddon.LOGGER.warn("Could not delete composition project {}", id, e);
+
+            return false;
+        }
     }
 
     /**
@@ -531,6 +759,8 @@ public final class CompStore
         barBack.width = 680F;
         barBack.height = 30F;
         barBack.color = 0xFF242A33;
+        barBack.in = 0.6F;
+        barBack.out = 11.4F;
 
         CompLayer bar = new CompLayer("bar", "HUD Bar", "bar");
 
@@ -540,6 +770,8 @@ public final class CompStore
         bar.height = 22F;
         bar.color = 0xFF55D68A;
         bar.fill = -1F;
+        bar.in = 0.6F;
+        bar.out = 11.4F;
 
         CompLayer accent = new CompLayer("accent", "Accent", "rect");
 
@@ -550,6 +782,8 @@ public final class CompStore
         accent.color = 0xFF55AAFF;
         accent.motion = true;
         accent.motionAmount = 220F;
+        accent.in = 0.4F;
+        accent.out = 9.2F;
 
         CompLayer title = new CompLayer("title", "Title", "text");
 
@@ -560,6 +794,7 @@ public final class CompStore
         title.color = 0xFFFFFFFF;
         title.align = 1;
         title.tracking = 2F;
+        title.out = 7.5F;
         title.styles.add(style(CompStyle.DROP_SHADOW, 0xCC000000, 6F, 3F, 45F, 8F));
 
         CompLayer subtitle = new CompLayer("subtitle", "Subtitle", "text");
@@ -570,12 +805,16 @@ public final class CompStore
         subtitle.fontSize = 32F;
         subtitle.color = 0xFF9AA4B2;
         subtitle.align = 1;
+        subtitle.in = 0.6F;
+        subtitle.out = 8.2F;
 
         CompLayer badge = new CompLayer("badge", "Badge Shape", "shape");
 
         badge.x = 1540F;
         badge.y = 180F;
         badge.shapes.add(star("badge_star", 0F, 0F, 52F, 0xFF55D68A));
+        badge.in = 1.4F;
+        badge.out = 6.5F;
 
         CompLayer nullLayer = new CompLayer("null_ctrl", "Null Controller", "null");
 

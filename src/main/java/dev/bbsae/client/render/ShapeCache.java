@@ -99,6 +99,9 @@ public final class ShapeCache
             hash = hash * 31 + Float.floatToIntBits(shape.innerRadius);
             hash = hash * 31 + Float.floatToIntBits(shape.outerRadius);
             hash = hash * 31 + shape.fillColor;
+            hash = hash * 31 + (shape.fillGradient ? 1 : 0);
+            hash = hash * 31 + shape.fillColor2;
+            hash = hash * 31 + Float.floatToIntBits(shape.fillGradientAngle);
             hash = hash * 31 + shape.strokeColor;
             hash = hash * 31 + Float.floatToIntBits(shape.strokeWidth);
             hash = hash * 31 + Float.floatToIntBits(shape.trimStart);
@@ -136,6 +139,8 @@ public final class ShapeCache
         java.util.List<Integer> strokeColors = new java.util.ArrayList<>();
         java.awt.geom.Rectangle2D bounds = null;
         int fillColor = 0;
+        dev.bbsae.comp.CompShape gradientShape = null;
+        boolean filled = false;
 
         for (dev.bbsae.comp.CompShape shape : shapes)
         {
@@ -178,9 +183,17 @@ public final class ShapeCache
                 strokeColors.add(shape.strokeColor);
             }
 
-            if ((shape.fillColor >>> 24) != 0)
+            if (shape.fillGradient)
+            {
+                /* The gradient is painted over the combined shape bounds in shape-local space;
+                 * it is baked into the raster, so moving the layer can never separate them. */
+                gradientShape = shape;
+                filled = true;
+            }
+            else if ((shape.fillColor >>> 24) != 0)
             {
                 fillColor = shape.fillColor;
+                filled = true;
             }
 
             java.awt.geom.Rectangle2D b = path.getBounds2D();
@@ -214,9 +227,17 @@ public final class ShapeCache
         g.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY);
         g.translate(pad - bounds.getX(), pad - bounds.getY());
 
-        if ((fillColor >>> 24) != 0)
+        if (filled)
         {
-            g.setColor(new java.awt.Color(fillColor, true));
+            if (gradientShape != null)
+            {
+                g.setPaint(gradientPaint(gradientShape, combined.getBounds2D()));
+            }
+            else
+            {
+                g.setColor(new java.awt.Color(fillColor, true));
+            }
+
             g.fill(combined);
         }
 
@@ -237,6 +258,27 @@ public final class ShapeCache
         texture.uploadRaw(pixels);
 
         return new Raster(texture, width, height, originX, originY);
+    }
+
+    /** Two-stop linear gradient across the shape bounds, in shape-local pixels. */
+    private static java.awt.GradientPaint gradientPaint(dev.bbsae.comp.CompShape shape, java.awt.geom.Rectangle2D bounds)
+    {
+        double angle = Math.toRadians(shape.fillGradientAngle);
+        double dx = Math.cos(angle);
+        double dy = Math.sin(angle);
+        double cx = bounds.getCenterX();
+        double cy = bounds.getCenterY();
+        double half = (Math.abs(bounds.getWidth() * dx) + Math.abs(bounds.getHeight() * dy)) * 0.5D;
+
+        if (half < 0.0001D)
+        {
+            half = 0.5D;
+        }
+
+        return new java.awt.GradientPaint(
+            (float) (cx - dx * half), (float) (cy - dy * half), new java.awt.Color(shape.fillColor, true),
+            (float) (cx + dx * half), (float) (cy + dy * half), new java.awt.Color(shape.fillColor2, true)
+        );
     }
 
     public static void clear()

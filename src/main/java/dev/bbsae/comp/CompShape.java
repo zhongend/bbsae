@@ -40,6 +40,15 @@ public class CompShape
     public int strokeColor = 0x00000000;
     public float strokeWidth = 0F;
 
+    /**
+     * Shape fill gradient (EffectCraft's gradient ramp, but in the shape's own local space).
+     * Rasterized by {@link dev.bbsae.client.render.ShapeCache} with an AWT {@code GradientPaint},
+     * so the gradient is part of the shape texture and follows every transform by construction.
+     */
+    public boolean fillGradient = false;
+    public int fillColor2 = 0x00000000;
+    public float fillGradientAngle = 90F;
+
     /** Trim path, as fractions of the path length. */
     public float trimStart = 0F;
     public float trimEnd = 1F;
@@ -110,6 +119,9 @@ public class CompShape
         copy.fillColor = this.fillColor;
         copy.strokeColor = this.strokeColor;
         copy.strokeWidth = this.strokeWidth;
+        copy.fillGradient = this.fillGradient;
+        copy.fillColor2 = this.fillColor2;
+        copy.fillGradientAngle = this.fillGradientAngle;
         copy.trimStart = this.trimStart;
         copy.trimEnd = this.trimEnd;
         copy.trimOffset = this.trimOffset;

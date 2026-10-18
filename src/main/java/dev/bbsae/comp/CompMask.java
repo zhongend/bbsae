@@ -86,8 +86,18 @@ public class CompMask
         copy.expansion = this.expansion;
         copy.points = new ArrayList<>();
 
+        if (this.points == null)
+        {
+            return copy;
+        }
+
         for (CompMaskPoint point : this.points)
         {
+            if (point == null)
+            {
+                continue;
+            }
+
             copy.points.add(new CompMaskPoint(point.x, point.y, point.inX, point.inY, point.outX, point.outY));
         }
 

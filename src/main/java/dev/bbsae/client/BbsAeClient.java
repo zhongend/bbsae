@@ -2,6 +2,7 @@ package dev.bbsae.client;
 
 import dev.bbsae.BbsAeAddon;
 import dev.bbsae.client.export.CompExportManager;
+import dev.bbsae.client.overlay.BbsPreviewBridge;
 import dev.bbsae.client.overlay.CompositionOverlay;
 import dev.bbsae.client.render.CompRenderer;
 import dev.bbsae.client.ui.UICompositionClip;
@@ -26,6 +27,7 @@ import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 
 /**
  * Client half: registers the frame overlay, the film-scoped compositor workspace and the
@@ -41,8 +43,56 @@ public class BbsAeClient implements BBSAddonMod
         CompStore.ensureDemo();
         BbsAeAddon.LOGGER.info("BBS Compositor client ready");
 
+        if (Boolean.getBoolean("bbsae.debugPreview"))
+        {
+            final int[] ticks = {0};
+            final boolean[] opened = {false};
+
+            ClientTickEvents.END_CLIENT_TICK.register((client) ->
+            {
+                if (client.player == null || client.world == null)
+                {
+                    return;
+                }
+
+                if (client.player == null || client.world == null)
+                {
+                    return;
+                }
+
+                if (!opened[0] && ++ticks[0] > 120 && compositorPanel != null)
+                {
+                    opened[0] = true;
+                    BBSModClient.getDashboard().setPanel(compositorPanel);
+                    UIScreen.open(BBSModClient.getDashboard());
+
+                    if (Boolean.getBoolean("bbsae.debugExport"))
+                    {
+                        compositorPanel.debugExportFilm("export_test", "film_export_test", "main", 1920, 1080, 60);
+                    }
+                    else if (!Boolean.getBoolean("bbsae.debugStart"))
+                    {
+                        compositorPanel.debugDemoEffects();
+                    }
+                }
+            });
+        }
+
         ClientTickEvents.END_CLIENT_TICK.register((client) -> CompExportManager.tick());
-        ClientLifecycleEvents.CLIENT_STOPPING.register((client) -> CompRenderer.clearCaches());
+        ClientLifecycleEvents.CLIENT_STOPPING.register((client) ->
+        {
+            BbsPreviewBridge.detach();
+            CompRenderer.clearCaches();
+        });
+
+        /* The compositor's "BBS preview" layer shows BBS's own frame. Replay actors are drawn by
+         * the film editor controller into the world pass, so the bridge needs the same hook the
+         * film panel uses; it is inert while the compositor is not on screen. */
+        WorldRenderEvents.AFTER_ENTITIES.register(BbsPreviewBridge::renderFilmActors);
+
+        /* AFTER_ENTITIES draws the replays; LAST runs after translucents/particles, so the copy
+         * contains the complete world frame the compositor should show. */
+        WorldRenderEvents.LAST.register((context) -> BbsPreviewBridge.captureFrame());
     }
 
     /**
@@ -107,9 +157,9 @@ public class BbsAeClient implements BBSAddonMod
     {
         event.register((filmPanel, replaySupplier) ->
         {
-            UISection section = new UISection(IKey.constant("Compositor"));
+            UISection section = new UISection(IKey.constant("合成器"));
 
-            UIButton open = new UIButton(IKey.constant("Open Film Compositor"), (button) ->
+            UIButton open = new UIButton(IKey.constant("打开影片合成器"), (button) ->
             {
                 Replay replay = replaySupplier.get();
 
@@ -144,7 +194,7 @@ public class BbsAeClient implements BBSAddonMod
 
         event.dashboard.getPanels().registerPanel(
             compositorPanel,
-            IKey.constant("Compositor"),
+            IKey.constant("合成器"),
             Icons.FILM
         );
 

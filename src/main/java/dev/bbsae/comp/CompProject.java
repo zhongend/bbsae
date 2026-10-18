@@ -95,6 +95,30 @@ public class CompProject
         public boolean showGrid = false;
         public int gridSize = 80;
         public boolean depthEnabled = true;
+
+        /** 0 = flat editor background, 1 = live BBS frame behind the composition. */
+        public int previewBackground = 0;
+
+        /** Preview overlay (FX/Mask/BBS) folded into a single arrow button. */
+        public boolean previewControlsCollapsed = false;
+
+        /** Persisted editor layout (pixels; dragged by the split handles). */
+        public int leftPanelWidth = 190;
+        public int rightPanelWidth = 300;
+        public int timelineHeight = 250;
+        public int keyframeDrawerHeight = 154;
+        public boolean cameraPreviewMode = false;
+        public boolean show3DGrid = true;
+
+        /** Default duration for newly created layers, in seconds. 0 = whole composition. */
+        public float defaultLayerDuration = 0F;
+
+        /** Show composition effects when a film is played outside the BBS editors. */
+        public boolean showDuringExternalPlayback = true;
+
+        /** 0 = Premiere-style shortcuts, 1 = BBS-style shortcuts. */
+        public int shortcutScheme = 0;
+
         public String defaultOutputPreset = "review_h264";
     }
 }

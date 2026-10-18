@@ -66,11 +66,19 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
 
+        boolean external = !isFilmEditorOpen();
+
         try
         {
             for (CompInstance instance : instances)
             {
                 CompProject project = CompStore.load(instance.project);
+
+                if (external && (project.settings == null || !project.settings.showDuringExternalPlayback))
+                {
+                    continue;
+                }
+
                 CompDocument doc = project.getComp(instance.comp);
 
                 if (doc == null)
@@ -107,6 +115,34 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
             else RenderSystem.disableCull();
 
             ui.pop();
+        }
+    }
+
+    /**
+     * The overlay runs in two very different places: the film editor/recorder (where the compositor
+     * is the point) and external replay playback in the world (where it may be unwanted). The
+     * current dashboard panel is the reliable discriminator; {@code ClipContext} carries no flag.
+     */
+    private static boolean isFilmEditorOpen()
+    {
+        try
+        {
+            /* The film editor and the F6 recorder both run BBS in custom-size mode. External
+             * replay playback does not, so this is the one flag that survives the recorder
+             * hiding the dashboard while it writes frames. */
+            if (mchorse.bbs_mod.client.BBSRendering.isCustomSize())
+            {
+                return true;
+            }
+
+            Object menu = mchorse.bbs_mod.ui.framework.UIScreen.getCurrentMenu();
+
+            return menu instanceof mchorse.bbs_mod.ui.dashboard.UIDashboard dashboard
+                && dashboard.getPanels().panel instanceof mchorse.bbs_mod.ui.film.UIFilmPanel;
+        }
+        catch (RuntimeException e)
+        {
+            return false;
         }
     }
 }

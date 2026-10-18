@@ -36,25 +36,28 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ BBS Compositor │ 影片/工程 │ Replay ▾ │ Save + Play ◀ ▶ 时间码 │ Export Render Focus │
-├───────────┬──────────────────────────────────┬─────────────────────┤
-│ Layers    │ Composition Preview              │ Inspector Tabs      │
-│ (UIList)  │ - 合成结果 GL FBO                │ Comp / Layer / FX   │
-│           │ - 选择框/四角 handle             │ Mask / Text / Out   │
-│           │ - 拖动选中层                     │ (UIScrollView)      │
-├───────────┴──────────────────────────────────┴─────────────────────┤
-│ - / + / Fit │ 可拖动 scrubber + 秒刻度 + 当前时间 + playhead       │
-│ BBS UIKeyframeEditor: dope sheet / graph / 关键帧菱形 / 右键菜单   │
+│ BBS Compositor │ Replay ▾ │ Play ◀ ▶ 时间码 │ Save Export Render Focus │
+├──────────────┬──────────────────────────────┬──────────────────────┤
+│ 效果库/素材  │ Composition Preview          │ 效果控件             │
+│ (搜索/分类树)│ - 合成结果 GL FBO            │ 片段 / 运动 / 不透明度│
+│ - 42 效果    │ - 选择框/四角 handle         │ 已应用效果栈 / 样式  │
+│ - 双击应用   │ - 拖动选中层                 │ 图层 / 蒙版 / 文字   │
+│              │                              │ 合成 / 输出          │
+├──────────────┴──────────────────────────────┴──────────────────────┤
+│ + 拆分 标记 吸附 关键帧 - + 适配 …… 快捷键                         │
+│ 秒刻度尺 / 工作区 / 播放头                                          │
+│ 轨道头(类型/名称/眼睛/锁定) │ 轨道 bar(移动/裁剪/关键帧刻度/FX)     │
+│ 可选：属性关键帧抽屉（BBS UIKeyframeEditor，dope sheet/graph）     │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Inspector 不再是无限长滚动**：`UITabStrip` 把 Comp / Layer / FX / Mask / Text / Out 分开。
-- **Focus**：隐藏层栈和检查器，只保留预览和时间轴。
+- **Effect Controls 是默认页**：选中轨道后显示运动、不透明度、已应用效果和图层样式；未选中时显示空状态。Inspector 其它页是图层、蒙版、文字、合成、输出。
+- **轨道是唯一图层列表**：左侧不再是重复的图层栈，而是效果库/素材；轨道头承担选择、可见、锁定。
+- **Focus**：隐藏效果库和检查器，只保留预览和时间轴。
 - **Replay 选择器**：点击打开 BBS 原生 `UIListOverlayPanel`，列出当前影片的所有 replay 以及其它已保存影片；选择 replay 切换该 replay 的 composition，选择 Film 切换影片工程。
 - **每个 replay 独立 composition**：工程仍按影片隔离，composition id 形如
   `replay_<replayId>`，避免不同 replay 的图层互相污染。
-- **Timeline**：顶部 `- / + / Fit`，中间 scrubber，底部仍是 BBS 原生
-  `UIKeyframeEditor`。原生菱形拖动、插值、复制粘贴、右键菜单保留。
+- **Timeline**：主体是自绘的 `UICompTrackTimeline`（秒刻度、轨道头、可移动/裁剪 bar、吸附、缩放/平移、工作区）；BBS `UIKeyframeEditor` 移入可选抽屉，原生菱形拖动、插值、复制粘贴、右键菜单保留。
 - **Preview**：选中层有边框和四角 handle；按住左键可拖动选中层，有 transform 关键帧时
   自动在播放头写入关键帧，否则改静态 x/y。预览来自合成器自己的 `CompRenderer` FBO，
   不是 BBS 影片编辑器覆盖层；左上角的 FX/Mask 开关可对比效果/蒙版。
@@ -80,10 +83,10 @@
 ## 后续优先级
 
 1. 多 replay 的 composition clip 启用/禁用策略（避免多个 replay 同时叠加）；
-2. 时间轴中的 layer duration bar 与 composition marker；
+2. 轨道多选/框选/剃刀/波纹删除（目前一层一条，拆分产生相邻轨道）；
 3. 预览缩放/平移与 snapping；
 4. 素材拖放导入和媒体库；
-5. 全局 undo 栈。
+5. 效果库拖拽到轨道。
 
 ## 参考链接
 

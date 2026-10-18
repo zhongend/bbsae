@@ -1,12 +1,6 @@
 # BBS Compositor (`bbsae`)
 
-**A screen-space compositor for BBS FS films**, built as a Fabric addon for **Minecraft 1.20.1**.
-
-The compositor adds a 2D/2.5D layer on top of BBS's finished 3D frame: text, shapes, images,
-solid layers, nulls, adjustment layers, precomps, masks, feathered mattes, effects, layer styles,
-parenting, tracked bindings and a native-keyframe timeline. The result is drawn through BBS's
-official `RegisterFrameOverlaysEvent`, so it is included in BBS's preview **and in its FFmpeg film
-export** without touching the `.dat` film format.
+> 交接文档：**[docs/HANDOFF.zh.md](docs/HANDOFF.zh.md)**（当前架构、已实现功能、关键 bug、未完成项、构建/重映射流程）。
 
 - **Source:** <https://github.com/zhongend/bbsae>
 - **Issues:** <https://github.com/zhongend/bbsae/issues>
@@ -14,14 +8,25 @@ export** without touching the `.dat` film format.
 - **UI architecture:** [`docs/ui-architecture.zh.md`](docs/ui-architecture.zh.md)
 - **Photon research:** [`docs/photon-research.zh.md`](docs/photon-research.zh.md)
 - **Developer handoff:** [`docs/HANDOFF.zh.md`](docs/HANDOFF.zh.md)
+- **Round 8 (Alight Motion PIXEL effects):** [`docs/ROUND8-01-AUDIT.zh.md`](docs/ROUND8-01-AUDIT.zh.md),
+  [`docs/ROUND8-02-PIXEL.zh.md`](docs/ROUND8-02-PIXEL.zh.md),
+  [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md)
 
 > This repository does **not** redistribute the BBS FS jar. Download BBS FS 2.7-1.20.1 from its
 > official Modrinth page and put `bbs-2.7-1.20.1.jar` in `libs/` before building.
 
+A screen-space compositor for **BBS FS** films, built as a BBS addon for **Minecraft 1.20.1 / Fabric**.
+
+The compositor adds a 2D/2.5D layer on top of BBS's finished 3D frame: text, shapes, images,
+solid layers, nulls, adjustment layers, precomps, masks, feathered mattes, effects, layer styles,
+parenting, tracked bindings and a native-keyframe timeline. The result is drawn through BBS's
+official `RegisterFrameOverlaysEvent`, so it is included in BBS's preview **and in its FFmpeg film
+export** without touching the `.dat` film format.
+
 ## Download / Install
 
 1. Download [`bbsae-0.1.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.1.0/bbsae-0.1.0.jar)
-   from the **v0.1.0** release.
+   from the **v0.1.0** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
 3. Put `bbsae-0.1.0.jar` and the BBS FS jar into the game's `mods/` folder.
@@ -37,7 +42,8 @@ what is and is not implemented.
 
 Verified in this iteration:
 
-- `compileJava` and all 16 tests pass;
+- `compileJava` and all **61** tests pass (headless model + real hidden-window OpenGL 3.2 pixel
+  tests);
 - the addon loads in a Fabric 1.20.1 + BBS 2.7 development client;
 - the compositor preview renders the composition (not a blank frame) after fixing projection,
   model-view and mask-transform state;
@@ -45,10 +51,110 @@ Verified in this iteration:
   frame contains the compositor layers, proving the frame-overlay path reaches the video file;
 - the final jar has Minecraft references remapped to intermediary and keeps BBS class names.
 
-Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), SHA-256
-`C6499F896395934308B8A487488ABCD19A7FA3540C55063D8EE49839CF409AD4`. The local sandbox could not let
-TinyRemapper write a zip directly, so the final jar was assembled from the remapped class tree and
-the processed resources; the class entries are intermediary-remapped.
+Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **396510** bytes,
+SHA-256 `1CC9F7F8827B5926A2A9C005A9D1FFDC8B946C276C796C8D4415E87EF6DBA00C` (check the file if it is
+repacked). The jar is produced by `gradlew build`; `remapJar` writes it directly and the class
+entries are intermediary-remapped.
+
+2026-10-18 eighth pass (Alight Motion PIXEL effects, first-principles bug audit):
+
+- added seven PIXEL-family effects: **Scanlines, Glitch, VHS, Halftone, Emboss, Mirror,
+  Kaleidoscope**; the catalogue now has **53** effects;
+- every one operates in **layer space** through `EffectSpace` / `sampleLocal`, so the pattern
+  follows the layer instead of staying glued to the composition;
+- Halftone follows Alight Motion's properties (dots across the project width, strength, angle,
+  row phase, ink/paper colours); Mirror now overlays a mirrored copy with an opacity control
+  instead of discarding half the layer;
+- fixed four dead parameters (`glitch.speed`, `vhs.speed`, `vhs.noise`, `depth_dof.focus`);
+- fixed `EffectSpace.identity()` inverting the V axis (adjustment/3D-layer effects sampled the
+  vertically flipped row) and `CompShaders.delete()` leaving a dangling `rgbSplit` program;
+- new `PixelPlan` separates parameter resolution from GL so a headless test can prove every
+  registry parameter reaches the shader; new GL pixel tests cover identity, layer space, colour
+  and symmetry. Evidence: `docs/verify/round8-pixel-effects.png`.
+- details: [`docs/ROUND8-01-AUDIT.zh.md`](docs/ROUND8-01-AUDIT.zh.md),
+  [`docs/ROUND8-02-PIXEL.zh.md`](docs/ROUND8-02-PIXEL.zh.md),
+  [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md).
+
+2026-10-18 sixth pass (distortion, grading, landing screen, media/sound, export):
+
+- distortion effects now measure strength in **pixels** and radius against the layer's half
+  diagonal (`2π/wavelength` for waves); `pinch` gained its missing radius parameter. A real GL
+  pixel test asserts that a bulge pulls transparent pixels into a square;
+- the inspector has a real **grading page**: three AE-style colour wheels (lift/gamma/gain),
+  a five-point master tone curve drawn with the same formula as the shader, presets and
+  keyframeable exposure/contrast/saturation/vibrance/temperature/tint;
+- the **landing screen** lists `.bbscomp` projects, creates new ones (name, canvas, fps,
+  duration) and forbids editing until a project is chosen; shortcut scheme (Premiere / BBS) is
+  selected there and persisted per project;
+- all four panel areas are **draggable** (left, right, timeline, keyframe drawer) and the
+  keyframe drawer height is saved; the old `row()` tab overflow is gone;
+- the media library indexes 10 texture roots plus BBS textures, searches across every category,
+  and has a sound library that auditions vanilla/BBS sound events, copies their ids and opens
+  BBS's own sound overlay;
+- layer duration has direct in/out/duration fields and 1s/2s/5s/fill buttons; settings add a
+  default layer duration;
+- 10 motion templates, a reworked block-shatter shader and a richer composition-clip inspector
+  (project picker, fit choice, clip info, fixed “合成器” title);
+- external replay playback can be configured to hide the compositor
+  (`showDuringExternalPlayback`), detected with `BBSRendering.isCustomSize()` so F6 recording is
+  never mistaken for external playback;
+- export accepts custom width/height and a numeric aspect ratio; a real **1920x1080 @ 60 fps**
+  export was produced (494 frames, 8.23 s) and a frame is at
+  `docs/verify/round6-export-1080p60.png`.
+
+2026-10-18 track-editor / Effect Controls pass (the Premiere-style correction):
+
+- the bottom of the workspace is now a **real track editor**, not a small strip above a property
+  sheet: one row per layer, a track header with visibility/lock, a movable/trimable clip bar,
+  frame-snapped dragging, edge handles, snapping to the playhead/markers/other clips, zoom/pan,
+  work-area shading and a proper seconds ruler;
+- the layer stack is no longer a second list in the left column. Track headers are the single
+  selection surface; clicking a bar selects its layer and feeds the right-hand panel. This removes
+  the old duplicate "which list owns selection?" state;
+- the right column is now **Effect Controls** by default: Motion (position/scale/rotation/anchor),
+  Opacity + blend mode, the applied-effect stack and layer styles for the selected track. With no
+  track selected it shows an explicit empty state instead of editing the last layer;
+- the left column is a Premiere-style **Effects library** with search, categories, recent effects
+  and a native `UIList` tree. Double-click or "Apply" adds the effect to the selected track; an
+  effect can be enabled, reordered or removed in Effect Controls;
+- the BBS keyframe editor moved into an optional drawer under the track timeline. Adding a keyframe
+  opens it automatically; it fits the composition duration instead of the keyframes' bounding box;
+- shortcuts were rebuilt around `KeyAction.PRESSED`: the old code also ran on key release, which
+  made Space/S and other toggles fire twice and look broken. The new set adds J/K/L shuttle,
+  frame/5-frame stepping, Home/End, edit-point and marker navigation, track selection/stacking,
+  `[`/`]` trim to playhead, I/O work area, Alt+arrow nudging, C/Ctrl+K split, S snapping,
+  `=`/`-`/`\` zoom/fit, F focus, Ctrl+S save, Ctrl+M export and Ctrl+/ shortcut help;
+- split-at-playhead keeps footage continuous (`startTime` advances with the split), trim-in keeps
+  the source frame under the cursor instead of slipping the clip, and moving a bar carries its
+  keyframes and layer markers with it. These rules live in `CompLayer` and are covered by tests.
+
+2026-10-18 UI pass (Chinese build):
+
+- the whole compositor UI is Chinese: header, inspector tabs, every inspector field, effect names,
+  effect parameter names and render-queue states;
+- the inspector tab bar was replaced with a deterministic clickable bar (BBS's `UITabStrip` is a
+  scroll view and swallowed presses inside the dashboard panel, so no tab could be switched);
+- the timeline is primed on the first laid-out frame: sheets no longer stay blank until the user
+  clicks something;
+- Space toggles playback;
+- opening the compositor now starts with a replay picker: a replay must be chosen before editing;
+- export opens a small preset dialog (1280/1920/2560/3840, 16:9 / 9:16 / 1:1, 24/30/60 fps) that
+  writes the values into BBS's own video settings and then runs BBS's native recorder, so export is
+  no longer stuck at the old 320x180 preview size;
+- toolbar regrouped: transport in the centre, save/export/render/focus anchored to the right, the
+  add-layer button moved into the layer panel header.
+
+2026-10-18 asset-library pass:
+
+- **asset library** (materials button in the layer panel): a photo-library style browser with
+  categories, thumbnails, search and paging. It indexes the project's own `assets` folder **and the
+  client's resource packs** (`mc:textures/item|block|entity|gui`), so Minecraft item/block icons can
+  be dropped straight into a HUD composition; double-click inserts, or replace the selected layer;
+- layer stack is now drawn top-most first (AE convention), new layers appear on top;
+- global undo/redo via 1-second project snapshots (Ctrl+Z / Ctrl+Y), plus Ctrl+D duplicate,
+  Delete, Escape closes modals;
+- Chinese default layer names, Chinese layer badges, label rows in the inspector use explicit
+  two-column layout.
 
 Implemented now:
 
@@ -61,12 +167,14 @@ Implemented now:
 - BBS-native `KeyframeChannel<Transform>` / `KeyframeChannel<Float>` animation, including effect
   parameters, text metrics, mask points/handles and shape trim/repeater values, edited with BBS's
   own `UIKeyframeEditor` (dope sheet, graph, context menus, interpolation, copy/paste);
-- a large, always-visible timeline scrubber with second marks, current timecode and a playhead,
-  plus the BBS ruler/CTI and native keyframe dragging underneath it;
+- a real track timeline with a seconds ruler, playhead, work-area shading, track headers and
+  movable/trimable layer bars; the BBS keyframe editor (dope sheet/graph/native keyframe dragging)
+  opens in a drawer under the tracks when needed;
 - masks with add/subtract/intersect/exclude, feather, opacity, positive/negative expansion,
   inversion, editable points and bezier handles;
-- a curated 42-effect catalogue (blur, color, keying, generate, distort, stylize, transitions,
-  depth) with real box/radial blur, unsharp sharpen and depth-aware passes;
+- a curated **53-effect** catalogue (blur, color, keying, generate, distort, stylize, screen/retro,
+  transitions, depth) with real box/radial blur, unsharp sharpen, depth-aware passes and the
+  Alight Motion-style Scanlines / Glitch / VHS / Halftone / Emboss / Mirror / Kaleidoscope family;
 - layer styles: drop shadow, inner shadow, outer/glow, bevel, color/gradient overlay, satin,
   stroke;
 - text with tracking, line height, wrap, per-character range/wiggle animators;
@@ -80,16 +188,22 @@ Implemented now:
 - render queue with add/remove/retry/cancel, render settings/output module separation, editable
   output modules, PNG sequence, H.264 review and ProRes 4444 alpha presets;
 - auto-save and `.bak` backups;
-- a compact BBS-native editor: header/toolbar, **tabbed inspector** (Comp / Layer / FX /
-  Mask / Text / Out), **Focus** preview mode, layer stack, composition preview with a selected
-  layer box and drag-to-move, timeline header, scrubber, `UIKeyframeEditor`, BBS
-  buttons/toggles/trackpads/color pickers, context menus and a replay/film selector;
+- a compact BBS-native editor with a Premiere-style information architecture:
+  **Effects library | composition preview | Effect Controls**, and a **track timeline** at the
+  bottom. The timeline has a seconds ruler, track headers (name, type icon, visibility, lock),
+  movable/trimable bars with keyframe ticks and FX badges, snapping, zoom/pan and work-area shading;
+  the BBS keyframe editor sits in an optional drawer under the tracks;
+- the inspector is contextual: **Effect Controls** (Motion/Opacity/effect stack/styles), **Layer**
+  (timing, switches, parenting, matte, expressions, type-specific fields), **Mask**, **Text**,
+  **Comp** and **Output**. Nothing edits a hidden "last selected layer";
+- the left **Effects library** has search, categories, recent effects and double-click apply; the
+  effect stack in Effect Controls supports enable/disable, reorder and remove;
 - preview drag writes the layer position, or inserts a transform keyframe at the playhead when the
   layer already has transform animation;
 - the compositor has its own FBO preview again (it is **not** an overlay over BBS's film editor),
   with a preview toolbar for FX/mask preview toggles and a resolution/fps/FX readout;
 - BBS timeline empty-state, timeline undo id, Add Transform/Opacity Keyframe context actions, and
-  Fit / - / + timeline navigation;
+  Fit / - / + / wheel-zoom track-timeline navigation;
 - baked export through BBS's recorder (the **Export** header button opens the film and starts the
   normal BBS recorder), and comp-only export through the render queue.
 
@@ -121,10 +235,10 @@ Implemented now:
    **Open Film Compositor** in the **Compositor** section. This is the intended entry point: the
    panel is bound to that film and replay, and the film gets its composition clip automatically.
 3. In the compositor, pick a layer, import an image with **Import Image...**, add text/shapes,
-   set stopwatches, and drag the timeline playhead or the large scrubber above the dope sheet.
+   set stopwatches, and drag clips/edges in the track timeline or scrub its ruler.
 4. Press **Export** in the compositor header to open the film and start BBS's normal recorder, or
    use **Render** for the compositor's own render queue.
-5. The **Replay** button opens a list of the current film's replays and other saved films.
+5. The **Replay** button cycles replays; right-click it to pick a replay or another saved film.
    Every replay has its own composition, and every film has its own project file.
 
 Projects live under:
@@ -172,8 +286,9 @@ the useful conclusions are documented in [docs/photon-research.zh.md](docs/photo
 dockable hierarchy/scene/timeline workspaces, a real-time scene preview with FX/bloom/mask
 toggles, and an isolated editor post-effect stack over a color+depth render target.
 
-Known limits relative to EffectCraft/AE: no 3D cameras/lights inside the composition, no graph
-editor for arbitrary expressions, no full 306-effect catalogue, no multi-window docking, and no
+Known limits relative to EffectCraft/AE: no imported 3D models inside the composition (3D
+layers are camera-projected planes over the live BBS world), no lights, no graph editor for
+arbitrary expressions, no full 306-effect catalogue, no multi-window docking, and no
 per-character text editing on canvas.
 
 ## Design notes
@@ -188,8 +303,8 @@ per-character text editing on canvas.
   depth effects degrade to a no-op and log a warning rather than corrupting the frame.
 - The editor intentionally does not implement a second window/timeline toolkit. BBS owns the
   buttons, sliders, number fields, track rows, keyframe diamonds, graph editor and context menus.
-  Custom drawing is limited to the preview viewport, safe-area/grid overlay, compact timeline
-  scrubber and layer thumbnails.
+  Custom drawing is limited to the preview viewport, safe-area/grid overlay, the track timeline
+  (bars, ruler, snapping guide) and track-header controls; keyframe diamonds remain BBS's.
 - The compositor FBO is drawn with an identity model-view and its own orthographic projection.
   This matters in the UI: BBS's screen model-view/scissor state must never transform composition
   content into the dashboard's coordinate space. Masks use JOML's column-major translation
@@ -197,19 +312,12 @@ per-character text editing on canvas.
 
 ## Screenshots
 
-The independent compositor preview, with its own FBO, FX/Mask switches, layer stack, inspector and
-native BBS keyframe timeline:
-
-![Compositor preview](docs/ui-preview-standalone3.png)
-
-A real exported BBS recording frame (the compositor is included in the video, not only on screen):
-
-![Exported frame](docs/export-frame3.png)
-
-The editor was also checked with the BBS film preview showing the composition overlay at a later
-time in the demo animation:
-
-![Film preview](docs/ui-preview-frame2.png)
+The track/Effect Controls redesign was verified in the development client
+([`docs/ui-track-redesign.png`](docs/ui-track-redesign.png)): the left Effects library, centre
+preview, right Effect Controls and bottom track timeline are visible together; a split at the
+playhead produced two consistent halves, the moved/trimmed bars show their in/out range, and the
+BBS keyframe drawer aligns its playhead with the track ruler. An older exported MP4 frame is in
+[`docs/export-frame3.png`](docs/export-frame3.png).
 
 ## License
 

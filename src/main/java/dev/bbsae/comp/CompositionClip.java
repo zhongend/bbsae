@@ -49,6 +49,12 @@ public class CompositionClip extends CameraClip
             if (projectId.equals(clip.project.get()) && compId.equals(clip.comp.get()))
             {
                 clip.duration.set(Math.max(clip.duration.get(), Math.max(20, film.calculateDuration())));
+
+                if (clip.title.get() == null || clip.title.get().isBlank() || "Compositor".equals(clip.title.get()))
+                {
+                    clip.title.set("合成器");
+                }
+
                 return clip;
             }
         }
@@ -70,6 +76,10 @@ public class CompositionClip extends CameraClip
     public CompositionClip()
     {
         super();
+
+        /* The clip's default label used to be the raw link path ("composition"), which is what
+         * showed up on the camera timeline. Name it like the panel it opens. */
+        this.title.set("合成器");
 
         this.add(this.project);
         this.add(this.comp);

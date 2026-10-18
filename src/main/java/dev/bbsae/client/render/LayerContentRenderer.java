@@ -5,6 +5,10 @@ import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompShape;
 import dev.bbsae.comp.CompTextAnimator;
+import mchorse.bbs_mod.BBSModClient;
+import mchorse.bbs_mod.client.BBSRendering;
+import mchorse.bbs_mod.resources.Link;
+import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
 import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
 import mchorse.bbs_mod.utils.colors.Colors;
@@ -24,11 +28,21 @@ final class LayerContentRenderer
 
     static void draw(CompLayer layer, CompRenderContext context, Batcher2D batcher, Matrix4f world)
     {
+        draw(layer, context, batcher, world, null);
+    }
+
+    /**
+     * @param projection null for the normal 2D ortho; a perspective matrix for a 3D layer.
+     */
+    static void draw(CompLayer layer, CompRenderContext context, Batcher2D batcher, Matrix4f world, Matrix4f projection)
+    {
         MatrixStack stack = batcher.getContext().getMatrices();
 
         stack.push();
         stack.peek().getPositionMatrix().set(world);
-        RenderSystem.setProjectionMatrix(GlStateGuard.ortho(context.width, context.height), com.mojang.blaze3d.systems.VertexSorter.BY_Z);
+        RenderSystem.setProjectionMatrix(projection == null
+            ? GlStateGuard.ortho(context.width, context.height)
+            : projection, com.mojang.blaze3d.systems.VertexSorter.BY_Z);
 
         String type = layer.type == null ? "solid" : layer.type;
 
@@ -43,7 +57,11 @@ final class LayerContentRenderer
                 break;
             case "shape":
                 drawShapes(layer, context, batcher);
-                break;            case "precomp":
+                break;
+            case "bbs":
+                drawBbsPreview(layer, batcher);
+                break;
+            case "precomp":
                 drawPrecomp(layer, context, batcher);
                 break;
             case "bar":
@@ -54,6 +72,7 @@ final class LayerContentRenderer
                 break;
             case "null":
             case "adjustment":
+            case "camera":
                 break;
             case "rect":
             case "solid":
@@ -167,19 +186,98 @@ final class LayerContentRenderer
         batcher.texturedBox(raster.texture.id, 0xFFFFFFFF, raster.originX, raster.originY, raster.width, raster.height, 0F, 0F, raster.width, raster.height, raster.width, raster.height);
     }
 
-    private static void drawPrecomp(CompLayer layer, CompRenderContext context, Batcher2D batcher)
+    /**
+     * The original BBS film/world frame, as a first-class layer.
+     *
+     * <p>BBS keeps the last rendered film frame in {@link BBSRendering#getTexture()}; the film
+     * editor's own preview samples exactly that texture. A compositor "BBS preview" layer can
+     * therefore show the world under (or above) the composition without re-rendering the world.
+     * Because it is an ordinary layer it can be moved, trimmed, masked, blended and animated like
+     * any other source.</p>
+     */
+    private static void drawBbsPreview(CompLayer layer, Batcher2D batcher)
     {
-        CompDocument sub = context.project.getComp(layer.precompId);
-
-        if (sub == null || context.stack.contains(sub.id))
+        /* Outside the compositor (film editor overlay / F6 export) the world is already under the
+         * composition, so a BBS preview layer must contribute nothing — sampling the preview
+         * texture there would copy the previous finished frame back into itself. */
+        if (!dev.bbsae.client.overlay.BbsPreviewBridge.isActive())
         {
             return;
         }
 
-        float base = layer.timeRemap
-            ? layer.sourceTimeAt(context.time, context.frame)
-            : (layer.freeze ? layer.freezeTime : context.time);
+        dev.bbsae.client.render.GlTexture texture = dev.bbsae.client.overlay.BbsPreviewBridge.texture();
+
+        if (texture == null)
+        {
+            /* Active but no frame yet: draw an unmistakable placeholder instead of a transparent
+             * rectangle that reads as "the layer does nothing". */
+            float x = -layer.width * layer.anchorX;
+            float y = -layer.height * layer.anchorY;
+
+            batcher.box(x, y, x + layer.width, y + layer.height, 0x3300AAFF);
+            batcher.box(x, y, x + layer.width, y + 2F, 0xFF55AAFF);
+            batcher.box(x, y + layer.height - 2F, x + layer.width, y + layer.height, 0xFF55AAFF);
+            batcher.textShadow("BBS 预览：等待世界帧…", x + 10F, y + 10F, 0xFFFFD27A);
+            return;
+        }
+
+        float w;
+        float h;
+
+        if (layer.imageFit == 2)
+        {
+            w = Math.max(1F, layer.width);
+            h = Math.max(1F, layer.height);
+        }
+        else
+        {
+            float scale = layer.imageFit == 1
+                ? Math.max(layer.width / texture.width, layer.height / texture.height)
+                : Math.min(layer.width / texture.width, layer.height / texture.height);
+
+            w = texture.width * scale;
+            h = texture.height * scale;
+        }
+
+        batcher.texturedBox(texture.id, layer.color,
+            -w * layer.anchorX, -h * layer.anchorY, w, h,
+            0F, texture.height, texture.width, 0F, texture.width, texture.height);
+        dev.bbsae.client.overlay.BbsPreviewBridge.noteFrameDrawn(texture.width, texture.height);
+    }
+
+    private static void drawPrecomp(CompLayer layer, CompRenderContext context, Batcher2D batcher)
+    {
+        CompDocument sub = layer.precompId == null || layer.precompId.isEmpty()
+            ? null
+            : context.project.getComp(layer.precompId);
+
+        if (sub == null || context.stack.contains(sub.id))
+        {
+            /* Empty precompId used to resolve to the *first* composition (the current one), and
+             * the cycle guard then swallowed the draw entirely. Say so instead of drawing air. */
+            drawPrecompPlaceholder(layer, batcher, sub == null ? "未指定预合成 · 在图层检查器选择目标" : "循环预合成");
+            return;
+        }
+
+        /* An empty precomp used to render nothing at all, so the layer looked broken. Draw a
+         * placeholder that is still selectable in the preview. */
+        if (sub.layers == null || sub.layers.isEmpty())
+        {
+            drawPrecompPlaceholder(layer, batcher, "空预合成 · 双击轨道进入编辑");
+
+            return;
+        }
+
+        /* A precomp is a clip like any other: it must obey startTime, timeScale, freeze and time
+         * remap. Using raw comp time here made trimming/moving the precomp layer appear to do
+         * nothing, which is why the layer felt like a name-only placeholder. */
+        float base = layer.sourceTimeAt(context.time, context.frame);
         float time = (base + layer.precompTimeOffset) * layer.precompTimeScale;
+
+        /* Flush the outer batch first: the nested composition binds its own framebuffers, and any
+         * queued quad would otherwise be flushed into the nested target instead of this layer. */
+        batcher.flush();
+
         GlFramebuffer framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth, context.projection, context.camera, context.stack, batcher, 0, true, true);
 
         if (framebuffer == null)
@@ -217,6 +315,16 @@ final class LayerContentRenderer
         FboPool.release(framebuffer);
     }
 
+    private static void drawPrecompPlaceholder(CompLayer layer, Batcher2D batcher, String hint)
+    {
+        float x = -layer.width * layer.anchorX;
+        float y = -layer.height * layer.anchorY;
+
+        batcher.box(x, y, x + layer.width, y + layer.height, 0x221E88E5);
+        batcher.outline(x, y, x + layer.width, y + layer.height, 0x8855AAFF);
+        batcher.textShadow(hint, x + 12F, y + 12F, 0xFF9CC7FF);
+    }
+
     private static void drawText(CompLayer layer, CompRenderContext context, Batcher2D batcher)
     {
         String text = layer.text == null ? "" : layer.text;
@@ -226,9 +334,9 @@ final class LayerContentRenderer
             return;
         }
 
-        FontRenderer font = batcher.getFont();
-        int fontHeight = Math.max(1, font.getHeight());
         float fontSize = layer.fontSizeAt(context.frame);
+        FontRenderer font = fontFor(layer, batcher, fontSize);
+        int fontHeight = Math.max(1, font.getHeight());
         float tracking = layer.trackingAt(context.frame);
         float lineHeightFactor = layer.lineHeightAt(context.frame);
         float textStroke = layer.textStrokeAt(context.frame);
@@ -329,6 +437,28 @@ final class LayerContentRenderer
         stack.pop();
     }
 
+    /** Custom fonts come from BBS's own TTF loader; an empty name keeps the default font. */
+    private static FontRenderer fontFor(CompLayer layer, Batcher2D batcher, float fontSize)
+    {
+        if (layer.fontName == null || layer.fontName.isBlank())
+        {
+            return batcher.getFont();
+        }
+
+        int size = Math.max(4, Math.min(96, Math.round(fontSize)));
+
+        try
+        {
+            FontRenderer custom = BBSModClient.getFonts().get(Link.assets("fonts/" + layer.fontName), size, 1F);
+
+            return custom == null ? batcher.getFont() : custom;
+        }
+        catch (RuntimeException e)
+        {
+            return batcher.getFont();
+        }
+    }
+
     private static void drawGlyph(Batcher2D batcher, String glyph, float x, float y, int color, int strokeColor, float strokeWidth)
     {
         if (Colors.getA(color) <= 0F)
@@ -388,6 +518,31 @@ final class LayerContentRenderer
                 {
                     line.setLength(0);
                     line.append(candidate);
+                }
+
+                /* CJK has no spaces and a long word can exceed the box on its own. Break it by
+                 * characters instead of letting it overflow. */
+                if (lineWidth(font, line.toString(), tracking) > maxWidth)
+                {
+                    String overflow = line.toString();
+                    StringBuilder chunk = new StringBuilder();
+
+                    line.setLength(0);
+
+                    for (int i = 0; i < overflow.length(); i++)
+                    {
+                        char c = overflow.charAt(i);
+
+                        if (chunk.length() > 0 && lineWidth(font, chunk.toString() + c, tracking) > maxWidth)
+                        {
+                            lines.add(chunk.toString());
+                            chunk.setLength(0);
+                        }
+
+                        chunk.append(c);
+                    }
+
+                    line.append(chunk);
                 }
             }
 

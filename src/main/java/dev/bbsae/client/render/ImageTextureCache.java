@@ -1,6 +1,8 @@
 package dev.bbsae.client.render;
 
 import dev.bbsae.comp.CompStore;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.util.Identifier;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -14,7 +16,7 @@ import java.util.Map;
 public final class ImageTextureCache
 {
     private static final Map<String, Entry> CACHE = new LinkedHashMap<>(16, 0.75F, true);
-    private static final int MAX = 32;
+    private static final int MAX = 160;
 
     private ImageTextureCache()
     {}
@@ -38,6 +40,11 @@ public final class ImageTextureCache
         if (path == null || path.isBlank())
         {
             return null;
+        }
+
+        if (path.startsWith("mc:") || path.startsWith("bbs:"))
+        {
+            return fromResource(path);
         }
 
         Path file = resolve(projectId, path);
@@ -87,6 +94,73 @@ public final class ImageTextureCache
         catch (Exception e)
         {
             dev.bbsae.BbsAeAddon.LOGGER.warn("Could not load composition image {}", file, e);
+
+            return null;
+        }
+    }
+
+    /**
+     * Loads a texture straight out of the client's resource packs. The asset browser inserts layers
+     * with paths like {@code mc:textures/item/apple.png}, so Minecraft item/block icons can be
+     * composited without copying files into the project.
+     */
+    private static Entry fromResource(String path)
+    {
+        int colon = path.indexOf(':');
+        String namespace = colon > 0 ? path.substring(0, colon) : "minecraft";
+        String id = colon > 0 ? path.substring(colon + 1) : path;
+        String key = namespace + ":" + id;
+        Entry cached = CACHE.get(key);
+
+        if (cached != null)
+        {
+            return cached;
+        }
+
+        try
+        {
+            Identifier identifier = new Identifier(namespace, id);
+            var resource = MinecraftClient.getInstance().getResourceManager().getResource(identifier);
+
+            if (resource.isEmpty())
+            {
+                return null;
+            }
+
+            try (var in = resource.get().getInputStream())
+            {
+                BufferedImage image = ImageIO.read(in);
+
+                if (image == null)
+                {
+                    return null;
+                }
+
+                int w = image.getWidth();
+                int h = image.getHeight();
+                int[] pixels = image.getRGB(0, 0, w, h, null, 0, w);
+                GlTexture texture = new GlTexture();
+
+                texture.allocate(w, h);
+                texture.uploadRaw(pixels);
+
+                Entry entry = new Entry(texture, w, h);
+
+                CACHE.put(key, entry);
+
+                while (CACHE.size() > MAX)
+                {
+                    String oldest = CACHE.keySet().iterator().next();
+
+                    CACHE.remove(oldest).texture.delete();
+                }
+
+                return entry;
+            }
+        }
+        catch (Exception e)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.warn("Could not load resource texture {}", key, e);
 
             return null;
         }

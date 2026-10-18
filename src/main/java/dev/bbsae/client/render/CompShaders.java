@@ -22,6 +22,9 @@ public final class CompShaders
     public static GlslProgram stroke;
     public static GlslProgram transition;
     public static GlslProgram depth;
+    public static GlslProgram shatter;
+    public static GlslProgram rgbSplit;
+    public static GlslProgram grade;
 
     private CompShaders()
     {}
@@ -51,6 +54,9 @@ public final class CompShaders
         stroke = make("stroke", ShaderSources.STROKE);
         transition = make("transition", ShaderSources.TRANSITION);
         depth = make("depth", ShaderSources.DEPTH);
+        shatter = make("shatter", ShaderSources.SHATTER);
+        rgbSplit = make("rgb_split", ShaderSources.RGB_SPLIT);
+        grade = make("grade", ShaderSources.GRADE);
     }
 
     private static GlslProgram make(String name, String fragment)
@@ -92,8 +98,11 @@ public final class CompShaders
         delete(stroke);
         delete(transition);
         delete(depth);
+        delete(shatter);
+        delete(rgbSplit);
+        delete(grade);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = sharpen = radial = color = key = generate = distort = pixel = stroke = transition = depth = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = sharpen = radial = color = key = generate = distort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = null;
         initialized = false;
     }
 
