@@ -1080,7 +1080,12 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 - `BbsPreviewBridge` 在 `AFTER_TRANSLUCENT` 抓取干净世界帧，`bbs` 图层在导出/影片预览
   也可采样 `SceneColor`；
 - 用户图标 32×32 → 16×16，`BbsAeAddon.ICON` 用于 dashboard 页签和
-  `bbsae:composition` clip；署名 **超级大布叮**，项目维护者 **终end**。
+  `bbsae:composition` clip；资源必须在
+  `assets/bbsae/assets/textures/gui/compositor_icon.png`（BBS addon source pack 的
+  `assets/<modId>/assets` 约定），否则运行时会报 `couldn't be found`；
+- 真实客户端已验证 `Texture "bbsae:textures/gui/compositor_icon.png" was loaded!`
+  （`docs/verify/round9-icon-load.txt`）；
+- 署名 **超级大布叮**，项目维护者 **终end**。
 
 ### 19.3 实机验证
 

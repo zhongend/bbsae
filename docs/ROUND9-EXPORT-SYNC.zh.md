@@ -293,12 +293,17 @@ duration=25.033333
 
 - 用户提供的 32×32 图标缩到 16×16：`docs/verify/round9-compositor-icon.png`；
 - BBS dashboard 页签和 `bbsae:composition` clip 工厂都使用 `BbsAeAddon.ICON`；
-- 资源路径 `assets/bbsae/assets/textures/gui/compositor_icon.png`。
+- 资源路径 `assets/bbsae/assets/textures/gui/compositor_icon.png`（BBS addon source pack
+  读取的是 jar 里的 `assets/<modId>/assets/...`，不是 `assets/<modId>/textures/...`）；
+- 真实客户端日志 `docs/verify/round9-icon-load.txt`：
+  `Texture "bbsae:textures/gui/compositor_icon.png" was loaded!`；
+- 图标作者 **超级大布叮**，项目维护者 **终end**。
 
 ## 5. 已知边界
 
-- BBS 相机时间轴只有 12 秒时，12 秒之后世界画面会停在最后一帧，但 composition 继续播放。
-  如果希望世界/相机也继续运动，需要把相机 clip 本身延长（这是 BBS 影片的时长，不是合成器 bug）。
+- 导出时长不再受 BBS 相机/loop 限制；但如果 BBS 相机时间轴没有覆盖 25 秒之后的时间，
+  世界画面会停在最后一帧，而 composition 继续播放。希望世界/相机也继续运动，需要延长
+  BBS 相机时间轴（影片内容），不是 compositor 时长 bug。
 - 同一部影片如果存在多个 replay 的 composition clip，它们仍会叠加。当前导出会正规化
   当前 project/comp 的 clip；要彻底只显示当前 replay，需要下一步做“导出时只启用当前
   composition clip”的显式开关。
