@@ -39,28 +39,61 @@ public class CompositionClip extends CameraClip
      */
     public static CompositionClip ensureForFilm(mchorse.bbs_mod.film.Film film, String projectId, String compId)
     {
+        return ensureForFilm(film, projectId, compId, 0F);
+    }
+
+    /**
+     * @param compDurationSeconds the composition's duration, or 0 when unknown. The clip is kept
+     *                            at tick 0 and made as long as the longer of the film and the
+     *                            composition, so neither BBS's 12-second default nor an earlier
+     *                            trim can cut the composition short.
+     */
+    /**
+     * BBS camera clips are measured in ticks (20 per second). A composition clip must cover the
+     * longer of the film and the composition, otherwise BBS's recorder stops at the film's old
+     * length (the 12-second camera default) and the rest of the composition is never recorded.
+     */
+    public static int exportDurationTicks(int filmTicks, float compDurationSeconds)
+    {
+        int filmDuration = Math.max(20, filmTicks);
+        int compDuration = compDurationSeconds > 0F
+            ? Math.max(20, Math.round(compDurationSeconds * 20F) + 1)
+            : 20;
+
+        return Math.max(filmDuration, compDuration);
+    }
+
+    public static CompositionClip ensureForFilm(mchorse.bbs_mod.film.Film film, String projectId, String compId, float compDurationSeconds)
+    {
         if (film == null)
         {
             return null;
         }
 
+        int duration = exportDurationTicks(film.calculateDuration(), compDurationSeconds);
+
         for (CompositionClip clip : film.camera.getClips(CompositionClip.class))
         {
             if (projectId.equals(clip.project.get()) && compId.equals(clip.comp.get()))
             {
-                clip.duration.set(Math.max(clip.duration.get(), Math.max(20, film.calculateDuration())));
+                clip.tick.set(0);
+                clip.duration.set(duration);
 
                 if (clip.title.get() == null || clip.title.get().isBlank() || "Compositor".equals(clip.title.get()))
                 {
                     clip.title.set("合成器");
                 }
 
+                dev.bbsae.BbsAeAddon.LOGGER.info(
+                    "Composition clip found for film {}: project={} comp={} tick={} duration={} layer={} opacity={}",
+                    film.getId(), projectId, compId, clip.tick.get(), clip.duration.get(), clip.layer.get(), clip.opacity.get()
+                );
+
                 return clip;
             }
         }
 
         CompositionClip clip = new CompositionClip();
-        int duration = Math.max(20, film.calculateDuration());
 
         clip.project.set(projectId);
         clip.comp.set(compId);
@@ -69,6 +102,58 @@ public class CompositionClip extends CameraClip
         clip.duration.set(duration);
         clip.layer.set(0);
         film.camera.addClip(clip);
+
+        dev.bbsae.BbsAeAddon.LOGGER.info(
+            "Composition clip created for film {}: project={} comp={} duration={}",
+            film.getId(), projectId, compId, duration
+        );
+
+        return clip;
+    }
+
+    /**
+     * Export must not depend on where the composition clip happened to be trimmed on the camera
+     * timeline. The compositor preview always shows the whole film; if the clip only covered the
+     * first two seconds, the recorder would show BBS's raw frame for the rest of the video. This
+     * normalizes the current film's matching clip to cover the entire film before an export.
+     */
+    public static CompositionClip prepareForExport(mchorse.bbs_mod.film.Film film, String projectId, String compId)
+    {
+        return prepareForExport(film, projectId, compId, 0F);
+    }
+
+    /**
+     * @param compDurationSeconds the composition's own duration. When it is longer than the film's
+     *                            camera timeline, the clip is extended so BBS's recorder does not
+     *                            stop at the old film length (the default 12 seconds).
+     */
+    public static CompositionClip prepareForExport(mchorse.bbs_mod.film.Film film, String projectId, String compId, float compDurationSeconds)
+    {
+        CompositionClip clip = ensureForFilm(film, projectId, compId);
+
+        if (clip == null)
+        {
+            return null;
+        }
+
+        int filmDuration = Math.max(20, film.calculateDuration());
+        int compDuration = compDurationSeconds > 0F
+            ? Math.max(20, Math.round(compDurationSeconds * 20F) + 1)
+            : 20;
+        int duration = exportDurationTicks(film.calculateDuration(), compDurationSeconds);
+
+        clip.tick.set(0);
+        clip.duration.set(duration);
+        clip.layer.set(0);
+        clip.opacity.set(1F);
+        clip.timeScale.set(1F);
+        clip.offset.set(0);
+        clip.hold.set(true);
+
+        dev.bbsae.BbsAeAddon.LOGGER.info(
+            "Composition export clip prepared: compDuration={}s ({} ticks), filmDuration={} ticks, clipDuration={} ticks",
+            compDurationSeconds, compDuration, filmDuration, duration
+        );
 
         return clip;
     }

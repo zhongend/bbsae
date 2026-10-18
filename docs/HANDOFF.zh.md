@@ -10,6 +10,7 @@
 > - 第六轮（扭曲 / 调色 / 引导页 / 素材音效 / 快捷键 / 1080p60 导出）：第 16 节 + [`docs/ROUND6-2026-10-18.zh.md`](ROUND6-2026-10-18.zh.md)
 > - 第七轮（交互手柄 / 3D / 调整层 / 预合成）：第 17 节 + [`docs/ROUND7-2026-10-18.zh.md`](ROUND7-2026-10-18.zh.md)
 > - 第八轮（Alight Motion PIXEL 效果 / 第一性原理审计）：第 18 节 + [`docs/ROUND8-01-AUDIT.zh.md`](ROUND8-01-AUDIT.zh.md)、[`docs/ROUND8-02-PIXEL.zh.md`](ROUND8-02-PIXEL.zh.md)、[`docs/ROUND8-03-VERIFY.zh.md`](ROUND8-03-VERIFY.zh.md)
+> - 第九轮（导出画面同步 / 12 秒时长 / 合成器图标）：第 19 节 + [`docs/ROUND9-EXPORT-SYNC.zh.md`](ROUND9-EXPORT-SYNC.zh.md)
 
 ---
 
@@ -32,8 +33,8 @@
 
 - 根目录 `bbsae-0.1.0.jar`
 - `build/libs/bbsae-0.1.0.jar`
-- SHA-256：`1CC9F7F8827B5926A2A9C005A9D1FFDC8B946C276C796C8D4415E87EF6DBA00C`
-- 大小：`396510` 字节
+- SHA-256：`2856C0590099208A1D4BF4336922320945DF9FC92CA4EC21BE1C4CEAA1867E4F`
+- 大小：`402706` 字节
 
 ---
 
@@ -604,17 +605,19 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 ## 9. 当前最终产物
 
 - `/bbsae-0.1.0.jar`
-- SHA-256 `1CC9F7F8827B5926A2A9C005A9D1FFDC8B946C276C796C8D4415E87EF6DBA00C`
-- 大小 `396510`
-- 构建时间 2026-10-18 20:19
+- SHA-256 `2856C0590099208A1D4BF4336922320945DF9FC92CA4EC21BE1C4CEAA1867E4F`
+- 大小 `402706`
+- 构建时间 2026-10-18 21:53
 - 构建方式：`gradle build --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
 
 当前源码最后一次验证：
 
-- `test` **61/61** 通过；`jar` 由 `remapJar` 重新打包；
+- `test` **63/63** 通过；`jar` 由 `remapJar` 重新打包；
 - 第八轮新增 `EffectRenderer.PixelPlan`、7 个 PIXEL 效果、`PixelPlanTest`、
   `ShaderPixelTest` 12 个真实 GL 像素断言；
-- 证据：`docs/verify/round8-pixel-effects.png`。
+- 第九轮新增 20 秒导出、`BBS 预览` 图层导出、`IconResourceTest`；
+- 证据：`docs/verify/round8-pixel-effects.png`、`round9-export-20s-15s.png`、
+  `round9-bbs-preview-layer.png`、`round9-compositor-icon.png`。
 
 **如果接手后改源码，记得重新编译、重映射、重新打包，并更新 README hash。**
 
@@ -1028,8 +1031,8 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 7. **镜像对齐 AM**：叠半透明镜像副本，而不是整幅折叠丢一半。
 8. **测试**：61/61 通过；`ShaderPixelTest` 用真实 GL 3.2 上下文做像素断言并输出
    `docs/verify/round8-pixel-effects.png`。
-9. **产物**：`bbsae-0.1.0.jar`，396510 字节，
-   SHA-256 `1CC9F7F8827B5926A2A9C005A9D1FFDC8B946C276C796C8D4415E87EF6DBA00C`。
+9. **产物**：`bbsae-0.1.0.jar`，402706 字节，
+   SHA-256 `2856C0590099208A1D4BF4336922320945DF9FC92CA4EC21BE1C4CEAA1867E4F`。
 10. **新增 `PixelPlan`**：参数解析与 GL 分离；`supports()` 改为 `SUPPORTED` 集合，
     `EffectCoverageTest` 同时检查“注册表→渲染器”和“渲染器→注册表”。
 
@@ -1046,3 +1049,53 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 - 未启动真实 Minecraft 客户端，未重新跑 F6 MP4；本轮是 headless GL 像素测试 + 联系表。
 - `depth_dof.focus` 的修复没有专门的 GL 深度测试（深度捕获在 headless 下不可用），
   只做了代码路径修正；接手后应在影片导出里复验景深。
+
+---
+
+## 19. 2026-10-18 第九轮：导出画面同步 / 时长根因 / 图标
+
+完整记录：[`ROUND9-EXPORT-SYNC.zh.md`](ROUND9-EXPORT-SYNC.zh.md)。
+
+### 19.1 根因
+
+1. 导出时长曾由 BBS 相机/loop 决定：`UIFilmPreview.recordVideo` 用
+   `camera.calculateDuration()`；`PanelVideoExportSession` 在 `editorLoop` 时又把结束点改成
+   loopMax。于是 12 秒相机默认、20 秒 loop 都会截断 composition。
+2. `CompositionClip` 可能只覆盖部分时间/被 trim，导出后面的画面没有 comp。
+3. `workAreaOut` 仍是 12 秒，合成器预览循环在 12 秒。
+4. `CompositionOverlay` 没关 UI scissor，可能整层被裁掉。
+5. 一个坏 project 会中断所有 composition clip。
+6. `BBS 预览` 图层在 `!BbsPreviewBridge.isActive()` 时直接 return，导出里必然消失。
+7. 2D overlay 写深度，会让下一帧世界/预览层采样到上一帧残影。
+
+### 19.2 修复
+
+- **compositor Export 直接调用 BBS 原生 `UIFilmRecorder.startRecording`**，传入
+  `round(doc.duration * 20) + 1` ticks；导出期间关闭 `BBSSettings.editorLoop`，结束后恢复。
+  **不再点击 BBS 的 recordVideo 按钮，也不再依赖相机/loop 的时长。**
+- `CompositionClip.ensureForFilm(..., compDuration)` 把 clip 固定到 tick 0、覆盖 comp；
+  `prepareForExport` 正规化 opacity/timeScale/offset/hold 并 `forceSave()`；
+- `workAreaOut` 跟随时长，迁移旧 12 秒默认；
+- `CompositionOverlay` 关闭 scissor、关闭 depth test/depth write、逐 instance 隔离异常；
+- `BbsPreviewBridge` 在 `AFTER_TRANSLUCENT` 抓取干净世界帧，`bbs` 图层在导出/影片预览
+  也可采样 `SceneColor`；
+- 用户图标 32×32 → 16×16，`BbsAeAddon.ICON` 用于 dashboard 页签和
+  `bbsae:composition` clip；署名 **超级大布叮**，项目维护者 **终end**。
+
+### 19.3 实机验证
+
+- 20 秒 comp：1202 帧 / 20.033 秒，15 秒帧仍有 panel/title
+  （`docs/verify/round9-export-20s-15s.png`）；
+- **25 秒 comp：501 ticks，1502 帧 / 25.033 秒**，22 秒帧仍有 `BBS 预览`+scanlines
+  （`docs/verify/round9-export-25s-22s.png`、`round9-export-25s-ffprobe.txt`）——
+  证明没有 12/20 秒常量；
+- 只含 `bbs` 图层的 comp 导出：`docs/verify/round9-bbs-preview-layer.png`；
+- 测试 **63/63**（新增导出时长 + 图标资源测试）。
+
+### 19.4 仍要注意
+
+- 25 秒之后 BBS 相机没有关键帧时，世界停在最后一帧，composition 继续动；要世界继续运动，
+  需要延长 BBS 相机时间轴（影片本身），不是 compositor 时长 bug。
+- 多个 replay 的 composition clip 仍可能叠加；当前导出正规化当前 project/comp 的 clip。
+- `workAreaOut` 的 12 秒迁移是启发式；如需保留故意的 12 秒循环，应加 `workAreaCustom`。
+- 导出仍走 BBS 原生 VideoRecorder/FFmpeg，音频/编码/ESC 行为不变。

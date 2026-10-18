@@ -7,7 +7,7 @@ import mchorse.bbs_mod.api.events.RegisterCameraClipsEvent;
 import mchorse.bbs_mod.api.events.RegisterSourcePacksEvent;
 import mchorse.bbs_mod.camera.clips.ClipFactoryData;
 import mchorse.bbs_mod.resources.Link;
-import mchorse.bbs_mod.ui.utils.icons.Icons;
+import mchorse.bbs_mod.ui.utils.icons.Icon;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,6 +24,12 @@ public class BbsAeAddon implements BBSAddonMod
 
     public static final String CLIP_ID = MOD_ID + ":composition";
 
+    /** The compositor's own 16x16 icon, shipped in the addon resource namespace. */
+    public static final Icon ICON = new Icon(
+        new Link(MOD_ID, "textures/gui/compositor_icon.png"),
+        "compositor", 0, 0, 16, 16, 16, 16
+    );
+
     @Subscribe
     public void onSourcePacks(RegisterSourcePacksEvent event)
     {
@@ -38,7 +44,7 @@ public class BbsAeAddon implements BBSAddonMod
         event.factory.register(
             new Link(MOD_ID, "composition"),
             dev.bbsae.comp.CompositionClip.class,
-            new ClipFactoryData(Icons.FILM, 0x55AAFF)
+            new ClipFactoryData(ICON, 0x55AAFF)
         );
     }
 }

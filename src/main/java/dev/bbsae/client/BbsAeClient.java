@@ -24,7 +24,6 @@ import mchorse.bbs_mod.ui.film.UIFilmPanel;
 import mchorse.bbs_mod.ui.framework.UIScreen;
 import mchorse.bbs_mod.ui.framework.elements.UISection;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
-import mchorse.bbs_mod.ui.utils.icons.Icons;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
@@ -90,9 +89,11 @@ public class BbsAeClient implements BBSAddonMod
          * film panel uses; it is inert while the compositor is not on screen. */
         WorldRenderEvents.AFTER_ENTITIES.register(BbsPreviewBridge::renderFilmActors);
 
-        /* AFTER_ENTITIES draws the replays; LAST runs after translucents/particles, so the copy
-         * contains the complete world frame the compositor should show. */
-        WorldRenderEvents.LAST.register((context) -> BbsPreviewBridge.captureFrame());
+        /* AFTER_ENTITIES draws the replays; AFTER_TRANSLUCENT runs after translucents/particles
+         * but still inside the world pass, before BBS's FrameOverlays draw the composition. Using
+         * LAST here was too late in practice: the BBS preview layer could sample the previous
+         * composition frame, producing a scanlined feedback ghost in the exported video. */
+        WorldRenderEvents.AFTER_TRANSLUCENT.register((context) -> BbsPreviewBridge.captureFrame());
     }
 
     /**
@@ -195,7 +196,7 @@ public class BbsAeClient implements BBSAddonMod
         event.dashboard.getPanels().registerPanel(
             compositorPanel,
             IKey.constant("合成器"),
-            Icons.FILM
+            BbsAeAddon.ICON
         );
 
         BbsAeAddon.LOGGER.info("BBS Compositor dashboard panel registered");

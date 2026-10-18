@@ -2110,6 +2110,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.doc.duration = Math.max(this.doc.duration, duration);
             this.doc.workAreaOut = Math.max(this.doc.workAreaOut, duration);
+            normalizeWorkArea(this.doc);
         }
 
         if (this.trackTimeline != null)
@@ -2135,7 +2136,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.doc != null)
         {
-            CompositionClip.ensureForFilm(film, this.project.id, this.doc.id);
+            CompositionClip.ensureForFilm(film, this.project.id, this.doc.id, this.doc.duration);
         }
 
         this.refreshLayers();
@@ -2157,6 +2158,32 @@ public class UICompositorPanel extends UIDashboardPanel
         this.save();
         this.primedWidth = -1;
         this.showStartScreen();
+    }
+
+    /**
+     * Old projects (and every project created before the work-area fix) carry the 12-second
+     * default work-area out point even after the composition duration was raised. Playback loops
+     * at workAreaOut, so the editor appeared to stop at 12s. Follow the duration when the out
+     * point is still the untouched default; leave a deliberately shorter loop alone.
+     */
+    private static void normalizeWorkArea(CompDocument doc)
+    {
+        if (doc == null)
+        {
+            return;
+        }
+
+        if (doc.workAreaOut <= 0F
+            || (doc.duration > 12.001F && Math.abs(doc.workAreaOut - 12F) < 0.001F)
+            || doc.workAreaOut > doc.duration)
+        {
+            doc.workAreaOut = doc.duration;
+        }
+
+        if (doc.workAreaIn < 0F || doc.workAreaIn >= doc.workAreaOut)
+        {
+            doc.workAreaIn = 0F;
+        }
     }
 
     /** Fallback when the dashboard tab is opened directly: locate the currently open film. */
@@ -2416,7 +2443,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.doc != null)
         {
-            CompositionClip.ensureForFilm(film, this.project.id, this.doc.id);
+            CompositionClip.ensureForFilm(film, this.project.id, this.doc.id, this.doc.duration);
         }
 
         this.refreshLayers();
@@ -3041,11 +3068,67 @@ public class UICompositorPanel extends UIDashboardPanel
         mchorse.bbs_mod.ui.film.UIFilmPanel.applyExportSizeToBBS();
 
         this.save();
+
+        /* Make the physical film agree with this panel before BBS starts recording. A clip
+         * trimmed to a few seconds used to leave the rest of the export as the raw BBS frame,
+         * even though the compositor preview showed the composition the whole time. */
+        mchorse.bbs_mod.film.Film exportFilm = this.filmPanel.getData();
+        String projectId = this.project == null ? null : this.project.id;
+        String compId = this.doc == null ? null : this.doc.id;
+        CompositionClip exportClip = projectId == null || compId == null
+            ? null
+            : CompositionClip.prepareForExport(exportFilm, projectId, compId,
+                this.doc == null ? 0F : this.doc.duration);
+
+        if (exportClip != null)
+        {
+            this.filmPanel.forceSave();
+        }
+
+        BbsAeAddon.LOGGER.info(
+            "Compositor export: film={} panelFilm={} project={} comp={} clip={} clipTick={} clipDuration={}",
+            this.film == null ? "-" : this.film.getId(),
+            exportFilm == null ? "-" : exportFilm.getId(),
+            projectId, compId,
+            exportClip == null ? "missing" : "ok",
+            exportClip == null ? -1 : exportClip.tick.get(),
+            exportClip == null ? -1 : exportClip.duration.get()
+        );
+
+        /* The composition duration is the authority for a compositor export. BBS's own record
+         * button derives its end from camera.calculateDuration(), and the film panel's loop range
+         * can shorten that further (the reported "stops at 20 seconds" was the loop/camera
+         * duration, not the composition). Start the same native VideoRecorder session directly
+         * with the composition's tick count instead of patching a larger camera clip. */
+        int exportTicks = this.doc == null
+            ? 20
+            : Math.max(20, Math.round(this.doc.duration * 20F) + 1);
+        final boolean previousLoop = mchorse.bbs_mod.BBSSettings.editorLoop.get();
+
+        mchorse.bbs_mod.BBSSettings.editorLoop.set(false);
+        this.filmPanel.recorder.setFinishedListener((cancelled) ->
+            mchorse.bbs_mod.BBSSettings.editorLoop.set(previousLoop));
+
+        BbsAeAddon.LOGGER.info("Compositor export duration: {} ticks ({}s), loop disabled for export",
+            exportTicks, String.format(java.util.Locale.ROOT, "%.3f", exportTicks / 20F));
+
         this.closeModal();
 
         this.dashboard.setPanel(this.filmPanel);
         mchorse.bbs_mod.ui.framework.UIScreen.open(this.dashboard);
-        this.filmPanel.preview.recordVideo.clickItself();
+
+        mchorse.bbs_mod.ui.film.UIFilmPanel.applyExportSizeToBBS();
+        mchorse.bbs_mod.client.BBSRendering.scheduleAfterNextExportFrame(() ->
+        {
+            mchorse.bbs_mod.graphics.texture.Texture texture = mchorse.bbs_mod.client.BBSRendering.getTexture();
+
+            this.filmPanel.recorder.startRecording(
+                exportTicks,
+                texture.id,
+                mchorse.bbs_mod.client.BBSRendering.getVideoWidth(),
+                mchorse.bbs_mod.client.BBSRendering.getVideoHeight()
+            );
+        });
     }
 
     private void cycleReplay()
@@ -3167,6 +3250,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.doc = CompStore.ensureReplayComp(this.project, replayKey, replay.getName(), width, height, fps, duration);
             this.doc.duration = Math.max(this.doc.duration, duration);
             this.doc.workAreaOut = Math.max(this.doc.workAreaOut, duration);
+            normalizeWorkArea(this.doc);
             this.time = 0F;
             this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
             this.resetTimelineView = true;
@@ -3178,7 +3262,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
             if (this.film != null)
             {
-                CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id);
+                CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
             }
 
             this.refreshLayers();
@@ -3369,7 +3453,9 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
-                CompositionClip.ensureForFilm(film, projectId, compId);
+                CompProject debugProject = CompStore.load(projectId);
+                CompDocument debugComp = debugProject == null ? null : debugProject.getComp(compId);
+                CompositionClip.prepareForExport(film, projectId, compId, debugComp == null ? 0F : debugComp.duration);
 
                 mchorse.bbs_mod.ui.film.UIFilmPanel panel = this.dashboard.getPanel(mchorse.bbs_mod.ui.film.UIFilmPanel.class);
 
@@ -3389,10 +3475,25 @@ public class UICompositorPanel extends UIDashboardPanel
                 mchorse.bbs_mod.BBSSettings.videoWidth.set(width);
                 mchorse.bbs_mod.BBSSettings.videoHeight.set(height);
                 mchorse.bbs_mod.BBSSettings.videoFrameRate.set(fps);
+                mchorse.bbs_mod.BBSSettings.editorLoop.set(false);
                 mchorse.bbs_mod.ui.film.UIFilmPanel.applyExportSizeToBBS();
-                panel.preview.recordVideo.clickItself();
 
-                BbsAeAddon.LOGGER.info("Debug export started: {}x{} @{}fps film={}", width, height, fps, filmId);
+                int debugTicks = debugComp == null ? 20 : Math.max(20, Math.round(debugComp.duration * 20F) + 1);
+
+                mchorse.bbs_mod.client.BBSRendering.scheduleAfterNextExportFrame(() ->
+                {
+                    mchorse.bbs_mod.graphics.texture.Texture texture = mchorse.bbs_mod.client.BBSRendering.getTexture();
+
+                    panel.recorder.startRecording(
+                        debugTicks,
+                        texture.id,
+                        mchorse.bbs_mod.client.BBSRendering.getVideoWidth(),
+                        mchorse.bbs_mod.client.BBSRendering.getVideoHeight()
+                    );
+                });
+
+                BbsAeAddon.LOGGER.info("Debug export started: {}x{} @{}fps film={} duration={} ticks",
+                    width, height, fps, filmId, debugTicks);
             });
         });
     }
@@ -5742,7 +5843,43 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.numberRow("宽度", comp.width, 1, 16384, true, (value) -> comp.width = value.intValue()));
         section.fields.add(this.numberRow("高度", comp.height, 1, 16384, true, (value) -> comp.height = value.intValue()));
         section.fields.add(this.numberRow("帧率", comp.fps, 1, 240, false, (value) -> comp.fps = value.floatValue()));
-        section.fields.add(this.numberRow("时长", comp.duration, 0.1F, 36000F, false, (value) -> comp.duration = value.floatValue()));
+        section.fields.add(this.numberRow("时长", comp.duration, 0.1F, 36000F, false, (value) ->
+        {
+            float previous = comp.duration;
+
+            comp.duration = Math.max(0.1F, value.floatValue());
+
+            /* The work area is the playback loop. It used to stay at the 12-second default after
+             * the composition duration was raised, so the compositor appeared to stop at 12s
+             * even though the timeline and the project said 30s. Only follow the duration when
+             * the work area was the old full-length range; a deliberately shorter loop stays. */
+            if (comp.workAreaOut <= previous + 0.001F || comp.workAreaOut > comp.duration)
+            {
+                comp.workAreaOut = comp.duration;
+            }
+
+            if (comp.workAreaIn > comp.duration)
+            {
+                comp.workAreaIn = 0F;
+            }
+
+            this.time = Math.min(this.time, comp.duration);
+
+            if (this.film != null && this.project != null && this.doc != null)
+            {
+                /* The camera clip is what BBS's recorder uses for its length. Keep it in sync
+                 * with the composition as soon as the user edits the duration. */
+                CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+
+                if (this.filmPanel != null)
+                {
+                    this.filmPanel.forceSave();
+                }
+            }
+
+            this.save();
+            this.refreshSheets();
+        }));
         section.fields.add(this.colorRow("背景", comp.background, (color) -> comp.background = color));
 
         if (this.project != null && this.project.settings != null)

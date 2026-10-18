@@ -28,6 +28,17 @@ public class CompModelTest
     }
 
     @Test
+    public void compositionExportDurationExtendsPastTheTwelveSecondFilmDefault()
+    {
+        /* BBS cameras used to default to 12s (240 ticks). A 20s compositor must extend the
+         * composition clip, or the recorder stops at 12s and drops the rest. */
+        assertEquals(401, CompositionClip.exportDurationTicks(240, 20F));
+        assertEquals(240, CompositionClip.exportDurationTicks(240, 8F));
+        assertEquals(600, CompositionClip.exportDurationTicks(600, 8F));
+        assertEquals(20, CompositionClip.exportDurationTicks(0, 0F));
+    }
+
+    @Test
     public void demoProjectHasLayersAndBbsTracks()
     {
         CompProject project = CompStore.demo("unit-test");

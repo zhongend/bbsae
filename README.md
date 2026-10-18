@@ -13,6 +13,7 @@
   [`docs/ROUND8-02-PIXEL.zh.md`](docs/ROUND8-02-PIXEL.zh.md),
   [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md),
   [`docs/ROUND8-04-PUBLISH.zh.md`](docs/ROUND8-04-PUBLISH.zh.md)
+- **Round 9 (export fidelity / 12 s duration / icon):** [`docs/ROUND9-EXPORT-SYNC.zh.md`](docs/ROUND9-EXPORT-SYNC.zh.md)
 
 <p align="center">
   <img src="docs/gallery/hero.png" alt="BBS Compositor — editor, effects and export" width="100%">
@@ -113,8 +114,8 @@ what is and is not implemented.
 
 Verified in this iteration:
 
-- `compileJava` and all **61** tests pass (headless model + real hidden-window OpenGL 3.2 pixel
-  tests);
+- `compileJava` and all **63** tests pass (headless model + real hidden-window OpenGL 3.2 pixel
+  tests + export-duration/icon checks);
 - the addon loads in a Fabric 1.20.1 + BBS 2.7 development client;
 - the compositor preview renders the composition (not a blank frame) after fixing projection,
   model-view and mask-transform state;
@@ -122,10 +123,33 @@ Verified in this iteration:
   frame contains the compositor layers, proving the frame-overlay path reaches the video file;
 - the final jar has Minecraft references remapped to intermediary and keeps BBS class names.
 
-Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **396510** bytes,
-SHA-256 `1CC9F7F8827B5926A2A9C005A9D1FFDC8B946C276C796C8D4415E87EF6DBA00C` (check the file if it is
+Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **402706** bytes,
+SHA-256 `2856C0590099208A1D4BF4336922320945DF9FC92CA4EC21BE1C4CEAA1867E4F` (check the file if it is
 repacked). The jar is produced by `gradlew build`; `remapJar` writes it directly and the class
 entries are intermediary-remapped.
+
+2026-10-18 ninth pass (export fidelity, 12 s duration, compositor icon):
+
+- the export length now uses `max(film, composition)` instead of BBS's 12-second camera default;
+  the composition clip is normalized (`tick=0`, full duration, opacity 1) and the film is saved
+  before recording, so the recorder cannot stop early or miss trimmed clips;
+- the **BBS preview layer** no longer disappears in the film-editor/F6 export path: the clean
+  world frame is captured at `AFTER_TRANSLUCENT` into `SceneColor`, and a `bbs` layer can sample
+  it outside the compositor panel too. The 2D overlay also disables depth writes and restores the
+  UI scissor, so the export cannot inherit a stale composition/frame state;
+- `workAreaOut` follows the composition duration (including migration of the old 12-second
+  default), so preview playback no longer loops at 12 s;
+- added the user-provided compositor icon as `assets/bbsae/textures/gui/compositor_icon.png`
+  (16×16), used by the dashboard tab and the `bbsae:composition` clip;
+- export length is now passed to BBS's native recorder directly as
+  `round(doc.duration * 20) + 1` ticks; the camera's 12-second default and the film panel's
+  20-second loop can no longer cap it. A 25-second composition produced **1502 frames /
+  25.033 s** (`docs/verify/round9-export-25s-22s.png`, `round9-export-25s-ffprobe.txt`); a
+  20-second run is also kept at `docs/verify/round9-export-20s-15s.png`;
+- a BBS-preview-layer-only export at `docs/verify/round9-bbs-preview-layer.png` proves the
+  `bbs` layer now samples the clean world frame in the export path;
+- tests now **63 / 63** (added `compositionExportDurationExtendsPastTheTwelveSecondFilmDefault`
+  and `IconResourceTest`). Details: [`docs/ROUND9-EXPORT-SYNC.zh.md`](docs/ROUND9-EXPORT-SYNC.zh.md).
 
 2026-10-18 eighth pass (Alight Motion PIXEL effects, first-principles bug audit):
 
@@ -391,6 +415,15 @@ playing back. The full evidence set lives in [`docs/verify/`](docs/verify/), inc
 `1920x1080@60fps` export frame `docs/verify/round6-export-1080p60.png` and the PIXEL contact
 sheet. An older exported MP4 frame is still available at
 [`docs/export-frame3.png`](docs/export-frame3.png).
+
+## Credits
+
+- **Project / maintainer:** 终end ([@zhongend](https://github.com/zhongend))
+- **Compositor icon:** 超级大布叮 — original 32×32 at
+  [`docs/gallery/compositor-icon.png`](docs/gallery/compositor-icon.png), UI copy at 16×16
+- **Runtime:** Minecraft 1.20.1 + Fabric + BBS FS 2.7-1.20.1
+
+See [CREDITS.md](CREDITS.md) for the full list.
 
 ## License
 

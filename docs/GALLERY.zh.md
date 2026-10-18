@@ -149,9 +149,18 @@ framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器�
 - [ROUND8-01-AUDIT.zh.md](ROUND8-01-AUDIT.zh.md)：第一性原理与 bug 审计；
 - [ROUND8-02-PIXEL.zh.md](ROUND8-02-PIXEL.zh.md)：PIXEL 公式与层空间；
 - [ROUND8-03-VERIFY.zh.md](ROUND8-03-VERIFY.zh.md)：测试、构建、实机复验清单；
-- [ROUND8-04-PUBLISH.zh.md](ROUND8-04-PUBLISH.zh.md)：GitHub 发布记录。
+- [ROUND8-04-PUBLISH.zh.md](ROUND8-04-PUBLISH.zh.md)：GitHub 发布记录；
+- [ROUND9-EXPORT-SYNC.zh.md](ROUND9-EXPORT-SYNC.zh.md)：导出画面同步、12/20 秒时长根因、BBS 预览层、图标。
 
-## 12. 已知限制
+## 12. 图标与署名
+
+- 合成器图标原作者：**超级大布叮**；
+- 项目维护者：**终end**（[@zhongend](https://github.com/zhongend)）；
+- 32×32 原图：`docs/gallery/compositor-icon.png`；
+- BBS 界面使用的 16×16 版本：`src/main/resources/assets/bbsae/textures/gui/compositor_icon.png`；
+- 图标同时用于 BBS dashboard 页签和 `bbsae:composition` 影片 clip。
+
+## 13. 已知限制
 
 - 没有实现完整 3D 图层/灯光/C4D；BBS 提供 3D 世界；
 - 没有 Roto Brush、木偶/网格变形、逐字 3D、文字路径；

@@ -54,6 +54,8 @@ public final class BbsPreviewBridge
     private static boolean active;
     private static boolean runnerAdded;
     private static boolean renderFailureLogged;
+    /** True while the open composition actually contains a "BBS 预览" layer. */
+    private static boolean worldCaptureRequested;
 
     /**
      * The film panel is removed from the dashboard element tree when it disappears, so its
@@ -82,6 +84,7 @@ public final class BbsPreviewBridge
         document = comp;
         active = true;
         renderFailureLogged = false;
+        worldCaptureRequested = hasBbsPreviewLayer(comp);
 
         BbsAeAddon.LOGGER.info("BBS preview attached: film={}, comp={}x{}",
             panel == null || panel.getData() == null ? "-" : panel.getData().getId(),
@@ -134,6 +137,54 @@ public final class BbsPreviewBridge
         {
             document = comp;
         }
+
+        if (comp != null)
+        {
+            worldCaptureRequested = hasBbsPreviewLayer(comp);
+        }
+    }
+
+    /**
+     * A BBS preview layer is a real layer: it must also exist in the film-editor/export path,
+     * not only while the compositor dashboard panel is open. The overlay asks for the world
+     * capture as soon as it sees such a layer; the capture itself happens at
+     * WorldRenderEvents.LAST, before BBS draws its frame overlays.
+     */
+    public static void requestWorldCapture(boolean requested)
+    {
+        if (requested)
+        {
+            worldCaptureRequested = true;
+        }
+    }
+
+    public static boolean hasBbsPreviewLayer(CompDocument comp)
+    {
+        if (comp == null || comp.layers == null)
+        {
+            return false;
+        }
+
+        for (dev.bbsae.comp.CompLayer layer : comp.layers)
+        {
+            if (layer != null && "bbs".equals(layer.type) && layer.visible)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static boolean hasCapturedWorld()
+    {
+        return SceneColor.texture() != null;
+    }
+
+    /** Force a world copy right now; used on the first overlay frame, before LAST runs again. */
+    public static void captureWorldNow()
+    {
+        SceneColor.capture();
     }
 
     public static void detach()
@@ -271,14 +322,39 @@ public final class BbsPreviewBridge
         }
     }
 
-    /** Copies the finished world frame for the compositor. Called from {@code WorldRenderEvents.LAST}. */
+    /**
+     * Copies the finished world frame for the compositor. Called from
+     * {@code WorldRenderEvents.LAST}, before BBS draws its frame overlays, so the copy is the
+     * clean world/film frame the BBS preview layer is supposed to show.
+     */
     public static void captureFrame()
     {
-        if (active)
+        /* active: compositor panel preview.
+         * worldCaptureRequested + custom size: film editor preview and the F6 recorder, where
+         * the BBS preview layer used to disappear from the exported video. */
+        if (active || (worldCaptureRequested
+            && (mchorse.bbs_mod.client.BBSRendering.isCustomSize()
+                || BBSModClient.getVideoRecorder().isRecording())))
         {
             SceneColor.capture();
+
+            if (Boolean.getBoolean("bbsae.traceExport"))
+            {
+                captureTrace++;
+
+                if (captureTrace % 20 == 0)
+                {
+                    BbsAeAddon.LOGGER.info("[export trace] world capture #{} size={}x{} active={} requested={}",
+                        captureTrace,
+                        SceneColor.texture() == null ? 0 : SceneColor.texture().width,
+                        SceneColor.texture() == null ? 0 : SceneColor.texture().height,
+                        active, worldCaptureRequested);
+                }
+            }
         }
     }
+
+    private static int captureTrace;
 
     /** The captured world frame, or null until the first world render after attach. */
     public static GlTexture texture()

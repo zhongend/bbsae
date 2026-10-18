@@ -197,10 +197,16 @@ final class LayerContentRenderer
      */
     private static void drawBbsPreview(CompLayer layer, Batcher2D batcher)
     {
-        /* Outside the compositor (film editor overlay / F6 export) the world is already under the
-         * composition, so a BBS preview layer must contribute nothing — sampling the preview
-         * texture there would copy the previous finished frame back into itself. */
-        if (!dev.bbsae.client.overlay.BbsPreviewBridge.isActive())
+        /* The BBS preview layer is a real layer, not an editor-only decoration. It used to be
+         * skipped outside the compositor panel ("the world is already under the composition"),
+         * which made it vanish from the film-editor preview and from the F6 export while the
+         * compositor still showed it. Instead, the overlay captures the clean world frame at
+         * WorldRenderEvents.LAST into SceneColor and this layer samples that copy — exactly the
+         * same source the compositor preview uses. */
+        boolean active = dev.bbsae.client.overlay.BbsPreviewBridge.isActive();
+        boolean captured = dev.bbsae.client.overlay.BbsPreviewBridge.hasCapturedWorld();
+
+        if (!active && !captured)
         {
             return;
         }
@@ -210,7 +216,13 @@ final class LayerContentRenderer
         if (texture == null)
         {
             /* Active but no frame yet: draw an unmistakable placeholder instead of a transparent
-             * rectangle that reads as "the layer does nothing". */
+             * rectangle that reads as "the layer does nothing". In the export path returning
+             * transparent is safer than baking a placeholder into the video. */
+            if (!active)
+            {
+                return;
+            }
+
             float x = -layer.width * layer.anchorX;
             float y = -layer.height * layer.anchorY;
 

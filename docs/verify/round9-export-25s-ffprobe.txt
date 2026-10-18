@@ -1,0 +1,5 @@
+﻿width=1920
+height=1080
+nb_frames=1502
+duration=25.033333
+size=3198535
