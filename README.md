@@ -15,6 +15,7 @@
   [`docs/ROUND8-04-PUBLISH.zh.md`](docs/ROUND8-04-PUBLISH.zh.md)
 - **Round 9 (export fidelity / duration / icon):** [`docs/ROUND9-EXPORT-SYNC.zh.md`](docs/ROUND9-EXPORT-SYNC.zh.md)
 - **Round 10 (drag layer reorder):** [`docs/ROUND10-LAYER-REORDER.zh.md`](docs/ROUND10-LAYER-REORDER.zh.md)
+- **Round 11 (asset library fix + blur):** [`docs/ROUND11-ASSET-LIBRARY.zh.md`](docs/ROUND11-ASSET-LIBRARY.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -126,10 +127,21 @@ Verified in this iteration:
   frame contains the compositor layers, proving the frame-overlay path reaches the video file;
 - the final jar has Minecraft references remapped to intermediary and keeps BBS class names.
 
-Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **406520** bytes,
-SHA-256 `C125F87AB4FF12005EAC660C17520A15C544018CE1E085EE7A3329A402BF22E6` (check the file if it is
+Build artifact: `build/libs/bbsae-0.1.0.jar` (also copied to `bbsae-0.1.0.jar`), **406842** bytes,
+SHA-256 `477DB7823351D6AA47D5359247835435442829ADDDB0961ABBB6960FFC171CF1` (check the file if it is
 repacked). The jar is produced by `gradlew build`; `remapJar` writes it directly and the class
 entries are intermediary-remapped.
+
+2026-10-18 asset-library hotfix:
+
+- the asset browser's `mc:` marker was passed to `Identifier` as a namespace (`mc`), but vanilla
+  resources live in `minecraft`; every item/block/entity thumbnail failed to load and inserted
+  layers had no texture. `mc:` is now mapped to `minecraft`;
+- added `InterfaceBlur.applyUnder()` plus a dark scrim behind the library;
+- the panel is now 620×400 (5×3 thumbnails, 6 category columns) so the action buttons fit a
+  1536×864 / GUI-scale-2 logical screen;
+- evidence: [`docs/verify/round11-asset-library.png`](docs/verify/round11-asset-library.png),
+  details: [`docs/ROUND11-ASSET-LIBRARY.zh.md`](docs/ROUND11-ASSET-LIBRARY.zh.md).
 
 2026-10-18 ninth pass (export fidelity, 12 s duration, compositor icon):
 

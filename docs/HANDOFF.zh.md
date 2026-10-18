@@ -12,6 +12,7 @@
 > - 第八轮（Alight Motion PIXEL 效果 / 第一性原理审计）：第 18 节 + [`docs/ROUND8-01-AUDIT.zh.md`](ROUND8-01-AUDIT.zh.md)、[`docs/ROUND8-02-PIXEL.zh.md`](ROUND8-02-PIXEL.zh.md)、[`docs/ROUND8-03-VERIFY.zh.md`](ROUND8-03-VERIFY.zh.md)
 > - 第九轮（导出画面同步 / 时长 / 合成器图标）：第 19 节 + [`docs/ROUND9-EXPORT-SYNC.zh.md`](ROUND9-EXPORT-SYNC.zh.md)
 > - 第十轮（图层左侧拖拽排序）：[`docs/ROUND10-LAYER-REORDER.zh.md`](ROUND10-LAYER-REORDER.zh.md)
+> - 第十一轮（素材库不可用 / 背景模糊）：[`docs/ROUND11-ASSET-LIBRARY.zh.md`](ROUND11-ASSET-LIBRARY.zh.md)
 > - Photon 引用声明（仅研究思想，未包含 Photon 代码/着色器/素材）：[`PHOTON-NOTICE.md`](../PHOTON-NOTICE.md)
 
 ---
@@ -35,8 +36,8 @@
 
 - 根目录 `bbsae-0.1.0.jar`
 - `build/libs/bbsae-0.1.0.jar`
-- SHA-256：`C125F87AB4FF12005EAC660C17520A15C544018CE1E085EE7A3329A402BF22E6`
-- 大小：`406520` 字节
+- SHA-256：`477DB7823351D6AA47D5359247835435442829ADDDB0961ABBB6960FFC171CF1`
+- 大小：`406842` 字节
 
 ---
 
@@ -607,8 +608,8 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 ## 9. 当前最终产物
 
 - `/bbsae-0.1.0.jar`
-- SHA-256 `C125F87AB4FF12005EAC660C17520A15C544018CE1E085EE7A3329A402BF22E6`
-- 大小 `406520`
+- SHA-256 `477DB7823351D6AA47D5359247835435442829ADDDB0961ABBB6960FFC171CF1`
+- 大小 `406842`
 - 构建时间 2026-10-18 21:53
 - 构建方式：`gradle build --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
 
@@ -1033,8 +1034,8 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 7. **镜像对齐 AM**：叠半透明镜像副本，而不是整幅折叠丢一半。
 8. **测试**：61/61 通过；`ShaderPixelTest` 用真实 GL 3.2 上下文做像素断言并输出
    `docs/verify/round8-pixel-effects.png`。
-9. **产物**：`bbsae-0.1.0.jar`，406520 字节，
-   SHA-256 `C125F87AB4FF12005EAC660C17520A15C544018CE1E085EE7A3329A402BF22E6`。
+9. **产物**：`bbsae-0.1.0.jar`，406842 字节，
+   SHA-256 `477DB7823351D6AA47D5359247835435442829ADDDB0961ABBB6960FFC171CF1`。
 10. **新增 `PixelPlan`**：参数解析与 GL 分离；`supports()` 改为 `SUPPORTED` 集合，
     `EffectCoverageTest` 同时检查“注册表→渲染器”和“渲染器→注册表”。
 
@@ -1119,3 +1120,39 @@ SHA-256 `DF83F07D2BC3B35ED070C51A98843CF9DA1AB7AFA05D7395A55096832434C706`。
 - 多个 replay 的 composition clip 仍可能叠加；当前导出正规化当前 project/comp 的 clip。
 - `workAreaOut` 的 12 秒迁移是启发式；如需保留故意的 12 秒循环，应加 `workAreaCustom`。
 - 导出仍走 BBS 原生 VideoRecorder/FFmpeg，音频/编码/ESC 行为不变。
+
+---
+
+## 20. 2026-10-18 素材库热修
+
+完整记录：[`ROUND11-ASSET-LIBRARY.zh.md`](ROUND11-ASSET-LIBRARY.zh.md)。
+
+### 20.1 根因
+
+素材库用 `mc:` 作为原版纹理前缀：
+
+```
+mc:textures/block/acacia_leaves.png
+```
+
+`ImageTextureCache.fromResource` 把 `mc` 直接当 `Identifier` 的 namespace：
+
+```java
+new Identifier("mc", "textures/block/acacia_leaves.png")
+```
+
+但原版资源命名空间是 `minecraft`，所以 `getResource` 永远为空。  
+表现就是所有物品/方块/实体缩略图变成占位图标，插入的图层也没有纹理。
+
+### 20.2 修复
+
+- `fromResource` 把 `mc` 映射到 `minecraft`；
+- `bbs:` 保持 `bbs`，工程图片保持文件路径；
+- `UIAssetBrowser.render` 用 `InterfaceBlur.applyUnder()` 模糊背景，再叠 40% 黑遮罩；
+- 面板缩到 620×400，5×3 缩略图、6 列分类，底部插入/替换/关闭在 GUI scale 2 下可见；
+- 证据：`docs/verify/round11-asset-library.png`。
+
+### 20.3 验证
+
+- 真实客户端：原版方块缩略图正常显示，背景模糊；
+- 测试 **65/65** 通过。

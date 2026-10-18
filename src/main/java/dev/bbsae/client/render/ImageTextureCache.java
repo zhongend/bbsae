@@ -109,6 +109,15 @@ public final class ImageTextureCache
         int colon = path.indexOf(':');
         String namespace = colon > 0 ? path.substring(0, colon) : "minecraft";
         String id = colon > 0 ? path.substring(colon + 1) : path;
+
+        /* The asset browser uses "mc:" as a compact marker for vanilla textures. It is not a
+         * resource namespace; Minecraft's namespace is "minecraft". Passing "mc" through made
+         * every vanilla item/block thumbnail look missing. */
+        if ("mc".equals(namespace))
+        {
+            namespace = "minecraft";
+        }
+
         String key = namespace + ":" + id;
         Entry cached = CACHE.get(key);
 

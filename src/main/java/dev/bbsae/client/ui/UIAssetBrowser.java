@@ -11,6 +11,7 @@ import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UISoundOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
+import mchorse.bbs_mod.ui.utils.InterfaceBlur;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
@@ -50,10 +51,12 @@ public class UIAssetBrowser extends UIElement
     private static final int PROJECT_CATEGORY = 0;
     private static final int BBS_CATEGORY = 11;
     private static final int SOUND_CATEGORY = 12;
-    private static final int CATEGORY_COLUMNS = 7;
+    private static final int CATEGORY_COLUMNS = 6;
 
-    private static final int COLUMNS = 6;
-    private static final int ROWS = 4;
+    private static final int COLUMNS = 5;
+    /* Three rows keep the 400px-tall panel inside a 432px logical screen (MC GUI scale 2 on a
+     * 1536x864 window). Four rows pushed the action buttons below the screen. */
+    private static final int ROWS = 3;
     private static final int TILE_W = 100;
     private static final int TILE_H = 62;
 
@@ -130,7 +133,7 @@ public class UIAssetBrowser extends UIElement
             }
         };
 
-        this.box.relative(this).x(0.5F, -350).y(0.5F, -220).w(700).h(440);
+        this.box.relative(this).x(0.5F, -310).y(0.5F, -200).w(620).h(400);
 
         this.title = new UILabel(IKey.constant("素材库"));
         this.title.relative(this.box).x(16).y(10).w(140).h(18);
@@ -140,7 +143,7 @@ public class UIAssetBrowser extends UIElement
         this.hint.relative(this.box).x(16).y(28).w(400).h(14);
 
         this.search = new UITextbox();
-        this.search.relative(this.box).x(452).y(10).w(232).h(20);
+        this.search.relative(this.box).x(372).y(10).w(232).h(20);
         this.search.placeholder(IKey.constant("搜索素材 / 音效…"));
         this.search.callback = (text) ->
         {
@@ -165,11 +168,11 @@ public class UIAssetBrowser extends UIElement
 
         this.pageLabel = new UILabel(IKey.constant("1 / 1"));
         this.pageLabel.color(0xFF9AA6B8, false);
-        this.pageLabel.relative(this.box).x(92).y(390).w(150).h(18);
+        this.pageLabel.relative(this.box).x(92).y(322).w(150).h(18);
 
-        this.importButton = this.button("导入图片…", 16, 408, 100, this::importAction);
-        this.insertButton = this.button("插入为新图层", 122, 408, 122, () -> this.useSelected(false));
-        this.replaceButton = this.button("替换当前图层", 250, 408, 122, () -> this.useSelected(true));
+        this.importButton = this.button("导入图片…", 16, 348, 100, this::importAction);
+        this.insertButton = this.button("插入为新图层", 122, 348, 122, () -> this.useSelected(false));
+        this.replaceButton = this.button("替换当前图层", 250, 348, 122, () -> this.useSelected(true));
 
         this.insertButton.tooltip(IKey.constant("把所选素材作为新图层插入"));
         this.replaceButton.tooltip(IKey.constant("替换所选图片图层的素材"));
@@ -177,15 +180,25 @@ public class UIAssetBrowser extends UIElement
 
         this.box.add(
             this.title, this.hint, this.search, this.grid, this.pageLabel,
-            this.button("‹", 16, 390, 32, () -> this.turn(-1)),
-            this.button("›", 54, 390, 32, () -> this.turn(1)),
+            this.button("‹", 16, 322, 32, () -> this.turn(-1)),
+            this.button("›", 54, 322, 32, () -> this.turn(1)),
             this.importButton, this.insertButton, this.replaceButton,
-            this.button("关闭", 614, 408, 70, this.onClose),
-            this.button("刷新", 614, 390, 70, this::refresh)
+            this.button("关闭", 614, 348, 70, this.onClose),
+            this.button("刷新", 614, 322, 70, this::refresh)
         );
 
         this.add(this.box);
         this.rebuild();
+    }
+
+    @Override
+    public void render(UIContext context)
+    {
+        /* Dim/blur the editor behind the library so the 620x400 panel reads as a modal. The
+         * blur follows BBS's interface-blur setting; the dark scrim is always present. */
+        InterfaceBlur.applyUnder();
+        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0x66000000);
+        super.render(context);
     }
 
     private UIButton button(String label, int x, int y, int w, Runnable action)
