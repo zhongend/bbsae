@@ -14,8 +14,9 @@
 | `a72aee4` | `Add Alight Motion PIXEL effects and layer-space fixes`（103 files，+18716/−2319） |
 | `f0c0ab1` | `Update handoff with round 8 build and entry points` |
 | `1ae375b` | `Document GitHub publish and release asset` |
+| `007c531` | `Record final publish commit and release notes` |
 
-推送后 `main` 的最新提交是 `1ae375b`。远程源码已验证包含：
+本文件最后更新时 `main` 的最新提交是 `007c531`。远程源码已验证包含：
 
 - `EffectRenderer.planPixel` / `SUPPORTED`；
 - `docs/ROUND8-01-AUDIT.zh.md`、`ROUND8-02-PIXEL.zh.md`、`ROUND8-03-VERIFY.zh.md`；
