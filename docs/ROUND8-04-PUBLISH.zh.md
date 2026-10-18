@@ -13,8 +13,9 @@
 | --- | --- |
 | `a72aee4` | `Add Alight Motion PIXEL effects and layer-space fixes`（103 files，+18716/−2319） |
 | `f0c0ab1` | `Update handoff with round 8 build and entry points` |
+| `1ae375b` | `Document GitHub publish and release asset` |
 
-推送后 `main` 的最新提交是 `f0c0ab1`。远程源码已验证包含：
+推送后 `main` 的最新提交是 `1ae375b`。远程源码已验证包含：
 
 - `EffectRenderer.planPixel` / `SUPPORTED`；
 - `docs/ROUND8-01-AUDIT.zh.md`、`ROUND8-02-PIXEL.zh.md`、`ROUND8-03-VERIFY.zh.md`；
@@ -29,8 +30,9 @@
 - SHA-256：`1CC9F7F8827B5926A2A9C005A9D1FFDC8B946C276C796C8D4415E87EF6DBA00C`
 
 旧的 `v0.1.0` 资产（216872 字节）已被本轮构建替换；tag 仍指向最初的 release commit，
-这是 GitHub release 的“固定 tag + 可替换资产”用法。如果以后要改源码版本号，
-建议升级 `gradle.properties` 的 `mod_version` 并新建 `v0.1.1` release，而不是继续覆盖。
+这是 GitHub release 的“固定 tag + 可替换资产”用法。Release 说明也已更新为
+“53 effects + round 8”与本轮 hash。如果以后要改源码版本号，建议升级
+`gradle.properties` 的 `mod_version` 并新建 `v0.1.1` release，而不是继续覆盖。
 
 ## 4. 构建与上传命令（复现）
 
