@@ -104,6 +104,35 @@ public final class GlFramebuffer
         return pixels;
     }
 
+    /**
+     * Reads the target as raw RGBA bytes in GL order (bottom-up).
+     *
+     * <p>This is the format the pre-render cache stores: no channel swap, no row reversal, no
+     * per-pixel Java loop — a straight copy that can be deflated and uploaded back verbatim. At
+     * 1280×720 the per-pixel conversion in {@link #readTopDown()} costs several milliseconds,
+     * which is exactly the budget a cached frame is supposed to save.</p>
+     */
+    public byte[] readRawBytes()
+    {
+        ByteBuffer buffer = MemoryUtil.memAlloc(this.width * this.height * 4);
+
+        try
+        {
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.id);
+            GL11.glReadPixels(0, 0, this.width, this.height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buffer);
+
+            byte[] bytes = new byte[this.width * this.height * 4];
+
+            buffer.get(bytes);
+
+            return bytes;
+        }
+        finally
+        {
+            MemoryUtil.memFree(buffer);
+        }
+    }
+
     public void delete()
     {
         GL30.glDeleteFramebuffers(this.id);

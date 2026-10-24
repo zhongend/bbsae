@@ -66,6 +66,8 @@ public final class CompPrecache
     private static final long TICK_BUDGET_MS = 18L;
 
     private static final Map<String, Cache> CACHES = new HashMap<>();
+    /** Keys whose {@code meta.txt} was already probed, so a miss is not a file-system hit per frame. */
+    private static final java.util.Set<String> RESTORE_TRIED = new java.util.HashSet<>();
     private static final Deque<GlTexture> FREE = new ArrayDeque<>();
     /**
      * One writer thread, bounded queue.
@@ -490,11 +492,11 @@ public final class CompPrecache
             return;
         }
 
-        int[] pixels;
+        byte[] pixels;
 
         try
         {
-            pixels = fbo.readTopDown();
+            pixels = fbo.readRawBytes();
         }
         finally
         {
@@ -508,7 +510,7 @@ public final class CompPrecache
         try (GlStateGuard guard = new GlStateGuard())
         {
             texture = takeTexture(cache.width, cache.height);
-            texture.uploadTopDown(pixels);
+            texture.uploadBytes(pixels);
         }
 
         Frame entry = cache.frames.computeIfAbsent(frame, (key) -> new Frame());
@@ -525,7 +527,7 @@ public final class CompPrecache
         writeAsync(cache, frame, pixels);
     }
 
-    private static void writeAsync(Cache cache, int frame, int[] pixels)
+    private static void writeAsync(Cache cache, int frame, byte[] pixels)
     {
         final Frame entry = cache.frames.get(frame);
         final Path file = frameFile(cache, frame);
@@ -633,9 +635,106 @@ public final class CompPrecache
             return null;
         }
 
-        Cache cache = CACHES.get(safe(project.id) + "/" + safe(comp.id));
+        String key = safe(project.id) + "/" + safe(comp.id);
+        Cache cache = CACHES.get(key);
+
+        if (cache == null)
+        {
+            cache = restore(project, comp, key);
+        }
 
         return cache == null || cache.broken ? null : cache;
+    }
+
+    /**
+     * Re-attaches a cache written in a previous session.
+     *
+     * <p>The disk cache is only worth having if it survives a restart: a green bar that
+     * disappears when the game is relaunched is just a progress indicator. {@code meta.txt}
+     * stores the content fingerprint and the cache size; if the fingerprint still matches the
+     * current document, the frame list is rebuilt from the directory (textures are loaded lazily,
+     * on the frame that is actually displayed).</p>
+     */
+    private static Cache restore(CompProject project, CompDocument comp, String key)
+    {
+        if (!RESTORE_TRIED.add(key))
+        {
+            return null;
+        }
+
+        Path meta = dir(key).resolve("meta.txt");
+
+        if (!Files.isRegularFile(meta))
+        {
+            return null;
+        }
+
+        try
+        {
+            String[] parts = Files.readString(meta).trim().split("\\s+");
+
+            if (parts.length < 3)
+            {
+                return null;
+            }
+
+            long signature = Long.parseLong(parts[0]);
+            int width = Integer.parseInt(parts[1]);
+            int height = Integer.parseInt(parts[2]);
+            int[] size = cacheSize(comp);
+
+            if (width != size[0] || height != size[1])
+            {
+                return null;
+            }
+
+            long current = CompRenderCache.signature(project, comp, 0F, true, true, 0, width, height, false);
+
+            if (current != signature)
+            {
+                return null;
+            }
+
+            Cache cache = new Cache(key, safe(project.id), safe(comp.id));
+
+            cache.signature = signature;
+            cache.width = width;
+            cache.height = height;
+            cache.valid = true;
+
+            try (java.util.stream.Stream<Path> stream = Files.list(dir(key)))
+            {
+                stream.forEach((path) ->
+                {
+                    String name = path.getFileName().toString();
+
+                    if (!name.startsWith("f") || !name.endsWith(".rgba"))
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        int frame = Integer.parseInt(name.substring(1, name.length() - 5));
+                        Frame entry = new Frame();
+
+                        entry.index = frame;
+                        entry.onDisk = true;
+                        cache.frames.put(frame, entry);
+                    }
+                    catch (NumberFormatException ignored)
+                    {}
+                });
+            }
+
+            CACHES.put(key, cache);
+
+            return cache;
+        }
+        catch (IOException | NumberFormatException e)
+        {
+            return null;
+        }
     }
 
     /**
@@ -696,7 +795,7 @@ public final class CompPrecache
         try
         {
             byte[] compressed = Files.readAllBytes(file);
-            int[] pixels = decompress(compressed, cache.width * cache.height);
+            byte[] pixels = decompress(compressed, cache.width * cache.height * 4);
 
             if (pixels == null)
             {
@@ -707,7 +806,7 @@ public final class CompPrecache
 
             GlTexture texture = takeTexture(cache.width, cache.height);
 
-            texture.uploadTopDown(pixels);
+            texture.uploadBytes(pixels);
 
             return texture;
         }
@@ -842,6 +941,7 @@ public final class CompPrecache
         }
 
         CACHES.clear();
+        RESTORE_TRIED.clear();
 
         for (GlTexture texture : FREE)
         {
@@ -931,20 +1031,16 @@ public final class CompPrecache
 
     /* ------------------------------------------------------------------ codec */
 
-    private static byte[] compress(int[] pixels)
+    private static byte[] compress(byte[] pixels)
     {
-        ByteBuffer buffer = ByteBuffer.allocate(pixels.length * 4);
-
-        buffer.asIntBuffer().put(pixels);
-
         Deflater deflater = new Deflater(Deflater.BEST_SPEED);
 
         try
         {
-            deflater.setInput(buffer.array());
+            deflater.setInput(pixels);
             deflater.finish();
 
-            ByteArrayOutputStream output = new ByteArrayOutputStream(Math.max(64, buffer.capacity() / 4));
+            ByteArrayOutputStream output = new ByteArrayOutputStream(Math.max(64, pixels.length / 4));
             byte[] chunk = new byte[16384];
 
             while (!deflater.finished())
@@ -962,10 +1058,10 @@ public final class CompPrecache
         }
     }
 
-    private static int[] decompress(byte[] data, int pixelCount)
+    private static byte[] decompress(byte[] data, int byteCount)
     {
         Inflater inflater = new Inflater();
-        byte[] raw = new byte[pixelCount * 4];
+        byte[] raw = new byte[byteCount];
 
         try
         {
@@ -1002,11 +1098,6 @@ public final class CompPrecache
             inflater.end();
         }
 
-        IntBuffer ints = ByteBuffer.wrap(raw).asIntBuffer();
-        int[] pixels = new int[pixelCount];
-
-        ints.get(pixels);
-
-        return pixels;
+        return raw;
     }
 }

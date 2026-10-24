@@ -120,6 +120,17 @@ public final class GlTexture
         GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, this.width, this.height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buffer);
     }
 
+    /**
+     * Uploads tightly packed RGBA bytes in GL order (bottom-up, no conversion).
+     *
+     * <p>This is the pre-render cache path: the bytes came from {@code glReadPixels} on a
+     * composition target, so they are already in the exact layout this texture wants.</p>
+     */
+    public void uploadBytes(byte[] rgba)
+    {
+        this.upload(ByteBuffer.wrap(rgba));
+    }
+
     public void delete()
     {
         if (this.id > 0)
