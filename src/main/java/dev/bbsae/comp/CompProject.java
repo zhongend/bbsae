@@ -14,7 +14,11 @@ import java.util.List;
 public class CompProject
 {
     public static final String FORMAT = "bbsae";
-    public static final int VERSION = 2;
+    /**
+     * 3 — added {@link #presets} (layer/effect/style/shape presets). Older files load unchanged:
+     * the list is simply created empty by the migration.
+     */
+    public static final int VERSION = 3;
 
     public String format = FORMAT;
     public int version = VERSION;
@@ -24,6 +28,7 @@ public class CompProject
     public List<CompDocument> comps = new ArrayList<>();
     public List<CompOutputPreset> outputPresets = new ArrayList<>();
     public List<CompAnimationPreset> animationPresets = new ArrayList<>();
+    public List<CompPreset> presets = new ArrayList<>();
     public List<CompRenderJob> renderQueue = new ArrayList<>();
     public CompSettings settings = new CompSettings();
 
@@ -99,6 +104,16 @@ public class CompProject
         /** 0 = flat editor background, 1 = live BBS frame behind the composition. */
         public int previewBackground = 0;
 
+        /**
+         * False until the user (or the migration below) has chosen a background mode.
+         *
+         * <p>A compositor is an overlay on a BBS film: the film frame is the thing being
+         * composited, so the editor should show it by default. Projects created before this flag
+         * existed were migrated to the world background the first time they were opened, which is
+         * why the preview now looks like BBS's own preview instead of a black stage.</p>
+         */
+        public boolean previewBackgroundChosen = false;
+
         /** Preview overlay (FX/Mask/BBS) folded into a single arrow button. */
         public boolean previewControlsCollapsed = false;
 
@@ -107,6 +122,13 @@ public class CompProject
         public int rightPanelWidth = 300;
         public int timelineHeight = 250;
         public int keyframeDrawerHeight = 154;
+        /** 0 = track timeline, 1 = curve editor. */
+        public int timelinePage = 0;
+        /**
+         * UI density: 0 = follow BBS's GUI scale, 1 = compact, 2 = normal, 3 = comfortable.
+         * Drives every row height, control height, label column and panel width (see CompUi).
+         */
+        public int uiDensity = 0;
         public boolean cameraPreviewMode = false;
         public boolean show3DGrid = true;
 

@@ -363,6 +363,24 @@ public class CompLayer
         {
             String[] parts = path.split("/");
 
+            /* Per-corner radius: shape/<id>/c/<index>. Checked before the property switch because
+             * that switch returns on every unknown key, which would swallow the corner path. */
+            if (parts.length >= 4 && "c".equals(parts[2]))
+            {
+                CompShape shape = this.getShape(parts[1]);
+                int index = parseInt(parts[3], -1);
+
+                if (shape == null || index < 0)
+                {
+                    return true;
+                }
+
+                shape.ensureCorners();
+                shape.corners.set(index, Math.max(0F, value));
+
+                return true;
+            }
+
             if (parts.length >= 3 && !"p".equals(parts[2]))
             {
                 CompShape shape = this.getShape(parts[1]);
@@ -392,6 +410,7 @@ public class CompLayer
                     default: return true;
                 }
             }
+
 
             if (parts.length >= 5 && "p".equals(parts[2]))
             {
@@ -514,6 +533,19 @@ public class CompLayer
         {
             String[] parts = path.split("/");
 
+            if (parts.length >= 4 && "c".equals(parts[2]))
+            {
+                CompShape shape = this.getShape(parts[1]);
+                int index = parseInt(parts[3], -1);
+
+                if (shape == null || index < 0)
+                {
+                    return fallback;
+                }
+
+                return shape.corner(index);
+            }
+
             if (parts.length >= 3 && !"p".equals(parts[2]))
             {
                 CompShape shape = this.getShape(parts[1]);
@@ -616,7 +648,28 @@ public class CompLayer
             return this.defaultTransform();
         }
 
-        return channel.interpolate(frame, this.defaultTransform());
+        /* Each component is evaluated on its own so per-keyframe bezier handles (the AE value
+         * graph) actually shape position/scale/rotation. BBS's Transform.lerp applies one
+         * interpolation to the whole vector and ignores the handles, which is why the compositor
+         * evaluates the five components here instead of calling channel.interpolate().
+         *
+         * A fresh Transform is returned on purpose: TransformKeyframeFactory reuses one internal
+         * instance for every interpolate() call, and mutating that would leak into other layers. */
+        Transform transform = new Transform();
+
+        transform.translate.set(
+            CompCurves.transformValue(channel, CompCurves.AXIS_X, frame, this.x),
+            CompCurves.transformValue(channel, CompCurves.AXIS_Y, frame, this.y),
+            0F
+        );
+        transform.scale.set(
+            CompCurves.transformValue(channel, CompCurves.AXIS_SCALE_X, frame, this.scaleX),
+            CompCurves.transformValue(channel, CompCurves.AXIS_SCALE_Y, frame, this.scaleY),
+            1F
+        );
+        transform.rotate.set(0F, 0F, CompCurves.transformValue(channel, CompCurves.AXIS_ROTATION, frame, this.rotation));
+
+        return transform;
     }
 
     public float opacityFrame(float frame)
@@ -863,6 +916,18 @@ public class CompLayer
         resolved.repeaterScale = this.scalarAt(base + "repeaterScale", shape.repeaterScale, frame);
         resolved.repeaterRotation = this.scalarAt(base + "repeaterRotation", shape.repeaterRotation, frame);
         resolved.repeaterOpacity = clamp01(this.scalarAt(base + "repeaterOpacity", shape.repeaterOpacity, frame));
+
+        /* Always resolve corners: a fresh shape has no corner list yet, and a keyframed corner
+         * radius must land there once the channel exists. */
+        resolved.ensureCorners();
+
+        for (int i = 0; i < resolved.corners.size(); i++)
+        {
+            String cornerPath = base + "c/" + i;
+            float fallbackCorner = shape.corner(i);
+
+            resolved.corners.set(i, Math.max(0F, this.scalarAt(cornerPath, fallbackCorner, frame)));
+        }
 
         for (int i = 0; i < resolved.points.size(); i++)
         {

@@ -52,6 +52,8 @@ public class UICompTrackTimeline extends UIElement
     private static final int MODE_SCRUB = 4;
     private static final int MODE_NAVIGATE = 5;
     private static final int MODE_REORDER = 6;
+    private static final int MODE_WORK_IN = 7;
+    private static final int MODE_WORK_OUT = 8;
     /** Width of the drag grip at the left edge of a track header. */
     private static final int REORDER_GRIP = 14;
 
@@ -104,6 +106,25 @@ public class UICompTrackTimeline extends UIElement
                 return;
             }
 
+            int count = this.panel.getSelectionCount();
+
+            if (count > 1)
+            {
+                manager.action(Icons.STRUCTURE, IKey.constant("合成预渲染（" + count + " 个图层）"), this.panel::precomposeSelection);
+                manager.action(Icons.LINK, IKey.constant("编组到空对象"), this.panel::groupSelection);
+                manager.action(Icons.ARROW_LEFT, IKey.constant("对齐：左"), () -> this.panel.alignSelection(dev.bbsae.comp.CompLayerOps.ALIGN_LEFT));
+                manager.action(Icons.ARROW_RIGHT, IKey.constant("对齐：右"), () -> this.panel.alignSelection(dev.bbsae.comp.CompLayerOps.ALIGN_RIGHT));
+                manager.action(Icons.ARROW_UP, IKey.constant("对齐：上"), () -> this.panel.alignSelection(dev.bbsae.comp.CompLayerOps.ALIGN_TOP));
+                manager.action(Icons.ARROW_DOWN, IKey.constant("对齐：下"), () -> this.panel.alignSelection(dev.bbsae.comp.CompLayerOps.ALIGN_BOTTOM));
+                manager.action(Icons.SHIFT_TO, IKey.constant("水平等距分布"), () -> this.panel.distributeSelection(true));
+                manager.action(Icons.SHIFT_TO, IKey.constant("垂直等距分布"), () -> this.panel.distributeSelection(false));
+                manager.action(Icons.VISIBLE, IKey.constant("显示所选"), () -> this.panel.setSelectionVisible(true));
+                manager.action(Icons.INVISIBLE, IKey.constant("隐藏所选"), () -> this.panel.setSelectionVisible(false));
+                manager.action(Icons.LOCKED, IKey.constant("锁定所选"), () -> this.panel.setSelectionLocked(true));
+                manager.action(Icons.DUPE, IKey.constant("复制所选"), this.panel::duplicateSelection);
+                manager.action(Icons.TRASH, IKey.constant("删除所选"), this.panel::deleteSelection);
+            }
+
             manager.action(Icons.EDIT, IKey.constant("重命名…"), () -> this.panel.renameLayer(layer));
             manager.action(Icons.DUPE, IKey.constant("复制轨道"), () -> this.panel.duplicateLayer(layer));
             manager.action(Icons.TRASH, IKey.constant("删除轨道"), () -> this.panel.deleteLayer(layer));
@@ -116,7 +137,7 @@ public class UICompTrackTimeline extends UIElement
             manager.action(Icons.SHIFT_TO, IKey.constant("在播放头拆分"), this.panel::splitSelectedAtPlayhead);
             manager.action(Icons.ARROW_UP, IKey.constant("上移一层"), () -> this.panel.moveLayerOrder(layer, 1));
             manager.action(Icons.ARROW_DOWN, IKey.constant("下移一层"), () -> this.panel.moveLayerOrder(layer, -1));
-            manager.action(Icons.WRENCH, IKey.constant("添加效果…"), () -> this.panel.focusEffectLibrary());
+            manager.action(Icons.WRENCH, IKey.constant("转到效果库（双击应用）…"), () -> this.panel.focusEffectLibrary());
             manager.action(Icons.GRAPH, IKey.constant("显示属性关键帧"), this.panel::openKeyframes);
             manager.action(Icons.VISIBLE, IKey.constant(layer.visible ? "隐藏轨道" : "显示轨道"), () -> this.panel.toggleLayerVisible(layer));
             manager.action(Icons.LOCKED, IKey.constant(layer.locked ? "解锁轨道" : "锁定轨道"), () -> this.panel.toggleLayerLocked(layer));
@@ -249,6 +270,19 @@ public class UICompTrackTimeline extends UIElement
         int max = Math.max(0, total - this.laneArea.h);
 
         this.scrollY = Math.max(0, Math.min(max, this.scrollY));
+    }
+
+    /** Shift + zoom of the time axis, for restoring a comp's view when navigating back. */
+    public double[] viewState()
+    {
+        return new double[] {this.xAxis.getShift(), this.xAxis.getZoom()};
+    }
+
+    public void restoreView(double shift, double zoom)
+    {
+        this.fitMode = false;
+        this.viewReady = true;
+        this.xAxis.set(shift, zoom);
     }
 
     private void ensureView()
@@ -406,10 +440,72 @@ public class UICompTrackTimeline extends UIElement
         context.batcher.textShadow("轨道", this.area.x + 8, this.area.y + 5, Colors.setA(Colors.WHITE, 0.55F));
 
         CompTimelineRuler.render(context, this.rulerArea, this.xAxis.getMinValue(), this.xAxis.getMaxValue(), (double value) -> this.toX((float) value));
+        this.renderPrecacheBar(context);
 
         context.batcher.box(this.headerArea.x, this.headerArea.y, this.headerArea.ex(), this.headerArea.ey(), BBSSettings.baseSurface());
         context.batcher.box(this.headerArea.ex() - 1, this.headerArea.y, this.headerArea.ex(), this.headerArea.ey(), BBSSettings.dividerColor());
         context.batcher.box(this.headerArea.x, this.headerArea.y, this.headerArea.ex(), this.headerArea.y + 1, BBSSettings.dividerColor());
+    }
+
+    /**
+     * The green bar.
+     *
+     * <p>A three-pixel strip along the bottom of the ruler, one segment per contiguous run of
+     * cached frames. This is the only visual contract the pre-render cache needs: green means
+     * "playback reads pixels instead of evaluating the graph", exactly like After Effects. Runs
+     * are merged so a fully cached minute costs a handful of quads, not one per frame.</p>
+     */
+    private void renderPrecacheBar(UIContext context)
+    {
+        CompDocument doc = this.doc();
+
+        if (doc == null || this.panel.getProject() == null)
+        {
+            return;
+        }
+
+        java.util.BitSet coverage = dev.bbsae.client.render.CompPrecache.coverage(this.panel.getProject(), doc);
+
+        if (coverage.isEmpty())
+        {
+            return;
+        }
+
+        float fps = Math.max(1F, doc.fps);
+        int first = Math.max(0, (int) Math.floor(this.xAxis.getMinValue() * fps));
+        int last = (int) Math.ceil(this.xAxis.getMaxValue() * fps);
+        int y0 = this.rulerArea.ey() - 3;
+        int y1 = this.rulerArea.ey() - 1;
+        int color = 0xFF3FBF6F;
+
+        context.batcher.clip(this.rulerArea, context);
+
+        try
+        {
+            int runStart = -1;
+
+            for (int frame = first; frame <= last + 1; frame++)
+            {
+                boolean cached = frame <= last && coverage.get(frame);
+
+                if (cached && runStart < 0)
+                {
+                    runStart = frame;
+                }
+                else if (!cached && runStart >= 0)
+                {
+                    int x1 = this.toX((float) (runStart / fps));
+                    int x2 = this.toX((float) (frame / fps));
+
+                    context.batcher.box(x1, y0, Math.max(x1 + 1, x2), y1, color);
+                    runStart = -1;
+                }
+            }
+        }
+        finally
+        {
+            context.batcher.unclip(context);
+        }
     }
 
     private void renderGrid(UIContext context)
@@ -479,11 +575,13 @@ public class UICompTrackTimeline extends UIElement
         if (x1 >= this.rulerArea.x && x1 <= this.rulerArea.ex())
         {
             context.batcher.box(x1, this.rulerArea.y + 1, x1 + 2, this.rulerArea.ey(), accent);
+            context.batcher.box(x1 - 3, this.rulerArea.y + 1, x1 + 3, this.rulerArea.y + 5, accent);
         }
 
         if (x2 >= this.rulerArea.x && x2 <= this.rulerArea.ex())
         {
             context.batcher.box(x2 - 2, this.rulerArea.y + 1, x2, this.rulerArea.ey(), accent);
+            context.batcher.box(x2 - 3, this.rulerArea.y + 1, x2 + 3, this.rulerArea.y + 5, accent);
         }
     }
 
@@ -511,6 +609,16 @@ public class UICompTrackTimeline extends UIElement
 
             CompLayer layer = rows.get(i);
             boolean selected = layer == this.panel.getSelectedLayer();
+            boolean alsoSelected = !selected && this.panel.isLayerSelected(layer);
+
+            if (alsoSelected)
+            {
+                /* Secondary members of a multi-selection get a tinted band: the primary keeps the
+                 * full accent so "what the inspector edits" stays obvious. */
+                int bottom = Math.min(y + this.rowHeight, this.laneArea.ey());
+
+                context.batcher.box(this.headerArea.x, y, this.laneArea.ex(), bottom, 0x1655AAFF);
+            }
 
             this.renderHeaderRow(context, layer, y, selected, context.mouseX < this.headerArea.ex());
             this.renderLaneRow(context, layer, y, selected);
@@ -657,7 +765,7 @@ public class UICompTrackTimeline extends UIElement
             }
 
             FontRenderer font = context.batcher.getFont();
-            String label = this.layerName(layer);
+            String label = this.laneLabel(layer);
             int textX = start + 6;
             int textW = finish - textX - 6;
 
@@ -690,9 +798,49 @@ public class UICompTrackTimeline extends UIElement
         }
     }
 
-    private void renderKeyframeTicks(UIContext context, CompLayer layer, int barY, int barH, int minX, int maxX)
+    /**
+     * The keyframe whose tick is within a few pixels of the cursor on this row's tick strip,
+     * or null. The strip is the 2px line drawn at the bottom of the bar.
+     */
+    private Keyframe keyframeAt(CompLayer layer, int row, UIContext context)
     {
         List<Keyframe> keyframes = layer.allKeyframes();
+
+        if (keyframes.isEmpty())
+        {
+            return null;
+        }
+
+        int barY = this.rowY(row) + 3;
+        int barH = Math.max(10, this.rowHeight - 6);
+        int tickY = barY + barH - 3;
+
+        if (Math.abs(context.mouseY - tickY) > 6)
+        {
+            return null;
+        }
+
+        float fps = this.fps();
+        Keyframe best = null;
+        int bestDistance = 5;
+
+        for (Keyframe keyframe : keyframes)
+        {
+            int x = this.toX(keyframe.getTick() / fps);
+            int distance = Math.abs(context.mouseX - x);
+
+            if (distance <= bestDistance)
+            {
+                best = keyframe;
+                bestDistance = distance;
+            }
+        }
+
+        return best;
+    }
+
+    private void renderKeyframeTicks(UIContext context, CompLayer layer, int barY, int barH, int minX, int maxX)
+    {        List<Keyframe> keyframes = layer.allKeyframes();
 
         if (keyframes.isEmpty())
         {
@@ -719,6 +867,26 @@ public class UICompTrackTimeline extends UIElement
                 return;
             }
         }
+    }
+
+    private CompMarker markerAt(int mouseX)
+    {
+        CompDocument doc = this.doc();
+
+        if (doc == null || doc.markers.isEmpty())
+        {
+            return null;
+        }
+
+        for (CompMarker marker : doc.markers)
+        {
+            if (Math.abs(mouseX - this.toX(marker.time)) <= 6)
+            {
+                return marker;
+            }
+        }
+
+        return null;
     }
 
     private void renderMarkers(UIContext context)
@@ -832,8 +1000,20 @@ public class UICompTrackTimeline extends UIElement
         {
             if (context.mouseY < this.laneArea.y)
             {
-                if (context.mouseX >= this.laneArea.x)
+                /* The toolbar sits above the ruler; only a click inside the ruler should scrub
+                 * or hit a marker. */
+                if (context.mouseX >= this.laneArea.x && context.mouseY >= this.rulerArea.y)
                 {
+                    CompMarker marker = this.markerAt(context.mouseX);
+
+                    if (marker != null)
+                    {
+                        this.panel.setFrame(Math.round(marker.time * this.fps()));
+                        this.panel.setStatus("标记：" + marker.name);
+
+                        return true;
+                    }
+
                     this.beginScrub(context.mouseX);
                 }
 
@@ -861,7 +1041,7 @@ public class UICompTrackTimeline extends UIElement
 
             if (row >= 0 && row < rows.size())
             {
-                this.panel.selectLayer(rows.get(row));
+                this.selectWithModifiers(rows.get(row));
             }
 
             /* Let UIElement open the context menu after this handler. */
@@ -879,6 +1059,27 @@ public class UICompTrackTimeline extends UIElement
         }
 
         return super.subMouseClicked(context);
+    }
+
+    /**
+     * Click selection with the usual modifiers: plain click replaces, Ctrl/Cmd toggles, Shift
+     * extends the range from the primary. This is the only selection source for the editor (the
+     * inspector and the preview follow it), so multi-select lives here, not in a second list.
+     */
+    private void selectWithModifiers(CompLayer layer)
+    {
+        if (Window.isCtrlPressed())
+        {
+            this.panel.toggleLayerSelection(layer);
+        }
+        else if (Window.isShiftPressed())
+        {
+            this.panel.selectLayerRange(layer);
+        }
+        else
+        {
+            this.panel.selectLayer(layer);
+        }
     }
 
     private void clickHeader(UIContext context)
@@ -899,7 +1100,7 @@ public class UICompTrackTimeline extends UIElement
 
         if (context.mouseX < this.headerArea.x + REORDER_GRIP)
         {
-            this.panel.selectLayer(layer);
+            this.selectWithModifiers(layer);
             this.dragMode = MODE_REORDER;
             this.dragId = layer.id;
             this.dragStartY = context.mouseY;
@@ -942,7 +1143,7 @@ public class UICompTrackTimeline extends UIElement
         this.lastClickRow = row;
         this.lastClickTime = now;
 
-        this.panel.selectLayer(layer);
+        this.selectWithModifiers(layer);
 
         if (twice)
         {
@@ -971,7 +1172,7 @@ public class UICompTrackTimeline extends UIElement
 
         CompLayer layer = rows.get(row);
 
-        this.panel.selectLayer(layer);
+        this.selectWithModifiers(layer);
 
         int start = this.toX(layer.in);
         int finish = this.toX(layer.out);
@@ -1000,6 +1201,18 @@ public class UICompTrackTimeline extends UIElement
         if (twice && "precomp".equals(layer.type))
         {
             this.panel.enterPrecomp(layer);
+
+            return;
+        }
+
+        /* Keyframe ticks used to be decoration: clicking one either moved the playhead or
+         * started a clip drag. Hit-test them before the bar drag so the visible affordance is
+         * real, and let the panel select the key + align the playhead. */
+        Keyframe keyframe = this.keyframeAt(layer, row, context);
+
+        if (keyframe != null)
+        {
+            this.panel.selectKeyframe(layer, keyframe.getTick());
 
             return;
         }
@@ -1035,6 +1248,25 @@ public class UICompTrackTimeline extends UIElement
 
     private void beginScrub(int mouseX)
     {
+        CompDocument doc = this.doc();
+
+        if (doc != null && (doc.workAreaIn > 0.0001F || doc.workAreaOut < doc.duration - 0.0001F))
+        {
+            if (Math.abs(mouseX - this.toX(doc.workAreaIn)) <= 6)
+            {
+                this.dragMode = MODE_WORK_IN;
+
+                return;
+            }
+
+            if (Math.abs(mouseX - this.toX(doc.workAreaOut)) <= 6)
+            {
+                this.dragMode = MODE_WORK_OUT;
+
+                return;
+            }
+        }
+
         this.dragMode = MODE_SCRUB;
         this.panel.setFrame(Math.round(this.fromX(mouseX) * this.fps()));
     }
@@ -1084,6 +1316,30 @@ public class UICompTrackTimeline extends UIElement
         if (this.dragMode == MODE_REORDER)
         {
             this.dragReorderTarget = this.reorderTarget(context.mouseY);
+
+            return;
+        }
+
+        if (this.dragMode == MODE_WORK_IN || this.dragMode == MODE_WORK_OUT)
+        {
+            CompDocument doc = this.doc();
+
+            if (doc != null)
+            {
+                float frame = 1F / this.fps();
+                float value = this.quantize(this.fromX(context.mouseX));
+
+                if (this.dragMode == MODE_WORK_IN)
+                {
+                    doc.workAreaIn = this.clamp(value, 0F, Math.max(0F, doc.workAreaOut - frame));
+                    this.panel.setStatus(String.format(Locale.ROOT, "工作区入点 %.2fs", doc.workAreaIn));
+                }
+                else
+                {
+                    doc.workAreaOut = this.clamp(value, Math.min(doc.duration, doc.workAreaIn + frame), doc.duration);
+                    this.panel.setStatus(String.format(Locale.ROOT, "工作区出点 %.2fs", doc.workAreaOut));
+                }
+            }
 
             return;
         }
@@ -1171,7 +1427,8 @@ public class UICompTrackTimeline extends UIElement
     private void endDrag()
     {
         boolean reorder = this.dragMode == MODE_REORDER;
-        boolean edited = this.dragMode == MODE_MOVE || this.dragMode == MODE_TRIM_IN || this.dragMode == MODE_TRIM_OUT;
+        boolean edited = this.dragMode == MODE_MOVE || this.dragMode == MODE_TRIM_IN || this.dragMode == MODE_TRIM_OUT
+            || this.dragMode == MODE_WORK_IN || this.dragMode == MODE_WORK_OUT;
 
         if (reorder)
         {
@@ -1272,16 +1529,23 @@ public class UICompTrackTimeline extends UIElement
         boolean alt = altDown();
         boolean ctrl = ctrlDown();
         boolean shift = shiftDown();
-        boolean premiere = this.panel.getShortcutScheme() == 0;
         float anchor = Scale.getAnchorX(context, this.laneArea);
 
-        /* Alt+wheel zooms in both schemes: it is the Premiere habit the user asked for, and it
-         * is also the fastest way to zoom without leaving the tracks. Row height moved to
-         * Alt+Shift+wheel so no gesture is lost. */
-        if (alt && shift)
+        /* Alt+wheel resizes the tracks. This is the gesture the user asked for, and it matches
+         * the documentation and every NLE: Alt/Option+wheel is vertical zoom of the track rows,
+         * while the time axis is zoomed with Ctrl+wheel (or Alt+Shift+wheel). Row height moved
+         * here from Alt+Shift because "Alt+wheel does nothing to my tracks" was the bug. */
+        if (alt && !shift)
         {
-            this.rowHeight = Math.max(ROW_MIN, Math.min(ROW_MAX, this.rowHeight + (wheel > 0 ? -2 : 2)));
-            this.clampScroll();
+            int step = wheel > 0 ? 2 : -2;
+            int next = Math.max(ROW_MIN, Math.min(ROW_MAX, this.rowHeight + step));
+
+            if (next != this.rowHeight)
+            {
+                this.rowHeight = next;
+                this.clampScroll();
+                this.panel.setStatus("轨道高度 " + this.rowHeight + "px（Alt+滚轮）");
+            }
         }
         else if (alt)
         {
@@ -1291,18 +1555,9 @@ public class UICompTrackTimeline extends UIElement
         }
         else if (ctrl)
         {
-            if (premiere)
-            {
-                /* In Premiere Ctrl+wheel is free; use it for horizontal travel. */
-                this.fitMode = false;
-                this.xAxis.setShift(this.xAxis.getShift() - (60D * wheel) / Math.max(0.0001D, this.xAxis.getZoom()));
-            }
-            else
-            {
-                this.fitMode = false;
-                this.xAxis.animateZoom(anchor, wheel);
-                this.panel.setStatus("时间轴缩放 " + Math.round(this.xAxis.getZoom() * 100D) + "%");
-            }
+            this.fitMode = false;
+            this.xAxis.animateZoom(anchor, wheel);
+            this.panel.setStatus("时间轴缩放 " + Math.round(this.xAxis.getZoom() * 100D) + "%");
         }
         else if (shift)
         {
@@ -1361,6 +1616,50 @@ public class UICompTrackTimeline extends UIElement
     private String layerName(CompLayer layer)
     {
         return layer.name == null || layer.name.isBlank() ? layer.id : layer.name;
+    }
+
+    /** Track label; a precomp shows its child count so the container reads as a container. */
+    private String laneLabel(CompLayer layer)
+    {
+        StringBuilder flags = new StringBuilder();
+
+        /* Solo/matte/mask/style were only visible in the inspector, so a soloed layer made the
+         * whole comp look broken with no clue on the timeline. Put the flags first so they
+         * survive the label's clipping. */
+        if (layer.solo)
+        {
+            flags.append("独显 ");
+        }
+
+        if (layer.trackMatteEnabled && layer.trackMatteId != null && !layer.trackMatteId.isEmpty())
+        {
+            flags.append("遮罩 ");
+        }
+
+        if (layer.masks != null && !layer.masks.isEmpty())
+        {
+            flags.append("蒙版 ");
+        }
+
+        if (layer.styles != null && !layer.styles.isEmpty())
+        {
+            flags.append("样式 ");
+        }
+
+        String label = flags + this.layerName(layer);
+
+        if ("precomp".equals(layer.type) && layer.precompId != null && !layer.precompId.isEmpty()
+            && this.panel.getProject() != null)
+        {
+            CompDocument sub = this.panel.getProject().getComp(layer.precompId);
+
+            if (sub != null)
+            {
+                label += "  ·  " + sub.layers.size() + " 层";
+            }
+        }
+
+        return label;
     }
 
     private int barColor(CompLayer layer)

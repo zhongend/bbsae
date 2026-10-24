@@ -266,8 +266,13 @@ final class LayerContentRenderer
         if (sub == null || context.stack.contains(sub.id))
         {
             /* Empty precompId used to resolve to the *first* composition (the current one), and
-             * the cycle guard then swallowed the draw entirely. Say so instead of drawing air. */
-            drawPrecompPlaceholder(layer, batcher, sub == null ? "未指定预合成 · 在图层检查器选择目标" : "循环预合成");
+             * the cycle guard then swallowed the draw entirely. Say so instead of drawing air.
+             * The message is editor-only: baking it into the export would put UI text in the film. */
+            if (context.preview)
+            {
+                drawPrecompPlaceholder(layer, batcher, sub == null ? "未指定预合成 · 在图层检查器选择目标" : "循环预合成");
+            }
+
             return;
         }
 
@@ -275,7 +280,10 @@ final class LayerContentRenderer
          * placeholder that is still selectable in the preview. */
         if (sub.layers == null || sub.layers.isEmpty())
         {
-            drawPrecompPlaceholder(layer, batcher, "空预合成 · 双击轨道进入编辑");
+            if (context.preview)
+            {
+                drawPrecompPlaceholder(layer, batcher, "空预合成 · 双击轨道进入编辑");
+            }
 
             return;
         }
@@ -290,7 +298,7 @@ final class LayerContentRenderer
          * queued quad would otherwise be flushed into the nested target instead of this layer. */
         batcher.flush();
 
-        GlFramebuffer framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth, context.projection, context.camera, context.stack, batcher, 0, true, true);
+        GlFramebuffer framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth, context.projection, context.camera, context.stack, batcher, 0, true, true, context.preview, context.scale);
 
         if (framebuffer == null)
         {

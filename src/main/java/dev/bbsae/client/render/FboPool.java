@@ -12,7 +12,13 @@ import java.util.Map;
  */
 public final class FboPool
 {
-    private static final int MAX_IDLE = 12;
+    /**
+     * Peak simultaneous targets is small (accumulation + one layer + an effect ping-pong), but a
+     * frame touches more distinct buffers than that. Keeping only 12 meant the pool destroyed and
+     * re-created 8 MB textures across a frame boundary, which is a hard stutter; 32 comfortably
+     * covers a busy composition without unbounded VRAM.
+     */
+    private static final int MAX_IDLE = 32;
     private static final Map<Long, Deque<GlFramebuffer>> CACHE = new HashMap<>();
     private static int idle;
 

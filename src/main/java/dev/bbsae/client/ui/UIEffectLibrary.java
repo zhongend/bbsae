@@ -70,8 +70,11 @@ public class UIEffectLibrary extends UIElement
         this.status = new UILabel(IKey.constant("未选择轨道"));
         this.status.color(0xFF9AA6B8, false);
 
-        this.apply = new UIButton(IKey.constant("应用效果"), (button) -> this.applySelected());
-        this.apply.tooltip(IKey.constant("把选中的效果添加到当前轨道（也可双击效果）"));
+        UICompButton apply = new UICompButton(IKey.constant("应用效果"), (button) -> this.applySelected());
+
+        apply.style(UICompButton.Style.PRIMARY);
+        apply.hint("把选中的效果加到当前轨道末尾；也可以直接双击效果");
+        this.apply = apply;
 
         this.searchLabel.relative(this).x(PAD).y(1).w(1F, -PAD * 2).h(16);
         this.search.relative(this).x(PAD).y(18).w(1F, -PAD * 2 - 21).h(18);

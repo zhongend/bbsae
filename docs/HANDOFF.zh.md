@@ -2,7 +2,7 @@
 
 > 给接手本项目的 AI / 开发者。  
 > 项目目录：`C:\Users\Administrator\Desktop\bbsae`（当前工作副本：`bbsae - 副本 (3) - 副本 - 副本`）  
-> 最后更新：2026-10-18 20:30（本地时间）
+> 最后更新：2026-10-24 20:35（本地时间）
 >
 > **先读这个**：
 > - 第四轮（效果空间 V 轴 / 摄像机基础 / BBS 预览）：第 14 节 + [`docs/ROUND4-2026-10-18.zh.md`](ROUND4-2026-10-18.zh.md)
@@ -13,6 +13,12 @@
 > - 第九轮（导出画面同步 / 时长 / 合成器图标）：第 19 节 + [`docs/ROUND9-EXPORT-SYNC.zh.md`](ROUND9-EXPORT-SYNC.zh.md)
 > - 第十轮（图层左侧拖拽排序）：[`docs/ROUND10-LAYER-REORDER.zh.md`](ROUND10-LAYER-REORDER.zh.md)
 > - 第十一轮（素材库不可用 / 背景模糊）：[`docs/ROUND11-ASSET-LIBRARY.zh.md`](ROUND11-ASSET-LIBRARY.zh.md)
+> - 第十二轮（AE 曲线编辑器 / 图层预设 / 父子级绑定修复 / 图形角与颜色，版本 0.2.0）：
+>   第 22 节 + [`docs/ROUND12-CURVES-PRESETS-PARENTING.zh.md`](ROUND12-CURVES-PRESETS-PARENTING.zh.md)
+> - 第十三轮（摄像机重写 / 3D 父子级 / 多选与预合成 / 性能，版本 0.3.0）：
+>   第 23 节 + [`docs/ROUND13-CAMERA-MULTISELECT-PERF.zh.md`](ROUND13-CAMERA-MULTISELECT-PERF.zh.md)
+> - 第十四轮（界面密度三档 / 扁平按钮 / 全量悬浮提示，版本 0.4.0）：
+>   第 24 节 + [`docs/ROUND14-UI-DENSITY-FLAT.zh.md`](ROUND14-UI-DENSITY-FLAT.zh.md)
 > - Photon 引用声明（仅研究思想，未包含 Photon 代码/着色器/素材）：[`PHOTON-NOTICE.md`](../PHOTON-NOTICE.md)
 
 ---
@@ -34,10 +40,10 @@
 
 产物：
 
-- 根目录 `bbsae-0.1.0.jar`
-- `build/libs/bbsae-0.1.0.jar`
-- SHA-256：`477DB7823351D6AA47D5359247835435442829ADDDB0961ABBB6960FFC171CF1`
-- 大小：`406842` 字节
+- 根目录 `bbsae-0.4.0.jar`
+- `build/libs/bbsae-0.4.0.jar`
+- SHA-256：`c13b6d5ae54fce16c2aae6dc1f57c19b29f2aa2ebdccd3786500cff6d48ff5ae`
+- 大小：`520636` 字节
 
 ---
 
@@ -292,7 +298,7 @@ status: y(1F,-18), h16
 - 完整时间重映射曲线：支持可关键帧 source time remap，但没有逐帧曲线 UI。
 - 形状扭转/摆动/位移路径：trim/repeater/roundness/布尔/路径点已实现，其余未实现。
 - MOGRT / 外部模板：未实现；只有属性动画预设。
-- 代理/预渲染缓存：未实现；预览按合成分辨率全量渲染。
+- 代理/预渲染缓存：**已实现（0.5.0）**，见第 25 节；预览按视口像素渲染，预渲染写磁盘缓存并显示绿条。
 - 网络渲染/协作/VR：未实现。
 - OCIO/线性工作流/LUT：未实现；当前 sRGB + straight alpha。
 - 轨道遮罩跟踪点：绑定整层/图层锚点，不是逐遮罩点。
@@ -586,7 +592,7 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 ### P5：性能与效果
 
 24. **4K 性能**  
-    预览全分辨率；重效果/蒙版/形状 CPU 栅格化慢。需要半分辨率代理、layer-local mask texture、mask cache 上限。
+    预览已按视口像素渲染（0.5.0）；蒙版/形状仍是 CPU 栅格化。需要 layer-local mask texture、mask cache 上限、GPU 蒙版。
 25. **效果覆盖**  
     42 个效果是精选，不是完整 AE 306；缺少部分 distortion/transition/3D/particle 效果。
 26. **深度 effect 降级**  
@@ -607,15 +613,15 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 
 ## 9. 当前最终产物
 
-- `/bbsae-0.1.0.jar`
-- SHA-256 `477DB7823351D6AA47D5359247835435442829ADDDB0961ABBB6960FFC171CF1`
-- 大小 `406842`
-- 构建时间 2026-10-18 21:53
-- 构建方式：`gradle build --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
+- `/bbsae-0.4.0.jar`
+- SHA-256 `c13b6d5ae54fce16c2aae6dc1f57c19b29f2aa2ebdccd3786500cff6d48ff5ae`
+- 大小 `520636`
+- 构建时间 2026-10-24 20:31
+- 构建方式：`gradle remapJar --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
 
 当前源码最后一次验证：
 
-- `test` **65/65** 通过；`jar` 由 `remapJar` 重新打包；
+- `test` **104/104** 通过；`jar` 由 `remapJar` 重新打包；
 - 第八轮新增 `EffectRenderer.PixelPlan`、7 个 PIXEL 效果、`PixelPlanTest`、
   `ShaderPixelTest` 12 个真实 GL 像素断言；
 - 第九轮新增 20 秒导出、`BBS 预览` 图层导出、`IconResourceTest`；
@@ -1156,3 +1162,241 @@ new Identifier("mc", "textures/block/acacia_leaves.png")
 
 - 真实客户端：原版方块缩略图正常显示，背景模糊；
 - 测试 **65/65** 通过。
+
+---
+
+## 21. 2026-10-24 交互逻辑修复
+
+完整审计见 [`INTERACTION-AUDIT.zh.md`](INTERACTION-AUDIT.zh.md)（8 个 P0 / 14 个 P1 / 27 个 P2）。
+这一轮先修 P0 和低风险 P1，没有重写布局/效果栈紧凑列表/预览缩放/蒙版钢笔。
+
+### 21.1 改了什么
+
+- **预合成**：逻辑收敛到 `CompStore.precompose`。新层插回源层原索引；子层 in/out 归零、
+  关键帧/标记整体平移 `-in`；父级/遮罩关系转移到新 precomp 层；新增
+  `precomposeRebasesInnerTimelineAndKeepsOrderAndRelations` 回归测试。
+- **关键帧**：`UICompositorKeyframes.pickKeyframe` 让播放头对齐选中键；轨道 bar 底部的
+  关键帧刻度可点击并选中；关闭抽屉/切合成/关面板时清理挂在 inspector 上的关键帧属性面板；
+  打关键帧不再自动弹抽屉，改为状态提示。
+- **入点**：图层页的入/出点改走 `trimInTo/trimOutTo`，不再直接写 `l.in`；补“冻结时间”字段。
+- **反馈**：所有直接写 `status.label` 的错误改走 `notifyError`（不会被 `render()` 每帧覆盖）；
+  保存/撤销/重做有状态提示；导出只保留一个“开始导出”，允许 0 = 合成时长；素材库有
+  replace 模式；空/循环预合成的占位文字只在预览出现。
+- **撤销**：新增 `beginAction` 在离散命令前压入当前状态，并在下一帧记录命令后的基线；
+  覆盖添加/删除/复制/排序/拆分/效果/样式/蒙版/标记/预合成等命令。
+- **容器**：从影片编辑器进入不再先弹工程列表；进入预合成映射父时间；Esc 退出；时间轴工具条
+  显示 `主合成 / 预合成 N` 路径；预合成 bar 显示子层数；返回时恢复父时间轴缩放；合成可改名。
+- **轨道**：独显/遮罩/蒙版/样式以文字旗标显示在 bar 上；标记可点击跳转；工作区边界可拖；
+  关键帧刻度可点。
+- **一致性**：样式左键弹出选择器并支持上移/下移；3D 空间可退出；摄像机视图中心优先内容层；
+  混合/遮罩/样式/输出等英文按钮本地化；右栏最小宽度 296px、头部 768 逻辑宽不再重叠；
+  快捷键弹窗关闭按钮移到底部。
+
+### 21.2 验证与产物
+
+- `test` **66/66** 通过（新增 1 个预合成回归）。
+- `gradlew build --offline` 成功，`remapJar` 正常写 zip。
+- `bbsae-0.1.0.jar`：**413352** 字节，
+  SHA-256 `19F8380628B88C21FC52FF685C536EA8A280E13FF7C70CC1D7D132DE55BCA293`。
+
+### 21.3 仍未做（下一批）
+
+- 效果栈仍是展开的 `UISection`，没有紧凑列表/拖拽排序；只做了加效果滚动、样式排序、
+  运动模板默认折叠。
+- 没有合成浏览器（列表/新建/删除/拖入）；只做了面包屑、改名、进入时间映射。
+- 预览没有缩放/平移；蒙版/形状仍只能输数字。
+- 关键帧刻度可选中但还不能直接拖动改时间。
+- 撤销没有 Undo/Redo 按钮和动作名，只有 Ctrl+Z / Ctrl+Shift+Z。
+
+
+---
+
+## 22. 2026-10-24 第十二轮：AE 曲线 / 预设 / 父子级 / 图形角（0.2.0）
+
+完整说明见 [`docs/ROUND12-CURVES-PRESETS-PARENTING.zh.md`](ROUND12-CURVES-PRESETS-PARENTING.zh.md)，
+这里只留接手必须知道的结论。
+
+### 22.1 新增的硬约束（不要破坏）
+
+1. **变换曲线必须逐分量求值**。`CompLayer.transformAt()` 用 `CompCurves.transformValue()` 分别算
+   x/y/rotation/scaleX/scaleY，且**返回新的 Transform**。BBS 的 `Transform.lerp` 会忽略
+   `lx/ly/rx/ry`，`TransformKeyframeFactory` 还会复用同一个 `Transform` 实例——
+   改回 `channel.interpolate()` 既会让曲线手柄失效，也会串图层。
+2. **曲线编辑器不是第二套关键帧**。`UICompCurveEditor` 只编辑 `KeyframeChannel` 与
+   `Keyframe.lx/ly/rx/ry` + `getInterpolation()`，和 BBS dope sheet 共用数据；
+   任何"曲线专用"的旁路存储都是错的。
+3. **父子级绑定必须换基**。`CompParenting.bind()` 做 `parentWorld⁻¹ · childWorld`，
+   再把 delta 应用到基础字段**和每一个 Transform key**。直接写 `parentId` 就是本轮修掉的那个 bug。
+4. **拖动父级子级要用父空间增量**（`CompParenting.toLocalDelta`），否则父级缩放/旋转时光标与元素分离。
+5. **角半径路径 `shape/<id>/c/<index>` 必须放在属性 switch 之前**。`putNestedScalar`/`nestedScalar`
+   的 switch 对未知键 `return true`/`return fallback`，放在后面永远走不到。
+6. **形状颜色是逐形状的**。`ShapeCache.rasterize` 按顺序逐形状填充/描边并用
+   `DstOut / DstIn / 双临时图` 实现相减/相交/排除；不要再合并成一个 `Area` 用单色填充。
+7. **预设必须走同一条 apply 路径**。内置预设也是 `CompPresetPayload` + JSON，
+   应用时对 `fx/<id>/...`、`shape/<id>/...` 通道做重映射，否则动画会丢。
+
+### 22.2 本轮改动
+
+- 曲线：值图表 / 速度图表、贝塞尔手柄（Alt 断开）、框选、拖键、双击加键、吸附、缩放平移、
+  播放头拖动、AE 关键帧图形（方块/圆点/菱形）、8 个缓动预设（线性/贝塞尔/缓动/缓入/缓出/定格/自动/连续）+ 影响参数。
+- 预设：左栏第三个页签；5 种 kind（动画/效果/样式/形状/整套）；10 个内置预设；
+  用户预设存在工程里；`CompProject.VERSION` → 3。
+- 父子级：`CompParenting`（换基、极分解、父空间增量、循环拒绝）；绑定/解绑都不再跳。
+- 图形：`TRIANGLE` 类型、逐角半径（可关键帧）、圆角/切角、逐形状填充/描边颜色、布尔运算按钮。
+- 时间轴区：顶部 **时间轴 / 曲线** 页签，视图状态存入 `settings.timelinePage`。
+
+### 22.3 验证与产物
+
+- `test` **88/88** 通过（新增 `CompCurvesTest` 6、`CompParentingTest` 8、`CompShapePresetTest` 8）。
+- `gradle remapJar --offline` 成功。
+- `bbsae-0.2.0.jar`：**476800** 字节，
+  SHA-256 `1a7e7cdebaa36aee0836967971faab77628582fe2b7638f54dff5bf1768fe2bc`。
+- 备份：`_backup/round12-2026-10-24/`（动工前的 src/docs/README/gradle/旧 jar）。
+
+### 22.4 明确未做
+
+- 3D 图层的父子级补偿（`localWorldMatrix3D` 的 Y 翻转空间未处理）。
+- 预设缩略图（当前只有名称 + 类型 + 描述）。
+- 曲线的复制/粘贴关键帧、整体数值偏移、与轨道选区联动。
+- 父级同时有**非均匀缩放 + 旋转**时，子级的旋转/缩放只能近似（位置精确）——
+  这是图层变换没有剪切通道的数学限制，不是实现偷懒。
+
+
+---
+
+## 23. 2026-10-24 第十三轮：摄像机 / 3D 父子级 / 多选 / 性能（0.3.0）
+
+完整推导见 [`docs/ROUND13-CAMERA-MULTISELECT-PERF.zh.md`](ROUND13-CAMERA-MULTISELECT-PERF.zh.md)。
+
+### 23.1 新增的硬约束（破坏任何一条都会让摄像机重新"不能用"）
+
+1. **只有一个摄像机、一个场景图**。`CompCamera` 解析相机，`CompScene` 给出 local/world/model/
+   projection/depth。不要在任何地方再写第二套 `localWorldMatrix3D`/`cameraView`——上一轮的 3D
+   父子级错位就是两套矩阵无法互逆造成的。
+2. **透视投影必须用 `Matrix4f.transformProject`**，不能用 `transformPosition`。JOML 的
+   `transformPosition` 是仿射变换、不做透视除法；用它会把 3D 坐标放大成 `-230646px` 这种值。
+3. **2D 视图是 3D 摄像机在 z=0 的切片**：`view2D = translate(center)·scale(focal/distance)·rotateZ(-roll)·translate(-camera)`。
+   任何"2D 用 scale、3D 用 cameraZ"的双语义都会让开关 3D 时尺寸跳变。
+4. **所有拾取/手柄/拖动都走 `CompScene.project` / `CompCamera.unproject`**。屏幕点先反投影回
+   comp 空间，再做局部框命中；否则摄像机一推近，点选就偏。
+5. **摄像机始终生效**，`cameraPreviewMode` 只控制 3D 辅助线（网格/视锥）；`camera3D` 只表示
+   透视/正交。不要再把摄像机挂到某个 UI 开关上。
+6. **每帧每层只算一次矩阵**（`CompRenderContext` 里的 IdentityHashMap 缓存）。渲染、排序、
+   手柄、命中测试共用同一个矩阵。
+7. **预览帧缓存按内容指纹失效**（`CompRenderCache`）。新增任何影响像素的字段，必须同时加进
+   指纹，否则会"改了没反应"。时间按合成帧率量化。
+8. **撤销快照只在文档脏时序列化**，并受 32MB 预算约束；拖拽期间跳过。
+9. **多选是 `selectedIds` 集合，`selectedLayer` 只是主成员**。轨道是唯一选择源；批量操作走
+   `CompLayerOps`，不要再在 UI 里各写一份。
+
+### 23.2 本轮改动
+
+- 摄像机重写：位置/朝向/滚转/FOV/近远、看向目标或自由俯仰偏航、透视/正交、预览内拖动/瞄准/
+  推拉/改视场、视锥+目标 gizmo、检查器重排、旧工程 z/scale 兼容回退。
+- 3D 父子级：统一场景图后同一套换基；`CompParenting` 增加 3D 分解（Rz·Rx·Ry）与标量通道平移。
+- 多选：Ctrl 切换 / Shift 区间 / 预览多选 / 整组拖动；多选检查器页；批量预合成、编组、对齐、
+  分布、显示/隐藏/锁定、复制、删除。
+- 性能：帧缓存、快照去抖与内存上限、深度与世界拷贝门控、去掉每帧 GL 同步、FBO 池 32、
+  每帧矩阵缓存、网格减负。
+
+### 23.3 验证与产物
+
+- `test` **97/97** 通过（新增/重写 `Camera3DTest` 11、`CompLayerOpsTest` 6、3D 父子级 2）。
+- `gradle remapJar --offline` 成功；产物见第 9 节。
+- 备份：`_backup/round12-2026-10-24/`（本轮动工前）+ `_backup/round13-final/`（本轮完成态）。
+
+### 23.4 明确未做
+
+- 2D 图层不跟随相机**倾斜**（只跟随平移/缩放/滚转）——"2D 贴在屏幕上"的定义。
+- 父级非均匀缩放 + 旋转时，子级旋转取最接近值（位置精确）。
+- 预合成没有"裁剪到选区 / 移动所有属性"选项。
+- 多选整体旋转/缩放（目前按主成员计算）。
+- 3D 图层内容 FBO 仍是整幅 comp 尺寸。
+
+
+---
+
+## 24. 2026-10-24 第十四轮：界面密度 / 扁平按钮 / 悬浮提示（0.4.0）
+
+完整说明见 [`docs/ROUND14-UI-DENSITY-FLAT.zh.md`](ROUND14-UI-DENSITY-FLAT.zh.md)。
+**本轮只改界面皮肤与尺寸，功能逻辑一行未动。**
+
+### 24.1 新增的硬约束
+
+1. **所有尺寸从 `CompUi` 取**，不要再写 `h(18)`、`w(90)`、`h(20)` 这类魔法数字：
+   `CompUi.control()/row()/gap()/labelWidth()/icon()/bar()` 与 `leftWidth()/rightWidth()/timelineHeight()`。
+   密度三档 + 自动跟随 BBS 的 GUI scale（scale 越小档位越大）。
+2. **按钮不再用 BBS 默认皮肤**。默认 `UIButton` 会用主色填充；面板里一律用
+   `UICompButton`（FLAT / PRIMARY / DANGER / GHOST）。**每个面板只能有一个 PRIMARY**。
+3. **每个按钮必须有悬浮说明**。`UICompButton` 构造时按标签查 `CompUi.describe`；新增按钮文案要
+   同步往词汇表里加一条，`CompUiTest` 会检查常用标签是否落到兜底文案。
+4. **图标优先**：一个符号能表达的动作（+、←/→、适配、删除）用 `CompUi.iconButton`，tooltip 必填。
+5. **密度切换要重建检查器**（行高在构造时确定）：`applyDensity()` 里 `refreshInspector()` 不能省。
+
+### 24.2 本轮改动
+
+- `CompUi`：密度表、按钮工厂、70+ 条中文提示词、强调色。
+- `UICompButton` / `UICompIconButton`：扁平皮肤、hover 边框、左对齐、可选图标与右值。
+- 顶栏 / 时间轴头 / 检查器 / 曲线工具条 / 预设卡片 / 设置弹窗 / 引导页 / 效果库全部扁平化。
+- 设置里新增 **界面密度**（跟随 BBS / 小 / 中 / 大），存 `CompSettings.uiDensity`，随工程保存。
+
+### 24.3 验证与产物
+
+- `test` **104/104**（新增 `CompUiTest` 7 个）。
+- `gradle remapJar --offline` 成功；产物见第 9 节。
+- 备份：`_backup/round14-final/`。
+
+### 24.4 已知限制
+
+- 顶栏按钮尺寸在创建时确定；切换密度后建议重开面板以完全一致。
+- `UISection` 标题条高度是 BBS 固定值，不随密度变化。
+- 提示词为中文硬编码，等 BBS i18n 键稳定后再迁移。
+
+---
+
+## 25. 2026-10-24 第十五轮：BBS 原版预览 + 世界深度 / 预渲染缓存 / 性能（0.5.0）
+
+完整推导见 [`docs/ROUND15-PREVIEW-CACHE-PERF.zh.md`](ROUND15-PREVIEW-CACHE-PERF.zh.md)。
+
+### 25.1 新增的硬约束（破坏任何一条，用户会立刻感觉到"卡"或"预览不对"）
+
+1. **`save()` 不写盘**。它只标记脏 + 预约写盘；写盘走 `flushSave()`。
+   任何在每帧/每个鼠标事件里调用 `CompStore.save` 的新代码都是回归。
+2. **预览按显示像素渲染**。`CompRenderContext.scale` 只改 render target，
+   **不改坐标系**；任何新增 pass 都必须用 `context.renderWidth()/renderHeight()` 申请 FBO，
+   不要再用 `context.width/height`（那是合成像素）。
+3. **世界 color 与 depth 必须同帧同源**。都在 `WorldRenderEvents.LAST` 里从
+   `mc.getFramebuffer().fbo` 拷贝；预览的深度效果读 `BbsPreviewBridge.depth()`，
+   不要自己去 `SceneDepth.capture()`（那会读到自己刚绑定的合成 FBO，得到空深度）。
+4. **预览背景的请求状态每帧从文档推导**（`BbsPreviewBridge.syncRequests`）。
+   不要再把 `setBackdropRequested` 只挂在 toggle 回调上——`UIToggle.setValue` 不触发回调。
+5. **绿条只能代表"当前文档"**。任何编辑都必须 `CompPrecache.markDirty()`；
+   含 `BBS 预览` 图层的合成禁止预渲染。
+6. **Alt+滚轮 = 轨道行高**，Ctrl/Alt+Shift+滚轮 = 时间轴缩放。
+7. **曲线数值轴按当前通道**，不要退回"所有可见通道的并集"。
+
+### 25.2 本轮改动
+
+- 新增 `CompPrecache`（磁盘 raw+deflate、显存 LRU 16、协作式 2 帧/18ms、绿条 BitSet）。
+- `CompRenderer`：`previewScale()` 预览代理、`blitTexture()`、`renderForCache()`、
+  预览优先用世界深度、`renderCached` 先查预渲染缓存。
+- `SceneDepth.captureFrom(fbo,w,h)`；`BbsPreviewBridge` 同时捕获 color+depth，
+  新增 `syncRequests()/depth()`。
+- `UICompositorPanel`：去抖保存、预览代理、摄像机滚轮方向与 Alt 检测、预渲染按钮、
+  背景默认迁移（`previewBackgroundChosen`）。
+- `UICompTrackTimeline`：Alt+滚轮行高、时间尺绿条。
+- `UICompCurveEditor`：数值轴按通道、聚焦模式、十字线读数、更大命中半径。
+
+### 25.3 验证与产物
+
+- `test` **111/111**（新增 `PreviewProxyTest` 7 个）。
+- 构建注意：**含中文的工程路径会让 Gradle test worker 报 `ClassNotFoundException`**。
+  用 `subst X: "<工程目录>"` 映射成 ASCII 盘符即可；junction 无效。
+- `gradle remapJar --offline` 成功；产物 `bbsae-0.5.0.jar`（哈希见 README）。
+
+### 25.4 已知限制
+
+- 3D 图层不会被世界几何遮挡（深度只提供给 `depth_*` 效果）。
+- 预渲染不支持 `BBS 预览` 图层。
+- 预渲染期间单帧渲染不可抢占，靠冷却让步，仍可能轻微掉帧。
+- 磁盘缓存不自动清理旧工程目录。

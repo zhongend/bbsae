@@ -56,6 +56,12 @@ public final class BbsPreviewBridge
     private static boolean renderFailureLogged;
     /** True while the open composition actually contains a "BBS 预览" layer. */
     private static boolean worldCaptureRequested;
+    /** True while the editor preview uses the live world frame as its backdrop. */
+    private static boolean backdropRequested;
+    /** True while a depth effect needs the world depth buffer. */
+    private static boolean depthRequested;
+    /** Copy of the world depth attachment, filled together with {@link SceneColor}. */
+    private static dev.bbsae.client.render.SceneDepth worldDepth;
 
     /**
      * The film panel is removed from the dashboard element tree when it disappears, so its
@@ -150,6 +156,68 @@ public final class BbsPreviewBridge
      * capture as soon as it sees such a layer; the capture itself happens at
      * WorldRenderEvents.LAST, before BBS draws its frame overlays.
      */
+    public static void setBackdropRequested(boolean requested)
+    {
+        backdropRequested = requested;
+    }
+
+    /**
+     * Re-derives the capture requests from the project settings.
+     *
+     * <p>This is the fix for "the preview has no depth and the BBS backdrop is missing after
+     * reopening a project": both flags used to be set <em>only</em> by a toggle callback, so a
+     * persisted {@code previewBackground = 1} or a {@code depth_*} effect never asked for a
+     * capture until the user flipped the switch twice. The panel calls this once per frame; it is
+     * three boolean reads.</p>
+     */
+    public static void syncRequests(dev.bbsae.comp.CompProject project, CompDocument comp)
+    {
+        document = comp;
+
+        boolean world = hasBbsPreviewLayer(comp);
+        boolean depth = needsDepth(comp);
+
+        worldCaptureRequested = world || depth;
+        depthRequested = depth;
+
+        if (project != null && project.settings != null)
+        {
+            backdropRequested = project.settings.previewBackground == 1;
+        }
+    }
+
+    private static boolean needsDepth(CompDocument comp)
+    {
+        if (comp == null || comp.layers == null)
+        {
+            return false;
+        }
+
+        for (dev.bbsae.comp.CompLayer layer : comp.layers)
+        {
+            if (layer == null || layer.effects == null)
+            {
+                continue;
+            }
+
+            for (dev.bbsae.comp.CompEffect effect : layer.effects)
+            {
+                if (effect != null && effect.enabled && effect.type != null && effect.type.startsWith("depth_"))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /** The world depth copy for the compositor preview, or null when it is not being captured. */
+    public static dev.bbsae.client.render.SceneDepth depth()
+    {
+        return worldDepth;
+    }
+
     public static void requestWorldCapture(boolean requested)
     {
         if (requested)
@@ -185,6 +253,11 @@ public final class BbsPreviewBridge
     public static void captureWorldNow()
     {
         SceneColor.capture();
+
+        if (depthRequested)
+        {
+            captureDepthNow();
+        }
     }
 
     public static void detach()
@@ -203,6 +276,8 @@ public final class BbsPreviewBridge
 
         runnerAdded = false;
         active = false;
+        backdropRequested = false;
+        depthRequested = false;
         filmPanel = null;
         document = null;
     }
@@ -332,11 +407,24 @@ public final class BbsPreviewBridge
         /* active: compositor panel preview.
          * worldCaptureRequested + custom size: film editor preview and the F6 recorder, where
          * the BBS preview layer used to disappear from the exported video. */
-        if (active || (worldCaptureRequested
+        /* Copying the world colour is a full framebuffer copy. Doing it every frame even when no
+         * layer samples it was pure GPU cost, so it now requires an actual consumer. */
+        boolean editorNeeds = active && (worldCaptureRequested || backdropRequested);
+        boolean exportNeeds = worldCaptureRequested
             && (mchorse.bbs_mod.client.BBSRendering.isCustomSize()
-                || BBSModClient.getVideoRecorder().isRecording())))
+                || BBSModClient.getVideoRecorder().isRecording());
+
+        if (editorNeeds || exportNeeds)
         {
             SceneColor.capture();
+
+            /* Depth is copied in the same pass, from the same framebuffer, so colour and depth can
+             * never come from different frames. It is only requested when an effect samples it:
+             * a 1080p depth blit per frame for nothing is a measurable cost. */
+            if (depthRequested)
+            {
+                captureDepthNow();
+            }
 
             if (Boolean.getBoolean("bbsae.traceExport"))
             {
@@ -355,6 +443,33 @@ public final class BbsPreviewBridge
     }
 
     private static int captureTrace;
+
+    private static void captureDepthNow()
+    {
+        try
+        {
+            net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
+
+            if (mc == null || mc.getFramebuffer() == null)
+            {
+                return;
+            }
+
+            net.minecraft.client.gl.Framebuffer framebuffer = mc.getFramebuffer();
+
+            if (worldDepth == null)
+            {
+                worldDepth = new dev.bbsae.client.render.SceneDepth();
+            }
+
+            worldDepth.captureFrom(framebuffer.fbo, framebuffer.textureWidth, framebuffer.textureHeight);
+        }
+        catch (RuntimeException e)
+        {
+            /* Depth is optional by design: every depth effect degrades to a no-op without it. */
+            worldDepth = null;
+        }
+    }
 
     /** The captured world frame, or null until the first world render after attach. */
     public static GlTexture texture()

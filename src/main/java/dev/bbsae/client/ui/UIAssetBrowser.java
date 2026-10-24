@@ -62,6 +62,7 @@ public class UIAssetBrowser extends UIElement
 
     private final Supplier<String> projectId;
     private final BiConsumer<String, Boolean> onUse;
+    private final boolean replaceMode;
     private final Runnable onImport;
     private final Runnable onClose;
 
@@ -109,12 +110,13 @@ public class UIAssetBrowser extends UIElement
         }
     }
 
-    public UIAssetBrowser(Supplier<String> projectId, BiConsumer<String, Boolean> onUse, Runnable onImport, Runnable onClose)
+    public UIAssetBrowser(Supplier<String> projectId, BiConsumer<String, Boolean> onUse, Runnable onImport, Runnable onClose, boolean replaceMode)
     {
         this.projectId = projectId;
         this.onUse = onUse;
         this.onImport = onImport;
         this.onClose = onClose;
+        this.replaceMode = replaceMode;
 
         this.box = new UIElement()
         {
@@ -138,7 +140,9 @@ public class UIAssetBrowser extends UIElement
         this.title = new UILabel(IKey.constant("素材库"));
         this.title.relative(this.box).x(16).y(10).w(140).h(18);
 
-        this.hint = new UILabel(IKey.constant("单击选择，双击插入；搜索会跨分类查找"));
+        this.hint = new UILabel(IKey.constant(replaceMode
+            ? "单击选择，双击替换当前图层；搜索会跨分类查找"
+            : "单击选择，双击插入；搜索会跨分类查找"));
         this.hint.color(0xFF8A94A6, false);
         this.hint.relative(this.box).x(16).y(28).w(400).h(14);
 
@@ -155,7 +159,7 @@ public class UIAssetBrowser extends UIElement
         for (int i = 0; i < CATEGORY_LABELS.length; i++)
         {
             final int index = i;
-            UIButton button = new UIButton(IKey.constant(CATEGORY_LABELS[i]), (b) -> this.selectCategory(index));
+            UIButton button = new UICompButton(IKey.constant(CATEGORY_LABELS[i]), (b) -> this.selectCategory(index));
 
             button.relative(this.box).x(16 + (i % CATEGORY_COLUMNS) * 96).y(48 + (i / CATEGORY_COLUMNS) * 22).w(92).h(20);
             button.tooltip(IKey.constant("浏览" + CATEGORY_LABELS[i] + "素材"));
@@ -203,7 +207,7 @@ public class UIAssetBrowser extends UIElement
 
     private UIButton button(String label, int x, int y, int w, Runnable action)
     {
-        UIButton button = new UIButton(IKey.constant(label), (b) -> action.run());
+        UIButton button = new UICompButton(IKey.constant(label), (b) -> action.run());
 
         button.relative(this.box).x(x).y(y).w(w).h(20);
 
@@ -682,14 +686,7 @@ public class UIAssetBrowser extends UIElement
             {
                 this.selectedIndex = index;
 
-                if (UIAssetBrowser.this.category == SOUND_CATEGORY)
-                {
-                    UIAssetBrowser.this.useSelected(false);
-                }
-                else
-                {
-                    UIAssetBrowser.this.useSelected(false);
-                }
+                UIAssetBrowser.this.useSelected(UIAssetBrowser.this.replaceMode);
 
                 return true;
             }

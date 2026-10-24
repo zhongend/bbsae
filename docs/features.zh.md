@@ -10,24 +10,30 @@
 | 合成 | 分辨率、帧率、时长、背景、工作区、合成标记、Master Parameters |
 | 图层 | solid/panel/rect、bar、text、image/footage（`%04d` 序列）、shape、null、adjustment、precomp |
 | 时间 | in/out、start offset、time scale、freeze、precomp offset/scale、可关键帧 time remap、layer markers |
-| 变换 | position、rotation、scale、anchor、父子链 |
+| 变换 | position、rotation、scale、anchor、父子链（**统一场景图**：2D/3D 同一套矩阵；换基绑定，绑定/解绑都不移动子级；3D 支持 z/rotationX/Y/scaleZ 与关键帧） |
 | 合成 | 13 种混合模式、不透明度、图层 solo/guide、调整层、轨道遮罩（alpha/luma，正/反） |
 | 动画 | BBS `KeyframeChannel<Transform>`、float 通道，BBS 原生 dope sheet + graph editor、插值/右键菜单/复制粘贴；文本字号/字距/行高/描边、蒙版羽化/不透明度/扩展/点/手柄、形状 trim/repeater/旋转/路径点、效果参数均可动画 |
 | 蒙版 | add/subtract/intersect/exclude、羽化、不透明度、正负扩展、反转、点/贝塞尔手柄编辑、父变换跟随、逐点动画 |
 | 效果 | 53 个精选效果：Gaussian/Box/Directional/Radial Blur、Sharpen、Brightness/Contrast、Hue/Saturation、Exposure、Tint、Levels、Curves、Invert、Vignette、Noise/Grain、Gradient Ramp、Fractal Noise、Checkerboard、Grid、Circle、Displacement、Bulge、Pinch、Twist、Wave、Chroma Key、Luma Key、Glow、Drop Shadow、Stroke、Outer Glow、Mosaic、Posterize、Threshold、Find Edges、Linear/Radial Wipe、Dissolve、Depth Matte/Fog/DOF、Scanlines、Glitch、VHS、Halftone、Emboss、Mirror、Kaleidoscope |
 | 图层样式 | Drop Shadow、Inner Shadow、Outer Glow、Inner Glow、Bevel、Color Overlay、Gradient Overlay、Satin、Stroke（Bevel/Satin 为近似实现） |
 | 文字 | 字号、颜色、描边、字距、行距、对齐、换行、逐字 animator、range selector、wiggle、随机顺序 |
-| 形状 | 矩形、椭圆、多边形、星形、贝塞尔路径、合并/减去/交集/排除、trim、repeater、圆角、填充/描边、**局部空间两段填充渐变（可关键帧角度）**、路径点编辑与逐点动画 |
+| 形状 | 矩形、椭圆、**三角形**、多边形、星形、贝塞尔路径、合并/减去/交集/排除、trim、repeater、**逐角半径（矩形 4 角 / 三角与多边形按顶点，可单独关键帧、圆角或切角）**、**逐形状填充与描边颜色**、局部空间两段填充渐变（可关键帧角度）、路径点编辑与逐点动画 |
 | 效果参数动画 | 每个标量效果参数都能用 BBS float channel 打关键帧 |
 | 表达式 | 安全子集：`+ - * / % ^`、括号、`time/frame/fps/value`、`comp.<参数>`、`layer.<id>.<属性>`、sin/cos/abs/min/max/clamp/noise/wiggle 等 |
 | 动画预设 | 保存/应用图层变换、不透明度与标量属性动画；不覆盖目标层内容 |
+| 摄像机 | **一个摄像机模型**：位置/朝向（看向目标或自由俯仰偏航）/滚转/FOV/近远；同时驱动 2D 图层（平移/缩放/滚转）与 3D 图层（透视），z=0 处 1:1 与 2D 视图逐像素一致；透视/正交可切换；预览里拖本体平移、拖准星瞄准、滚轮推拉、Alt+滚轮改视场；带视锥与目标点辅助线 |
+| 多选 | 轨道 Ctrl 切换 / Shift 区间、预览 Ctrl 切换、拖动整组移动；多选检查器页；批量：合成预渲染（时间重定基、父子/遮罩关系重指向）、编组到空对象、对齐（左/中/右/上/中/下）、水平/垂直等距、显示/隐藏/锁定、复制、删除 |
+| 性能 | 预览帧缓存（内容指纹 + 按合成帧率量化，静止时每帧只画一张贴图）；撤销快照按脏标记触发并限制 32MB；世界帧/深度拷贝按需；FBO 池 32；每帧每层只算一次场景矩阵 |
+| 曲线编辑器 | 底部 `时间轴 / 曲线` 页签：**值图表 / 速度图表**、逐属性通道列表（位置 X/Y、旋转、缩放 X/Y、不透明度、效果参数、蒙版点、形状角）、贝塞尔手柄（默认镜像、Alt 断开）、框选/加选、拖键改时间与数值（按帧吸附）、双击加键、拖刻度尺找回放头、滚轮缩放、Ctrl+滚轮缩放数值轴、AE 关键帧图形（方块/圆点/菱形）、8 个缓动预设（线性/贝塞尔/缓动/缓入/缓出/定格/自动/连续）+ 影响参数、Delete/Ctrl+A/F 快捷键、每手势一次撤销 |
+| 图层预设 | 左栏 `预设` 页签：保存为 动画/效果/样式/形状/整套 预设，应用到任意图层；10 个内置预设（电影青橙、柔光人像、霓虹发光、复古 VHS、故障闪断、卡片投影、外发光+白描边、圆角卡片、三角徽章、圆环）；应用时效果/形状 id 与动画通道自动重映射，动画按目标入点重新对时；用户预设随工程保存 |
 | 数据绑定 | BBS 相机、Replay 实体（投影到屏幕）、图层目标（含父级/变换）、offset、平滑 |
 | 深度 | 从当前世界 framebuffer 复制 depth，供 depth matte/fog/DOF/displacement 使用 |
 | 渲染 | 每层独立 FBO、straight-alpha 合成、mask/matte/effects/styles、ping-pong 效果链、GlStateGuard、BBS BufferRenderer 缓存同步 |
 | 输出 | 渲染队列（新增/移除/重试/取消/串行）、render settings 与 output module 分离、输出模块 UI 可编辑、PNG 序列、H.264 审阅、ProRes 422 HQ、ProRes 4444 Alpha、输出模板持久化、打开输出文件夹 |
 | 影片集成 | 一个影片一个项目；每个 replay 一个独立 composition；打开 replay 时自动补 `bbsae:composition` clip；`ClipContext.clipData` → `FrameOverlays` → BBS recorder；不修改 `.dat` |
 | BBS 预览 | 合成器面板内通过 `BbsPreviewBridge` 重新启用 BBS customSize + film runner + `FilmEditorController`：`BBS 预览` 图层与预览背景 `BBS` 开关显示真实的影片/世界帧，机位与回放随合成播放头移动 |
-| UI | `UIDashboardPanel`、`UIList`、`UIKeyframeEditor`、`UISection`、`UIButton`、`UIIcon`、`UIToggle`、`UITrackpad`、`UISliderTrackpad`、`UIColor`、`UITextbox`、BBS `ContextMenuManager`；PR 式布局：左效果库 / 中预览 / 右 Effect Controls / 下轨道时间轴；四个可拖拽分区（左右栏、时间轴、关键帧抽屉）且尺寸持久化；引导页与 `.bbscomp` 工程列表；效果库支持搜索、分类树、最近使用、双击应用；轨道 bar 支持移动/裁剪/吸附/缩放/平移，BBS 关键帧编辑器在可选抽屉；顶部 Replay/影片选择 overlay；预览左上角 FX/Mask 对照开关和分辨率/FPS/FX 信息 |
+| UI 密度 | **三档（小/中/大）+ 自动跟随 BBS 的 GUI 缩放**：控件高度 14/16/20、行高 16/18/22、标签列 62/76/92、左右栏与时间轴宽度全部由 `CompUi` 一张表推导；设置里可切换，随工程保存 |
+| UI | `UIDashboardPanel`、`UIList`、`UIKeyframeEditor`、`UISection`、`UIButton`、`UIIcon`、`UIToggle`、`UITrackpad`、`UISliderTrackpad`、`UIColor`、`UITextbox`、BBS `ContextMenuManager`；**扁平按钮（灰底+文字，主色只留给每个面板唯一的主动作）+ 图标按钮**；**每个按钮都有中文悬浮说明（70+ 条词汇表）**；PR 式布局：左效果库 / 中预览 / 右 Effect Controls / 下轨道时间轴；四个可拖拽分区（左右栏、时间轴、关键帧抽屉）且尺寸持久化；引导页与 `.bbscomp` 工程列表；效果库支持搜索、分类树、最近使用、双击应用；轨道 bar 支持移动/裁剪/吸附/缩放/平移，BBS 关键帧编辑器在可选抽屉；顶部 Replay/影片选择 overlay；预览左上角 FX/Mask 对照开关和分辨率/FPS/FX 信息 |
 | 调色 | 三个 AE 风格色轮（Lift/Gamma/Gain，中心中性、角度=色相、半径=饱和度、下方明度条）；五点主曲线（与 shader 同一 Catmull-Rom）；预设（中性/电影/暖阳/冷峻/黑白）；曝光/对比度/饱和度/自然饱和度/色温/色调均可关键帧 |
 | 素材 / 音效 | 素材库 13 个分类（项目、物品、方块、实体、界面、粒子、状态、画、环境、杂项、地图、BBS、音效）；跨分类搜索；音效试听、复制 ID、打开 BBS 原版音效库；`mc:` / `bbs:` 命名空间纹理直接插入图层 |
 | 引导 / 快捷键 | 开始引导页、工程列表、新建工程（名称/画布/帧率/时长）、未选工程禁止编辑；Premiere / BBS 两套快捷键，Alt+滚轮在两种方案下都缩放时间轴；设置含默认图层初始时长、外部播放显示合成、自动保存、安全框、网格、预览背景 |
@@ -49,12 +55,12 @@
 | 完整时间重映射曲线 | 已支持可关键帧的 source time remap；但还没有逐帧曲线重映射 UI |
 | 形状扭转/摆动/位移路径 | trim/repeater/roundness/布尔运算/路径点已实现；其余未实现 |
 | 动画预设、MOGRT、Essential Graphics | 已支持属性动画预设；MOGRT 外部模板未实现 |
-| 代理/预渲染缓存 | 未实现；预览按合成分辨率渲染 |
+| 代理/预渲染缓存 | **已实现（0.5.0）**：预览按视口像素渲染（`CompRenderContext.scale`）；`预渲染` 把工作区/整段渲染到磁盘+显存缓存，时间尺显示绿条；含 BBS 预览层或深度效果的合成不可缓存 |
 | 网络渲染/协作/VR | 未实现 |
 | OCIO/线性工作流/LUT | 未实现；当前在 sRGB 空间合成（straight alpha） |
 | 轨道遮罩跟踪点 | 绑定的是整层/图层锚点，不是逐个遮罩点 |
 | 图层标记 | 已实现模型与检查器编辑；时间轴图形标记仍由 BBS 原生组件负责 |
-| 撤销/重做 | 已实现跨图层全局 undo/redo（每秒工程 JSON 快照，最多 50 步；拖动轨道期间不抓帧，松手后生成一步）；另有自动保存和 `.bak` |
+| 撤销/重做 | 已实现跨图层全局 undo/redo：离散命令（增删图层/效果/样式/蒙版/标记/预合成等）在入口压入动作级检查点，连续编辑仍按 1 秒快照合并；最多 50 步；拖动轨道期间不抓帧，松手后生成一步；另有自动保存和 `.bak` |
 | 颜色管理/元数据 | 仅合成标记和基础设置 |
 
 ## UI 约束
@@ -91,6 +97,6 @@
 1. Gradle Wrapper 在当前机器上会因 `.gradle` 缓存权限/锁失败；本次通过独立 `GRADLE_USER_HOME` 和缓存 Gradle 发行版完成了构建。普通开发机仍建议按 README 使用 `gradlew.bat build`。
 2. GLSL 运行时编译在部分驱动/Iris 组合下可能失败；失败会记录日志并跳过对应效果，不应导致花屏。
 3. 深度 blit 在 Iris/不同 framebuffer 配置下可能不可用；不可用时深度效果自动降级。
-4. 预览始终按合成分辨率渲染，重效果在 4K 合成上会明显变慢；动画蒙版和形状每帧重新 CPU 栅格化，4K 下尤其明显。后续可加半分辨率代理和 layer-local mask 纹理。
+4. 预览已按视口像素渲染（0.5.0），重效果不再是按合成分辨率全屏开销；动画蒙版和形状仍每帧 CPU 栅格化，4K 下明显。后续可加 layer-local mask 纹理与 GPU 蒙版。
 5. 预览/导出中曾出现过 Minecraft `BufferRenderer` 的 VAO 缓存与自定义 pass 不同步的问题；已通过 `BufferRenderer.resetCurrentVertexBuffer()` 修复，并在自定义 pass 前后重置。
 6. 预览网格、安全区、深度和自动保存开关均已接到实际渲染/保存逻辑；UI 已做过一次完整视觉检查。普通开发机仍建议按 README 使用 `gradlew.bat build`，本机因执行沙箱无法让 TinyRemapper 直接写 zip，最终 jar 通过“重映射 class 目录 + PowerShell 重打包”生成。

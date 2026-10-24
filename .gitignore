@@ -36,3 +36,8 @@ docs/screenshots/
 !docs/ui-final1.png
 !docs/ui-preview-frame2.png
 !docs/ui-preview-standalone3.png
+
+# Local scratch / decompiled experiments (not part of the addon)
+_backup/
+net/
+_patch.py

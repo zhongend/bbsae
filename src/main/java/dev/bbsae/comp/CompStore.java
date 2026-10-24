@@ -275,6 +275,11 @@ public final class CompStore
             project.animationPresets = new java.util.ArrayList<>();
         }
 
+        if (project.presets == null)
+        {
+            project.presets = new java.util.ArrayList<>();
+        }
+
         if (project.renderQueue == null)
         {
             project.renderQueue = new java.util.ArrayList<>();
@@ -666,6 +671,11 @@ public final class CompStore
             project.animationPresets = new java.util.ArrayList<>();
         }
 
+        if (project.presets == null)
+        {
+            project.presets = new java.util.ArrayList<>();
+        }
+
         if (project.settings == null)
         {
             project.settings = new CompProject.CompSettings();
@@ -897,6 +907,101 @@ public final class CompStore
         shape.fillColor = color;
 
         return shape;
+    }
+
+    /**
+     * Move one layer into a new composition and replace it in place. This is the model half of
+     * "Pre-compose": the new precomp layer keeps the source's stack index and parent/matte
+     * relationships, and the inner copy's timeline is rebased to 0 (in/out, keyframes, markers)
+     * so the content does not start twice as late.
+     *
+     * @return the new precomp layer, or null when the source is not in the document
+     */
+    public static CompLayer precompose(CompProject project, CompDocument doc, CompLayer source, String baseName)
+    {
+        if (project == null || doc == null || source == null || !doc.layers.contains(source))
+        {
+            return null;
+        }
+
+        int sourceIndex = doc.layers.indexOf(source);
+        float fps = Math.max(1F, doc.fps);
+        float frame = 1F / fps;
+        float in = source.in;
+        float out = source.out > source.in ? source.out : Math.min(doc.duration, source.in + frame);
+
+        List<CompLayer> children = new ArrayList<>();
+        List<CompLayer> matteUsers = new ArrayList<>();
+
+        for (CompLayer candidate : doc.layers)
+        {
+            if (candidate == source)
+            {
+                continue;
+            }
+
+            if (source.id.equals(candidate.parentId))
+            {
+                children.add(candidate);
+            }
+
+            if (source.id.equals(candidate.trackMatteId))
+            {
+                matteUsers.add(candidate);
+            }
+        }
+
+        int subIndex = project.comps.size() + 1;
+        String name = (baseName == null || baseName.isBlank() ? "预合成" : baseName) + " " + subIndex;
+        CompDocument sub = project.addComp("precomp_" + subIndex, doc.width, doc.height, doc.fps, doc.duration);
+
+        sub.name = name;
+        sub.duration = doc.duration;
+        sub.workAreaOut = doc.duration;
+
+        CompLayer copy = source.duplicate();
+
+        copy.in = 0F;
+        copy.out = Math.max(frame, out - in);
+        copy.shiftKeyframes(-in * fps);
+        copy.shiftMarkers(-in);
+        copy.parentId = "";
+        copy.trackMatteId = "";
+        copy.trackMatteEnabled = false;
+        sub.layers.add(copy);
+
+        doc.removeLayer(source.id);
+
+        CompLayer precomp = new CompLayer("precomp", name, "precomp");
+
+        precomp.id = uniqueId("precomp", doc.layers, (candidate) -> candidate.id);
+        precomp.precompId = sub.id;
+        precomp.x = doc.width / 2F;
+        precomp.y = doc.height / 2F;
+        precomp.width = doc.width;
+        precomp.height = doc.height;
+        precomp.in = in;
+        precomp.out = out;
+        precomp.startTime = 0F;
+
+        precomp.parentId = source.id.equals(source.parentId) ? "" : source.parentId;
+        precomp.trackMatteId = source.id.equals(source.trackMatteId) ? "" : source.trackMatteId;
+        precomp.trackMatteEnabled = !precomp.trackMatteId.isEmpty() && source.trackMatteEnabled;
+        precomp.trackMatteMode = source.trackMatteMode;
+
+        doc.layers.add(Math.max(0, Math.min(sourceIndex, doc.layers.size())), precomp);
+
+        for (CompLayer child : children)
+        {
+            child.parentId = precomp.id;
+        }
+
+        for (CompLayer user : matteUsers)
+        {
+            user.trackMatteId = precomp.id;
+        }
+
+        return precomp;
     }
 
     private static final class CachedProject

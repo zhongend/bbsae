@@ -75,9 +75,9 @@ public class UICompositionClip extends UIClip<CompositionClip>
         this.info = new mchorse.bbs_mod.ui.framework.elements.utils.UILabel(IKey.constant(""));
         this.info.color(0xFF8A94A6, false);
 
-        this.chooseProject = new UIButton(IKey.constant("选择工程…"), (button) -> this.openProjectPicker());
+        this.chooseProject = new UICompButton(IKey.constant("选择工程…"), (button) -> this.openProjectPicker());
 
-        this.useCurrent = new UIButton(IKey.constant("绑定到当前回放工程"), (button) ->
+        this.useCurrent = new UICompButton(IKey.constant("绑定到当前回放工程"), (button) ->
         {
             UIFilmPanel panel = BBSModClient.getDashboard().getPanel(UIFilmPanel.class);
 
@@ -99,7 +99,7 @@ public class UICompositionClip extends UIClip<CompositionClip>
         });
         this.useCurrent.tooltip(IKey.constant("把片段指向当前影片/回放的工程"));
 
-        this.edit = new UIButton(IKey.constant("打开合成器…"), (button) ->
+        this.edit = new UICompButton(IKey.constant("打开合成器…"), (button) ->
         {
             UIFilmPanel panel = BBSModClient.getDashboard().getPanel(UIFilmPanel.class);
 

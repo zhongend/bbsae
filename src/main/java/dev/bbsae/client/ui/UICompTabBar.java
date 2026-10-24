@@ -80,9 +80,10 @@ public class UICompTabBar extends UIElement
 
         /* Absolute layout: BBS's row() divides the width equally and ignores w(), which squeezed
          * seven Chinese tabs into seven 42 px slots and made the labels overlap. */
-        int width = Math.max(38, 14 + label.length() * 10);
+        int width = Math.max(34, 12 + label.length() * 9);
 
-        tab.relative(this).x(this.nextX).y(0).w(width).h(22);
+        /* h(1F) fills whatever bar height the host gives us, so the tab can never overflow it. */
+        tab.relative(this).x(this.nextX).y(0).w(width).h(1F);
         this.nextX += width + 2;
         this.tabs.add(tab);
         this.add(tab);

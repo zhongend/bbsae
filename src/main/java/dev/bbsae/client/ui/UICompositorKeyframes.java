@@ -44,6 +44,22 @@ public class UICompositorKeyframes extends UIKeyframes
         return this.panel.getFrame();
     }
 
+    /**
+     * Selecting a keyframe must make that keyframe's time the current time. The rest of the
+     * compositor (Effect Controls, preview drag, Alt+K) writes at the playhead, so leaving the
+     * playhead elsewhere silently wrote a second keyframe at the old time.
+     */
+    @Override
+    public void pickKeyframe(Keyframe keyframe)
+    {
+        super.pickKeyframe(keyframe);
+
+        if (keyframe != null)
+        {
+            this.panel.setFrame(keyframe.getTick());
+        }
+    }
+
     @Override
     protected boolean hasCursor()
     {

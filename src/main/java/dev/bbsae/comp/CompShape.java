@@ -12,8 +12,12 @@ public class CompShape
     public static final String RECT = "rect";
     public static final String ELLIPSE = "ellipse";
     public static final String POLYGON = "polygon";
+    public static final String TRIANGLE = "triangle";
     public static final String STAR = "star";
     public static final String PATH = "path";
+
+    public static final int CORNER_ROUND = 0;
+    public static final int CORNER_BEVEL = 1;
 
     public static final int OP_ADD = 0;
     public static final int OP_SUBTRACT = 1;
@@ -35,6 +39,21 @@ public class CompShape
     public int sides = 6;
     public float innerRadius = 0.45F;
     public float outerRadius = 1F;
+
+    /**
+     * Per-corner radius in pixels, in the shape's own order:
+     * <ul>
+     *   <li>rect — 左上, 右上, 右下, 左下 (AE's four corner widgets)</li>
+     *   <li>triangle / polygon / star — one entry per vertex, starting at the top and going
+     *       clockwise, which is exactly the order {@link dev.bbsae.client.render.ShapeRasterizer}
+     *       emits vertices in</li>
+     * </ul>
+     * Corner radius is independent of {@link #roundness} (which is the legacy all-corner value used
+     * by the rect primitive) so old projects keep rendering identically.
+     */
+    public List<Float> corners = new ArrayList<>();
+    /** 0 = rounded arc, 1 = straight bevel cut. */
+    public int cornerStyle = CORNER_ROUND;
 
     public int fillColor = 0xFFFFFFFF;
     public int strokeColor = 0x00000000;
@@ -101,6 +120,82 @@ public class CompShape
         return this;
     }
 
+    /** How many corner radius slots this shape type exposes. */
+    public int cornerCount()
+    {
+        switch (this.type)
+        {
+            case RECT: return 4;
+            case TRIANGLE: return 3;
+            case POLYGON:
+            case STAR: return Math.max(3, this.sides);
+            case PATH: return this.points.size();
+            default: return 0;
+        }
+    }
+
+    /** Grows the corner list to the current corner count; missing entries default to 0. */
+    public void ensureCorners()
+    {
+        if (this.corners == null)
+        {
+            this.corners = new ArrayList<>();
+        }
+
+        int count = this.cornerCount();
+
+        while (this.corners.size() < count)
+        {
+            this.corners.add(0F);
+        }
+
+        while (this.corners.size() > count)
+        {
+            this.corners.remove(this.corners.size() - 1);
+        }
+    }
+
+    public float corner(int index)
+    {
+        if (this.corners == null || index < 0 || index >= this.corners.size())
+        {
+            return 0F;
+        }
+
+        Float value = this.corners.get(index);
+
+        return value == null ? 0F : Math.max(0F, value);
+    }
+
+    public void setCorner(int index, float value)
+    {
+        this.ensureCorners();
+
+        if (index >= 0 && index < this.corners.size())
+        {
+            this.corners.set(index, Math.max(0F, value));
+        }
+    }
+
+    /** True when any corner has a radius, so the rasterizer can take the fast rectangle path. */
+    public boolean hasCorners()
+    {
+        if (this.corners == null)
+        {
+            return false;
+        }
+
+        for (Float value : this.corners)
+        {
+            if (value != null && value > 0.01F)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public CompShape copy()
     {
         CompShape copy = new CompShape(this.id, this.type);
@@ -116,6 +211,7 @@ public class CompShape
         copy.sides = this.sides;
         copy.innerRadius = this.innerRadius;
         copy.outerRadius = this.outerRadius;
+        copy.cornerStyle = this.cornerStyle;
         copy.fillColor = this.fillColor;
         copy.strokeColor = this.strokeColor;
         copy.strokeWidth = this.strokeWidth;
@@ -132,6 +228,7 @@ public class CompShape
         copy.repeaterRotation = this.repeaterRotation;
         copy.repeaterOpacity = this.repeaterOpacity;
         copy.points = new ArrayList<>();
+        copy.corners = this.corners == null ? new ArrayList<>() : new ArrayList<>(this.corners);
 
         for (Point point : this.points)
         {

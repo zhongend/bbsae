@@ -13,7 +13,16 @@ import java.awt.geom.RoundRectangle2D;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Turns the data-only shape model into AWT paths, then rasterizes them through {@link ShapeCache}. */
+/**
+ * Turns the data-only shape model into AWT paths, then rasterizes them through {@link ShapeCache}.
+ *
+ * <p>Corner control is per corner, not global. A rectangle exposes the four corners in reading
+ * order; a triangle/polygon/star exposes one slot per vertex, starting at the top vertex and going
+ * clockwise — the same order the vertices are generated in. A corner radius is measured in pixels
+ * along both adjacent edges, which is how After Effects' "Round Corners" and Illustrator's corner
+ * widgets behave, and it stays correct when the shape is rotated or non-uniformly scaled because it
+ * is applied before those transforms.</p>
+ */
 public final class ShapeRasterizer
 {
     private ShapeRasterizer()
@@ -25,18 +34,24 @@ public final class ShapeRasterizer
         float w = Math.max(0.01F, shape.width);
         float h = Math.max(0.01F, shape.height);
 
+        shape.ensureCorners();
+
         switch (shape.type)
         {
             case CompShape.ELLIPSE:
                 path.append(new Ellipse2D.Float(-w / 2F, -h / 2F, w, h), false);
                 break;
 
+            case CompShape.TRIANGLE:
+                polygon(path, 3, w / 2F, h / 2F, shape.outerRadius, shape);
+                break;
+
             case CompShape.POLYGON:
-                polygon(path, Math.max(3, shape.sides), w / 2F, h / 2F, shape.outerRadius);
+                polygon(path, Math.max(3, shape.sides), w / 2F, h / 2F, shape.outerRadius, shape);
                 break;
 
             case CompShape.STAR:
-                star(path, Math.max(3, shape.sides), w / 2F, h / 2F, shape.innerRadius, shape.outerRadius);
+                star(path, Math.max(3, shape.sides), w / 2F, h / 2F, shape.innerRadius, shape.outerRadius, shape);
                 break;
 
             case CompShape.PATH:
@@ -45,14 +60,7 @@ public final class ShapeRasterizer
 
             case CompShape.RECT:
             default:
-                if (shape.roundness > 0F)
-                {
-                    path.append(new RoundRectangle2D.Float(-w / 2F, -h / 2F, w, h, shape.roundness, shape.roundness), false);
-                }
-                else
-                {
-                    path.append(new java.awt.geom.Rectangle2D.Float(-w / 2F, -h / 2F, w, h), false);
-                }
+                rect(path, w, h, shape);
                 break;
         }
 
@@ -66,32 +74,139 @@ public final class ShapeRasterizer
         return trim(path, shape);
     }
 
-    private static void polygon(Path2D.Float path, int sides, float rx, float ry, float radius)
+    /**
+     * Rectangle with four independent corner radii. Without per-corner radii this is the original
+     * {@link RoundRectangle2D} path, so existing projects render exactly as before.
+     */
+    private static void rect(Path2D.Float path, float w, float h, CompShape shape)
     {
-        for (int i = 0; i < sides; i++)
+        if (!shape.hasCorners())
         {
-            double angle = -Math.PI / 2D + i * Math.PI * 2D / sides;
-            float x = (float) (Math.cos(angle) * rx * radius);
-            float y = (float) (Math.sin(angle) * ry * radius);
+            if (shape.roundness > 0F)
+            {
+                path.append(new RoundRectangle2D.Float(-w / 2F, -h / 2F, w, h, shape.roundness, shape.roundness), false);
+            }
+            else
+            {
+                path.append(new java.awt.geom.Rectangle2D.Float(-w / 2F, -h / 2F, w, h), false);
+            }
 
-            if (i == 0) path.moveTo(x, y);
-            else path.lineTo(x, y);
+            return;
         }
 
-        path.closePath();
+        float hw = w / 2F;
+        float hh = h / 2F;
+        float[] xs = {-hw, hw, hw, -hw};
+        float[] ys = {-hh, -hh, hh, hh};
+        float[] radii = {shape.corner(0), shape.corner(1), shape.corner(2), shape.corner(3)};
+
+        roundedPolygon(path, xs, ys, radii, shape.cornerStyle);
     }
 
-    private static void star(Path2D.Float path, int points, float rx, float ry, float inner, float outer)
+    private static void polygon(Path2D.Float path, int sides, float rx, float ry, float radius, CompShape shape)
     {
-        for (int i = 0; i < points * 2; i++)
+        int count = Math.max(3, sides);
+        float[] xs = new float[count];
+        float[] ys = new float[count];
+        float[] radii = new float[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            double angle = -Math.PI / 2D + i * Math.PI * 2D / count;
+
+            xs[i] = (float) (Math.cos(angle) * rx * radius);
+            ys[i] = (float) (Math.sin(angle) * ry * radius);
+            radii[i] = shape.corner(i);
+        }
+
+        roundedPolygon(path, xs, ys, radii, shape.cornerStyle);
+    }
+
+    private static void star(Path2D.Float path, int points, float rx, float ry, float inner, float outer, CompShape shape)
+    {
+        int count = points * 2;
+        float[] xs = new float[count];
+        float[] ys = new float[count];
+        float[] radii = new float[count];
+
+        for (int i = 0; i < count; i++)
         {
             double angle = -Math.PI / 2D + i * Math.PI / points;
             float radius = (i & 1) == 0 ? outer : inner;
-            float x = (float) (Math.cos(angle) * rx * radius);
-            float y = (float) (Math.sin(angle) * ry * radius);
 
-            if (i == 0) path.moveTo(x, y);
-            else path.lineTo(x, y);
+            xs[i] = (float) (Math.cos(angle) * rx * radius);
+            ys[i] = (float) (Math.sin(angle) * ry * radius);
+            radii[i] = shape.corner(i);
+        }
+
+        roundedPolygon(path, xs, ys, radii, shape.cornerStyle);
+    }
+
+    /**
+     * Polygon with a radius per vertex. A vertex whose radius is 0 emits a hard corner; otherwise
+     * the path cuts r pixels along both edges and joins them with a quadratic (round) or a straight
+     * line (bevel).
+     */
+    private static void roundedPolygon(Path2D.Float path, float[] xs, float[] ys, float[] radii, int style)
+    {
+        int count = xs.length;
+
+        if (count < 3)
+        {
+            return;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            int prev = (i + count - 1) % count;
+            int next = (i + 1) % count;
+            float px = xs[i];
+            float py = ys[i];
+            float ax = xs[prev];
+            float ay = ys[prev];
+            float bx = xs[next];
+            float by = ys[next];
+            float lenA = (float) Math.hypot(ax - px, ay - py);
+            float lenB = (float) Math.hypot(bx - px, by - py);
+            float radius = radii == null || i >= radii.length ? 0F : Math.max(0F, radii[i]);
+
+            /* Never eat more than half of either adjacent edge: two adjacent corners would
+             * otherwise overlap and produce a self-intersecting path. */
+            radius = Math.min(radius, Math.min(lenA, lenB) * 0.5F);
+
+            float inX = px;
+            float inY = py;
+            float outX = px;
+            float outY = py;
+
+            if (radius > 0.01F && lenA > 0.0001F && lenB > 0.0001F)
+            {
+                inX = px + (ax - px) / lenA * radius;
+                inY = py + (ay - py) / lenA * radius;
+                outX = px + (bx - px) / lenB * radius;
+                outY = py + (by - py) / lenB * radius;
+            }
+
+            if (i == 0)
+            {
+                path.moveTo(inX, inY);
+            }
+            else
+            {
+                path.lineTo(inX, inY);
+            }
+
+            if (radius > 0.01F)
+            {
+                if (style == CompShape.CORNER_BEVEL)
+                {
+                    path.lineTo(outX, outY);
+                }
+                else
+                {
+                    path.quadTo(px, py, outX, outY);
+                }
+            }
         }
 
         path.closePath();

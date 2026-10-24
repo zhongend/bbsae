@@ -20,6 +20,7 @@ public final class SceneDepth
     private int width;
     private int height;
     private boolean available;
+    private boolean tested;
 
     public SceneDepth()
     {
@@ -32,14 +33,36 @@ public final class SceneDepth
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL11.GL_CLAMP);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL11.GL_CLAMP);
     }
+    /**
+     * Copies the depth attachment of the currently bound draw framebuffer.
+     *
+     * <p>The old version called {@code glGetError()} in a loop and {@code glCheckFramebufferStatus}
+     * <b>every frame</b>. Both are pipeline syncs: they force the CPU to wait for the GPU and can
+     * cost tens of milliseconds per frame on their own. The status is now probed once per
+     * allocation (and only retried when the size changes), and the per-frame path is a single
+     * blit.</p>
+     */
     public void capture()
     {
         int[] viewport = new int[4];
 
         GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport);
 
-        int w = viewport[2];
-        int h = viewport[3];
+        this.captureFrom(GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING), viewport[2], viewport[3]);
+    }
+
+    /**
+     * Copies the depth attachment of a specific framebuffer.
+     *
+     * <p>Used by the compositor preview: the world's depth is copied at
+     * {@code WorldRenderEvents.LAST} from Minecraft's main framebuffer, which is the only source
+     * that contains the film's real geometry. Relying on "whatever is bound" worked for the
+     * overlay path but read an empty attachment once the compositor had bound its own target.</p>
+     */
+    public void captureFrom(int readFramebuffer, int width, int height)
+    {
+        int w = width;
+        int h = height;
 
         if (w <= 0 || h <= 0)
         {
@@ -47,10 +70,11 @@ public final class SceneDepth
             return;
         }
 
-        if (w != this.width || h != this.height)
+        if (w != this.width || h != this.height || !this.tested)
         {
             this.width = w;
             this.height = h;
+            this.tested = true;
 
             GlStateManager._bindTexture(this.texture);
             GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT24, w, h, 0, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, (java.nio.ByteBuffer) null);
@@ -58,22 +82,21 @@ public final class SceneDepth
             GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D, this.texture, 0);
             GL11.glDrawBuffer(GL11.GL_NONE);
             GL11.glReadBuffer(GL11.GL_NONE);
+
+            this.available = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER) == GL30.GL_FRAMEBUFFER_COMPLETE;
+        }
+
+        if (!this.available)
+        {
+            return;
         }
 
         int oldRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
         int oldDraw = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
 
-        while (GL11.glGetError() != GL11.GL_NO_ERROR)
-        {
-            /* Clear stale errors before testing whether the driver accepted the depth blit. */
-        }
-
-        GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, oldDraw);
+        GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, readFramebuffer);
         GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, this.framebuffer);
         GL30.glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
-
-        this.available = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER) == GL30.GL_FRAMEBUFFER_COMPLETE
-            && GL11.glGetError() == GL11.GL_NO_ERROR;
 
         GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, oldRead);
         GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, oldDraw);

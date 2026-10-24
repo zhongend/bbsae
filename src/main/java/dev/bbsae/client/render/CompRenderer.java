@@ -5,9 +5,7 @@ import com.mojang.blaze3d.systems.VertexSorter;
 import dev.bbsae.BbsAeAddon;
 import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompEffect;
-import dev.bbsae.comp.CompExpression;
 import dev.bbsae.comp.CompLayer;
-import dev.bbsae.comp.CompMask;
 import dev.bbsae.comp.CompProject;
 import dev.bbsae.comp.CompStore;
 import dev.bbsae.comp.CompStyle;
@@ -18,11 +16,13 @@ import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.Camera;
 import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix4f;
-import org.joml.Quaternionf;
 import org.joml.Vector2f;
+import org.joml.Vector3f;
 import org.lwjgl.opengl.GL11;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -32,6 +32,10 @@ import java.util.Set;
  * styles -> blend happen in that order. Adjustment layers apply their chain to the accumulated
  * target instead of producing content. Precomps recurse with their own time. The result is one
  * RGBA texture that the BBS frame overlay (or the render queue) can consume.</p>
+ *
+ * <p>Transform composition, parenting and the camera all live in {@link CompScene} / {@link CompCamera};
+ * this class only decides <em>what</em> to draw and in which order. That split is what keeps the
+ * editor gizmos, the depth sort and the actual pixels on the same matrices.</p>
  */
 public final class CompRenderer
 {
@@ -50,33 +54,198 @@ public final class CompRenderer
         render(project, doc, time, alpha, frameWidth, frameHeight, fit, false, true, null, batcher);
     }
 
-    /**
-     * @param captureDepth whether the current world framebuffer's depth should be copied for depth
-     *                     effects. Pass false in editor previews and off-screen comp-only exports.
-     * @param projection   the film/world projection at the start of the overlay, or null to use a
-     *                     perspective projection derived from the composition.
-     */
     public static void render(CompProject project, CompDocument doc, float time, float alpha, float frameWidth, float frameHeight, int fit, boolean preview, boolean captureDepth, Matrix4f projection, Batcher2D batcher)
     {
         render(project, doc, time, alpha, frameWidth, frameHeight, fit, preview, captureDepth, true, true, projection, batcher);
     }
 
-    /**
-     * Editor previews can disable effects or masks to compare a layer with and without its
-     * post chain. Export and the film overlay always use the full graph.
-     */
     public static void render(CompProject project, CompDocument doc, float time, float alpha, float frameWidth, float frameHeight, int fit, boolean preview, boolean captureDepth, boolean renderEffects, boolean renderMasks, Matrix4f projection, Batcher2D batcher)
     {
         render(project, doc, time, alpha, frameWidth, frameHeight, fit, preview, captureDepth, renderEffects, renderMasks, projection, batcher, true);
     }
 
     /**
-     * @param cameraPreview editor-only switch: false looks at the 3D space from the default front
-     *                      camera, true looks through the active 3D camera. Export always uses true.
+     * @param cameraPreview kept for source compatibility; the camera is always applied now. It only
+     *                      controls whether the editor draws 3D overlays.
      */
     public static void render(CompProject project, CompDocument doc, float time, float alpha, float frameWidth, float frameHeight, int fit, boolean preview, boolean captureDepth, boolean renderEffects, boolean renderMasks, Matrix4f projection, Batcher2D batcher, boolean cameraPreview)
     {
+        GlFramebuffer composition = renderToTexture(project, doc, time, captureDepth, renderEffects, renderMasks, preview, projection);
+
+        if (composition == null)
+        {
+            return;
+        }
+
+        blit(batcher, composition, doc, alpha, frameWidth, frameHeight, fit);
+        FboPool.release(composition);
+    }
+
+    /**
+     * Editor preview with frame caching.
+     *
+     * <p>Renders at most once per composition frame <b>and</b> only when the content signature
+     * changed. A parked playhead with no edits costs one textured quad per display frame instead of
+     * the whole graph; playing back a 30 fps composition on a 120 Hz display renders 30 times a
+     * second instead of 120.</p>
+     *
+     * <p>Two further shortcuts live here, in this order:</p>
+     * <ol>
+     *   <li><b>Pre-render cache</b> — if the frame is green on the ruler, the pixels are already
+     *       on disk/VRAM and playback is a texture lookup. This is what makes a heavy composition
+     *       play back smoothly.</li>
+     *   <li><b>Preview proxy</b> — otherwise the graph is rendered at the size the viewport
+     *       actually displays ({@link #previewScale}), not at composition resolution. A 1920×1080
+     *       comp shown in a 700 px wide panel costs a quarter of the pixels it used to.</li>
+     * </ol>
+     */
+    public static void renderCached(CompProject project, CompDocument doc, float time, float alpha, float frameWidth, float frameHeight, int fit, boolean renderEffects, boolean renderMasks, boolean cameraOverlays, Batcher2D batcher)
+    {
         if (project == null || doc == null || doc.layers == null || doc.layers.isEmpty() || frameWidth <= 0F || frameHeight <= 0F)
+        {
+            return;
+        }
+
+        float fps = Math.max(1F, doc.fps);
+        int frameIndex = Math.round(Math.max(0F, time) * fps);
+
+        /* 1. Green frames: the whole point of the pre-render cache. */
+        GlTexture cached = CompPrecache.texture(project, doc, frameIndex);
+
+        if (cached != null)
+        {
+            blitTexture(batcher, cached.id, doc, alpha, frameWidth, frameHeight, fit);
+
+            return;
+        }
+
+        float scale = previewScale(doc, frameWidth, frameHeight, fit);
+        long signature = CompRenderCache.signature(project, doc, time, renderEffects, renderMasks, fit, Math.round(frameWidth), Math.round(frameHeight), cameraOverlays) ^ ((long) Math.round(scale * 1000F) << 48);
+
+        if (CompRenderCache.matches(signature, doc, doc.width, doc.height))
+        {
+            blit(batcher, CompRenderCache.get(), doc, alpha, frameWidth, frameHeight, fit);
+
+            return;
+        }
+
+        GlFramebuffer composition = renderToTexture(project, doc, time, false, renderEffects, renderMasks, true, null, scale);
+
+        if (composition == null)
+        {
+            return;
+        }
+
+        /* The cache owns this framebuffer now; releasing it here would hand a live texture back to
+         * the pool and the next layer would draw over the cached frame. */
+        CompRenderCache.put(composition, signature, doc, doc.width, doc.height);
+        blit(batcher, composition, doc, alpha, frameWidth, frameHeight, fit);
+    }
+
+    /**
+     * Resolution factor that makes the render target match the displayed pixels.
+     *
+     * <p>Never above 1 (a preview is not a render), never below 0.2 (a very small panel should
+     * still be legible), and quantised to 1/16 so dragging a splitter does not re-render on every
+     * pixel of movement.</p>
+     */
+    public static float previewScale(CompDocument doc, float frameWidth, float frameHeight, int fit)
+    {
+        float dw = Math.max(1F, doc.width);
+        float dh = Math.max(1F, doc.height);
+        float sx = frameWidth / dw;
+        float sy = frameHeight / dh;
+        float uniform = fit == 2 ? Math.max(sx, sy) : fit == 1 ? Math.max(sx, sy) : Math.min(sx, sy);
+
+        uniform = Math.max(0.2F, Math.min(1F, uniform));
+
+        return Math.round(uniform * 16F) / 16F;
+    }
+
+    private static GlFramebuffer renderToTexture(CompProject project, CompDocument doc, float time, boolean captureDepth, boolean renderEffects, boolean renderMasks, boolean preview, Matrix4f projection)
+    {
+        return renderToTexture(project, doc, time, captureDepth, renderEffects, renderMasks, preview, projection, 1F);
+    }
+
+    private static GlFramebuffer renderToTexture(CompProject project, CompDocument doc, float time, boolean captureDepth, boolean renderEffects, boolean renderMasks, boolean preview, Matrix4f projection, float scale)
+    {
+        if (project == null || doc == null || doc.layers == null || doc.layers.isEmpty())
+        {
+            return null;
+        }
+
+        SceneDepth depth = null;
+
+        if (needsDepth(project, doc))
+        {
+            /* In the editor the world has already been drawn for this frame, so its depth is the
+             * only correct depth for a depth effect: copying the *compositor's* framebuffer here
+             * (the old behaviour) read an empty depth attachment and every depth effect silently
+             * degraded to a no-op. The bridge copies the world depth at WorldRenderEvents.LAST;
+             * use that copy while previewing, and a fresh capture only in the export path. */
+            SceneDepth bridged = preview ? dev.bbsae.client.overlay.BbsPreviewBridge.depth() : null;
+
+            if (bridged != null && bridged.isAvailable())
+            {
+                depth = bridged;
+            }
+            else if (captureDepth)
+            {
+                depth = ensureDepth();
+                depth.capture();
+            }
+        }
+
+        GlFramebuffer composition;
+
+        try (GlStateGuard guard = new GlStateGuard())
+        {
+            CompShaders.init();
+            MinecraftClient client = MinecraftClient.getInstance();
+            Batcher2D fboBatcher = new Batcher2D(new net.minecraft.client.gui.DrawContext(client, client.getBufferBuilders().getEntityVertexConsumers()));
+            MatrixStack modelView = RenderSystem.getModelViewStack();
+
+            modelView.push();
+            modelView.peek().getPositionMatrix().identity();
+            RenderSystem.applyModelViewMatrix();
+
+            try
+            {
+                composition = renderCompToFbo(project, doc, time, depth, projection, client.gameRenderer.getCamera(), new HashSet<>(), fboBatcher, 0, renderEffects, renderMasks, preview, scale);
+            }
+            finally
+            {
+                modelView.pop();
+                RenderSystem.applyModelViewMatrix();
+            }
+        }
+
+        /* Our passes bind their own VAOs. Minecraft's BufferRenderer caches the last
+         * VertexBuffer object, and that cache is only invalidated when the buffer object
+         * changes; without this reset the next UI draw could reuse the wrong VAO. */
+        BufferRenderer.resetCurrentVertexBuffer();
+
+        return composition;
+    }
+
+    private static void blit(Batcher2D batcher, GlFramebuffer composition, CompDocument doc, float alpha, float frameWidth, float frameHeight, int fit)
+    {
+        if (composition == null || batcher == null)
+        {
+            return;
+        }
+
+        blitTexture(batcher, composition.color.id, doc, alpha, frameWidth, frameHeight, fit);
+    }
+
+    /**
+     * Paints a composition texture into the viewport. Used by the live FBO, the render cache and
+     * the pre-render cache alike, so a cached frame can never be framed differently from a fresh
+     * one.
+     */
+    private static void blitTexture(Batcher2D batcher, int texture, CompDocument doc, float alpha, float frameWidth, float frameHeight, int fit)
+    {
+        if (batcher == null || texture <= 0)
         {
             return;
         }
@@ -101,68 +270,13 @@ public final class CompRenderer
 
         float ox = (frameWidth - doc.width * scaleX) / 2F;
         float oy = (frameHeight - doc.height * scaleY) / 2F;
-        Matrix4f bindingProjection = projection;
-
-        if (bindingProjection == null)
-        {
-            bindingProjection = new Matrix4f().perspective(
-                (float) Math.toRadians(70F),
-                Math.max(0.01F, doc.width / (float) doc.height),
-                0.05F,
-                1000F
-            );
-        }
-
-        SceneDepth depth = null;
-
-        if (captureDepth && (project.settings == null || project.settings.depthEnabled))
-        {
-            depth = ensureDepth();
-            depth.capture();
-        }
-
-        GlFramebuffer composition;
-
-        batcher.flush();
-
-        try (GlStateGuard guard = new GlStateGuard())
-        {
-            CompShaders.init();
-            MinecraftClient client = MinecraftClient.getInstance();
-            Batcher2D fboBatcher = new Batcher2D(new net.minecraft.client.gui.DrawContext(client, client.getBufferBuilders().getEntityVertexConsumers()));
-            MatrixStack modelView = RenderSystem.getModelViewStack();
-
-            modelView.push();
-            modelView.peek().getPositionMatrix().identity();
-            RenderSystem.applyModelViewMatrix();
-
-            try
-            {
-                composition = renderCompToFbo(project, doc, time, depth, bindingProjection, client.gameRenderer.getCamera(), new HashSet<>(), fboBatcher, 0, renderEffects, renderMasks, cameraPreview);
-            }
-            finally
-            {
-                modelView.pop();
-                RenderSystem.applyModelViewMatrix();
-            }
-        }
-
-        if (composition == null)
-        {
-            return;
-        }
-
-        /* Our passes bind their own VAOs. Minecraft's BufferRenderer caches the last
-         * VertexBuffer object, and that cache is only invalidated when the buffer object
-         * changes; without this reset the next UI draw could reuse the wrong VAO. */
-        BufferRenderer.resetCurrentVertexBuffer();
 
         /* The FBO is top-down because layer content is drawn with an ortho whose y axis points
          * down. GL's texture origin is the opposite, so the final blit swaps v. */
         int color = Colors.setA(0xFFFFFF, Math.max(0F, Math.min(1F, alpha)));
 
         batcher.texturedBox(
-            composition.color.id,
+            texture,
             color,
             ox, oy,
             doc.width * scaleX, doc.height * scaleY,
@@ -171,7 +285,42 @@ public final class CompRenderer
         );
 
         batcher.flush();
-        FboPool.release(composition);
+    }
+
+    /**
+     * Depth capture is a real GPU readback-style blit; it is only worth doing when some layer
+     * actually samples depth. Skipping it is the difference between "the editor idles" and "the
+     * editor copies a 1080p depth buffer 60 times a second for nothing".
+     */
+    private static boolean needsDepth(CompProject project, CompDocument doc)
+    {
+        if (project.settings != null && !project.settings.depthEnabled)
+        {
+            return false;
+        }
+
+        return hasDepthEffect(doc);
+    }
+
+    private static boolean hasDepthEffect(CompDocument doc)
+    {
+        for (CompLayer layer : doc.layers)
+        {
+            if (layer.effects == null)
+            {
+                continue;
+            }
+
+            for (CompEffect effect : layer.effects)
+            {
+                if (effect != null && effect.enabled && effect.type != null && effect.type.startsWith("depth_"))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public static GlFramebuffer renderOffscreen(CompProject project, CompDocument doc, float time, Batcher2D batcher)
@@ -183,13 +332,36 @@ public final class CompRenderer
 
             try
             {
-                return renderCompToFbo(project, doc, time, null, null, null, new HashSet<>(), batcher, 0, true, true);
+                return renderCompToFbo(project, doc, time, null, null, null, new HashSet<>(), batcher, 0, true, true, true, 1F);
             }
             finally
             {
                 exportDepth -= 1;
             }
         }
+    }
+
+    /**
+     * Renders one frame for the pre-render cache at an explicit pixel size.
+     *
+     * <p>Same graph, same effects, same masks as the preview — the only difference is the target
+     * resolution and the fact that the caller keeps the texture. Guide layers and the editor's
+     * 3D overlays are suppressed because a cached frame must equal an exported frame.</p>
+     *
+     * <p>It deliberately goes through {@link #renderToTexture} instead of drawing with the caller's
+     * batcher: the UI's {@link Batcher2D} has queued quads for the panel, and flushing those into
+     * the composition target would both corrupt the cached frame and lose the UI batch.</p>
+     */
+    public static GlFramebuffer renderForCache(CompProject project, CompDocument doc, float time, int width, int height)
+    {
+        if (project == null || doc == null || width <= 0 || height <= 0)
+        {
+            return null;
+        }
+
+        float scale = Math.max(0.05F, Math.min(1F, Math.min(width / (float) Math.max(1, doc.width), height / (float) Math.max(1, doc.height))));
+
+        return renderToTexture(project, doc, time, false, true, true, false, null, scale);
     }
 
     /** Marks the film-overlay/recording path, where guide layers must not be baked in. */
@@ -203,12 +375,23 @@ public final class CompRenderer
         exportDepth = Math.max(0, exportDepth - 1);
     }
 
-    static GlFramebuffer renderCompToFbo(CompProject project, CompDocument comp, float time, SceneDepth depth, Matrix4f projection, Camera camera, Set<String> stack, Batcher2D batcher, int recursion, boolean renderEffects, boolean renderMasks)
+    /** True while rendering for the recorder/render queue; editor-only overlays must be suppressed. */
+    public static boolean isExporting()
     {
-        return renderCompToFbo(project, comp, time, depth, projection, camera, stack, batcher, recursion, renderEffects, renderMasks, true);
+        return exportDepth > 0;
     }
 
-    static GlFramebuffer renderCompToFbo(CompProject project, CompDocument comp, float time, SceneDepth depth, Matrix4f projection, Camera camera, Set<String> stack, Batcher2D batcher, int recursion, boolean renderEffects, boolean renderMasks, boolean cameraPreview)
+    static GlFramebuffer renderCompToFbo(CompProject project, CompDocument comp, float time, SceneDepth depth, Matrix4f projection, Camera camera, Set<String> stack, Batcher2D batcher, int recursion, boolean renderEffects, boolean renderMasks)
+    {
+        return renderCompToFbo(project, comp, time, depth, projection, camera, stack, batcher, recursion, renderEffects, renderMasks, true, 1F);
+    }
+
+    static GlFramebuffer renderCompToFbo(CompProject project, CompDocument comp, float time, SceneDepth depth, Matrix4f projection, Camera camera, Set<String> stack, Batcher2D batcher, int recursion, boolean renderEffects, boolean renderMasks, boolean preview)
+    {
+        return renderCompToFbo(project, comp, time, depth, projection, camera, stack, batcher, recursion, renderEffects, renderMasks, preview, 1F);
+    }
+
+    static GlFramebuffer renderCompToFbo(CompProject project, CompDocument comp, float time, SceneDepth depth, Matrix4f projection, Camera camera, Set<String> stack, Batcher2D batcher, int recursion, boolean renderEffects, boolean renderMasks, boolean preview, float scale)
     {
         if (comp == null || comp.layers == null || comp.layers.isEmpty() || recursion > 8 || stack.contains(comp.id))
         {
@@ -219,9 +402,10 @@ public final class CompRenderer
 
         CompRenderContext context = new CompRenderContext(project, comp, time, projection, camera, depth);
 
-        setup3D(context, cameraPreview);
+        context.preview = preview;
+        context.scale = Math.max(0.05F, Math.min(1F, scale));
 
-        GlFramebuffer accumulation = FboPool.acquire(comp.width, comp.height);
+        GlFramebuffer accumulation = FboPool.acquire(context.renderWidth(), context.renderHeight());
         int previousFramebuffer = GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
         int[] previousViewport = new int[4];
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
@@ -245,11 +429,9 @@ public final class CompRenderer
 
         try
         {
-            for (CompLayer layer : orderLayersFor3D(comp, context))
+            for (CompLayer layer : orderLayers(comp, context))
             {
-                /* Camera layers drive {@link #cameraView}; they have no pixels of their own.
-                 * Without this check they fell through to the solid drawing path and left a
-                 * coloured rectangle at the camera position. */
+                /* Camera layers drive the view; they have no pixels of their own. */
                 if (!layer.activeAt(time) || (layer.guide && exportDepth > 0)
                     || "null".equals(layer.type) || "camera".equals(layer.type))
                 {
@@ -265,36 +447,25 @@ public final class CompRenderer
                 {
                     if (renderEffects)
                     {
-                        Matrix4f adjustmentWorld = worldMatrix(comp, layer, context, new HashSet<>());
-                        accumulation = applyAdjustment(layer, accumulation, context, adjustmentWorld, stack, batcher);
+                        accumulation = applyAdjustment(layer, accumulation, context, stack, batcher);
                     }
                     continue;
                 }
 
-                boolean is3D = layer.threeD && !"camera".equals(layer.type) && !"adjustment".equals(layer.type);
-                Matrix4f world;
-                Matrix4f layerProjection = null;
-
-                if (is3D)
-                {
-                    world = context.view3D.mul(localWorldMatrix3D(comp, layer, context, new HashSet<>()));
-                    layerProjection = context.projection3D;
-                }
-                else
-                {
-                    world = worldMatrix(comp, layer, context, new HashSet<>());
-                }
-
-                GlFramebuffer content = renderLayerContent(layer, context, world, layerProjection, stack, batcher);
+                Matrix4f model = CompScene.model(context, layer);
+                Matrix4f layerProjection = CompScene.projection(context, layer);
+                GlFramebuffer content = renderLayerContent(layer, context, model, layerProjection, stack, batcher);
 
                 if (content == null)
                 {
                     continue;
                 }
 
-                if (!is3D && renderMasks && layer.masks != null && !layer.masks.isEmpty())
+                boolean is2D = !CompScene.usePerspective(context, layer);
+
+                if (is2D && renderMasks && layer.masks != null && !layer.masks.isEmpty())
                 {
-                    MaskCache.MaskTexture mask = MaskCache.get(layer, comp.width, comp.height, world, context.frame);
+                    MaskCache.MaskTexture mask = MaskCache.get(layer, comp.width, comp.height, model, context.frame);
 
                     if (mask != null)
                     {
@@ -305,14 +476,14 @@ public final class CompRenderer
                     }
                 }
 
-                if (!is3D && renderMasks && layer.trackMatteEnabled && layer.trackMatteId != null && !layer.trackMatteId.isEmpty())
+                if (is2D && renderMasks && layer.trackMatteEnabled && layer.trackMatteId != null && !layer.trackMatteId.isEmpty())
                 {
                     CompLayer matte = comp.getLayer(layer.trackMatteId);
 
                     if (matte != null && matte != layer)
                     {
-                        Matrix4f matteWorld = worldMatrix(comp, matte, context, new HashSet<>());
-                        GlFramebuffer matteFbo = renderLayerContent(matte, context, matteWorld, stack, batcher);
+                        Matrix4f matteModel = CompScene.model(context, matte);
+                        GlFramebuffer matteFbo = renderLayerContent(matte, context, matteModel, CompScene.projection(context, matte), stack, batcher);
 
                         if (matteFbo != null)
                         {
@@ -326,12 +497,14 @@ public final class CompRenderer
                     }
                 }
 
-                for (var effect : layer.effects)
+                Matrix4f effectSpace = effectSpace(context, layer, model);
+
+                for (CompEffect effect : layer.effects)
                 {
                     if (renderEffects && effect != null && effect.enabled)
                     {
                         CompEffect resolved = layer.resolveEffect(effect, context.frame);
-                        GlFramebuffer processed = EffectRenderer.apply(layer, resolved, content, context, world);
+                        GlFramebuffer processed = EffectRenderer.apply(layer, resolved, content, context, effectSpace);
 
                         if (processed != content)
                         {
@@ -343,7 +516,7 @@ public final class CompRenderer
 
                 if (renderEffects)
                 {
-                    content = applyStyles(layer, content, context, world);
+                    content = applyStyles(layer, content, context, effectSpace);
                 }
 
                 float opacity = opacityAt(layer, context);
@@ -371,24 +544,31 @@ public final class CompRenderer
             /* A precomp is rendered while its parent's layer target is bound. Restore that
              * framebuffer, viewport and projection so the caller can continue drawing into it. */
             com.mojang.blaze3d.platform.GlStateManager._glBindFramebuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, previousFramebuffer);
-            GL11.glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);            RenderSystem.setProjectionMatrix(previousProjection, VertexSorter.BY_Z);
+            GL11.glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+            RenderSystem.setProjectionMatrix(previousProjection, VertexSorter.BY_Z);
         }
 
         return accumulation;
     }
 
     /**
-     * Painter's order for 3D layers: only the 3D slots are permuted (far to near), so adjustment
-     * layers and 2D screen-attached layers keep their stack position. Without this a card at
-     * z=+300 could be drawn before a card behind it and win the blend.
-     *
-     * <p>Sorting is confined to the segment between two adjustment layers. An adjustment layer
-     * affects exactly the pixels accumulated before it, so letting a 3D layer from above cross
-     * that boundary would silently change which layers the adjustment sees.</p>
+     * Effects and styles work in layer-local UV space. For 2D layers that space is the camera-view
+     * model matrix; a 3D layer keeps its world matrix (a perspective homography cannot be expressed
+     * as the affine map those effects expect).
      */
-    private static java.util.List<CompLayer> orderLayersFor3D(CompDocument comp, CompRenderContext context)
+    private static Matrix4f effectSpace(CompRenderContext context, CompLayer layer, Matrix4f model)
     {
-        java.util.List<CompLayer> order = new java.util.ArrayList<>(comp.layers);
+        return CompScene.usePerspective(context, layer) ? CompScene.world(context, layer) : model;
+    }
+
+    /**
+     * Painter's order: 3D slots are permuted far-to-near. Adjustment layers and 2D layers keep
+     * their stack position, because an adjustment layer affects exactly the pixels accumulated
+     * before it.
+     */
+    private static List<CompLayer> orderLayers(CompDocument comp, CompRenderContext context)
+    {
+        List<CompLayer> order = new ArrayList<>(comp.layers);
         int start = 0;
 
         for (int i = 0; i <= order.size(); i++)
@@ -411,10 +591,10 @@ public final class CompRenderer
         return order;
     }
 
-    private static void sortSegment(java.util.List<CompLayer> order, int start, int end, CompRenderContext context)
+    private static void sortSegment(List<CompLayer> order, int start, int end, CompRenderContext context)
     {
-        java.util.List<Integer> slots = new java.util.ArrayList<>();
-        java.util.List<CompLayer> three = new java.util.ArrayList<>();
+        List<Integer> slots = new ArrayList<>();
+        List<CompLayer> three = new ArrayList<>();
 
         for (int i = start; i < end; i++)
         {
@@ -432,7 +612,9 @@ public final class CompRenderer
             return;
         }
 
-        three.sort((a, b) -> Float.compare(depthOf(a, context), depthOf(b, context)));
+        /* Ascending depth = far first. CompScene caches the value for this frame, so the comparator
+         * does a map lookup instead of rebuilding two matrices per comparison. */
+        three.sort((a, b) -> Float.compare(CompScene.depth(context, a), CompScene.depth(context, b)));
 
         for (int i = 0; i < slots.size(); i++)
         {
@@ -440,38 +622,21 @@ public final class CompRenderer
         }
     }
 
-    private static float depthOf(CompLayer layer, CompRenderContext context)
+    private static GlFramebuffer renderLayerContent(CompLayer layer, CompRenderContext context, Matrix4f model, Set<String> stack, Batcher2D batcher)
     {
-        try
-        {
-            Matrix4f world = context.view3D.mul(localWorldMatrix3D(context.comp, layer, context, new HashSet<>()));
-            org.joml.Vector4f center = new org.joml.Vector4f(0F, 0F, 0F, 1F);
-
-            world.transform(center);
-
-            return center.z;
-        }
-        catch (RuntimeException e)
-        {
-            return 0F;
-        }
+        return renderLayerContent(layer, context, model, CompScene.projection(context, layer), stack, batcher);
     }
 
-    private static GlFramebuffer renderLayerContent(CompLayer layer, CompRenderContext context, Matrix4f world, Set<String> stack, Batcher2D batcher)
+    private static GlFramebuffer renderLayerContent(CompLayer layer, CompRenderContext context, Matrix4f model, Matrix4f layerProjection, Set<String> stack, Batcher2D batcher)
     {
-        return renderLayerContent(layer, context, world, null, stack, batcher);
-    }
-
-    private static GlFramebuffer renderLayerContent(CompLayer layer, CompRenderContext context, Matrix4f world, Matrix4f layerProjection, Set<String> stack, Batcher2D batcher)
-    {
-        GlFramebuffer target = FboPool.acquire(context.width, context.height);
+        GlFramebuffer target = FboPool.acquire(context.renderWidth(), context.renderHeight());
 
         target.begin();
         BufferRenderer.resetCurrentVertexBuffer();
 
         try
         {
-            LayerContentRenderer.draw(layer, context, batcher, world, layerProjection);
+            LayerContentRenderer.draw(layer, context, batcher, model, layerProjection);
             batcher.flush();
             BufferRenderer.resetCurrentVertexBuffer();
 
@@ -495,19 +660,20 @@ public final class CompRenderer
         return target;
     }
 
-    private static GlFramebuffer applyAdjustment(CompLayer layer, GlFramebuffer original, CompRenderContext context, Matrix4f world, Set<String> stack, Batcher2D batcher)
+    private static GlFramebuffer applyAdjustment(CompLayer layer, GlFramebuffer original, CompRenderContext context, Set<String> stack, Batcher2D batcher)
     {
         GlFramebuffer processed = original;
         boolean changed = false;
+        Matrix4f space = new Matrix4f();
 
-        for (var effect : layer.effects)
+        for (CompEffect effect : layer.effects)
         {
             if (effect == null || !effect.enabled)
             {
                 continue;
             }
 
-            GlFramebuffer next = EffectRenderer.apply(layer, layer.resolveEffect(effect, context.frame), processed, context, world);
+            GlFramebuffer next = EffectRenderer.apply(layer, layer.resolveEffect(effect, context.frame), processed, context, space);
 
             if (next != processed)
             {
@@ -530,7 +696,7 @@ public final class CompRenderer
 
         if (layer.masks != null && !layer.masks.isEmpty())
         {
-            MaskCache.MaskTexture mask = MaskCache.get(layer, context.width, context.height, world, context.frame);
+            MaskCache.MaskTexture mask = MaskCache.get(layer, context.width, context.height, CompScene.world(context, layer), context.frame);
 
             if (mask != null)
             {
@@ -591,479 +757,90 @@ public final class CompRenderer
 
         if (expression != null && !expression.isBlank())
         {
-            value = CompExpression.eval(expression, expressionContext(layer, context, value), value);
+            value = dev.bbsae.comp.CompExpression.eval(expression, new dev.bbsae.comp.CompExpression.Context()
+            {
+                @Override
+                public float time()
+                {
+                    return context.time;
+                }
+
+                @Override
+                public float frame()
+                {
+                    return context.frame;
+                }
+
+                @Override
+                public float fps()
+                {
+                    return context.comp.fps;
+                }
+
+                @Override
+                public float value()
+                {
+                    return layer.opacityFrame(context.frame);
+                }
+
+                @Override
+                public float variable(String path)
+                {
+                    return dev.bbsae.comp.CompExpression.variable(context.project, context.comp, path, layer.opacityFrame(context.frame), context.frame);
+                }
+            }, value);
         }
 
         return Math.max(0F, Math.min(1F, value));
     }
 
-    /**
-     * Builds the 3D camera once per composition frame.
-     *
-     * <p>World space is composition pixels with Y up (the UI is Y down, so every layer matrix
-     * converts its local Y with a final scale(1,-1,1)). The camera sits on +Z looking towards the
-     * composition; a default 50° camera at {@code z = focal} maps the z=0 plane exactly 1:1 to
-     * the composition, which makes switching between 2D and 3D non-destructive.</p>
-     */
-    private static void setup3D(CompRenderContext context, boolean cameraPreview)
-    {
-        CompLayer camera = context.comp.activeCamera(context.time);
-        boolean useCamera = camera != null && camera.camera3D && cameraPreview;
-        float width = context.width;
-        float height = context.height;
-        float fov = 50F;
-        float near = 10F;
-        float far = 100000F;
-        float cx = width * 0.5F;
-        float cy = height * 0.5F;
-        float cz;
-        float tx = width * 0.5F;
-        float ty = height * 0.5F;
-        float tz = 0F;
+    /* Compatibility shims: the editor's gizmos and hit test used these before CompScene existed. */
 
-        float roll = 0F;
-        float rotationX = 0F;
-        float rotationY = 0F;
-
-        if (useCamera)
-        {
-            mchorse.bbs_mod.utils.pose.Transform transform = camera.transformAt(context.frame);
-
-            cx = transform.translate.x;
-            cy = transform.translate.y;
-            /* cameraZ is the AE-style camera distance. Older projects only wrote the layer's
-             * generic z, so fall back to it instead of silently collapsing the camera onto the
-             * point of interest. */
-            cz = camera.scalarAt("cameraZ", camera.cameraZ, context.frame);
-
-            if (Math.abs(cz) < 0.001F)
-            {
-                cz = camera.scalarAt("z", camera.z, context.frame);
-            }
-
-            tx = camera.scalarAt("cameraTargetX", camera.cameraTargetX, context.frame);
-            ty = camera.scalarAt("cameraTargetY", camera.cameraTargetY, context.frame);
-            tz = camera.scalarAt("cameraTargetZ", camera.cameraTargetZ, context.frame);
-            fov = camera.scalarAt("cameraFov", camera.cameraFov, context.frame);
-            near = Math.max(0.1F, camera.scalarAt("cameraNear", camera.cameraNear, context.frame));
-            far = Math.max(near + 1F, camera.scalarAt("cameraFar", camera.cameraFar, context.frame));
-            rotationX = camera.scalarAt("rotationX", camera.rotationX, context.frame);
-            rotationY = camera.scalarAt("rotationY", camera.rotationY, context.frame);
-            roll = transform.rotate.z;
-
-            if (Math.abs(cz - tz) < 0.001F && Math.abs(cx - tx) < 0.001F && Math.abs(cy - ty) < 0.001F)
-            {
-                cz = tz + height * 1.1F;
-            }
-        }
-        else
-        {
-            float focal = (height * 0.5F) / (float) Math.tan(Math.toRadians(fov) * 0.5D);
-
-            cz = focal;
-        }
-
-        fov = Math.max(1F, Math.min(179F, fov));
-
-        float focal = (height * 0.5F) / (float) Math.tan(Math.toRadians(fov) * 0.5D);
-
-        context.focal3D = focal;
-        /* A 3D camera must not pan/zoom 2D layers: they are screen-attached by definition. */
-        context.camera2DLayer = camera != null && !camera.camera3D ? camera : null;
-        context.view2D = cameraView(context.camera2DLayer, context);
-        context.view2DPrepared = true;
-        context.camera3DLayer = useCamera ? camera : null;
-        context.camera3DMode = useCamera;
-
-        /* Camera orientation. World space is Y-up (the UI is Y-down, hence the -cy), +Z points
-         * towards the viewer and the default camera sits at +Z looking at the origin.
-         *
-         * Two modes, like AE:
-         *  - look-at: direction = point of interest - position, roll around that direction;
-         *  - free:    direction from the camera's own X/Y rotation (yaw/pitch), roll from Z.
-         *
-         * The previous build ignored rotationX/rotationY entirely, which is why rotating a
-         * camera in the inspector appeared to do nothing. */
-        org.joml.Vector3f position = new org.joml.Vector3f(cx, -cy, cz);
-        org.joml.Vector3f direction = new org.joml.Vector3f();
-
-        if (useCamera && camera.cameraLookAt)
-        {
-            direction.set(tx - cx, -ty + cy, tz - cz);
-        }
-        else
-        {
-            float yaw = (float) Math.toRadians(rotationY);
-            float pitch = (float) Math.toRadians(rotationX);
-
-            direction.set(
-                (float) (Math.sin(yaw) * Math.cos(pitch)),
-                (float) Math.sin(pitch),
-                (float) (-Math.cos(yaw) * Math.cos(pitch))
-            );
-        }
-
-        if (direction.lengthSquared() < 0.000001F)
-        {
-            direction.set(0F, 0F, -1F);
-        }
-
-        direction.normalize();
-
-        org.joml.Vector3f up = new org.joml.Vector3f(0F, 1F, 0F);
-        org.joml.Vector3f right = new org.joml.Vector3f(direction).cross(up);
-
-        if (right.lengthSquared() < 0.000001F)
-        {
-            right.set(1F, 0F, 0F);
-        }
-
-        right.normalize();
-        up.set(right).cross(direction).normalize();
-
-        if (Math.abs(roll) > 0.0001F)
-        {
-            float radians = (float) Math.toRadians(roll);
-            float cos = (float) Math.cos(radians);
-            float sin = (float) Math.sin(radians);
-            org.joml.Vector3f rolledUp = new org.joml.Vector3f(up).mul(cos).add(new org.joml.Vector3f(right).mul(sin));
-
-            up.set(rolledUp).normalize();
-        }
-
-        context.view3D = new Matrix4f().lookAt(position, new org.joml.Vector3f(position).add(direction), up);
-        context.projection3D = new Matrix4f()
-            .perspective((float) Math.toRadians(fov), Math.max(0.01F, width / height), near, far);
-    }
-
-    /** UI helper: build the 3D view/projection for gizmos and picking. */
+    /** Resolves the frame's camera; kept so old call sites read naturally. */
     public static void prepare3D(CompRenderContext context, boolean cameraPreview)
     {
-        setup3D(context, cameraPreview);
+        CompScene.camera(context);
     }
 
-    /** UI helper: model-view matrix for a 3D layer. */
+    public static CompCamera camera(CompRenderContext context)
+    {
+        return CompScene.camera(context);
+    }
+
+    /** Model matrix (camera view included) for a layer, in the current frame. */
     public static Matrix4f world3D(CompDocument comp, CompLayer layer, CompRenderContext context)
     {
-        return context.view3D.mul(localWorldMatrix3D(comp, layer, context, new HashSet<>()));
+        return CompScene.model(context, layer);
     }
 
     /**
-     * Projects a local layer point through the prepared 3D camera into composition pixels.
-     * Returns null when the point is behind the camera.
+     * Projects a local point of an already-built <b>model</b> matrix (camera view included) to comp
+     * pixels. The view must not be applied twice, which is why this only runs the projection.
      */
-    public static org.joml.Vector2f project3D(CompRenderContext context, Matrix4f world, float localX, float localY)
+    public static Vector2f project3D(CompRenderContext context, Matrix4f model, float localX, float localY)
     {
-        org.joml.Vector4f point = new org.joml.Vector4f(localX, localY, 0F, 1F);
+        CompCamera camera = CompScene.camera(context);
+        Vector3f point = new Vector3f(localX, localY, 0F);
 
-        world.transform(point);
-        context.projection3D.transform(point);
+        model.transformPosition(point);
 
-        if (Math.abs(point.w) < 0.00001F)
+        if (!camera.perspective)
         {
-            return null;
+            return new Vector2f(point.x, point.y);
         }
 
-        float ndcX = point.x / point.w;
-        float ndcY = point.y / point.w;
+        camera.projection.transformProject(point);
 
-        return new org.joml.Vector2f(
-            (ndcX * 0.5F + 0.5F) * context.width,
-            (1F - (ndcY * 0.5F + 0.5F)) * context.height
+        return new Vector2f(
+            (point.x * 0.5F + 0.5F) * context.width,
+            (1F - (point.y * 0.5F + 0.5F)) * context.height
         );
     }
 
+    /** World matrix (parents included) for a layer at the context's frame. */
     public static Matrix4f worldMatrix(CompDocument comp, CompLayer layer, CompRenderContext context, Set<String> seen)
     {
-        Matrix4f local = localWorldMatrix(comp, layer, context, seen);
-
-        if (layer == null || "adjustment".equals(layer.type) || "camera".equals(layer.type))
-        {
-            return local;
-        }
-
-        if (!context.view2DPrepared)
-        {
-            context.camera2DLayer = comp.activeCamera(context.time);
-            context.view2D = cameraView(context.camera2DLayer, context);
-            context.view2DPrepared = true;
-        }
-
-        if (context.camera2DLayer == null)
-        {
-            return local;
-        }
-
-        return context.view2D.mul(local);
-    }
-
-    /**
-     * AE-style two-node camera. The camera layer's normal transform is the position, the target
-     * is a separate point (animatable through cameraTargetX/Y), and the transform's X scale is
-     * the zoom. The view keeps the camera position pinned to the comp centre, which is how a
-     * two-node camera reads in a 2D comp: pan moves the world, the target turns it, zoom scales it.
-     *
-     * <p>The view is the <b>inverse</b> of the camera's own rotation: turning the camera clockwise
-     * turns the world counter-clockwise. Both the look-at branch and the manual rotation branch
-     * therefore use a negated angle — they used to disagree, so switching "look at target" off
-     * silently reversed the rotation.</p>
-     */
-    public static Matrix4f cameraView(CompLayer camera, CompRenderContext context)
-    {
-        if (camera == null)
-        {
-            return new Matrix4f();
-        }
-
-        mchorse.bbs_mod.utils.pose.Transform transform = camera.transformAt(context.frame);
-        float cx = transform.translate.x;
-        float cy = transform.translate.y;
-        float rotation = transform.rotate.z;
-
-        if (camera.expressionX != null && !camera.expressionX.isBlank())
-        {
-            cx = CompExpression.eval(camera.expressionX, expressionContext(camera, context, cx), cx);
-        }
-        if (camera.expressionY != null && !camera.expressionY.isBlank())
-        {
-            cy = CompExpression.eval(camera.expressionY, expressionContext(camera, context, cy), cy);
-        }
-        if (camera.expressionRotation != null && !camera.expressionRotation.isBlank())
-        {
-            rotation = CompExpression.eval(camera.expressionRotation, expressionContext(camera, context, rotation), rotation);
-        }
-
-        /* One zoom value, like a real camera. The inspector writes both scale channels so a
-         * layer-style transform (which has separate X/Y) cannot desync it. */
-        float zoom = Math.max(0.0001F, Math.abs(transform.scale.x));
-        float angle = (float) Math.toRadians(rotation);
-
-        if (camera.cameraLookAt)
-        {
-            float tx = camera.scalarAt("cameraTargetX", camera.cameraTargetX, context.frame);
-            float ty = camera.scalarAt("cameraTargetY", camera.cameraTargetY, context.frame);
-            float dx = tx - cx;
-            float dy = ty - cy;
-
-            if (Math.abs(dx) + Math.abs(dy) > 0.0001F)
-            {
-                angle = (float) (Math.atan2(dy, dx) + Math.PI / 2D);
-            }
-        }
-
-        return new Matrix4f()
-            .translate(context.width / 2F, context.height / 2F, 0F)
-            .scale(zoom, zoom, 1F)
-            .rotateZ(-angle)
-            .translate(-cx, -cy, 0F);
-    }
-
-    private static Matrix4f localWorldMatrix(CompDocument comp, CompLayer layer, CompRenderContext context, Set<String> seen)
-    {
-        if (layer == null || !seen.add(layer.id))
-        {
-            return new Matrix4f();
-        }
-
-        mchorse.bbs_mod.utils.pose.Transform transform = layer.transformAt(context.frame);
-        float x = transform.translate.x;
-        float y = transform.translate.y;
-        float rotation = transform.rotate.z;
-
-        if (layer.expressionX != null && !layer.expressionX.isBlank())
-        {
-            x = CompExpression.eval(layer.expressionX, expressionContext(layer, context, x), x);
-        }
-        if (layer.expressionY != null && !layer.expressionY.isBlank())
-        {
-            y = CompExpression.eval(layer.expressionY, expressionContext(layer, context, y), y);
-        }
-        if (layer.expressionRotation != null && !layer.expressionRotation.isBlank())
-        {
-            rotation = CompExpression.eval(layer.expressionRotation, expressionContext(layer, context, rotation), rotation);
-        }
-
-        if (layer.motion)
-        {
-            x += (float) Math.sin(context.time * 1.8F) * layer.motionAmount;
-        }
-
-        Shake shake = shakeOf(layer, context);
-
-        if (shake != null)
-        {
-            x += shake.x;
-            y += shake.y;
-            rotation += shake.rotation;
-        }
-
-        Vector2f bound = BindingResolver.resolve(layer, context);
-
-        if (bound != null)
-        {
-            x = bound.x;
-            y = bound.y;
-        }
-
-        Matrix4f local = new Matrix4f()
-            .translate(x, y, 0F)
-            .rotate(new Quaternionf().rotateZ((float) Math.toRadians(rotation)))
-            .scale(Math.max(0.0001F, transform.scale.x * (1F + layer.squash)),
-                Math.max(0.0001F, transform.scale.y * (1F - layer.squash)), 1F);
-
-        if (layer.parentId != null && !layer.parentId.isEmpty())
-        {
-            CompLayer parent = comp.getLayer(layer.parentId);
-
-            if (parent != null && parent != layer)
-            {
-                return localWorldMatrix(comp, parent, context, seen).mul(local);
-            }
-        }
-
-        return local;
-    }
-
-    private static final class Shake
-    {
-        float x;
-        float y;
-        float rotation;
-    }
-
-    private static Shake shakeOf(CompLayer layer, CompRenderContext context)
-    {
-        if (layer == null || layer.effects == null)
-        {
-            return null;
-        }
-
-        for (dev.bbsae.comp.CompEffect effect : layer.effects)
-        {
-            if (effect != null && effect.enabled && "shake".equals(effect.type))
-            {
-                float amount = Math.max(0F, effect.valueF("amplitude", 18F));
-                float frequency = Math.max(0.01F, effect.valueF("frequency", 6F));
-                float rotation = Math.max(0F, effect.valueF("rotation", 2F));
-                float seed = effect.valueF("seed", 0F);
-                float t = context.time * frequency * 6.2831855F;
-                Shake shake = new Shake();
-
-                shake.x = (float) (Math.sin(t + seed * 1.7F) * 0.65F + Math.sin(t * 2.3F + seed * 3.1F) * 0.35F) * amount;
-                shake.y = (float) (Math.sin(t * 1.37F + seed * 5.3F) * 0.65F + Math.sin(t * 2.9F + seed * 7.7F) * 0.35F) * amount;
-                shake.rotation = (float) Math.sin(t * 1.9F + seed * 11.1F) * rotation;
-
-                return shake;
-            }
-        }
-
-        return null;
-    }
-
-    /** Model matrix for a 3D layer: comp pixels, Y-up world, z towards the camera. */
-    private static Matrix4f localWorldMatrix3D(CompDocument comp, CompLayer layer, CompRenderContext context, Set<String> seen)
-    {
-        if (layer == null || !seen.add(layer.id))
-        {
-            return new Matrix4f();
-        }
-
-        mchorse.bbs_mod.utils.pose.Transform transform = layer.transformAt(context.frame);
-        float x = transform.translate.x;
-        float y = transform.translate.y;
-        float z = layer.scalarAt("z", layer.z, context.frame);
-        float rotation = transform.rotate.z;
-        float rotationX = layer.scalarAt("rotationX", layer.rotationX, context.frame);
-        float rotationY = layer.scalarAt("rotationY", layer.rotationY, context.frame);
-        float scaleZ = Math.max(0.0001F, layer.scalarAt("scaleZ", layer.scaleZ, context.frame));
-
-        if (layer.expressionX != null && !layer.expressionX.isBlank())
-        {
-            x = CompExpression.eval(layer.expressionX, expressionContext(layer, context, x), x);
-        }
-        if (layer.expressionY != null && !layer.expressionY.isBlank())
-        {
-            y = CompExpression.eval(layer.expressionY, expressionContext(layer, context, y), y);
-        }
-        if (layer.expressionRotation != null && !layer.expressionRotation.isBlank())
-        {
-            rotation = CompExpression.eval(layer.expressionRotation, expressionContext(layer, context, rotation), rotation);
-        }
-
-        Shake shake = shakeOf(layer, context);
-
-        if (shake != null)
-        {
-            x += shake.x;
-            y += shake.y;
-            rotation += shake.rotation;
-        }
-
-        float sx = Math.max(0.0001F, transform.scale.x * (1F + layer.squash));
-        float sy = Math.max(0.0001F, transform.scale.y * (1F - layer.squash));
-        Matrix4f local = new Matrix4f()
-            .translate(x, -y, z)
-            .rotateZ((float) Math.toRadians(-rotation))
-            .rotateX((float) Math.toRadians(rotationX))
-            .rotateY((float) Math.toRadians(rotationY))
-            .scale(sx, sy, scaleZ)
-            .scale(1F, -1F, 1F);
-
-        if (layer.parentId != null && !layer.parentId.isEmpty())
-        {
-            CompLayer parent = comp.getLayer(layer.parentId);
-
-            if (parent != null && parent != layer)
-            {
-                if (parent.threeD)
-                {
-                    return localWorldMatrix3D(comp, parent, context, seen).mul(local);
-                }
-
-                Matrix4f parent2D = localWorldMatrix(comp, parent, context, seen);
-                Matrix4f converted = new Matrix4f().scale(1F, -1F, 1F).mul(parent2D).scale(1F, -1F, 1F);
-
-                return converted.mul(local);
-            }
-        }
-
-        return local;
-    }
-
-    private static CompExpression.Context expressionContext(CompLayer layer, CompRenderContext context, float value)
-    {
-        return new CompExpression.Context()
-        {
-            @Override
-            public float time()
-            {
-                return context.time;
-            }
-
-            @Override
-            public float frame()
-            {
-                return context.frame;
-            }
-
-            @Override
-            public float fps()
-            {
-                return context.comp.fps;
-            }
-
-            @Override
-            public float value()
-            {
-                return value;
-            }
-
-            @Override
-            public float variable(String path)
-            {
-                return CompExpression.variable(context.project, context.comp, path, value, context.frame);
-            }
-        };
+        return CompScene.world(context, layer);
     }
 
     private static SceneDepth ensureDepth()
@@ -1080,6 +857,8 @@ public final class CompRenderer
     public static void clearCaches()
     {
         FboPool.clear();
+        CompRenderCache.clear();
+        CompPrecache.clearAll();
         ShapeCache.clear();
         MaskCache.clear();
         ImageTextureCache.clear();

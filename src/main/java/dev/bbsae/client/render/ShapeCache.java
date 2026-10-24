@@ -98,6 +98,15 @@ public final class ShapeCache
             hash = hash * 31 + shape.sides;
             hash = hash * 31 + Float.floatToIntBits(shape.innerRadius);
             hash = hash * 31 + Float.floatToIntBits(shape.outerRadius);
+            hash = hash * 31 + shape.cornerStyle;
+
+            if (shape.corners != null)
+            {
+                for (Float corner : shape.corners)
+                {
+                    hash = hash * 31 + (corner == null ? 0 : Float.floatToIntBits(corner));
+                }
+            }
             hash = hash * 31 + shape.fillColor;
             hash = hash * 31 + (shape.fillGradient ? 1 : 0);
             hash = hash * 31 + shape.fillColor2;
@@ -134,13 +143,9 @@ public final class ShapeCache
             return null;
         }
 
-        java.awt.geom.Area combined = new java.awt.geom.Area();
-        java.util.List<java.awt.Shape> strokes = new java.util.ArrayList<>();
-        java.util.List<Integer> strokeColors = new java.util.ArrayList<>();
+        java.util.List<dev.bbsae.comp.CompShape> ordered = new java.util.ArrayList<>();
+        java.util.List<java.awt.Shape> paths = new java.util.ArrayList<>();
         java.awt.geom.Rectangle2D bounds = null;
-        int fillColor = 0;
-        dev.bbsae.comp.CompShape gradientShape = null;
-        boolean filled = false;
 
         for (dev.bbsae.comp.CompShape shape : shapes)
         {
@@ -158,43 +163,8 @@ public final class ShapeCache
 
             path = ShapeRasterizer.repeat(path, shape);
 
-            java.awt.geom.Area area = new java.awt.geom.Area(path);
-
-            if (shape.operator == dev.bbsae.comp.CompShape.OP_SUBTRACT)
-            {
-                combined.subtract(area);
-            }
-            else if (shape.operator == dev.bbsae.comp.CompShape.OP_INTERSECT)
-            {
-                combined.intersect(area);
-            }
-            else if (shape.operator == dev.bbsae.comp.CompShape.OP_EXCLUDE)
-            {
-                combined.exclusiveOr(area);
-            }
-            else
-            {
-                combined.add(area);
-            }
-
-            if (shape.strokeWidth > 0F && (shape.strokeColor >>> 24) != 0)
-            {
-                strokes.add(new java.awt.BasicStroke(shape.strokeWidth, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND).createStrokedShape(path));
-                strokeColors.add(shape.strokeColor);
-            }
-
-            if (shape.fillGradient)
-            {
-                /* The gradient is painted over the combined shape bounds in shape-local space;
-                 * it is baked into the raster, so moving the layer can never separate them. */
-                gradientShape = shape;
-                filled = true;
-            }
-            else if ((shape.fillColor >>> 24) != 0)
-            {
-                fillColor = shape.fillColor;
-                filled = true;
-            }
+            ordered.add(shape);
+            paths.add(path);
 
             java.awt.geom.Rectangle2D b = path.getBounds2D();
 
@@ -227,24 +197,45 @@ public final class ShapeCache
         g.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY);
         g.translate(pad - bounds.getX(), pad - bounds.getY());
 
-        if (filled)
+        /* Each shape paints its own fill and stroke, in list order. Before this, every shape was
+         * merged into one Area and the whole layer took the last non-transparent fill colour, which
+         * is exactly why "shape colour" appeared to do nothing on a multi-shape layer. Boolean
+         * operators now act on the accumulated pixels (add / erase / intersect / xor), so the result
+         * still reads like a shape group but keeps per-shape colour. */
+        for (int i = 0; i < ordered.size(); i++)
         {
-            if (gradientShape != null)
+            dev.bbsae.comp.CompShape shape = ordered.get(i);
+            java.awt.Shape path = paths.get(i);
+            java.awt.geom.Area area = new java.awt.geom.Area(path);
+
+            if (shape.operator == dev.bbsae.comp.CompShape.OP_SUBTRACT)
             {
-                g.setPaint(gradientPaint(gradientShape, combined.getBounds2D()));
+                erase(g, area);
+            }
+            else if (shape.operator == dev.bbsae.comp.CompShape.OP_INTERSECT)
+            {
+                intersect(g, area, width, height);
+            }
+            else if (shape.operator == dev.bbsae.comp.CompShape.OP_EXCLUDE)
+            {
+                exclude(g, image, area, width, height, shape);
             }
             else
             {
-                g.setColor(new java.awt.Color(fillColor, true));
+                fill(g, area, shape);
             }
 
-            g.fill(combined);
-        }
+            if (shape.strokeWidth > 0F && (shape.strokeColor >>> 24) != 0)
+            {
+                java.awt.Shape stroked = new java.awt.BasicStroke(
+                    shape.strokeWidth,
+                    java.awt.BasicStroke.CAP_ROUND,
+                    java.awt.BasicStroke.JOIN_ROUND
+                ).createStrokedShape(path);
 
-        for (int i = 0; i < strokes.size(); i++)
-        {
-            g.setColor(new java.awt.Color(strokeColors.get(i), true));
-            g.fill(strokes.get(i));
+                g.setColor(new java.awt.Color(shape.strokeColor, true));
+                g.fill(stroked);
+            }
         }
 
         g.dispose();
@@ -258,6 +249,87 @@ public final class ShapeCache
         texture.uploadRaw(pixels);
 
         return new Raster(texture, width, height, originX, originY);
+    }
+
+    private static void fill(java.awt.Graphics2D g, java.awt.geom.Area area, dev.bbsae.comp.CompShape shape)
+    {
+        boolean filled = shape.fillGradient || (shape.fillColor >>> 24) != 0;
+
+        if (!filled)
+        {
+            return;
+        }
+
+        if (shape.fillGradient)
+        {
+            g.setPaint(gradientPaint(shape, area.getBounds2D()));
+        }
+        else
+        {
+            g.setColor(new java.awt.Color(shape.fillColor, true));
+        }
+
+        g.fill(area);
+    }
+
+    /** Subtract: remove the shape's pixels from everything painted so far. */
+    private static void erase(java.awt.Graphics2D g, java.awt.Shape area)
+    {
+        java.awt.Composite old = g.getComposite();
+
+        g.setComposite(java.awt.AlphaComposite.DstOut);
+        g.setColor(java.awt.Color.BLACK);
+        g.fill(area);
+        g.setComposite(old);
+    }
+
+    /** Intersect: keep only the accumulated pixels covered by this shape. */
+    private static void intersect(java.awt.Graphics2D g, java.awt.geom.Area area, int width, int height)
+    {
+        BufferedImage mask = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D mg = mask.createGraphics();
+
+        mg.setColor(java.awt.Color.WHITE);
+        mg.fill(area);
+        mg.dispose();
+
+        java.awt.Composite old = g.getComposite();
+
+        g.setComposite(java.awt.AlphaComposite.DstIn);
+        g.drawImage(mask, 0, 0, null);
+        g.setComposite(old);
+    }
+
+    /** Exclude (xor): accumulated-minus-shape plus shape-minus-accumulated, drawn with own colour. */
+    private static void exclude(java.awt.Graphics2D g, BufferedImage image, java.awt.geom.Area area, int width, int height, dev.bbsae.comp.CompShape shape)
+    {
+        BufferedImage minus = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D mg = minus.createGraphics();
+
+        mg.drawImage(image, 0, 0, null);
+        mg.setComposite(java.awt.AlphaComposite.DstOut);
+        mg.setColor(java.awt.Color.BLACK);
+        mg.fill(area);
+        mg.dispose();
+
+        BufferedImage only = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D og = only.createGraphics();
+
+        og.setColor(shape.fillGradient ? java.awt.Color.WHITE : new java.awt.Color(shape.fillColor, true));
+        og.fill(area);
+        og.setComposite(java.awt.AlphaComposite.DstOut);
+        og.drawImage(image, 0, 0, null);
+        og.dispose();
+
+        java.awt.Composite old = g.getComposite();
+        java.awt.Paint oldPaint = g.getPaint();
+
+        g.setComposite(java.awt.AlphaComposite.Src);
+        g.drawImage(minus, 0, 0, null);
+        g.setComposite(java.awt.AlphaComposite.SrcOver);
+        g.drawImage(only, 0, 0, null);
+        g.setComposite(old);
+        g.setPaint(oldPaint);
     }
 
     /** Two-stop linear gradient across the shape bounds, in shape-local pixels. */

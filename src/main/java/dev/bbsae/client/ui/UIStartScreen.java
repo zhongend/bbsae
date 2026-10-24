@@ -136,9 +136,12 @@ public class UIStartScreen extends UIElement
         this.summary.color(0xFFB8C4D6, false);
         this.summary.relative(this.card).x(306).y(1F, -60).w(1F, -330).h(16);
 
-        this.enter = new UIButton(IKey.constant("进入合成器"), (button) -> this.openSelected());
-        this.enter.relative(this.card).x(1F, -178).y(1F, -42).w(154).h(24);
-        this.enter.tooltip(IKey.constant("用所选工程打开合成器"));
+        UICompButton enter = new UICompButton(IKey.constant("进入合成器"), (button) -> this.openSelected());
+
+        enter.style(UICompButton.Style.PRIMARY);
+        enter.hint("用所选工程打开合成器；也可以直接双击工程卡片");
+        enter.relative(this.card).x(1F, -178).y(1F, -42).w(154).h(24);
+        this.enter = enter;
 
         /* New-project form (same right-hand area, toggled). */
         this.form = new UIElement();
@@ -176,7 +179,7 @@ public class UIStartScreen extends UIElement
         {
             final int w = sizes[i][0];
             final int h = sizes[i][1];
-            UIButton button = new UIButton(IKey.constant(presets[i]), (b) ->
+            UIButton button = new UICompButton(IKey.constant(presets[i]), (b) ->
             {
                 this.width.setValue(w);
                 this.height.setValue(h);
@@ -204,11 +207,13 @@ public class UIStartScreen extends UIElement
         this.formHint.color(0xFF6F7A8A, false);
         this.formHint.relative(this.form).x(0).y(202).w(1F).h(16);
 
-        UIButton create = new UIButton(IKey.constant("创建并进入"), (button) -> this.create());
+        UICompButton create = new UICompButton(IKey.constant("创建并进入"), (button) -> this.create());
+        create.style(UICompButton.Style.PRIMARY);
+        create.hint("按上面的名称、画布尺寸、帧率和时长新建工程，并立即进入合成器");
         create.relative(this.form).x(0).y(232).w(120).h(22);
         create.tooltip(IKey.constant("创建 .bbscomp 工程并立即打开"));
 
-        UIButton cancel = new UIButton(IKey.constant("取消"), (button) -> this.hideForm());
+        UIButton cancel = new UICompButton(IKey.constant("取消"), (button) -> this.hideForm());
         cancel.relative(this.form).x(128).y(232).w(76).h(22);
 
         this.form.add(formTitle, nameLabel, this.name, canvasLabel, sizeLabel, this.width, this.height,
@@ -225,7 +230,7 @@ public class UIStartScreen extends UIElement
 
     private UIButton menuButton(String label, int y, mchorse.bbs_mod.ui.utils.icons.Icon icon, Runnable action)
     {
-        UIButton button = new UIButton(IKey.constant(label), (b) -> action.run());
+        UIButton button = new UICompButton(IKey.constant(label), (b) -> action.run());
 
         button.relative(this.card).x(24).y(y).w(256).h(22);
 

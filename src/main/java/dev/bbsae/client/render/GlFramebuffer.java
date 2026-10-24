@@ -34,11 +34,17 @@ public final class GlFramebuffer
         GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, this.color.id, 0);
         GL30.glDrawBuffers(GL30.GL_COLOR_ATTACHMENT0);
 
-        int status = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER);
-
-        if (status != GL30.GL_FRAMEBUFFER_COMPLETE)
+        /* glCheckFramebufferStatus is a sync point. It used to run for every target the pool
+         * created — including the ones created mid-frame when the pool was exhausted — so the
+         * debug-only probe below keeps the hot path clean. Set -Dbbsae.debugFbo=true to verify. */
+        if (Boolean.getBoolean("bbsae.debugFbo"))
         {
-            org.slf4j.LoggerFactory.getLogger("bbsae").warn("Composition framebuffer {}x{} is incomplete: 0x{}", this.width, this.height, Integer.toHexString(status));
+            int status = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER);
+
+            if (status != GL30.GL_FRAMEBUFFER_COMPLETE)
+            {
+                org.slf4j.LoggerFactory.getLogger("bbsae").warn("Composition framebuffer {}x{} is incomplete: 0x{}", this.width, this.height, Integer.toHexString(status));
+            }
         }
     }
 

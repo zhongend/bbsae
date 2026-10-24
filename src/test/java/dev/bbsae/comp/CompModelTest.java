@@ -431,4 +431,64 @@ public class CompModelTest
 
         assertEquals(180F, layer.shapeAt(shape, 0F).fillGradientAngle, 0.0001F);
     }
+
+    @Test
+    public void precomposeRebasesInnerTimelineAndKeepsOrderAndRelations()
+    {
+        CompProject project = new CompProject();
+        CompDocument doc = new CompDocument();
+
+        doc.id = "main";
+        doc.name = "Main";
+        doc.fps = 20F;
+        doc.duration = 10F;
+        doc.workAreaOut = 10F;
+        project.comps.add(doc);
+
+        CompLayer below = doc.addLayer(new CompLayer("below", "Below", "solid"));
+        CompLayer source = new CompLayer("source", "Source", "solid");
+        CompLayer above = doc.addLayer(new CompLayer("above", "Above", "solid"));
+        CompLayer child = doc.addLayer(new CompLayer("child", "Child", "null"));
+        CompLayer matte = doc.addLayer(new CompLayer("matte", "Matte", "solid"));
+
+        source.in = 5F;
+        source.out = 8F;
+
+        Transform transform = new Transform();
+        transform.translate.x = 123F;
+        source.transformChannel().insert(6F * 20F, transform);
+
+        doc.layers.add(1, source);
+        child.parentId = source.id;
+        matte.trackMatteId = source.id;
+
+        CompLayer precomp = CompStore.precompose(project, doc, source, "预合成");
+
+        assertNotNull(precomp);
+        assertEquals(1, doc.layers.indexOf(precomp));
+        assertEquals(List.of("below", "precomp", "above", "child", "matte"),
+            doc.layers.stream().map((layer) -> layer.id).toList());
+        assertEquals(5F, precomp.in, 0.0001F);
+        assertEquals(8F, precomp.out, 0.0001F);
+        assertEquals(0F, precomp.startTime, 0.0001F);
+        assertEquals(precomp.id, child.parentId);
+        assertEquals(precomp.id, matte.trackMatteId);
+
+        CompDocument sub = project.getComp(precomp.precompId);
+
+        assertNotNull(sub);
+        assertEquals(1, sub.layers.size());
+
+        CompLayer copy = sub.layers.get(0);
+
+        assertEquals(0F, copy.in, 0.0001F);
+        assertEquals(3F, copy.out, 0.0001F);
+        assertEquals(20F, copy.transformChannel().getKeyframes().get(0).getTick(), 0.0001F);
+
+        /* Parent 6s maps to inner 1s; the inner source frame must match the pre-precompose
+         * source frame at 6s (1s after the 5s in point). */
+        assertEquals(1F, precomp.sourceTimeAt(6F, 120F), 0.0001F);
+        assertEquals(1F, copy.sourceTimeAt(1F, 20F), 0.0001F);
+    }
+
 }
