@@ -119,6 +119,15 @@ public final class CompRenderer
             return;
         }
 
+        /* 2. A curve edit outside the playhead's segment cannot change this frame. Reuse the
+         *    pixels instead of hashing the document and re-running the graph. */
+        if (CompRenderCache.reuseForTime(time, frameIndex))
+        {
+            blit(batcher, CompRenderCache.get(), doc, alpha, frameWidth, frameHeight, fit);
+
+            return;
+        }
+
         float scale = previewScale(doc, frameWidth, frameHeight, fit);
         long signature = CompRenderCache.signature(project, doc, time, renderEffects, renderMasks, fit, Math.round(frameWidth), Math.round(frameHeight), cameraOverlays) ^ ((long) Math.round(scale * 1000F) << 48);
 
@@ -138,7 +147,7 @@ public final class CompRenderer
 
         /* The cache owns this framebuffer now; releasing it here would hand a live texture back to
          * the pool and the next layer would draw over the cached frame. */
-        CompRenderCache.put(composition, signature, doc, doc.width, doc.height);
+        CompRenderCache.put(composition, signature, doc, doc.width, doc.height, frameIndex);
         blit(batcher, composition, doc, alpha, frameWidth, frameHeight, fit);
     }
 
@@ -157,9 +166,26 @@ public final class CompRenderer
         float sy = frameHeight / dh;
         float uniform = fit == 2 ? Math.max(sx, sy) : fit == 1 ? Math.max(sx, sy) : Math.min(sx, sy);
 
+        /* Adaptive resolution while a curve is being dragged: the graph is being evaluated on
+         * every mouse move, so the preview trades a little sharpness for a stable frame rate and
+         * restores it 150 ms after the mouse is released. */
+        if (interactionPreview)
+        {
+            uniform *= INTERACTION_SCALE;
+        }
+
         uniform = Math.max(0.2F, Math.min(1F, uniform));
 
         return Math.round(uniform * 16F) / 16F;
+    }
+
+    /** Extra factor applied to the preview while a curve/handle is being dragged. */
+    private static final float INTERACTION_SCALE = 0.7F;
+    private static boolean interactionPreview;
+
+    public static void setInteractionPreview(boolean interacting)
+    {
+        interactionPreview = interacting;
     }
 
     private static GlFramebuffer renderToTexture(CompProject project, CompDocument doc, float time, boolean captureDepth, boolean renderEffects, boolean renderMasks, boolean preview, Matrix4f projection)

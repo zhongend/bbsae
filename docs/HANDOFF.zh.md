@@ -1400,3 +1400,51 @@ new Identifier("mc", "textures/block/acacia_leaves.png")
 - 预渲染不支持 `BBS 预览` 图层。
 - 预渲染期间单帧渲染不可抢占，靠冷却让步，仍可能轻微掉帧。
 - 磁盘缓存不自动清理旧工程目录。
+
+---
+
+## 26. 2026-10-24 第十七轮：曲线编辑器 P0+P1（0.6.0）
+
+方案见 [`docs/ROUND16-CURVE-EDITOR-DESIGN.zh.md`](ROUND16-CURVE-EDITOR-DESIGN.zh.md)，
+实施记录见 [`docs/ROUND17-CURVE-PERF.zh.md`](ROUND17-CURVE-PERF.zh.md)。
+改动前备份：`_backup/round16-pre/`。
+
+### 26.1 新增硬约束
+
+1. **曲线不许再"按像素画线"**。几何走 `CurveSpans`（每列 `[lo,hi]`，相同区间合并成矩形）。
+   `line()` 只用于手柄连线，且必须按水平跨度步进。
+2. **几何缓存用显式失效**：`CompCurveChannel.touch()`（标量）与 `transformEpoch`（5 轴共享键表）。
+   任何新的关键帧写路径必须 `touch()`，否则曲线画旧形状。
+3. **拖动只重建脏列**（`markDataChanged(fromCol, toCol, channel)`），不许整条重建。
+4. **拖动不排序全部通道**：只排本次编辑涉及且 tick 真的乱序的通道（`sortIfNeeded`）。
+5. **拖动每帧 `panel.markCurveDirty()`**：预渲染缓存优先于内容指纹，不标记就会显示绿帧旧画面。
+6. **松手分级刷新**：拖动 → `curveChanged(false)`（只跑值绑定）；加/删键/改类型 →
+   `curveChanged(true)`（才重建 Inspector 与 keyframe sheets）。
+7. **底部条是纯函数**：`reconcileTimelinePage()` 每帧从 `(page, 可见性, 矩形)` 推导；
+   `Graph.updateAreas()` 永远钳制到 ≥1×1（负矩形会让裁剪吃掉全部内容 → 空白页）。
+8. **曲线区修饰键走 `CompInput`**，不要用 `Window.isXxxPressed()`。
+9. **数值轴缩放保持 Ctrl+滚轮**（用户确认），不要改成 AE 的 Alt+滚轮。
+
+### 26.2 本轮改动
+
+- `CurveSpans`（新）+ 列跨度绘制 + 脏列重建。
+- `CompCurveChannel`：`revision/touch()`、`valueAt(frame, fallback)`、去掉 `setKeyValue` 的 sort。
+- `UICompCurveEditor`：零分配遍历（keys/handles/keyAt/marquee）、`owners` 身份表、
+  行/轴标签/读数缓存、`sortIfNeeded`、松手分级、`CompInput`、活动通道按 id 保持。
+- `UICompositorPanel`：`curveChanged(boolean)`、`rebindInspectorValues()`、`markCurveDirty()`、
+  `setCurveInteraction()`、`setCurveDirtyRange()`、`reconcileTimelinePage()`、
+  `applyTimelinePage(grow)`、`onAppear/refreshComp/toggleRenderView` 重新推导、曲线区过窄自动回退。
+- `CompRenderCache`：`cachedFrame` + 时间域守卫（`reuseForTime`）。
+- `CompRenderer`：时间域短路、`setInteractionPreview()`（拖动期 0.7×）。
+
+### 26.3 验证
+
+- `test` **119/119**（新增 `CurveSpansTest` 5、`CompCurveChannelRevisionTest` 3）。
+- `remapJar --offline` 成功；产物 `bbsae-0.6.0.jar` 548025 字节，
+  SHA-256 `b4ab3d93…aef92`。
+
+### 26.4 已知限制 / 下一轮
+
+- 起手仍会做一次整工程 JSON 撤销快照（10–40ms），未做图层级快照（P3）。
+- 顶部工具条仍是 15 个控件平铺，通道树/上下文面板/右键键类型未做（P2）。
+- 曲线 VBO 未做；若 4K 下曲线区仍超 2ms 再上（P3）。

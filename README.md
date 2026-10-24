@@ -23,6 +23,8 @@
   [`docs/ROUND15-PREVIEW-CACHE-PERF.zh.md`](docs/ROUND15-PREVIEW-CACHE-PERF.zh.md)
 - **Round 16 (curve editor redesign — jank analysis, render architecture, AE parity plan):**
   [`docs/ROUND16-CURVE-EDITOR-DESIGN.zh.md`](docs/ROUND16-CURVE-EDITOR-DESIGN.zh.md)
+- **Round 17 (curve editor P0+P1 — column-span geometry, blank-page fix, v0.6.0):**
+  [`docs/ROUND17-CURVE-PERF.zh.md`](docs/ROUND17-CURVE-PERF.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -42,11 +44,11 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.5.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.5.0/bbsae-0.5.0.jar)
-   from the **v0.5.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.6.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.6.0/bbsae-0.6.0.jar)
+   from the **v0.6.0** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.5.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.6.0.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
@@ -115,6 +117,46 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.6.0
+
+**The curve editor stopped drawing a line per pixel.** `line()` walked every pixel of a segment
+and emitted a quad per step, so a steep curve cost thousands of quads per frame and got slower the
+further you dragged a handle. Curves are now rasterised into a **per-column span cache**
+(`CurveSpans`): one rectangle per screen column, merged into runs when the span is identical.
+Vertex count is bounded by the width of the graph instead of by the data, and an unchanged curve
+costs zero evaluations.
+
+**Editing only recomputes what changed.** A handle drag rebuilds the 20–80 columns of the affected
+segment instead of resampling the whole graph; the five transform axes share one key list, so they
+invalidate together (a shared epoch) while scalar channels keep their own revision counter.
+
+**Release no longer jumps.** A drag used to rebuild the entire inspector and every keyframe sheet
+on mouse-up — 3–10 ms landing exactly on the frame you let go. A drag now only re-runs the
+inspector's value bindings; only adding/removing keys rebuilds widgets.
+
+**Preview follows the curve.** Dragging used to leave the pre-render cache answering with the last
+green frame (a regression from 0.5.0: `markDirty()` only ran on save). A drag now invalidates the
+cache every frame, drops the preview to 0.7× resolution while the mouse is down, and — when the
+playhead sits outside the edited segment — reuses the frame it already has instead of re-rendering
+the whole graph.
+
+**The blank curve page is fixed.** The strip was laid out only when the tab was clicked, so a
+dashboard page switch (or entering a precomp, or the render view) could leave the curve editor
+visible with a zero-height rectangle — and a negative clip silently erases everything. The strip is
+now reconciled every frame from `(page, visibility, area)`, the graph area is clamped to at least
+1×1, and a strip too short to host a graph falls back to the timeline with a message. Switching to
+the curve page also grows the strip to 55% of the panel once.
+
+**Smaller fixes.** Modifiers in the curve area go through GLFW instead of `Screen.hasAltDown()`
+(Alt-broken handles were intermittent); the active channel survives an inspector edit (it used to
+jump back to "位置 X" because the check compared object identity); `keyAt`/marquee iterate the raw
+key list instead of allocating a `Key` per keyframe per frame; grid labels and the value readout
+are cached per view/frame instead of `String.format`-ed every display frame.
+
+Value-axis zoom stays on **Ctrl+wheel** (as requested), not AE's Alt+wheel.
+
+Tests: **119/119**.
 
 ## What's new in 0.5.0
 
@@ -248,7 +290,7 @@ what is and is not implemented.
 
 Verified in this iteration:
 
-- `compileJava` and all **111** tests pass (headless model + real hidden-window OpenGL 3.2 pixel
+- `compileJava` and all **119** tests pass (headless model + real hidden-window OpenGL 3.2 pixel
   tests + export-duration/icon checks + the new curve/parenting/preset/shape assertions);
 - the addon loads in a Fabric 1.20.1 + BBS 2.7 development client;
 - the compositor preview renders the composition (not a blank frame) after fixing projection,
@@ -257,8 +299,8 @@ Verified in this iteration:
   frame contains the compositor layers, proving the frame-overlay path reaches the video file;
 - the final jar has Minecraft references remapped to intermediary and keeps BBS class names.
 
-Build artifact: `build/libs/bbsae-0.5.0.jar` (also copied to `bbsae-0.5.0.jar`), **540465** bytes,
-SHA-256 `d7db1ca5462e2962d0b44e74e92ed3c8f9ce63ba41bf90e2f981424ba67f14bb` (check the file if it is
+Build artifact: `build/libs/bbsae-0.6.0.jar` (also copied to `bbsae-0.6.0.jar`), **548025** bytes,
+SHA-256 `b4ab3d93cf64e8eaa154542b1a42a3da2e1df22e224196f04009de44185aef92` (check the file if it is
 repacked). The jar is produced by `gradlew build`; `remapJar` writes it directly and the class
 entries are intermediary-remapped.
 
@@ -489,7 +531,7 @@ Implemented now:
    gradlew.bat build
    ```
 
-   The addon jar is written to `build/libs/bbsae-0.5.0.jar`; the headless model tests run with
+   The addon jar is written to `build/libs/bbsae-0.6.0.jar`; the headless model tests run with
    `gradlew.bat test`.
 
 ## Use

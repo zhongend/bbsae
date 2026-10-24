@@ -2257,8 +2257,10 @@ public class UICompositorPanel extends UIDashboardPanel
         this.timelineTabs.active(() -> this.timelinePage);
         this.timelineTabs.onSelect((index) ->
         {
+            boolean grow = index != 0 && this.timelinePage == 0;
+
             this.timelinePage = index;
-            this.applyTimelinePage();
+            this.applyTimelinePage(grow);
         });
         fitTimeline.tooltip(IKey.constant("时间轴适配全长（\\）"));
 
@@ -2374,6 +2376,10 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 this.showStartScreen();
             }
+
+            /* Coming back from another dashboard page: re-derive the strip instead of trusting
+             * the visibility flags left behind. */
+            this.applyTimelinePage();
         });
         this.onAppear(() -> dev.bbsae.client.overlay.BbsPreviewBridge.attach(this.filmPanel, this.doc));
         this.onClose(() ->
@@ -3964,6 +3970,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshInspector();
         this.refreshSheets();
         this.updatePlayLabel();
+        this.applyTimelinePage();
     }
 
     private void refreshLayers()
@@ -4064,6 +4071,15 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     private void applyTimelinePage()
     {
+        this.applyTimelinePage(false);
+    }
+
+    /**
+     * @param grow true when the user just switched to the curve page: a graph squeezed into the
+     *             224 px default strip is unusable, so the strip takes 55% of the panel once.
+     */
+    private void applyTimelinePage(boolean grow)
+    {
         if (this.trackTimeline == null || this.curveEditor == null)
         {
             return;
@@ -4082,10 +4098,66 @@ public class UICompositorPanel extends UIDashboardPanel
         if (!tracks)
         {
             this.curveEditor.refresh();
+
+            if (grow && this.area.h > 0)
+            {
+                int max = Math.max(140, this.area.h - 24 - 160 - 18);
+                int target = Math.min(max, Math.max(this.timelinePanelHeight, Math.round(this.area.h * 0.55F)));
+
+                if (target > this.timelinePanelHeight)
+                {
+                    this.timelinePanelHeight = target;
+                    this.applyLayout();
+                }
+            }
         }
 
         this.layoutKeyframeDrawer();
-        this.resize();
+
+        /* Explicit resize: the curve editor must own a real rectangle before the next draw.
+         * Relying on the panel's layout flush left it at 0×0 after a page switch, and a
+         * zero-height clip silently erases the whole graph — the "blank curve editor" bug. */
+        this.curveEditor.resize();
+        this.trackTimeline.resize();
+    }
+
+    /**
+     * Reconciles the bottom strip with {@link #timelinePage} once per frame.
+     *
+     * <p>Layout used to be event-driven only (tab click → apply). Anything that changed the strip
+     * while the panel was off screen — a dashboard page switch, a project re-bind, a resize —
+     * left the curve editor visible with a stale rectangle, which renders as an empty box. The
+     * strip is a pure function of (page, visibility, area), so it is cheap to re-derive it.</p>
+     */
+    private void reconcileTimelinePage()
+    {
+        if (this.trackTimeline == null || this.curveEditor == null || this.timeline == null)
+        {
+            return;
+        }
+
+        boolean tracks = this.timelinePage == 0;
+
+        if (this.curveEditor.isVisible() == tracks || this.trackTimeline.isVisible() != tracks)
+        {
+            this.applyTimelinePage();
+
+            return;
+        }
+
+        if (tracks || this.curveEditor.area.h <= 0 || this.curveEditor.area.w <= 0)
+        {
+            this.layoutKeyframeDrawer();
+            this.curveEditor.resize();
+
+            /* A strip that cannot host a graph falls back instead of showing an empty box. */
+            if (!tracks && this.area.h > 200 && this.curveEditor.area.h < 80)
+            {
+                this.timelinePage = 0;
+                this.applyTimelinePage();
+                this.setStatus("曲线区太窄，已切回时间轴；拖高时间轴后可再次打开曲线");
+            }
+        }
     }
 
     /** Undo checkpoint for one curve gesture (drag, ease preset, key insert). */
@@ -4094,12 +4166,74 @@ public class UICompositorPanel extends UIDashboardPanel
         this.beginAction("曲线编辑");
     }
 
-    /** Called once per curve gesture, after the edits landed. */
-    void curveChanged()
+    /**
+     * Called once per curve gesture, after the edits landed.
+     *
+     * @param structural true when keys were added/removed or their type changed (the inspector's
+     *                   widget set changes), false for a drag.
+     *
+     * <p>A drag used to rebuild the whole inspector and every keyframe sheet on mouse release.
+     * That is 3–10 ms landing exactly on the frame the user lets go of the mouse — the "it jumps
+     * when I release" symptom. A drag only changes values, and the inspector already has value
+     * bindings for those, so re-running them is enough.</p>
+     */
+    void curveChanged(boolean structural)
     {
-        this.refreshSheets();
-        this.refreshInspector();
+        this.rebindInspectorValues();
+
+        if (structural)
+        {
+            this.refreshSheets();
+            this.refreshInspector();
+        }
+
         this.save();
+    }
+
+    /** Runs the inspector's value bindings without rebuilding any widget. */
+    private void rebindInspectorValues()
+    {
+        for (Runnable binding : this.inspectorBindings)
+        {
+            try
+            {
+                binding.run();
+            }
+            catch (RuntimeException e)
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.error("Could not refresh an inspector value", e);
+            }
+        }
+    }
+
+    /**
+     * A curve gesture is mutating the document right now.
+     *
+     * <p>{@code save()} is the usual dirty hook, but a drag deliberately does not save on every
+     * mouse move. Without this the pre-render cache keeps answering with the last green frame and
+     * the preview freezes while the curve changes — a regression introduced when the cache was
+     * put in front of the content signature.</p>
+     */
+    void markCurveDirty()
+    {
+        dev.bbsae.client.render.CompPrecache.markDirty();
+    }
+
+    /** Drops the preview to a cheaper resolution while a curve is being dragged. */
+    void setCurveInteraction(boolean interacting)
+    {
+        dev.bbsae.client.render.CompRenderer.setInteractionPreview(interacting);
+    }
+
+    /** The edited segment, in seconds; the preview may reuse its frame outside this range. */
+    void setCurveDirtyRange(float from, float to)
+    {
+        dev.bbsae.client.render.CompRenderCache.setTimeGuard(from, to);
+    }
+
+    void clearCurveDirtyRange()
+    {
+        dev.bbsae.client.render.CompRenderCache.clearTimeGuard();
     }
 
     /** Called after a preset is applied or saved. */
@@ -5255,6 +5389,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.inspectorColumn.setVisible(!this.renderView && !this.focusMode);
         this.renderPanel.resize();
         this.applyLayout();
+        this.applyTimelinePage();
     }
 
     private void toggleFocusMode()
@@ -9773,6 +9908,7 @@ public class UICompositorPanel extends UIDashboardPanel
     public void render(UIContext context)
     {
         this.primeTimeline();
+        this.reconcileTimelinePage();
         this.captureSnapshot();
 
         /* Debounced persistence: one write per gesture instead of one per mouse event. */
@@ -9811,18 +9947,7 @@ public class UICompositorPanel extends UIDashboardPanel
             && !Window.isMouseButtonPressed(0))
         {
             this.lastInspectorTime = this.time;
-
-            for (Runnable binding : this.inspectorBindings)
-            {
-                try
-                {
-                    binding.run();
-                }
-                catch (RuntimeException e)
-                {
-                    dev.bbsae.BbsAeAddon.LOGGER.error("Could not refresh an inspector value", e);
-                }
-            }
+            this.rebindInspectorValues();
         }
 
         this.timecode.label = IKey.constant(this.doc == null ? "00:00:00:00" : CompTime.timecode(this.getTime(), this.doc.fps));

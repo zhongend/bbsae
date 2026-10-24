@@ -32,6 +32,18 @@ public final class CompRenderCache
     private static int cachedWidth;
     private static int cachedHeight;
     private static Object cachedDoc;
+    /** Composition frame the cached pixels belong to. */
+    private static int cachedFrame = Integer.MIN_VALUE;
+
+    /* --- time guard -------------------------------------------------------
+     * While a curve segment is being dragged, only frames inside that segment can change.
+     * A parked playhead outside the segment can keep the frame it already has, even though the
+     * document fingerprint changed — that is the difference between "editing a curve re-renders
+     * the whole composition every mouse move" and "it only re-renders when the playhead can see
+     * the edit". */
+    private static boolean guardActive;
+    private static float guardFrom;
+    private static float guardTo;
 
     private CompRenderCache()
     {}
@@ -50,7 +62,7 @@ public final class CompRenderCache
         return cached;
     }
 
-    public static void put(GlFramebuffer framebuffer, long signature, CompDocument doc, int width, int height)
+    public static void put(GlFramebuffer framebuffer, long signature, CompDocument doc, int width, int height, int frame)
     {
         if (cached != null && cached != framebuffer)
         {
@@ -62,6 +74,34 @@ public final class CompRenderCache
         cachedDoc = doc;
         cachedWidth = width;
         cachedHeight = height;
+        cachedFrame = frame;
+    }
+
+    /** Restricts re-rendering to a time range; see the field comment above. */
+    public static void setTimeGuard(float from, float to)
+    {
+        guardActive = true;
+        guardFrom = Math.min(from, to);
+        guardTo = Math.max(from, to);
+    }
+
+    public static void clearTimeGuard()
+    {
+        guardActive = false;
+    }
+
+    /**
+     * True when the cached frame is still pixel-identical for this time.
+     *
+     * <p>Requires the same composition frame index: a guard only excuses a changed
+     * <em>fingerprint</em>, never a different point in time.</p>
+     */
+    public static boolean reuseForTime(float time, int frame)
+    {
+        return guardActive
+            && cached != null
+            && cachedFrame == frame
+            && (time < guardFrom || time > guardTo);
     }
 
     public static void clear()
@@ -74,6 +114,8 @@ public final class CompRenderCache
 
         cachedDoc = null;
         cachedSignature = 0L;
+        cachedFrame = Integer.MIN_VALUE;
+        guardActive = false;
     }
 
     /* ---------------------------------------------------------------- signature */

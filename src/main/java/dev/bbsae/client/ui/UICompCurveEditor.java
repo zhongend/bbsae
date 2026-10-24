@@ -16,6 +16,7 @@ import mchorse.bbs_mod.ui.utils.keys.KeyAction;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.interps.Interpolations;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
+import mchorse.bbs_mod.utils.pose.Transform;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -223,6 +224,25 @@ public class UICompCurveEditor extends UIElement
         private int lastClickY;
         private long lastClickTime;
 
+        /* --- curve geometry cache ------------------------------------------------
+         * One span array per channel, rebuilt only when the view or the data changes.
+         * See CurveSpans for why the curve is stored per column instead of as a polyline. */
+        private final java.util.Map<String, CurveSpans> spanCache = new java.util.HashMap<>();
+        /** keyframe -> owning channel, so hit testing is O(1) instead of O(channels x keys). */
+        private final IdentityHashMap<Keyframe<?>, CompCurveChannel> owners = new IdentityHashMap<>();
+        /** Bumped on every mutation of a transform channel; the five axes share one key list. */
+        private int transformEpoch;
+        private int dirtyFromColumn = -1;
+        private int dirtyToColumn = -1;
+        private final Set<String> partialChannels = new java.util.HashSet<>();
+        private boolean rowsDirty = true;
+        private String readoutText = "";
+        private int readoutFrame = Integer.MIN_VALUE;
+        private CompCurveChannel readoutChannel;
+        private long axisLabelKey;
+        private float[] axisLabelValues = new float[0];
+        private String[] axisLabelTexts = new String[0];
+
         private final class ListRow
         {
             final String group;
@@ -255,9 +275,39 @@ public class UICompCurveEditor extends UIElement
                 this.viewDuration = Math.max(1D, UICompCurveEditor.this.panel.getDurationTicks() / 24D);
             }
 
+            /* The channel adapters are rebuilt on every refresh, so the active channel has to be
+             * carried over by id. Comparing object identity (the old check) always failed and
+             * silently jumped the user back to "位置 X" after any inspector edit. */
+            String activeId = this.active == null ? null : this.active.id;
+
             this.channels = CompCurveChannel.of(selected);
 
-            if (this.active == null || !this.channels.contains(this.active))
+            /* Rebuild the key -> channel index once per channel-set change, not per hit test. */
+            this.owners.clear();
+
+            for (CompCurveChannel channel : this.channels)
+            {
+                for (Object entry : channel.raw().getKeyframes())
+                {
+                    this.owners.put((Keyframe<?>) entry, channel);
+                }
+            }
+
+            this.active = null;
+
+            if (activeId != null)
+            {
+                for (CompCurveChannel channel : this.channels)
+                {
+                    if (channel.id.equals(activeId))
+                    {
+                        this.active = channel;
+                        break;
+                    }
+                }
+            }
+
+            if (this.active == null)
             {
                 this.active = this.channels.isEmpty() ? null : this.channels.get(0);
             }
@@ -278,11 +328,23 @@ public class UICompCurveEditor extends UIElement
                 }
             }
 
-            this.buildRows();
+            this.rowsDirty = true;
+            this.invalidateGeometry();
+        }
+
+        /** Drops every cached curve; used when the channel set, view or data changes wholesale. */
+        private void invalidateGeometry()
+        {
+            this.spanCache.clear();
+            this.partialChannels.clear();
+            this.dirtyFromColumn = -1;
+            this.dirtyToColumn = -1;
+            this.readoutFrame = Integer.MIN_VALUE;
         }
 
         private void buildRows()
         {
+            this.rowsDirty = false;
             this.rows.clear();
 
             int y = -this.listScroll;
@@ -466,7 +528,13 @@ public class UICompCurveEditor extends UIElement
 
         private void endEdit()
         {
-            UICompCurveEditor.this.panel.curveChanged();
+            UICompCurveEditor.this.panel.curveChanged(true);
+        }
+
+        /** Continuous gesture (drag): the panel must not rebuild its inspector on release. */
+        private void endDragEdit()
+        {
+            UICompCurveEditor.this.panel.curveChanged(false);
         }
 
         private void applyEase(int mode)
@@ -508,6 +576,8 @@ public class UICompCurveEditor extends UIElement
                 default -> {}
             }
 
+            this.active.touch();
+            this.markDataChanged(-1, -1, null);
             this.endEdit();
         }
 
@@ -557,6 +627,7 @@ public class UICompCurveEditor extends UIElement
                 this.selection.add(key);
             }
 
+            this.markDataChanged(-1, -1, null);
             this.endEdit();
         }
 
@@ -577,6 +648,7 @@ public class UICompCurveEditor extends UIElement
                 this.selection.add(key);
             }
 
+            this.markDataChanged(-1, -1, null);
             this.endEdit();
         }
 
@@ -638,8 +710,16 @@ public class UICompCurveEditor extends UIElement
 
         private void updateAreas()
         {
-            this.listArea.set(this.area.x, this.area.y, Math.min(LIST_W, this.area.w / 2), this.area.h);
-            this.curveArea.set(this.listArea.ex(), this.area.y + RULER_H, this.area.w - this.listArea.w, this.area.h - RULER_H);
+            /* Never let the graph collapse to a zero or negative rectangle: a negative clip
+             * silently erases every child draw, which is exactly how the panel used to go blank
+             * after a page switch. The clamp is one compare per frame. */
+            int width = Math.max(1, this.area.w);
+            int height = Math.max(1, this.area.h);
+            int listWidth = Math.max(0, Math.min(LIST_W, width / 2));
+
+            this.listArea.set(this.area.x, this.area.y, listWidth, height);
+            this.curveArea.set(this.listArea.ex(), this.area.y + RULER_H,
+                Math.max(1, width - listWidth), Math.max(1, height - RULER_H));
             this.rulerArea.set(this.curveArea.x, this.area.y, this.curveArea.w, RULER_H);
         }
 
@@ -659,7 +739,10 @@ public class UICompCurveEditor extends UIElement
 
             try
             {
-                this.buildRows();
+                if (this.rowsDirty)
+                {
+                    this.buildRows();
+                }
 
                 for (ListRow row : this.rows)
                 {
@@ -741,12 +824,17 @@ public class UICompCurveEditor extends UIElement
                 float valueStep = this.niceStep(span / 6F);
                 float start = (float) Math.ceil(this.axisMin / valueStep) * valueStep;
 
-                for (float value = start; value <= this.axisMax; value += valueStep)
+                /* The labels depend only on the value range, so they are formatted once per
+                 * view instead of once per line per frame. */
+                this.ensureAxisLabels(valueStep, start);
+
+                for (int i = 0; i < this.axisLabelCount; i++)
                 {
+                    float value = this.axisLabelValues[i];
                     int y = (int) this.toY(value);
 
                     context.batcher.box(this.curveArea.x, y, this.curveArea.ex(), y + 1, 0x14FFFFFF);
-                    context.batcher.textShadow(this.formatAxis(value), this.curveArea.x + 4, y - 8, 0x667C8798);
+                    context.batcher.textShadow(this.axisLabelTexts[i], this.curveArea.x + 4, y - 8, 0x667C8798);
                 }
 
                 /* Zero line: AE marks it because overshoot reads against it. */
@@ -761,6 +849,46 @@ public class UICompCurveEditor extends UIElement
             {
                 context.batcher.unclip(context);
             }
+        }
+
+        private int axisLabelCount;
+
+        private void ensureAxisLabels(float step, float start)
+        {
+            long key = ((long) Float.floatToIntBits(this.axisMin) << 32)
+                ^ (Float.floatToIntBits(this.axisMax) * 0x9E3779B1L)
+                ^ (Float.floatToIntBits(step) * 31L);
+
+            if (key == this.axisLabelKey && this.axisLabelCount > 0)
+            {
+                return;
+            }
+
+            this.axisLabelKey = key;
+
+            int count = 0;
+
+            for (float value = start; value <= this.axisMax && count < 64; value += step)
+            {
+                count++;
+            }
+
+            if (this.axisLabelValues.length < count)
+            {
+                this.axisLabelValues = new float[count];
+                this.axisLabelTexts = new String[count];
+            }
+
+            int index = 0;
+
+            for (float value = start; value <= this.axisMax && index < count; value += step)
+            {
+                this.axisLabelValues[index] = value;
+                this.axisLabelTexts[index] = this.formatAxis(value);
+                index++;
+            }
+
+            this.axisLabelCount = index;
         }
 
         private float niceStep(float raw)
@@ -797,8 +925,6 @@ public class UICompCurveEditor extends UIElement
 
             try
             {
-                int step = 2;
-
                 for (CompCurveChannel channel : this.channels)
                 {
                     if (!this.isVisible(channel))
@@ -816,45 +942,215 @@ public class UICompCurveEditor extends UIElement
                         continue;
                     }
 
-                    boolean isActive = channel == this.active;
-                    int color = isActive ? channel.color : Colors.setA(channel.color, 0.45F);
-                    int lastX = Integer.MIN_VALUE;
-                    int lastY = 0;
-                    boolean started = false;
-
-                    for (int x = this.curveArea.x; x <= this.curveArea.ex(); x += step)
-                    {
-                        double time = this.fromX(x);
-                        float value = this.channelValueAt(channel, (float) time * this.fps());
-                        int y = (int) this.toY(value);
-
-                        if (started)
-                        {
-                            this.line(context, lastX, lastY, x, y, color, isActive ? 2 : 1);
-                        }
-
-                        lastX = x;
-                        lastY = y;
-                        started = true;
-                    }
+                    this.drawChannel(context, channel);
                 }
             }
             finally
             {
                 context.batcher.unclip(context);
+
+                /* The partial range is valid for one frame only: a channel that was not drawn
+                 * must not inherit it on the next one. */
+                this.dirtyFromColumn = -1;
+                this.dirtyToColumn = -1;
+                this.partialChannels.clear();
+            }
+        }
+
+        private void drawChannel(UIContext context, CompCurveChannel channel)
+        {
+            CurveSpans spans = this.spansFor(channel);
+            boolean isActive = channel == this.active;
+            int color = isActive ? channel.color : Colors.setA(channel.color, 0.35F);
+            int thickness = isActive ? 2 : 1;
+            int runStart = -1;
+            int runLo = 0;
+            int runHi = 0;
+
+            for (int column = 0; column < spans.columns(); column++)
+            {
+                if (!spans.has(column))
+                {
+                    if (runStart >= 0)
+                    {
+                        this.drawSpan(context, runStart, column, runLo, runHi, color, thickness);
+                        runStart = -1;
+                    }
+
+                    continue;
+                }
+
+                int lo = spans.lo(column);
+                int hi = spans.hi(column);
+
+                if (runStart < 0)
+                {
+                    runStart = column;
+                    runLo = lo;
+                    runHi = hi;
+                }
+                else if (lo == runLo && hi == runHi)
+                {
+                    /* Only identical spans merge. A looser tolerance would swallow a diagonal
+                     * run into one tall rectangle and turn the curve into a filled band. */
+                }
+                else
+                {
+                    this.drawSpan(context, runStart, column, runLo, runHi, color, thickness);
+                    runStart = column;
+                    runLo = lo;
+                    runHi = hi;
+                }
+            }
+
+            if (runStart >= 0)
+            {
+                this.drawSpan(context, runStart, spans.columns(), runLo, runHi, color, thickness);
+            }
+        }
+
+        private void drawSpan(UIContext context, int from, int to, int lo, int hi, int color, int thickness)
+        {
+            float x1 = this.curveArea.x + from;
+            float x2 = this.curveArea.x + Math.max(from + 1, to);
+
+            context.batcher.box(x1, this.curveArea.y + lo, x2, this.curveArea.y + hi + thickness - 1, color);
+        }
+
+        /** Cached per-column geometry of a channel; rebuilds only what actually changed. */
+        private CurveSpans spansFor(CompCurveChannel channel)
+        {
+            CurveSpans spans = this.spanCache.get(channel.id);
+
+            if (spans == null)
+            {
+                spans = new CurveSpans();
+                this.spanCache.put(channel.id, spans);
+            }
+
+            int columns = Math.max(1, this.curveArea.w);
+
+            spans.ensure(columns);
+
+            long view = this.viewKey();
+            long stamp = this.stampOf(channel);
+
+            if (spans.viewKey == view && spans.stamp == stamp)
+            {
+                return spans;
+            }
+
+            CurveSpans.Sampler sampler = this.sampler(channel);
+
+            if (spans.viewKey != view)
+            {
+                spans.clear();
+                spans.viewKey = view;
+                spans.build(0, columns - 1, sampler);
+            }
+            else if (this.partialChannels.contains(channel.id)
+                && this.dirtyFromColumn >= 0 && this.dirtyToColumn >= this.dirtyFromColumn)
+            {
+                spans.build(this.dirtyFromColumn, this.dirtyToColumn, sampler);
+            }
+            else
+            {
+                spans.build(0, columns - 1, sampler);
+            }
+
+            spans.stamp = stamp;
+
+            return spans;
+        }
+
+        /** Transform axes share one key list, so they share one epoch; scalars use their own. */
+        private long stampOf(CompCurveChannel channel)
+        {
+            return channel.transform ? this.transformEpoch : channel.revision();
+        }
+
+        private long viewKey()
+        {
+            long hash = 0x9E3779B97F4A7C15L;
+
+            hash = hash * 31 + Double.doubleToLongBits(this.viewStart);
+            hash = hash * 31 + Double.doubleToLongBits(this.viewDuration);
+            hash = hash * 31 + Float.floatToIntBits(this.axisMin);
+            hash = hash * 31 + Float.floatToIntBits(this.axisMax);
+            hash = hash * 31 + this.curveArea.w;
+            hash = hash * 31 + this.curveArea.h;
+            hash = hash * 31 + (this.speedMode ? 1 : 0);
+
+            return hash;
+        }
+
+        private CurveSpans.Sampler sampler(CompCurveChannel channel)
+        {
+            final float fps = this.fps();
+            final float originX = this.curveArea.x;
+            final Transform fallback = channel.transform ? this.layer.defaultTransform() : null;
+
+            return (column) ->
+            {
+                double seconds = this.fromX(originX + column);
+                float value = this.channelValueAt(channel, (float) seconds * fps, fallback);
+
+                return Math.round(this.toY(value));
+            };
+        }
+
+        /**
+         * Marks the geometry dirty.
+         *
+         * <p>A column range narrows the rebuild to the segment that changed. Without it, dragging
+         * one handle of a 500-key channel would resample the whole graph every mouse-move frame,
+         * which is exactly the cost this cache exists to remove.</p>
+         */
+        private void markDataChanged(int fromColumn, int toColumn, CompCurveChannel channel)
+        {
+            this.transformEpoch++;
+
+            this.partialChannels.clear();
+
+            if (channel != null && fromColumn >= 0 && toColumn >= fromColumn)
+            {
+                this.dirtyFromColumn = fromColumn;
+                this.dirtyToColumn = toColumn;
+                this.partialChannels.add(channel.id);
+
+                if (channel.transform)
+                {
+                    for (CompCurveChannel other : this.channels)
+                    {
+                        if (other.transform)
+                        {
+                            this.partialChannels.add(other.id);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                this.dirtyFromColumn = -1;
+                this.dirtyToColumn = -1;
             }
         }
 
         /** Value shown on the y axis: the property value, or its derivative in speed mode. */
         private float channelValueAt(CompCurveChannel channel, float frame)
         {
+            return this.channelValueAt(channel, frame, null);
+        }
+
+        private float channelValueAt(CompCurveChannel channel, float frame, Transform fallback)
+        {
             if (!this.speedMode)
             {
-                return channel.valueAt(frame);
+                return channel.valueAt(frame, fallback);
             }
 
-            float a = channel.valueAt(frame - 0.5F);
-            float b = channel.valueAt(frame + 0.5F);
+            float a = channel.valueAt(frame - 0.5F, fallback);
+            float b = channel.valueAt(frame + 0.5F, fallback);
 
             return (b - a) * this.fps();
         }
@@ -898,22 +1194,25 @@ public class UICompCurveEditor extends UIElement
 
                     boolean isActive = channel == this.active;
 
-                    for (CompCurveChannel.Key key : channel.keys())
+                    for (Object entry : channel.raw().getKeyframes())
                     {
-                        float value = this.speedMode ? this.keySpeed(channel, key.raw, true) : key.value;
-                        float x = this.toX(key.tick / this.fps());
-                        float y = this.toY(value);
+                        Keyframe<?> raw = (Keyframe<?>) entry;
+                        float x = this.toX(raw.getTick() / this.fps());
 
+                        /* Cull before touching the value: a 500-key channel must not evaluate
+                         * keys that are outside the viewport. */
                         if (x < this.curveArea.x - 8 || x > this.curveArea.ex() + 8)
                         {
                             continue;
                         }
 
-                        boolean selected = this.selection.contains(key.raw);
+                        float value = this.speedMode ? this.keySpeed(channel, raw, true) : channel.numericValue(raw);
+                        float y = this.toY(value);
+                        boolean selected = this.selection.contains(raw);
                         int color = selected ? 0xFFFFFFFF : (isActive ? channel.color : Colors.setA(channel.color, 0.6F));
                         int outline = selected ? 0xFF000000 : 0xAA000000;
 
-                        this.drawKeyShape(context, x, y, key.raw, color, outline);
+                        this.drawKeyShape(context, x, y, raw, color, outline);
                     }
                 }
             }
@@ -968,27 +1267,29 @@ public class UICompCurveEditor extends UIElement
 
             try
             {
-                for (CompCurveChannel.Key key : channel.keys())
+                float pxPerFrame = this.pxPerSecond() / this.fps();
+                float pxPerValue = Math.abs(this.toY(0F) - this.toY(1F));
+
+                for (Object entry : channel.raw().getKeyframes())
                 {
-                    if (!this.selection.contains(key.raw))
+                    Keyframe<?> key = (Keyframe<?>) entry;
+
+                    if (!this.selection.contains(key))
                     {
                         continue;
                     }
 
-                    float x = this.toX(key.tick / this.fps());
-                    float y = this.toY(key.value);
-                    float pxPerFrame = this.pxPerSecond() / this.fps();
-                    float pxPerValue = Math.abs(this.toY(0F) - this.toY(1F));
-
-                    float hx = x + key.raw.rx * pxPerFrame;
-                    float hy = y - key.raw.ry * pxPerValue;
+                    float x = this.toX(key.getTick() / this.fps());
+                    float y = this.toY(channel.numericValue(key));
+                    float hx = x + key.rx * pxPerFrame;
+                    float hy = y - key.ry * pxPerValue;
 
                     this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
                     context.batcher.box(hx - 3, hy - 3, hx + 3, hy + 3, 0xFF0D1015);
                     context.batcher.box(hx - 2, hy - 2, hx + 2, hy + 2, 0xFFE8C86A);
 
-                    hx = x - key.raw.lx * pxPerFrame;
-                    hy = y - key.raw.ly * pxPerValue;
+                    hx = x - key.lx * pxPerFrame;
+                    hy = y - key.ly * pxPerValue;
 
                     this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
                     context.batcher.box(hx - 3, hy - 3, hx + 3, hy + 3, 0xFF0D1015);
@@ -1045,14 +1346,20 @@ public class UICompCurveEditor extends UIElement
                 return;
             }
 
-            String label = channel.label + "  " + channel.format(channel.valueAt(this.frame()));
+            int frame = Math.round(this.frame());
 
-            if (this.speedMode)
+            /* The card is a function of (channel, frame, mode); rebuilding the string every
+             * display frame was pure garbage. The playhead only moves at the comp frame rate. */
+            if (frame != this.readoutFrame || channel != this.readoutChannel)
             {
-                label = channel.label + "  " + String.format(Locale.ROOT, "%.1f /s", this.channelValueAt(channel, this.frame()));
+                this.readoutFrame = frame;
+                this.readoutChannel = channel;
+                this.readoutText = this.speedMode
+                    ? channel.label + "  " + String.format(Locale.ROOT, "%.1f /s", this.channelValueAt(channel, this.frame()))
+                    : channel.label + "  " + channel.format(channel.valueAt(this.frame()));
             }
 
-            context.batcher.textCard(label, this.curveArea.x + 6, this.curveArea.y + 4, 0xFFE6ECF5, 0x99000000, 3F);
+            context.batcher.textCard(this.readoutText, this.curveArea.x + 6, this.curveArea.y + 4, 0xFFE6ECF5, 0x99000000, 3F);
 
             /* Cursor crosshair: AE's graph editor always tells you what the point under the
              * mouse is worth. Without it, placing a key by eye is guesswork. */
@@ -1088,18 +1395,36 @@ public class UICompCurveEditor extends UIElement
             context.batcher.textShadow(message, this.curveArea.x + this.curveArea.w / 2F - 80, this.curveArea.y + this.curveArea.h / 2F, 0x88FFFFFF);
         }
 
+        /**
+         * A short straight segment, drawn one rectangle per screen column.
+         *
+         * <p>Walking the dominant axis (the old implementation) emitted one quad per pixel of
+         * <em>slope</em>, so a steep handle cost hundreds of quads. One column per pixel of
+         * horizontal extent is bounded by the length the user can actually see, and looks the
+         * same at 1–2 px thickness.</p>
+         */
         private void line(UIContext context, float x1, float y1, float x2, float y2, int color, int thickness)
         {
-            float length = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
-            int steps = Math.max(1, (int) length);
+            float dx = x2 - x1;
+            float dy = y2 - y1;
+            float half = thickness * 0.5F;
+
+            if (Math.abs(dx) < 0.5F)
+            {
+                context.batcher.box(x1 - half, Math.min(y1, y2), x1 + half + 1F, Math.max(y1, y2) + 1F, color);
+
+                return;
+            }
+
+            int steps = Math.max(1, Math.min(4096, (int) Math.abs(dx)));
 
             for (int i = 0; i <= steps; i++)
             {
                 float t = i / (float) steps;
-                float x = x1 + (x2 - x1) * t;
-                float y = y1 + (y2 - y1) * t;
+                float x = x1 + dx * t;
+                float y = y1 + dy * t;
 
-                context.batcher.box(x, y, x + thickness, y + thickness, color);
+                context.batcher.box(x, y - half, x + 1F, y + half + 1F, color);
             }
         }
 
@@ -1336,17 +1661,23 @@ public class UICompCurveEditor extends UIElement
                     continue;
                 }
 
-                for (CompCurveChannel.Key key : channel.keys())
+                for (Object entry : channel.raw().getKeyframes())
                 {
-                    float value = this.speedMode ? this.keySpeed(channel, key.raw, true) : key.value;
-                    float x = this.toX(key.tick / this.fps());
-                    float y = this.toY(value);
-                    double distance = Math.hypot(mouseX - x, mouseY - y);
+                    Keyframe<?> raw = (Keyframe<?>) entry;
+                    float x = this.toX(raw.getTick() / this.fps());
+
+                    if (Math.abs(mouseX - x) > bestDistance)
+                    {
+                        continue;
+                    }
+
+                    float value = this.speedMode ? this.keySpeed(channel, raw, true) : channel.numericValue(raw);
+                    double distance = Math.hypot(mouseX - x, mouseY - this.toY(value));
 
                     if (distance < bestDistance)
                     {
                         bestDistance = distance;
-                        best = key.raw;
+                        best = raw;
                     }
                 }
             }
@@ -1410,15 +1741,7 @@ public class UICompCurveEditor extends UIElement
         @SuppressWarnings({"rawtypes", "unchecked"})
         private CompCurveChannel channelOf(Keyframe<?> key)
         {
-            for (CompCurveChannel channel : this.channels)
-            {
-                if (channel.owns(key))
-                {
-                    return channel;
-                }
-            }
-
-            return null;
+            return this.owners.get(key);
         }
 
         private void handleDrag(UIContext context)
@@ -1483,7 +1806,13 @@ public class UICompCurveEditor extends UIElement
             {
                 this.actionStarted = true;
                 this.beginEdit();
+                UICompCurveEditor.this.panel.setCurveInteraction(true);
             }
+
+            /* The curve is being edited right now: the pre-render cache must stop answering for
+             * this composition, or a green frame would keep showing the old shape until the mouse
+             * is released. */
+            UICompCurveEditor.this.panel.markCurveDirty();
 
             if (this.dragMode == DRAG_HANDLE)
             {
@@ -1521,7 +1850,7 @@ public class UICompCurveEditor extends UIElement
                 key.ly = -dy / pxPerValue;
             }
 
-            if (!Window.isAltPressed())
+            if (!CompInput.altDown())
             {
                 CompCurves.mirrorHandles(key, this.dragHandleOutgoing);
             }
@@ -1563,6 +1892,8 @@ public class UICompCurveEditor extends UIElement
                 speed = CompCurves.handleSpeed(key, this.dragHandleOutgoing ? key.rx : key.lx,
                     this.dragHandleOutgoing ? key.ry : key.ly, this.fps());
             }
+
+            this.markHandleDirty(channel, key);
 
             UICompCurveEditor.this.panel.setStatus(String.format(
                 Locale.ROOT,
@@ -1621,9 +1952,29 @@ public class UICompCurveEditor extends UIElement
                 }
             }
 
-            for (CompCurveChannel channel : this.channels)
+            /* Only the channels that were actually edited can go out of order. The old code
+             * sorted every channel on every mouse-move frame: with 18 channels and 500 keys that
+             * was ~80k comparisons per frame, more than the rendering it was protecting. */
+            java.util.Set<CompCurveChannel> edited = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+
+            for (Keyframe<?> key : this.selection)
             {
-                channel.raw().sort();
+                CompCurveChannel channel = this.channelOf(key);
+
+                if (channel != null)
+                {
+                    edited.add(channel);
+                }
+            }
+
+            for (CompCurveChannel channel : edited)
+            {
+                this.sortIfNeeded(channel);
+            }
+
+            if (this.active != null)
+            {
+                this.markSelectionDirty(this.active);
             }
 
             if (this.active != null)
@@ -1639,6 +1990,93 @@ public class UICompCurveEditor extends UIElement
         }
 
         /** Speed-graph key drag: move the tangent speed, keeping influence. */
+        /** Sorts a channel only when the tick order actually broke; O(n) scan otherwise. */
+        private void sortIfNeeded(CompCurveChannel channel)
+        {
+            java.util.List<?> keys = channel.raw().getKeyframes();
+            float previous = -Float.MAX_VALUE;
+
+            for (Object entry : keys)
+            {
+                float tick = ((Keyframe<?>) entry).getTick();
+
+                if (tick < previous)
+                {
+                    channel.raw().sort();
+
+                    return;
+                }
+
+                previous = tick;
+            }
+        }
+
+        private int columnOf(double seconds)
+        {
+            return (int) Math.floor(this.toX(seconds) - this.curveArea.x);
+        }
+
+        /** Dirty columns covering the selection plus one neighbouring segment on each side. */
+        private void markSelectionDirty(CompCurveChannel channel)
+        {
+            java.util.List<?> keys = channel.raw().getKeyframes();
+            int size = keys.size();
+            int first = -1;
+            int last = -1;
+
+            for (int i = 0; i < size; i++)
+            {
+                if (this.selection.contains(keys.get(i)))
+                {
+                    if (first < 0)
+                    {
+                        first = i;
+                    }
+
+                    last = i;
+                }
+            }
+
+            if (first < 0)
+            {
+                this.markDataChanged(-1, -1, channel);
+
+                return;
+            }
+
+            float fps = this.fps();
+            int from = Math.max(0, first - 1);
+            int to = Math.min(size - 1, last + 1);
+            double start = ((Keyframe<?>) keys.get(from)).getTick() / fps;
+            double end = ((Keyframe<?>) keys.get(to)).getTick() / fps;
+
+            this.markDataChanged(this.columnOf(start) - 2, this.columnOf(end) + 2, channel);
+            UICompCurveEditor.this.panel.setCurveDirtyRange((float) start, (float) end);
+        }
+
+        /** A handle drag changes the segment on both sides of its key. */
+        private void markHandleDirty(CompCurveChannel channel, Keyframe<?> key)
+        {
+            java.util.List<?> keys = channel.raw().getKeyframes();
+            int index = CompCurves.indexOfIdentity((java.util.List) keys, key);
+
+            if (index < 0)
+            {
+                this.markDataChanged(-1, -1, channel);
+
+                return;
+            }
+
+            float fps = this.fps();
+            int from = Math.max(0, index - 1);
+            int to = Math.min(keys.size() - 1, index + 1);
+            double start = ((Keyframe<?>) keys.get(from)).getTick() / fps;
+            double end = ((Keyframe<?>) keys.get(to)).getTick() / fps;
+
+            this.markDataChanged(this.columnOf(start) - 2, this.columnOf(end) + 2, channel);
+            UICompCurveEditor.this.panel.setCurveDirtyRange((float) start, (float) end);
+        }
+
         private void applySpeed(CompCurveChannel channel, Keyframe<?> key, float speed)
         {
             float fps = this.fps();
@@ -1670,15 +2108,22 @@ public class UICompCurveEditor extends UIElement
                     continue;
                 }
 
-                for (CompCurveChannel.Key key : channel.keys())
+                for (Object entry : channel.raw().getKeyframes())
                 {
-                    float value = this.speedMode ? this.keySpeed(channel, key.raw, true) : key.value;
-                    float x = this.toX(key.tick / this.fps());
+                    Keyframe<?> raw = (Keyframe<?>) entry;
+                    float x = this.toX(raw.getTick() / this.fps());
+
+                    if (x < x1 || x > x2)
+                    {
+                        continue;
+                    }
+
+                    float value = this.speedMode ? this.keySpeed(channel, raw, true) : channel.numericValue(raw);
                     float y = this.toY(value);
 
-                    if (x >= x1 && x <= x2 && y >= y1 && y <= y2)
+                    if (y >= y1 && y <= y2)
                     {
-                        this.selection.add(key.raw);
+                        this.selection.add(raw);
                     }
                 }
             }
@@ -1693,8 +2138,11 @@ public class UICompCurveEditor extends UIElement
 
             if ((mode == DRAG_KEY || mode == DRAG_HANDLE) && this.actionStarted)
             {
-                this.endEdit();
+                this.endDragEdit();
             }
+
+            UICompCurveEditor.this.panel.setCurveInteraction(false);
+            UICompCurveEditor.this.panel.clearCurveDirtyRange();
 
             this.actionStarted = false;
             this.dragMoved = false;
@@ -1723,7 +2171,7 @@ public class UICompCurveEditor extends UIElement
                 return true;
             }
 
-            if (Window.isCtrlPressed())
+            if (CompInput.ctrlDown())
             {
                 float anchor = this.fromY(context.mouseY);
                 float factor = context.mouseWheel > 0 ? 0.85F : 1.18F;
@@ -1742,7 +2190,7 @@ public class UICompCurveEditor extends UIElement
                 return true;
             }
 
-            if (Window.isShiftPressed())
+            if (CompInput.shiftDown())
             {
                 this.viewStart = Math.max(0D, this.viewStart - Math.signum(context.mouseWheel) * this.viewDuration * 0.1D);
 

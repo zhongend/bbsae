@@ -47,6 +47,27 @@ public final class CompCurveChannel
     public final CompLayer layer;
     public final String path;
 
+    /**
+     * Bumped on every mutation of this channel's keys.
+     *
+     * <p>The curve editor caches its per-column geometry and must know when the cache is stale.
+     * Hashing every keyframe per frame (the alternative) costs more than the drawing itself, so
+     * the producer of the change reports it instead. Not serialized: a loaded project starts at 0
+     * and the editor simply rebuilds once.</p>
+     */
+    private int revision;
+
+    public int revision()
+    {
+        return this.revision;
+    }
+
+    /** Marks the channel dirty; called by every write path in this class and by the editor. */
+    public void touch()
+    {
+        this.revision++;
+    }
+
     private CompCurveChannel(CompLayer layer, String id, String label, String group, int color, boolean transform, int axis, String path)
     {
         this.layer = layer;
@@ -225,13 +246,27 @@ public final class CompCurveChannel
 
     public float valueAt(float frame)
     {
+        return this.valueAt(frame, null);
+    }
+
+    /**
+     * @param defaultTransform the layer's fallback transform, or null to build one.
+     *
+     * <p>The curve editor samples hundreds of columns per rebuild; passing one shared transform
+     * removes a {@code new Transform()} (plus three vectors) per sample, which was the largest
+     * allocation source in the editor's steady state.</p>
+     */
+    public float valueAt(float frame, Transform defaultTransform)
+    {
         if (this.transform)
         {
+            Transform fallback = defaultTransform == null ? this.layer.defaultTransform() : defaultTransform;
+
             return CompCurves.transformValue(
                 this.layer.transformChannel(),
                 this.axis,
                 frame,
-                CompCurves.component(this.layer.defaultTransform(), this.axis)
+                CompCurves.component(fallback, this.axis)
             );
         }
 
@@ -310,13 +345,18 @@ public final class CompCurveChannel
 
             /* insertInheriting copies the left key's interpolation, style and handles, which is
              * what AE does: a key dropped onto an eased curve keeps the curve's shape. */
-            return channel.insertInheriting(tick, transform);
+            Keyframe<?> key = channel.insertInheriting(tick, transform);
+
+            this.touch();
+
+            return key;
         }
 
         KeyframeChannel<Float> channel = (KeyframeChannel<Float>) this.raw();
 
         channel.insert(tick, value);
         this.layer.putScalar(this.path, value);
+        this.touch();
 
         return findKey(channel, tick);
     }
@@ -327,13 +367,18 @@ public final class CompCurveChannel
         if (this.transform)
         {
             CompCurves.setComponent((Transform) key.getValue(), this.axis, value);
-            this.layer.transformChannel().sort();
+
+            /* No sort() here: moving a value never changes tick order, and the curve editor
+             * sorts once per gesture frame for the channels it actually edited. Sorting per key
+             * per frame was O(keys) work for nothing. */
             this.layer.putScalar(this.pathForField(), value);
+            this.touch();
             return;
         }
 
         ((Keyframe<Float>) key).setValue(value);
         this.layer.putScalar(this.path, value);
+        this.touch();
     }
 
     /** Field name used to keep the layer's base value in sync with a transform key. */
@@ -359,6 +404,7 @@ public final class CompCurveChannel
             if (keys.get(i) == key)
             {
                 channel.remove(i);
+                this.touch();
 
                 return;
             }
@@ -383,6 +429,7 @@ public final class CompCurveChannel
     public void removeAll()
     {
         this.raw().removeAll();
+        this.touch();
     }
 
     @SuppressWarnings("rawtypes")
