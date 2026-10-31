@@ -75,6 +75,7 @@ public class UILayerQuickPanel extends UIElement
     private boolean resizing;
     private int resizeStartX;
     private int resizeStartWidth;
+    private final UiMotion motion = new UiMotion();
 
     private static final class Row
     {
@@ -344,10 +345,24 @@ public class UILayerQuickPanel extends UIElement
     {
         this.syncFields();
         this.applyResize(context);
+        this.motion.tickFrame();
+        this.motion.markShown();
+
+        int accent = mchorse.bbs_mod.BBSSettings.primaryColor() | 0xFF000000;
 
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF11151C);
+        UiGfx.gradientV(context.batcher, this.area.x, this.area.y, this.area.w, 42,
+            UiGfx.alpha(accent, 0.06F), 0x00FFFFFF);
         context.batcher.box(this.area.x, this.area.y, this.area.x + 1, this.area.ey(), 0xFF2A303A);
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 1, 0xFF2A303A);
+
+        if (this.motion.time < 0.55F && CompPrefs.get().glow)
+        {
+            float intro = this.motion.intro(0.08F);
+
+            context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 2,
+                UiGfx.alpha(accent, 0.35F * (1F - intro)));
+        }
 
         FontRenderer font = context.batcher.getFont();
         int groupColor = 0xFF9FB2C8;
@@ -357,6 +372,8 @@ public class UILayerQuickPanel extends UIElement
         {
             context.batcher.textShadow(group.label, this.area.x + PAD, this.area.y + group.y
                 + (GROUP - font.getHeight()) / 2F, groupColor);
+            context.batcher.box(this.area.x + PAD - 4, this.area.y + group.y + 4,
+                this.area.x + PAD - 2, this.area.y + group.y + GROUP - 4, 0x554C9AFF);
         }
 
         for (Row row : this.rows)

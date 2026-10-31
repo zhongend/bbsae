@@ -137,6 +137,10 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIElement modalBox;
     private final UILabel modalTitle;
     private final UILabel modalHint;
+    /** Shared panel entrance/breathing clock; child widgets own their own channels. */
+    private final UiMotion panelMotion = new UiMotion();
+    private UICompSettings settingsOverlay;
+    private UIOnboarding onboarding;
 
     private final UICompRenderJobList queue;
     /** Output module (video or audio) chosen for the next job; shows the preset's real name. */
@@ -288,6 +292,11 @@ public class UICompositorPanel extends UIDashboardPanel
     public UICompositorPanel(UIDashboard dashboard)
     {
         super(dashboard);
+
+        CompPrefs.Data preferences = CompPrefs.get();
+
+        this.pendingScheme = preferences.shortcutScheme;
+        CompUi.configure(preferences.uiDensity);
 
         this.title = new UILabel(IKey.constant("BBS 合成器"));
         this.title.w(92).h(20);
@@ -3572,7 +3581,16 @@ public class UICompositorPanel extends UIDashboardPanel
         this.startScreen.relative(this).x(0).y(0).w(1F).h(1F);
         this.startScreen.setVisible(false);
 
-        this.add(this.header, this.body, this.renderPanel, this.timeline, this.quickPanel, this.status, this.modalLayer, this.startScreen);
+        this.onboarding = new UIOnboarding(this);
+        this.onboarding.relative(this).x(0).y(0).w(1F).h(1F);
+        this.onboarding.setVisible(false);
+
+        this.settingsOverlay = new UICompSettings(this);
+        this.settingsOverlay.relative(this).x(0).y(0).w(1F).h(1F);
+        this.settingsOverlay.setVisible(false);
+
+        this.add(this.header, this.body, this.renderPanel, this.timeline, this.quickPanel, this.status,
+            this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay);
 
         this.focusButton.h(18);
 
@@ -3589,6 +3607,11 @@ public class UICompositorPanel extends UIDashboardPanel
             /* Coming back from another dashboard page: re-derive the strip instead of trusting
              * the visibility flags left behind. */
             this.applyTimelinePage();
+
+            if (!Boolean.getBoolean("bbsae.debugNoOnboarding") && CompPrefs.get().needsOnboarding())
+            {
+                this.openOnboarding();
+            }
         });
         this.onAppear(() -> dev.bbsae.client.overlay.BbsPreviewBridge.attach(this.filmPanel, this.doc));
         this.onClose(() ->
@@ -3596,6 +3619,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.flushSave();
+            CompPrefs.flush();
+
+            if (this.settingsOverlay != null)
+            {
+                this.settingsOverlay.close();
+            }
+
             dev.bbsae.client.overlay.BbsPreviewBridge.detach();
         });
         this.onDisappear(() ->
@@ -3603,6 +3633,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.flushSave();
+            CompPrefs.flush();
+
+            if (this.settingsOverlay != null)
+            {
+                this.settingsOverlay.close();
+            }
+
             dev.bbsae.client.render.CompPrecache.stop();
             dev.bbsae.client.overlay.BbsPreviewBridge.detach();
         });
@@ -3921,6 +3958,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.startScreen.setVisible(true);
         this.startScreen.resize();
+        this.startScreen.replayMotion();
         this.updatePlayLabel();
     }
 
@@ -4014,6 +4052,10 @@ public class UICompositorPanel extends UIDashboardPanel
             width, height, fps, duration, System.currentTimeMillis());
 
         this.openProject(info);
+
+        /* A brand-new project inherits the workspace the user chose during onboarding. Existing
+         * projects keep their own saved layout. */
+        this.applyLayoutPreset(CompPrefs.get().layoutPreset);
     }
 
     /** Standalone project (no film): editing, grading and the render queue still work. */
@@ -4077,6 +4119,8 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.setStatus(this.pendingScheme == 1 ? "快捷键方案：BBS 原版" : "快捷键方案：Premiere");
+        CompPrefs.get().shortcutScheme = this.pendingScheme;
+        CompPrefs.save();
     }
 
     /** Opens a specific project/comp pair stored on a composition clip. */
@@ -4269,6 +4313,12 @@ public class UICompositorPanel extends UIDashboardPanel
             /* Closing the settings dialog makes the rejected choice unambiguous: there is no
              * half-selected state to explain. */
             this.closeModal();
+
+            if (this.settingsOverlay != null)
+            {
+                this.settingsOverlay.close();
+            }
+
             this.showEncoderRisk();
 
             return;
@@ -4279,7 +4329,7 @@ public class UICompositorPanel extends UIDashboardPanel
         /* Rebuild the dialog so the hint under the chooser describes the pipeline that is now
          * active; keeping the old sentence would be the exact kind of stale label this mode is
          * supposed to remove. */
-        this.showSettings();
+        this.openSettings("advanced");
     }
 
     private void applyEncoder(String encoder)
@@ -4450,10 +4500,284 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /**
-     * Project settings. These are stored on the project (not in a global config) because the
-     * shortcut scheme and the external-playback flag are editorial decisions about this film.
+     * Opens the new BBS-style settings surface. The old modal is retained as an explicit
+     * "advanced" fallback because the encoder risk list and a few diagnostics are still written
+     * for that fixed-size dialog; the primary path is now the scrollable, animated overlay.
      */
     private void showSettings()
+    {
+        this.openSettings("motion");
+    }
+
+    public void openSettings(String category)
+    {
+        if (this.settingsOverlay == null)
+        {
+            return;
+        }
+
+        this.settingsOverlay.open(category);
+    }
+
+    public void openOnboarding()
+    {
+        if (this.onboarding == null || this.onboarding.isOpen())
+        {
+            return;
+        }
+
+        this.onboarding.open(() ->
+        {
+            this.setStatus("引导已完成；所有选项都能在设置中重新调整");
+            this.onboardingClosed();
+        });
+        this.onboarding.debugPage(Integer.getInteger("bbsae.debugOnboardingPage", 0));
+    }
+
+    private void onboardingClosed()
+    {
+        if (this.startScreenOpen)
+        {
+            this.showStartScreen();
+        }
+    }
+
+    public CompProject getProject()
+    {
+        return this.project;
+    }
+
+    public CompProject.CompSettings getProjectSettings()
+    {
+        if (this.project == null)
+        {
+            return null;
+        }
+
+        if (this.project.settings == null)
+        {
+            this.project.settings = new CompProject.CompSettings();
+        }
+
+        return this.project.settings;
+    }
+
+    public void saveSettings()
+    {
+        this.save();
+    }
+
+    public int getDensityPreference()
+    {
+        return this.project != null && this.project.settings != null
+            ? this.project.settings.uiDensity
+            : CompPrefs.get().uiDensity;
+    }
+
+    public void applyDensityPreference(int preference)
+    {
+        CompPrefs.get().uiDensity = preference;
+        CompPrefs.save();
+        this.applyDensity(preference);
+    }
+
+    public int getShortcutSchemeForSettings()
+    {
+        return this.getShortcutScheme();
+    }
+
+    public void applyShortcutScheme(int scheme)
+    {
+        this.setShortcutScheme(scheme);
+        CompPrefs.get().shortcutScheme = scheme == 1 ? 1 : 0;
+        CompPrefs.save();
+    }
+
+    public void applyMotionPreset(int preset)
+    {
+        CompPrefs.Data prefs = CompPrefs.get();
+
+        switch (preset)
+        {
+            case 1 ->
+            {
+                prefs.animations = true;
+                prefs.motionIntensity = 1.25F;
+                prefs.motionSpeed = 0.85F;
+                prefs.glow = true;
+                prefs.shadows = true;
+                prefs.backdropIntensity = 1.25F;
+            }
+            case 2 ->
+            {
+                prefs.animations = false;
+                prefs.motionIntensity = 0.4F;
+                prefs.motionSpeed = 1.25F;
+                prefs.glow = false;
+                prefs.shadows = false;
+                prefs.backdropIntensity = 0.35F;
+            }
+            default ->
+            {
+                prefs.animations = true;
+                prefs.motionIntensity = 1F;
+                prefs.motionSpeed = 1F;
+                prefs.glow = true;
+                prefs.shadows = true;
+                prefs.backdropIntensity = 1F;
+            }
+        }
+
+        CompPrefs.save();
+        this.panelMotion.replay();
+        this.setStatus("动效预设已应用");
+    }
+
+    public void applyLayoutPreset(int preset)
+    {
+        int density = switch (preset)
+        {
+            case UIOnboarding.LAYOUT_COMPACT -> CompUi.DENSITY_COMPACT;
+            case UIOnboarding.LAYOUT_WIDE -> CompUi.DENSITY_COMFORTABLE;
+            default -> CompUi.DENSITY_AUTO;
+        };
+
+        this.applyDensity(density);
+
+        switch (preset)
+        {
+            case UIOnboarding.LAYOUT_FOCUS ->
+            {
+                this.leftPanelWidth = 160;
+                this.rightPanelWidth = 280;
+                this.timelinePanelHeight = 230;
+                this.quickPanelWidth = 190;
+            }
+            case UIOnboarding.LAYOUT_COMPACT ->
+            {
+                this.leftPanelWidth = 152;
+                this.rightPanelWidth = 260;
+                this.timelinePanelHeight = 232;
+                this.quickPanelWidth = 184;
+            }
+            case UIOnboarding.LAYOUT_WIDE ->
+            {
+                this.leftPanelWidth = 214;
+                this.rightPanelWidth = 350;
+                this.timelinePanelHeight = 286;
+                this.quickPanelWidth = 240;
+            }
+            default ->
+            {
+                this.leftPanelWidth = 190;
+                this.rightPanelWidth = 300;
+                this.timelinePanelHeight = 250;
+                this.quickPanelWidth = 210;
+            }
+        }
+
+        CompPrefs.get().layoutPreset = preset;
+        CompPrefs.save();
+        this.applyLayout();
+        this.savePanelLayout();
+        this.setStatus("工作区布局：" + UIOnboarding.LAYOUT_NAMES[Math.max(0, Math.min(UIOnboarding.LAYOUT_NAMES.length - 1, preset))]);
+    }
+
+    public void resetEditorLayout()
+    {
+        this.applyLayoutPreset(CompPrefs.get().layoutPreset);
+    }
+
+    public void applyExportDurationSetting(float seconds)
+    {
+        if (this.project == null)
+        {
+            return;
+        }
+
+        float duration = Math.max(0F, Math.min(3600F, seconds));
+
+        this.project.settings.exportDuration = duration;
+
+        if (duration > 0F)
+        {
+            if (this.doc != null)
+            {
+                this.doc.duration = Math.max(0.1F, duration);
+                this.doc.workAreaOut = this.doc.duration;
+            }
+
+            if (this.film != null && this.filmPanel != null)
+            {
+                CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, duration);
+                this.syncBbsLoop(Math.max(20, Math.round(duration * 20F) + 1));
+                this.filmPanel.forceSave();
+            }
+
+            this.refreshLayers();
+            this.refreshSheets();
+        }
+
+        this.save();
+        this.setStatus(duration <= 0F ? "导出时长：使用合成时长" : "导出时长：" + duration + " 秒");
+    }
+
+    public String getEncoderId()
+    {
+        return this.currentEncoder();
+    }
+
+    public void chooseEncoder(String encoder)
+    {
+        this.requestEncoder(encoder);
+    }
+
+    public float getEncoderProxySetting()
+    {
+        return this.project == null || this.project.settings == null ? 1F : this.encoderProxy();
+    }
+
+    public void setEncoderProxySetting(float proxy)
+    {
+        if (this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        this.project.settings.encoderProxy = Math.max(0.1F, Math.min(1F, proxy));
+        this.save();
+        this.setStatus("AE 预览代理：" + proxyLabel(this.project.settings.encoderProxy));
+    }
+
+    public void clearPreviewCache()
+    {
+        if (this.project != null && this.doc != null)
+        {
+            dev.bbsae.client.render.CompPrecache.clear(this.project, this.doc);
+        }
+    }
+
+    public void showStartScreenFromSettings()
+    {
+        if (this.settingsOverlay != null)
+        {
+            this.settingsOverlay.close();
+        }
+
+        this.showStartScreen();
+    }
+
+    public void showLegacySettings()
+    {
+        this.openLegacySettingsDialog();
+    }
+
+    /**
+     * The original fixed-size settings modal. Kept behind ``高级`` because the encoder risk list
+     * and a few legacy diagnostics are written for this layout; the normal entry point is the
+     * scrollable overlay opened by :meth:`showSettings`.
+     */
+    private void openLegacySettingsDialog()
     {
         this.openModalSized("合成器设置", "设置会随当前工程保存；没有工程时先进入工程列表。", 520, 520);
 
@@ -6109,11 +6433,6 @@ public class UICompositorPanel extends UIDashboardPanel
         this.actionInProgress = false;
     }
 
-    public CompProject getProject()
-    {
-        return this.project;
-    }
-
     /** Temporary verification hook: a clean comp with BBS preview, a gradient shape and a null. */
     /**
      * Development-only: drives the panel into one of the states a screenshot has to prove.
@@ -6183,6 +6502,22 @@ public class UICompositorPanel extends UIDashboardPanel
 
         switch (view)
         {
+            case "settings":
+                this.openSettings("motion");
+                return;
+
+            case "settingskeys":
+                this.openSettings("keys");
+                return;
+
+            case "settingslayout":
+                this.openSettings("layout");
+                return;
+
+            case "onboarding":
+                this.openOnboarding();
+                return;
+
             case "assets":
                 this.openAssetBrowser(false);
 
@@ -13011,6 +13346,46 @@ public class UICompositorPanel extends UIDashboardPanel
         boolean repeat = action == KeyAction.REPEAT;
         boolean typing = context.activeElement instanceof IFocusedUIElement;
 
+        boolean ctrl = CompInput.ctrlDown();
+        boolean shift = CompInput.shiftDown();
+        boolean alt = CompInput.altDown();
+
+        /* Shortcut capture is global: the settings overlay arms it, and the next physical key
+         * becomes the binding. Modifier-only presses are ignored by CompKeybinds. */
+        if (CompKeybinds.isCapturing())
+        {
+            if (pressed)
+            {
+                CompKeybinds.capture(key, ctrl, shift, alt);
+            }
+
+            return true;
+        }
+
+        if (this.onboarding != null && this.onboarding.isOpen())
+        {
+            this.onboarding.subKeyPressed(context);
+
+            return true;
+        }
+
+        if (this.settingsOverlay != null && this.settingsOverlay.isOpen())
+        {
+            if (pressed && key == GLFW.GLFW_KEY_ESCAPE)
+            {
+                this.settingsOverlay.close();
+
+                return true;
+            }
+
+            if (typing)
+            {
+                return super.subKeyPressed(context);
+            }
+
+            return true;
+        }
+
         if (this.startScreenOpen)
         {
             if (pressed && !typing && key == GLFW.GLFW_KEY_ESCAPE)
@@ -13093,90 +13468,12 @@ public class UICompositorPanel extends UIDashboardPanel
             return super.subKeyPressed(context);
         }
 
-        boolean ctrl = CompInput.ctrlDown();
-        boolean shift = CompInput.shiftDown();
-        boolean alt = CompInput.altDown();
         int scheme = this.getShortcutScheme();
-        boolean premiere = scheme == 0;
+        String shortcut = CompKeybinds.find(key, ctrl, shift, alt, scheme);
 
-        if (pressed && !ctrl)
+        if (shortcut != null && this.performShortcut(shortcut))
         {
-            if (key == GLFW.GLFW_KEY_SPACE) { this.togglePlay(); return true; }
-            if (key == GLFW.GLFW_KEY_J) { this.shuttle(-1); return true; }
-            if (key == GLFW.GLFW_KEY_K && alt) { this.addTransformKey(false); this.openKeyframes(); return true; }
-            if (key == GLFW.GLFW_KEY_K && !alt) { this.pause(); return true; }
-            if (key == GLFW.GLFW_KEY_L) { this.shuttle(1); return true; }
-            if (key == GLFW.GLFW_KEY_S && !alt) { this.trackTimeline.toggleSnapping(); this.updateToolbarLabels(); return true; }
-            if (key == GLFW.GLFW_KEY_F) { this.toggleFocusMode(); return true; }
-            if (key == GLFW.GLFW_KEY_M && !shift && !alt) { this.addMarkerAtPlayhead(); return true; }
-            if (key == GLFW.GLFW_KEY_M && shift) { this.jumpMarker(1); return true; }
-            if (key == GLFW.GLFW_KEY_C && !alt) { this.splitSelectedAtPlayhead(); return true; }
-            if (key == GLFW.GLFW_KEY_BACKSLASH) { this.trackTimeline.fit(); return true; }
-            /* =/- zoom time; Alt+=/- zoom the tracks themselves (row height), mirroring
-             * Alt+wheel. Both used to be "nothing happens" (see UICompTrackTimeline.zoomAt). */
-            if (key == GLFW.GLFW_KEY_EQUAL || key == GLFW.GLFW_KEY_KP_ADD)
-            {
-                if (alt) this.trackTimeline.stepRowHeight(2);
-                else this.trackTimeline.zoom(1D);
-
-                return true;
-            }
-
-            if (key == GLFW.GLFW_KEY_MINUS || key == GLFW.GLFW_KEY_KP_SUBTRACT)
-            {
-                if (alt) this.trackTimeline.stepRowHeight(-2);
-                else this.trackTimeline.zoom(-1D);
-
-                return true;
-            }
-            if (key == GLFW.GLFW_KEY_LEFT_BRACKET && !alt) { this.trimSelectedToPlayhead(true); return true; }
-            if (key == GLFW.GLFW_KEY_RIGHT_BRACKET && !alt) { this.trimSelectedToPlayhead(false); return true; }
-            if (key == GLFW.GLFW_KEY_COMMA) { this.navigateKeyframe(-1); return true; }
-            if (key == GLFW.GLFW_KEY_PERIOD) { this.navigateKeyframe(1); return true; }
-
-            if (premiere)
-            {
-                /* Premiere's mark-in/out and trim-to-playhead vocabulary. */
-                if (key == GLFW.GLFW_KEY_I && alt) { this.setWorkAreaIn(); return true; }
-                if (key == GLFW.GLFW_KEY_O && alt) { this.setWorkAreaOut(); return true; }
-                if (key == GLFW.GLFW_KEY_E) { this.trimSelectedToPlayhead(false); return true; }
-                if (key == GLFW.GLFW_KEY_V || key == GLFW.GLFW_KEY_A)
-                {
-                    this.setStatus("已切换到选择工具（本合成器始终为选择模式）");
-                    return true;
-                }
-            }
-            else
-            {
-                if (key == GLFW.GLFW_KEY_I && !alt) { this.setWorkAreaIn(); return true; }
-                if (key == GLFW.GLFW_KEY_O && !alt) { this.setWorkAreaOut(); return true; }
-            }
-
-            if (key == GLFW.GLFW_KEY_HOME) { this.setFrame(0F); return true; }
-            if (key == GLFW.GLFW_KEY_END) { this.setFrame(this.getDurationTicks()); return true; }
-            if (key == GLFW.GLFW_KEY_DELETE || key == GLFW.GLFW_KEY_BACKSPACE) { this.deleteSelected(); return true; }
-        }
-
-        if (pressed && ctrl)
-        {
-            if (key == GLFW.GLFW_KEY_Z)
-            {
-                if (shift) this.redo(); else this.undo();
-
-                return true;
-            }
-
-            if (key == GLFW.GLFW_KEY_Y) { this.redo(); return true; }
-            if (key == GLFW.GLFW_KEY_S) { this.save(); this.setStatus("工程已保存"); return true; }
-            if (key == GLFW.GLFW_KEY_D && (!premiere || shift)) { this.duplicateSelected(); return true; }
-            if (key == GLFW.GLFW_KEY_K && alt) { this.showShortcutHelp(); return true; }
-            if (key == GLFW.GLFW_KEY_K) { this.splitSelectedAtPlayhead(); return true; }
-            if (key == GLFW.GLFW_KEY_M && shift) { this.jumpMarker(-1); return true; }
-            if (key == GLFW.GLFW_KEY_M) { this.showExportDialog(); return true; }
-            if (key == GLFW.GLFW_KEY_SLASH) { this.showShortcutHelp(); return true; }
-            if (key == GLFW.GLFW_KEY_A && shift) { this.selectAllLayers(); this.setStatus("已全选 " + this.getSelectionCount() + " 个图层"); return true; }
-            if (key == GLFW.GLFW_KEY_I && shift && !premiere) { this.clearWorkAreaIn(); return true; }
-            if (key == GLFW.GLFW_KEY_O && shift && !premiere) { this.clearWorkAreaOut(); return true; }
+            return true;
         }
 
         if (key == GLFW.GLFW_KEY_LEFT || key == GLFW.GLFW_KEY_RIGHT)
@@ -13203,6 +13500,55 @@ public class UICompositorPanel extends UIDashboardPanel
         return super.subKeyPressed(context);
     }
 
+    /** Executes an editable shortcut action; returns false when this context cannot run it. */
+    private boolean performShortcut(String action)
+    {
+        if (action == null)
+        {
+            return false;
+        }
+
+        switch (action)
+        {
+            case "play.pause" -> { this.togglePlay(); return true; }
+            case "play.back" -> { this.shuttle(-1); return true; }
+            case "play.forward" -> { this.shuttle(1); return true; }
+            case "play.stop" -> { this.pause(); return true; }
+            case "key.transform" -> { this.addTransformKey(false); this.openKeyframes(); return true; }
+            case "key.prev" -> { this.navigateKeyframe(-1); return true; }
+            case "key.next" -> { this.navigateKeyframe(1); return true; }
+            case "clip.split" -> { this.splitSelectedAtPlayhead(); return true; }
+            case "clip.trimIn" -> { this.trimSelectedToPlayhead(true); return true; }
+            case "clip.trimOut", "clip.trimOutAlt" -> { this.trimSelectedToPlayhead(false); return true; }
+            case "timeline.snap" -> { this.trackTimeline.toggleSnapping(); this.updateToolbarLabels(); return true; }
+            case "timeline.fit" -> { this.trackTimeline.fit(); return true; }
+            case "timeline.zoomIn" -> { this.trackTimeline.zoom(1D); return true; }
+            case "timeline.zoomOut" -> { this.trackTimeline.zoom(-1D); return true; }
+            case "track.rowUp" -> { this.trackTimeline.stepRowHeight(2); return true; }
+            case "track.rowDown" -> { this.trackTimeline.stepRowHeight(-2); return true; }
+            case "work.in" -> { this.setWorkAreaIn(); return true; }
+            case "work.out" -> { this.setWorkAreaOut(); return true; }
+            case "work.clearIn" -> { this.clearWorkAreaIn(); return true; }
+            case "work.clearOut" -> { this.clearWorkAreaOut(); return true; }
+            case "marker.add" -> { this.addMarkerAtPlayhead(); return true; }
+            case "marker.next" -> { this.jumpMarker(1); return true; }
+            case "marker.prev" -> { this.jumpMarker(-1); return true; }
+            case "go.start" -> { this.setFrame(0F); return true; }
+            case "go.end" -> { this.setFrame(this.getDurationTicks()); return true; }
+            case "selection.delete" -> { this.deleteSelected(); return true; }
+            case "edit.undo" -> { this.undo(); return true; }
+            case "edit.redo" -> { this.redo(); return true; }
+            case "layer.duplicate" -> { this.duplicateSelected(); return true; }
+            case "select.all" -> { this.selectAllLayers(); this.setStatus("已全选 " + this.getSelectionCount() + " 个图层"); return true; }
+            case "tool.select" -> { this.setStatus("选择工具：本合成器始终为选择模式"); return true; }
+            case "file.save" -> { this.save(); this.setStatus("工程已保存"); return true; }
+            case "file.export" -> { this.showExportDialog(); return true; }
+            case "view.focus" -> { this.toggleFocusMode(); return true; }
+            case "settings.open" -> { this.openSettings("motion"); return true; }
+            case "help.shortcuts" -> { this.openSettings("keys"); return true; }
+            default -> { return false; }
+        }
+    }
     private void togglePlay()
     {
         if (this.playing)
@@ -13557,7 +13903,13 @@ public class UICompositorPanel extends UIDashboardPanel
         this.trackTimeline.revealTime(this.time);
     }
 
-    private void showShortcutHelp()
+    /** The editable list is the single source of truth; the old static card is kept as legacy. */
+    public void showShortcutHelp()
+    {
+        this.openSettings("keys");
+    }
+
+    private void showShortcutHelpLegacy()
     {
         boolean premiere = this.getShortcutScheme() == 0;
 
@@ -13932,7 +14284,49 @@ public class UICompositorPanel extends UIDashboardPanel
             this.renderStatus.label = IKey.constant(CompExportManager.status());
         }
 
-        super.render(context);
+        this.panelMotion.tickFrame();
+        this.panelMotion.markShown();
+
+        /* A single accent hairline under the header, with a very slow breath. It is the only
+         * always-on glow in the editor: everything else lights up in response to the pointer or a
+         * state change. */
+        if (this.header != null && this.header.area.h > 0 && CompPrefs.get().glow)
+        {
+            float breathe = this.panelMotion.breathe(3.6F);
+            int accent = mchorse.bbs_mod.BBSSettings.primaryColor() | 0xFF000000;
+
+            context.batcher.box(this.area.x, this.header.area.ey() - 1, this.area.ex(), this.header.area.ey(),
+                UiGfx.alpha(accent, 0.16F + 0.12F * breathe));
+        }
+
+        boolean overlay = (this.onboarding != null && this.onboarding.isOpen())
+            || (this.settingsOverlay != null && this.settingsOverlay.isOpen());
+
+        if (overlay)
+        {
+            super.render(context);
+
+            /* BBS draws tooltips after the panel tree; an editor tooltip would otherwise float
+             * on top of the onboarding/settings card. */
+            context.resetTooltip();
+
+            return;
+        }
+
+        float entrance = this.panelMotion.intro(0F);
+        MatrixStack stack = context.batcher.getContext().getMatrices();
+
+        stack.push();
+        stack.translate(0F, (1F - entrance) * 6F, 0F);
+
+        try
+        {
+            super.render(context);
+        }
+        finally
+        {
+            stack.pop();
+        }
     }
 
     private void updatePlayLabel()

@@ -58,10 +58,12 @@
   [`docs/ROUND27-PLAYBACK-CURVES-3D.zh.md`](docs/ROUND27-PLAYBACK-CURVES-3D.zh.md)
 - **Round 28 (asset-library scrollbar / professional AE curve editor / plugin icon, v0.17.0):**
   [`docs/ROUND28-ASSETS-CURVES-ICON.zh.md`](docs/ROUND28-ASSETS-CURVES-ICON.zh.md)
+- **Round 29 (onboarding / BBS-style settings / non-linear motion / editable keybinds, v0.18.0):**
+  [`docs/ROUND29-UI-MOTION-ONBOARDING.zh.md`](docs/ROUND29-UI-MOTION-ONBOARDING.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
-  <img src="docs/gallery/hero.png" alt="BBS Compositor — editor, effects and export" width="100%">
+  <img src="docs/gallery/hero.png" alt="BBS Compositor 0.18 — onboarding, BBS-style settings and editable shortcuts" width="100%">
 </p>
 
 > This repository does **not** redistribute the BBS FS jar. Download BBS FS 2.7-1.20.1 from its
@@ -77,11 +79,11 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.17.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.17.0/bbsae-0.17.0.jar)
-   from the **v0.17.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.18.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.18.0/bbsae-0.18.0.jar)
+   from the **v0.18.0** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.17.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.18.0.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
@@ -150,6 +152,41 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.18.0
+
+**A first-run onboarding, a BBS-style settings surface and editable shortcuts — and every custom
+widget now moves with a non-linear curve instead of snapping.**
+
+*Onboarding.* The compositor opens on a BBS-style welcome card: layout presets (标准 / 专注 / 紧凑 /
+宽屏), a motion preset (平衡 / 电影感 / 极简), a shortcut scheme, and a short finish page. The
+background is the same visual language as BBS's own landing screen — a deep surface, drifting
+lights and a pointer-following glow — and the choice is persisted, so it only appears once. It can
+be replayed from Settings → 新手引导.
+
+*Settings.* The old fixed 520×520 modal is replaced by a left category rail + right scrollable list
+in the style of BBS 2.7's settings: search, section headers, toggles, sliders and segmented choices.
+Motion intensity/speed, glow, shadows, backdrop brightness, layout density, project defaults,
+encoder/proxy and the shortcut editor all live here. The overlay enters with a short overshoot,
+rows light up under the pointer and category switches sweep an accent line.
+
+*Shortcuts.* Every compositor command is now an action in one table with a default for the
+Premiere and BBS schemes. Click a keycap, press the new combination, and it is saved globally;
+Backspace clears a binding, Esc cancels, and conflicting actions are reported in the status bar.
+`Ctrl+,` opens Settings and `Ctrl+/` jumps straight to the editor.
+
+*Motion.* A shared `UiMotion` layer drives button hover, tab underlines, tile/card entrance,
+asset-library scroll smoothing, track selection, panel entrance and the new overlays. Settings can
+turn it off or reduce intensity/speed; all motion is paint-time only, never in the frame/export
+path. The `UiMotion` easings and the shortcut table are covered by unit tests.
+
+<p align="center">
+  <img src="docs/gallery/onboarding.png" alt="BBS Compositor first-run onboarding with layout, motion and shortcut choices" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/gallery/settings.png" alt="BBS-style compositor settings with categories, motion controls and editable shortcuts" width="100%">
+</p>
 
 ## What's new in 0.17.0
 

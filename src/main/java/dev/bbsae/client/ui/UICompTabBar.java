@@ -22,6 +22,7 @@ public class UICompTabBar extends UIElement
 {
     private final List<UITextTab> tabs = new ArrayList<>();
     private int nextX;
+    private final UiMotion motion = new UiMotion();
 
     private IntSupplier active = () -> 0;
     private IntConsumer onSelect;
@@ -29,6 +30,13 @@ public class UICompTabBar extends UIElement
     public UICompTabBar()
     {
         this.h(22);
+    }
+
+    @Override
+    public void render(UIContext context)
+    {
+        this.motion.tickFrame();
+        super.render(context);
     }
 
     public UICompTabBar active(IntSupplier active)
@@ -54,13 +62,34 @@ public class UICompTabBar extends UIElement
             public void render(UIContext context)
             {
                 boolean selected = UICompTabBar.this.active.getAsInt() == index;
+                float sel = UICompTabBar.this.motion.select("tab:" + index, selected);
+                float hov = UICompTabBar.this.motion.anim("hover:" + index,
+                    this.area.isInside(context) ? 1F : 0F, 22F);
 
-                this.color = selected ? 0xFFFFFFFF : 0xFF8A94A6;
+                if (hov > 0.01F && !selected)
+                {
+                    context.batcher.box(this.area.x + 2, this.area.y + 2,
+                        this.area.ex() - 2, this.area.ey() - 4,
+                        UiGfx.mulA(0xFFFFFFFF, 0.035F * hov));
+                }
+
+                this.color = UiMotion.lerpColor(0xFF8A94A6, 0xFFFFFFFF, Math.max(sel, hov));
                 super.render(context);
 
-                if (selected)
+                if (sel > 0.01F)
                 {
-                    context.batcher.box(this.area.x + 4, this.area.ey() - 2, this.area.ex() - 4, this.area.ey(), 0xFF4C9AFF);
+                    float inset = 4F + (1F - sel) * 6F;
+
+                    context.batcher.box(this.area.x + inset, this.area.ey() - 2,
+                        this.area.ex() - inset, this.area.ey() - 1,
+                        UiGfx.mulA(0xFF4C9AFF, sel));
+
+                    if (CompPrefs.get().glow)
+                    {
+                        context.batcher.box(this.area.x + inset, this.area.ey() - 3,
+                            this.area.ex() - inset, this.area.ey() - 2,
+                            UiGfx.mulA(0xFF4C9AFF, 0.18F * sel));
+                    }
                 }
             }
 

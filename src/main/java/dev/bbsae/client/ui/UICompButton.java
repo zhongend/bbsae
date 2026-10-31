@@ -23,13 +23,15 @@ public class UICompButton extends UIButton
 {
     public enum Style
     {
-        FLAT, PRIMARY, DANGER, GHOST
+        FLAT, PRIMARY, DANGER, GHOST, SELECTED
     }
 
     private Style style = Style.FLAT;
     private Icon icon;
     /** Optional right-aligned hint (e.g. a value) drawn in a muted colour. */
     private IKey value;
+    private boolean alignRight;
+    private final UiMotion motion = new UiMotion();
 
     public UICompButton(IKey label, Consumer<UIButton> callback)
     {
@@ -56,6 +58,14 @@ public class UICompButton extends UIButton
     public UICompButton symbol(Icon icon)
     {
         this.icon = icon;
+
+        return this;
+    }
+
+    /** Right-align the label; used by value/keycap buttons in settings rows. */
+    public UICompButton alignRight()
+    {
+        this.alignRight = true;
 
         return this;
     }
@@ -97,11 +107,16 @@ public class UICompButton extends UIButton
     @Override
     protected void renderSkin(UIContext context)
     {
+        this.motion.tickFrame();
+
         int x = this.area.x;
         int y = this.area.y;
         int ex = this.area.ex();
         int ey = this.area.ey();
         boolean hover = this.hover;
+        float hv = this.motion.anim("hover", hover ? 1F : 0F, 20F);
+        float intensity = this.motion.intensity();
+        float lift = hv * Math.min(1F, intensity) * 2F;
         int fill;
         int border;
         int text;
@@ -110,47 +125,76 @@ public class UICompButton extends UIButton
         {
             case PRIMARY ->
             {
-                fill = hover ? Colors.mulRGB(BBSSettings.primaryColor() | Colors.A100, 0.88F) : (BBSSettings.primaryColor() | Colors.A100);
+                int base = BBSSettings.primaryColor() | Colors.A100;
+                fill = UiMotion.lerpColor(base, Colors.mulRGB(base, 1.14F), hv);
                 border = Colors.mulRGB(fill, 1.25F);
                 text = 0xFFFFFFFF;
             }
             case DANGER ->
             {
-                fill = hover ? 0xFF5A2A2A : 0xFF472323;
+                fill = UiMotion.lerpColor(0xFF472323, 0xFF5A2A2A, hv);
                 border = 0xFF6E3434;
-                text = 0xFFFFB4B4;
+                text = UiMotion.lerpColor(0xFFFFB4B4, 0xFFFFFFFF, hv * 0.5F);
             }
             case GHOST ->
             {
-                fill = hover ? 0x22FFFFFF : 0x00000000;
+                fill = UiMotion.alpha(0xFFFFFFFF, 0.10F * hv);
                 border = 0x00000000;
-                text = hover ? 0xFFFFFFFF : CompUi.mutedText();
+                text = UiMotion.lerpColor(CompUi.mutedText(), 0xFFFFFFFF, hv);
+            }
+            case SELECTED ->
+            {
+                /* A settings category, not a primary action: tinted surface + accent rail,
+                 * never the full accent fill. */
+                fill = UiMotion.lerpColor(0xFF2A3B4F, 0xFF34495F, hv);
+                border = UiMotion.lerpColor(BBSSettings.primaryColor() | 0x55000000,
+                    BBSSettings.primaryColor() | 0xAA000000, hv);
+                text = 0xFFFFFFFF;
             }
             default ->
             {
-                /* Rest: one rung above the panel (raised). Hover does not change the fill — it
-                 * switches the hairline to the accent colour, like AE's list rows. Darkening the
-                 * fill on hover would sink the button into the panel instead of lifting it. */
-                fill = BBSSettings.raisedSurface();
-                border = hover ? (BBSSettings.primaryColor() | 0xCC000000) : BBSSettings.dividerColor();
-                text = hover ? 0xFFFFFFFF : 0xFFD3DBE6;
+                /* Rest: one rung above the panel (raised). Hover switches the hairline to the
+                 * accent colour and lifts the fill a little, like AE's list rows. */
+                fill = UiMotion.lerpColor(BBSSettings.raisedSurface(), 0xFF2A3442, hv);
+                border = UiMotion.lerpColor(BBSSettings.dividerColor(),
+                    BBSSettings.primaryColor() | 0xCC000000, hv);
+                text = UiMotion.lerpColor(0xFFD3DBE6, 0xFFFFFFFF, hv);
             }
+        }
+
+        if (hv > 0.01F && CompPrefs.get().shadows)
+        {
+            UiGfx.shadow(context.batcher, x, y - lift, ex - x, ey - y, 2.5F,
+                UiGfx.alpha(0xFF000000, 0.10F * hv * intensity));
         }
 
         if (fill != 0)
         {
-            context.batcher.box(x, y, ex, ey, fill);
+            context.batcher.box(x, y - lift, ex, ey - lift, fill);
+
+            /* A 1 px top highlight sells the "raised chip" without a second fill colour. */
+            UiGfx.gradientV(context.batcher, x + 1, y - lift, ex - x - 2, 2,
+                UiGfx.alpha(0xFFFFFFFF, 0.05F + 0.05F * hv), 0x00FFFFFF);
         }
 
         if (border != 0)
         {
-            context.batcher.outline(x, y, ex, ey, border);
+            context.batcher.outline(x, y - lift, ex, ey - lift, border);
         }
 
-        /* A 2px accent rail marks the primary action without flooding the row with colour. */
+        /* A 2 px accent rail marks the primary action without flooding the row with colour. */
         if (this.style == Style.PRIMARY)
         {
-            context.batcher.box(x, y, x + 2, ey, Colors.mulRGB(0xFFFFFFFF, 0.85F));
+            context.batcher.box(x, y - lift, x + 2, ey - lift, Colors.mulRGB(0xFFFFFFFF, 0.85F));
+        }
+        else if (this.style == Style.SELECTED)
+        {
+            context.batcher.box(x, y - lift, x + 2, ey - lift,
+                BBSSettings.primaryColor() | 0xFF000000);
+        }
+        else if (hv > 0.01F && this.style != Style.GHOST)
+        {
+            UiGfx.accentRail(context.batcher, x, y - lift + 1, ey - y - 2, hv, BBSSettings.primaryColor());
         }
 
         FontRenderer font = context.batcher.getFont();
@@ -166,19 +210,22 @@ public class UICompButton extends UIButton
 
             rightSpace = valueWidth + paddingX;
 
-            context.batcher.text(valueText, ex - paddingX - valueWidth, this.area.my(size), CompUi.mutedText(), false);
+            context.batcher.text(valueText, ex - paddingX - valueWidth, this.area.my(size) - lift, CompUi.mutedText(), false);
         }
 
         if (this.icon != null)
         {
             int iconY = this.area.my(this.icon.h);
 
-            context.batcher.icon(this.icon, text, x + paddingX, iconY);
+            context.batcher.icon(this.icon, text, x + paddingX, iconY - lift);
         }
 
         String label = font.limitToWidth(this.label.get(), Math.max(4, this.area.w - paddingX * 2 - iconSpace - rightSpace));
+        int labelX = this.alignRight
+            ? ex - paddingX - font.getWidth(label)
+            : x + paddingX + iconSpace;
 
-        context.batcher.text(label, x + paddingX + iconSpace, this.area.my(size), text, false);
+        context.batcher.text(label, labelX, this.area.my(size) - lift, text, false);
 
         this.renderLockedArea(context);
     }

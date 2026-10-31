@@ -66,6 +66,13 @@ public class UIStartScreen extends UIElement
     private int schemeValue;
     private boolean creating;
     private String currentProject = "";
+    private final UiBackdrop backdrop = new UiBackdrop();
+    private final UiMotion motion = new UiMotion();
+
+    public void replayMotion()
+    {
+        this.motion.replay();
+    }
 
     public interface CreateHandler
     {
@@ -84,7 +91,11 @@ public class UIStartScreen extends UIElement
             @Override
             public void render(UIContext context)
             {
+                UiGfx.shadow(context.batcher, this.area.x, this.area.y, this.area.w, this.area.h, 14F, 0x88000000);
                 context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF151A21);
+                UiGfx.gradientV(context.batcher, this.area.x, this.area.y, this.area.w, 60,
+                    UiGfx.alpha(0xFF4C9AFF, 0.08F), 0x004C9AFF);
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 2, 0xFF4C9AFF);
                 context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF36414F);
                 super.render(context);
             }
@@ -360,8 +371,35 @@ public class UIStartScreen extends UIElement
     @Override
     public void render(UIContext context)
     {
-        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xD80B0E13);
-        super.render(context);
+        this.motion.tickFrame();
+        this.motion.markShown();
+        this.backdrop.render(context, this.area);
+        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0x8A070A0E);
+
+        float p = this.motion.intro(0F);
+        net.minecraft.client.util.math.MatrixStack stack = context.batcher.getContext().getMatrices();
+
+        stack.push();
+        stack.translate(0F, (1F - p) * 9F, 0F);
+
+        try
+        {
+            super.render(context);
+        }
+        finally
+        {
+            stack.pop();
+        }
+
+        /* A short accent underline that draws in after the card: the landing page gets one
+         * deliberate motion beat instead of every label flying in separately. */
+        if (this.card != null && this.card.area.h > 0)
+        {
+            int w = Math.round(74F * p);
+
+            context.batcher.box(this.card.area.x + 24, this.card.area.y + 70,
+                this.card.area.x + 24 + w, this.card.area.y + 72, 0xFF4C9AFF);
+        }
     }
 
     @Override

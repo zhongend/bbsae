@@ -262,6 +262,10 @@ public class UILayerLibrary extends UIElement
     {
         private final List<LayerCatalog.Entry> entries = new ArrayList<>();
         private int scrollY;
+        private float smoothScroll;
+        private boolean smoothInit;
+        private final UiMotion motion = new UiMotion();
+        private int hot = -1;
         private int selected = -1;
         private int pressY = Integer.MIN_VALUE;
         private int pressScroll;
@@ -304,6 +308,18 @@ public class UILayerLibrary extends UIElement
         @Override
         public void render(UIContext context)
         {
+            this.motion.tickFrame();
+
+            if (!this.smoothInit)
+            {
+                this.smoothScroll = this.scrollY;
+                this.smoothInit = true;
+            }
+
+            this.smoothScroll = CompPrefs.animating()
+                ? UiMotion.approach(this.smoothScroll, this.scrollY, 20F * CompPrefs.speed(), this.motion.dt)
+                : this.scrollY;
+
             if (this.pressY != Integer.MIN_VALUE)
             {
                 int delta = this.pressY - context.mouseY;
@@ -316,18 +332,20 @@ public class UILayerLibrary extends UIElement
                 }
             }
 
+            this.hot = this.indexAt(context.mouseX, context.mouseY);
             context.batcher.clip(this.area, context);
 
             try
             {
                 int columns = this.columns();
+                int scroll = Math.round(this.smoothScroll);
 
                 for (int i = 0; i < this.entries.size(); i++)
                 {
                     int column = i % columns;
                     int row = i / columns;
                     int x = this.area.x + column * (CARD_W + GAP);
-                    int y = this.area.y + row * (CARD_H + GAP) - this.scrollY;
+                    int y = this.area.y + row * (CARD_H + GAP) - scroll;
 
                     if (y + CARD_H < this.area.y || y > this.area.ey())
                     {
@@ -351,16 +369,57 @@ public class UILayerLibrary extends UIElement
             super.render(context);
         }
 
+        private int indexAt(int mouseX, int mouseY)
+        {
+            if (!this.area.isInside(mouseX, mouseY))
+            {
+                return -1;
+            }
+
+            int columns = this.columns();
+            int row = (mouseY - this.area.y + Math.round(this.smoothScroll)) / (CARD_H + GAP);
+            int column = (mouseX - this.area.x) / (CARD_W + GAP);
+
+            if (column < 0 || column >= columns || row < 0)
+            {
+                return -1;
+            }
+
+            int index = row * columns + column;
+
+            return index >= 0 && index < this.entries.size() ? index : -1;
+        }
+
         private void renderCard(UIContext context, LayerCatalog.Entry entry, int index, int x, int y)
         {
             boolean active = index == this.selected;
+            float hover = this.motion.hover("layer:" + index, this.hot == index ? "layer:" + index : null);
+            float sel = this.motion.select("layer:" + index, active);
+            float intro = this.motion.intro(Math.min(0.32F, index * 0.008F));
+            int drawY = y + Math.round((1F - intro) * 5F * this.motion.intensity() * 2F);
+            int fill = UiMotion.lerpColor(0xFF1E2530, 0xFF26313F, hover);
 
-            context.batcher.box(x, y, x + CARD_W, y + CARD_H, active ? 0xFF2F5C9E : 0xFF1E2530);
-            context.batcher.outline(x, y, x + CARD_W, y + CARD_H, active ? 0xFF7FB4FF : 0xFF313B49);
-            context.batcher.icon(UILayerLibrary.icon(entry.icon), active ? 0xFFFFFFFF : 0xFF9FB2C8, x + 10, y + 10);
-            context.batcher.text(entry.name, x + 32, y + 8, active ? 0xFFFFFFFF : 0xFFD6DEEB);
-            context.batcher.text(entry.category, x + CARD_W - 8 - context.batcher.getFont().getWidth(entry.category), y + 9, 0xFF6F7A8A);
-            context.batcher.text(this.wrap(entry.description, CARD_W - 40), x + 32, y + 26, 0xFF8A94A6);
+            fill = UiMotion.lerpColor(fill, 0xFF2F5C9E, sel);
+
+            if (hover > 0.01F && CompPrefs.get().shadows)
+            {
+                UiGfx.shadow(context.batcher, x, drawY, CARD_W, CARD_H, 3F,
+                    UiGfx.alpha(0xFF000000, 0.14F * hover));
+            }
+
+            context.batcher.box(x, drawY, x + CARD_W, drawY + CARD_H, UiGfx.mulA(fill, intro));
+            context.batcher.outline(x, drawY, x + CARD_W, drawY + CARD_H,
+                UiMotion.lerpColor(0xFF313B49, 0xFF7FB4FF, sel));
+
+            int iconColor = UiMotion.lerpColor(0xFF9FB2C8, 0xFFFFFFFF, sel);
+
+            context.batcher.icon(UILayerLibrary.icon(entry.icon), UiGfx.mulA(iconColor, intro), x + 10, drawY + 10);
+            context.batcher.text(entry.name, x + 32, drawY + 8,
+                UiGfx.mulA(UiMotion.lerpColor(0xFFD6DEEB, 0xFFFFFFFF, hover), intro));
+            context.batcher.text(entry.category, x + CARD_W - 8 - context.batcher.getFont().getWidth(entry.category), drawY + 9,
+                UiGfx.mulA(0xFF6F7A8A, intro));
+            context.batcher.text(this.wrap(entry.description, CARD_W - 40), x + 32, drawY + 26,
+                UiGfx.mulA(0xFF8A94A6, intro));
         }
 
         /** Two-line clamp: the card has room for two rows at 13 px. */
@@ -394,7 +453,7 @@ public class UILayerLibrary extends UIElement
             }
 
             int barH = Math.max(18, Math.round(this.area.h * (this.area.h / (float) content)));
-            int barY = this.area.y + Math.round((this.area.h - barH) * (this.scrollY / (float) Math.max(1, content - this.area.h)));
+            int barY = this.area.y + Math.round((this.area.h - barH) * (Math.max(0F, this.smoothScroll) / (float) Math.max(1, content - this.area.h)));
 
             context.batcher.box(this.area.ex() - 4, this.area.y, this.area.ex() - 1, this.area.ey(), 0x22FFFFFF);
             context.batcher.box(this.area.ex() - 4, barY, this.area.ex() - 1, barY + barH, 0x99FFFFFF);
@@ -414,7 +473,7 @@ public class UILayerLibrary extends UIElement
 
             int columns = this.columns();
             int localX = context.mouseX - this.area.x;
-            int localY = context.mouseY - this.area.y + this.scrollY;
+            int localY = context.mouseY - this.area.y + Math.round(this.smoothScroll);
             int column = localX / (CARD_W + GAP);
             int row = localY / (CARD_H + GAP);
 

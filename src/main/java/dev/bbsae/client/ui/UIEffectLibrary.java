@@ -44,6 +44,7 @@ public class UIEffectLibrary extends UIElement
 
     private String filter = "";
     private final Set<String> expanded = new LinkedHashSet<>();
+    private final UiMotion motion = new UiMotion();
 
     public UIEffectLibrary(UICompositorPanel panel)
     {
@@ -415,6 +416,7 @@ public class UIEffectLibrary extends UIElement
         @Override
         public void render(UIContext context)
         {
+            UIEffectLibrary.this.motion.tickFrame();
             super.render(context);
 
             java.util.List<EffectRow> rows = this.visible();
@@ -440,6 +442,18 @@ public class UIEffectLibrary extends UIElement
                 if (rowY + rowH < this.area.y || rowY > this.area.ey())
                 {
                     continue;
+                }
+
+                boolean hover = context.mouseX >= this.area.x && context.mouseX <= this.area.ex()
+                    && context.mouseY >= rowY && context.mouseY <= rowY + rowH;
+                float hv = UIEffectLibrary.this.motion.anim("effect:" + i, hover ? 1F : 0F, 20F);
+
+                if (hv > 0.01F)
+                {
+                    context.batcher.box(this.area.x, rowY, this.area.ex(), rowY + rowH,
+                        UiGfx.mulA(0xFFFFFFFF, 0.055F * hv));
+                    context.batcher.box(this.area.x, rowY + 2, this.area.x + 2, rowY + rowH - 2,
+                        UiGfx.mulA(0xFF4C9AFF, 0.75F * hv));
                 }
 
                 dev.bbsae.client.render.GlFramebuffer frame = dev.bbsae.client.render.CompEffectPreview.frame(row.definition.id);

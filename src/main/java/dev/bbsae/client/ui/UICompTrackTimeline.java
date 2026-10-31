@@ -69,6 +69,7 @@ public class UICompTrackTimeline extends UIElement
 
     private int scrollY;
     private int rowHeight = ROW_DEFAULT;
+    private final UiMotion motion = new UiMotion();
     private boolean viewReady;
     private boolean fitMode = true;
     private float knownDuration = -1F;
@@ -581,6 +582,7 @@ public class UICompTrackTimeline extends UIElement
     @Override
     public void render(UIContext context)
     {
+        this.motion.tickFrame();
         this.updateAreas();
         this.ensureView();
         this.clampScroll();
@@ -916,22 +918,25 @@ public class UICompTrackTimeline extends UIElement
 
     private void renderHeaderRow(UIContext context, CompLayer layer, int y, boolean selected, boolean hover)
     {
+        float sel = this.motion.select("track-head:" + layer.id, selected);
         int bottom = Math.min(y + this.rowHeight, this.laneArea.ey());
 
         context.batcher.clip(this.headerArea, context);
 
         try
         {
-            int background = selected
-                ? Colors.setA(BBSSettings.primaryColor(), 0.20F) | 0xFF000000
-                : (hover && context.mouseY >= y && context.mouseY < bottom ? BBSSettings.deepSurface() : BBSSettings.baseSurface());
+            int background = UiMotion.lerpColor(
+                hover && context.mouseY >= y && context.mouseY < bottom
+                    ? BBSSettings.deepSurface() : BBSSettings.baseSurface(),
+                Colors.setA(BBSSettings.primaryColor(), 0.20F) | 0xFF000000, sel);
 
             context.batcher.box(this.headerArea.x, y, this.headerArea.ex(), bottom, background);
             context.batcher.box(this.headerArea.x, y, this.headerArea.x + 3, bottom, this.barColor(layer));
 
-            if (selected)
+            if (sel > 0.01F)
             {
-                context.batcher.box(this.headerArea.x, y, this.headerArea.x + 2, bottom, BBSSettings.primaryColor());
+                context.batcher.box(this.headerArea.x, y, this.headerArea.x + 2, bottom,
+                    UiGfx.mulA(BBSSettings.primaryColor() | 0xFF000000, sel));
             }
 
             context.batcher.box(this.headerArea.x, bottom - 1, this.headerArea.ex(), bottom, Colors.setA(BBSSettings.dividerColor(), 0.55F));
@@ -939,7 +944,9 @@ public class UICompTrackTimeline extends UIElement
             /* Drag grip: the user grabs the left edge of a track header and moves it vertically.
              * Keeping it separate from the eye/lock/3D/parent icons means those still click. */
             int gripX = this.headerArea.x + 3;
-            int gripColor = selected ? BBSSettings.primaryColor() : Colors.setA(Colors.WHITE, hover ? 0.55F : 0.28F);
+            int gripColor = UiMotion.lerpColor(
+                Colors.setA(Colors.WHITE, hover ? 0.55F : 0.28F),
+                BBSSettings.primaryColor() | 0xFF000000, sel);
 
             for (int line = 0; line < 3; line++)
             {
@@ -993,6 +1000,7 @@ public class UICompTrackTimeline extends UIElement
 
     private void renderLaneRow(UIContext context, CompLayer layer, int y, boolean selected)
     {
+        float sel = this.motion.select("track-lane:" + layer.id, selected);
         int bottom = Math.min(y + this.rowHeight, this.laneArea.ey());
         int barY = y + 3;
         int barH = Math.max(10, this.rowHeight - 6);
@@ -1001,7 +1009,8 @@ public class UICompTrackTimeline extends UIElement
 
         try
         {
-            int rowBackground = selected ? 0x1A55AAFF : (y / Math.max(1, this.rowHeight)) % 2 == 0 ? 0x08FFFFFF : 0x00000000;
+            int stripe = (y / Math.max(1, this.rowHeight)) % 2 == 0 ? 0x08FFFFFF : 0x00000000;
+            int rowBackground = UiMotion.lerpColor(stripe, 0x1A55AAFF, sel);
 
             if (rowBackground != 0)
             {
@@ -1027,15 +1036,16 @@ public class UICompTrackTimeline extends UIElement
             context.batcher.box(start, barY, finish, barY + 2, 0x55FFFFFF);
             context.batcher.box(start, barY + barH - 1, finish, barY + barH, 0x33000000);
 
-            if (selected)
+            if (sel > 0.01F)
             {
-                context.batcher.outline(start, barY, finish, barY + barH, 0xFFEAF3FF);
+                context.batcher.outline(start, barY, finish, barY + barH,
+                    UiGfx.mulA(0xFFEAF3FF, sel));
             }
 
             /* Trim grips: visible whenever the bar is wide enough, brighter when selected */
             if (finish - start >= 10)
             {
-                int grip = selected ? 0xFFFFFFFF : 0x88FFFFFF;
+                int grip = UiMotion.lerpColor(0x88FFFFFF, 0xFFFFFFFF, sel);
 
                 context.batcher.box(start, barY, start + 2, barY + barH, grip);
                 context.batcher.box(finish - 2, barY, finish, barY + barH, grip);

@@ -2086,3 +2086,41 @@ BBS `UIKeys.C_CLIP` 的键是 `bbs.ui.camera.clips.<link>`，缺失时回退为�
 
 验证：`test` **193/193**；截图 `docs/verify/round28-curve2.png`、`round28-assets.png`；新
 README 主图 `docs/gallery/hero.png`、`editor-overview.png`、`timeline.png`。
+
+
+---
+
+## 38. 2026-11-01 第二十九轮：新手引导 / BBS 风格设置 / 可编辑快捷键 / 全局动效（0.18.0）
+
+> 完整论述见 `docs/ROUND29-UI-MOTION-ONBOARDING.zh.md`。
+
+### 38.1 新增模块
+
+- `UiMotion`：每宿主时钟 + 通道（hover/selection/scroll/intro/flash/breathe），缓动
+  `easeOut/easeInOut/easeOutBack/easeOutElastic/easeOutExpo`；所有采样读 `CompPrefs`，设置即时生效。
+- `UiGfx`：渐变、柔影、强调轨、光晕；只用 `Batcher2D`，不改 GL 状态。
+- `UiBackdrop`：BBS landing 风格 3 灯 + 48 微粒 + 指针柔光，供 onboarding/start screen。
+- `CompPrefs`：`config/bbsae/prefs.json` 全局偏好（引导、动效、布局、快捷键覆盖）。
+- `CompKeybinds`：命令表 + 两套默认 + 用户覆盖 + 录制/清除/冲突/重置。
+- `UIOnboarding`：5 页引导（欢迎/布局/动效/快捷键/完成），支持鼠标、方向键、Enter、Esc、圆点跳页。
+- `UICompSettings`：BBS 2.7 风格左分类/搜索 + 右滚动设置，含动效、布局、快捷键、项目、高级、引导。
+
+### 38.2 接入点
+
+`UICompButton`（hover 填充/浮起/阴影/选中态）、`UICompTabBar`（滑动下划线）、
+`UICompositorPanel`（面板入场/顶部呼吸线/设置和引导时清 tooltip）、`UIStartScreen`（背景/卡片入场）、
+`UIAssetBrowser`（逐格入场/平滑滚动/缩略图淡入）、`UILayerLibrary`、`UIEffectLibrary`、
+`UILayerQuickPanel`、`UICompTrackTimeline`（选择过渡）、`UICompSettings`、`UIOnboarding`。
+
+### 38.3 快捷键
+
+`subKeyPressed` 已被改为 `CompKeybinds.find(...)` + `performShortcut(action)`；保留方向键/视口/
+鼠标滚轮的特殊路径。旧 `Ctrl+K` 拆分、`Ctrl+Alt+K` 帮助、V/A 选择提示作为兼容别名保留。
+录制在面板最前与设置浮层各检查一次，避免事件路由差异；清除写入 `cleared=true`，防止默认绑定复活。
+
+### 38.4 验证与版本
+
+- `test` **197/197**（`CompKeybindTest` 4 项 + 原有 193）。
+- 实机 1920×1055 截图：`run/screenshots/round29-final-onboarding.png`、`round29-final-settings.png`。
+- `docs/gallery/onboarding.png`、`settings.png`、`hero.png` 更新为 0.18.0。
+- `gradle.properties` → `0.18.0`；README / GALLERY / features 更新。

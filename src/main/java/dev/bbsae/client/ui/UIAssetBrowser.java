@@ -982,6 +982,10 @@ public class UIAssetBrowser extends UIElement
 
         private int selected = -1;
         private int scrollY;
+        private float scrollSmooth;
+        private boolean smoothInit;
+        private final UiMotion motion = new UiMotion();
+        private String hot;
         private long lastClick;
         private int lastIndex = -1;
         private int pressX = Integer.MIN_VALUE;
@@ -1088,7 +1092,7 @@ public class UIAssetBrowser extends UIElement
             }
 
             return this.area.y + Math.round((this.area.h - this.thumbHeight())
-                * (this.scrollY / (float) max));
+                * (Math.max(0F, Math.min(this.scrollSmooth, max)) / (float) max));
         }
 
         /**
@@ -1123,6 +1127,21 @@ public class UIAssetBrowser extends UIElement
         @Override
         public void render(UIContext context)
         {
+            this.motion.tickFrame();
+
+            if (!this.smoothInit)
+            {
+                this.scrollSmooth = this.scrollY;
+                this.smoothInit = true;
+            }
+
+            this.scrollSmooth = CompPrefs.animating()
+                ? UiMotion.approach(this.scrollSmooth, this.scrollY, 20F * CompPrefs.speed(), this.motion.dt)
+                : this.scrollY;
+
+            int hotIndex = this.tileAt(context.mouseX, context.mouseY);
+            this.hot = hotIndex >= 0 ? "tile:" + hotIndex : null;
+
             /* Scrollbar drags are polled like the tile drag: BBS only dispatches click/release,
              * and a fast drag can release over a sibling that consumes the release. Without the
              * physical-button check the thumb would stay glued to the cursor. */
@@ -1160,8 +1179,9 @@ public class UIAssetBrowser extends UIElement
                 int columns = this.columns();
                 int colW = TILE_W + TILE_GAP;
                 int rowH = TILE_H + TILE_GAP;
-                int firstRow = Math.max(0, this.scrollY / rowH);
-                int lastRow = (this.scrollY + this.area.h) / rowH;
+                int scroll = Math.round(this.scrollSmooth);
+                int firstRow = Math.max(0, scroll / rowH);
+                int lastRow = (scroll + this.area.h) / rowH;
 
                 for (int row = firstRow; row <= lastRow; row++)
                 {
@@ -1175,7 +1195,7 @@ public class UIAssetBrowser extends UIElement
                         }
 
                         int x = this.area.x + column * colW;
-                        int y = this.area.y + row * rowH - this.scrollY;
+                        int y = this.area.y + row * rowH - scroll;
 
                         this.renderTile(context, UIAssetBrowser.this.filtered.get(index), index, x, y);
                     }
@@ -1190,20 +1210,76 @@ public class UIAssetBrowser extends UIElement
             super.render(context);
         }
 
+        private int tileAt(int mouseX, int mouseY)
+        {
+            if (!this.area.isInside(mouseX, mouseY))
+            {
+                return -1;
+            }
+
+            int columns = this.columns();
+
+            if (columns <= 0)
+            {
+                return -1;
+            }
+
+            int row = (mouseY - this.area.y + Math.round(this.scrollSmooth)) / (TILE_H + TILE_GAP);
+            int column = (mouseX - this.area.x) / (TILE_W + TILE_GAP);
+
+            if (column < 0 || column >= columns || row < 0)
+            {
+                return -1;
+            }
+
+            int index = row * columns + column;
+
+            return index >= 0 && index < UIAssetBrowser.this.filtered.size() ? index : -1;
+        }
+
         private void renderTile(UIContext context, Asset asset, int index, int x, int y)
         {
             boolean isSelected = index == this.selected;
+            String key = "tile:" + index;
+            float hover = this.motion.hover(key, this.hot);
+            float select = this.motion.select(key, isSelected);
+            float intro = this.motion.intro(Math.min(0.36F, index * 0.006F));
+            float intensity = this.motion.intensity();
+            int drawY = y + Math.round((1F - intro) * 7F * intensity * 2F);
+            int fill = UiMotion.lerpColor(0xFF20262F, 0xFF2A3442, hover);
 
-            context.batcher.box(x, y, x + TILE_W, y + TILE_H, isSelected ? 0xFF2F5C9E : 0xFF20262F);
+            fill = UiMotion.lerpColor(fill, 0xFF2F5C9E, select);
+
+            if (hover > 0.01F && CompPrefs.get().shadows)
+            {
+                UiGfx.shadow(context.batcher, x, drawY, TILE_W, TILE_H, 3F,
+                    UiGfx.alpha(0xFF000000, 0.14F * hover * intensity));
+            }
+
+            context.batcher.box(x, drawY, x + TILE_W, drawY + TILE_H, UiGfx.mulA(fill, intro));
+
+            if (select > 0.01F)
+            {
+                context.batcher.box(x, drawY + TILE_H - 2, x + TILE_W, drawY + TILE_H,
+                    UiGfx.mulA(0xFF4C86D8, select * intro));
+            }
+            else if (hover > 0.01F)
+            {
+                UiGfx.accentRail(context.batcher, x, drawY + 1, TILE_H - 2, hover * intro, 0xFF4C86D8);
+            }
+
+            float contentAlpha = Math.max(0.25F, intro);
 
             if (asset.sound)
             {
-                context.batcher.box(x + (TILE_W - 32) / 2, y + 6, x + (TILE_W + 32) / 2, y + 38, 0xFF2A3442);
-                context.batcher.icon(Icons.SOUND, 0xFFFFFFFF, x + TILE_W / 2 - 8, y + 12);
+                context.batcher.box(x + (TILE_W - 32) / 2, drawY + 6, x + (TILE_W + 32) / 2, drawY + 38,
+                    UiGfx.mulA(0xFF2A3442, contentAlpha));
+                context.batcher.icon(Icons.SOUND, UiGfx.mulA(0xFFFFFFFF, contentAlpha), x + TILE_W / 2 - 8, drawY + 12);
             }
             else
             {
                 ImageTextureCache.Entry texture = ImageTextureCache.get(UIAssetBrowser.this.projectId.get(), asset.path);
+                float shown = this.motion.anim("thumb:" + asset.path, texture != null ? 1F : 0F, 8F);
 
                 if (texture != null)
                 {
@@ -1214,13 +1290,14 @@ public class UIAssetBrowser extends UIElement
                     int dw = Math.max(1, Math.round(tw * fit));
                     int dh = Math.max(1, Math.round(th * fit));
 
-                    context.batcher.texturedBox(texture.texture.id, 0xFFFFFFFF,
-                        x + (TILE_W - dw) / 2, y + 3 + (size - dh) / 2, dw, dh,
+                    context.batcher.texturedBox(texture.texture.id,
+                        UiGfx.mulA(0xFFFFFFFF, contentAlpha * UiMotion.easeInOut(shown)),
+                        x + (TILE_W - dw) / 2, drawY + 3 + (size - dh) / 2, dw, dh,
                         0F, 0F, tw, th, tw, th);
                 }
                 else
                 {
-                    context.batcher.icon(Icons.IMAGE, 0xFF66707E, x + TILE_W / 2 - 8, y + 12);
+                    context.batcher.icon(Icons.IMAGE, UiGfx.mulA(0xFF66707E, contentAlpha), x + TILE_W / 2 - 8, drawY + 12);
                 }
             }
 
@@ -1231,8 +1308,11 @@ public class UIAssetBrowser extends UIElement
                 label = label.substring(0, 12) + "…";
             }
 
-            context.batcher.text(label, x + 4, y + TILE_H - 21, 0xFFB8C4D6);
-            context.batcher.text(asset.category, x + 4, y + TILE_H - 10, 0xFF6F7A8A);
+            int labelColor = UiMotion.lerpColor(0xFFB8C4D6, 0xFFFFFFFF, hover * 0.7F);
+
+            context.batcher.text(label, x + 4, drawY + TILE_H - 21, UiGfx.mulA(labelColor, contentAlpha));
+            context.batcher.text(asset.category, x + 4, drawY + TILE_H - 10,
+                UiGfx.mulA(0xFF6F7A8A, contentAlpha));
         }
 
         private void renderScrollbar(UIContext context)
@@ -1319,7 +1399,7 @@ public class UIAssetBrowser extends UIElement
 
             int columns = this.columns();
             int column = (pressX - this.area.x) / (TILE_W + TILE_GAP);
-            int row = (this.pressY - this.area.y + this.scrollY) / (TILE_H + TILE_GAP);
+            int row = (this.pressY - this.area.y + Math.round(this.scrollSmooth)) / (TILE_H + TILE_GAP);
 
             if (column < 0 || column >= columns || row < 0)
             {

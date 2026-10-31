@@ -1,7 +1,7 @@
 # BBS Compositor 图文介绍
 
 > Minecraft 1.20.1 / Fabric · BBS FS 2.7 客户端 addon  
-> 仓库：<https://github.com/zhongend/bbsae> · Release：<https://github.com/zhongend/bbsae/releases/tag/v0.1.0>
+> 仓库：<https://github.com/zhongend/bbsae> · Release：<https://github.com/zhongend/bbsae/releases/tag/v0.18.0>
 
 <p align="center">
   <img src="gallery/cover.png" alt="BBS Compositor（bbsae）封面" width="420">
@@ -43,6 +43,35 @@ BBS 负责 3D 世界、相机、回放和视频编码；合成器负责在 BBS �
 
 预览不是 BBS 影片编辑器的截图，也不是透明覆盖：`CompRenderer` 每帧把图层栈渲染到自己的
 framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器里看到的就是最终导出的画面。
+
+## 2.1 新手引导与设置（0.18.0）
+
+<p align="center">
+  <img src="gallery/onboarding.png" alt="BBS Compositor 新手引导：布局、动效和快捷键" width="100%">
+</p>
+
+首次进入时，引导会先问三个真正影响日常使用的问题：
+
+- **工作区布局**：标准、专注、紧凑、宽屏；选择会立即应用，并保存到工程；
+- **动效强度**：平衡、电影感、极简；也可以之后在设置里逐项调；
+- **快捷键方案**：Premiere 或 BBS 原版；之后每个命令都能单独改。
+
+背景沿用 BBS 原版 landing screen 的视觉语言：深色表面、漂浮灯、跟随鼠标的光晕，以及会被
+指针推开的微粒。引导只出现一次，可从「设置 → 新手引导」重新播放。
+
+<p align="center">
+  <img src="gallery/settings.png" alt="BBS 风格设置：左侧分类、右侧滚动选项、可编辑快捷键" width="100%">
+</p>
+
+设置改成 BBS 2.7 的「左分类 + 右滚动列表」布局，支持搜索、分区标题、开关、滑杆和分段选择：
+
+- **动效与光效**：开关、强度、速度、辉光、阴影、引导背景亮度；
+- **界面布局**：工作区预设、控件密度、安全框/网格、重置布局；
+- **快捷键**：点击键帽后按下新组合键，`Backspace` 清除，`Esc` 取消，冲突会在状态栏提示；
+- **项目设置 / 高级 / 新手引导**：原有工程默认值、编码器、AE 代理和引导重播都归位。
+
+所有自定义控件共用一层 `UiMotion`：按钮 hover、页签下划线、卡片入场、素材库滚动、轨道选择
+和浮层入场都走非线性曲线；设置里可以随时关闭或降低强度。
 
 ## 3. 轨道时间轴
 
@@ -141,9 +170,9 @@ framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器�
 
 ## 10. 安装
 
-1. 下载 [`bbsae-0.17.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.17.0/bbsae-0.17.0.jar)；
+1. 下载 [`bbsae-0.18.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.18.0/bbsae-0.18.0.jar)；
 2. 安装 Minecraft 1.20.1、Fabric Loader 0.16.14+、Fabric API 0.92.1+1.20.1、BBS FS 2.7-1.20.1；
-3. 把 `bbsae-0.17.0.jar` 和 BBS FS jar 放进 `mods/`；
+3. 把 `bbsae-0.18.0.jar` 和 BBS FS jar 放进 `mods/`；
 4. 打开 BBS 影片，选择 replay，进入 **Replay properties → Compositor → Open Film Compositor**。
 
 ## 11. 文档
