@@ -99,7 +99,7 @@ public class UIStartScreen extends UIElement
         this.title = new UILabel(IKey.constant("BBS 合成器"));
         this.title.relative(this.card).x(24).y(18).w(300).h(24);
 
-        this.subtitle = new UILabel(IKey.constant("选择或新建一个工程，然后进入合成器"));
+        this.subtitle = new UILabel(IKey.constant("选择或新建一个工程，然后进入合成器 · 作者 终end"));
         this.subtitle.color(0xFF8A94A6, false);
         this.subtitle.relative(this.card).x(24).y(44).w(1F, -48).h(16);
 

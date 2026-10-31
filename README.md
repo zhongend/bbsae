@@ -1,5 +1,13 @@
 # BBS Compositor (`bbsae`)
 
+<p align="center">
+  <img src="docs/gallery/cover.png" alt="BBS Compositor (bbsae)" width="460">
+</p>
+
+<p align="center">
+  <b>作者 / Author：终end</b> · <a href="https://github.com/zhongend">@zhongend</a>
+</p>
+
 > 交接文档：**[docs/HANDOFF.zh.md](docs/HANDOFF.zh.md)**（当前架构、已实现功能、关键 bug、未完成项、构建/重映射流程）。
 
 - **Source:** <https://github.com/zhongend/bbsae>
@@ -42,7 +50,7 @@
 - **Round 24 (viewport input polling, layer-space effects in the export path, mask/exclude,
   effect thumbnails, layer quick panel, v0.13.2):**
   [`docs/ROUND24-VIEWPORT-MASK-QUICKPANEL.zh.md`](docs/ROUND24-VIEWPORT-MASK-QUICKPANEL.zh.md)
-- **Round 25 (replay entity layer — depth-keyed matte, native file dialog, v0.14.0):**
+- **Round 25 (replay entity layer — depth-keyed matte, native file dialog, v0.14.1):**
   [`docs/ROUND25-ENTITY-KEY-IMPORT.zh.md`](docs/ROUND25-ENTITY-KEY-IMPORT.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
@@ -63,11 +71,11 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.14.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.14.0/bbsae-0.14.0.jar)
-   from the **v0.14.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.14.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.14.1/bbsae-0.14.1.jar)
+   from the **v0.14.1** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.14.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.14.1.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 

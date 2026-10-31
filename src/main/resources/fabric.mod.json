@@ -4,8 +4,12 @@
   "version": "${version}",
   "name": "BBS Compositor",
   "description": "A screen-space compositor for BBS FS films.",
-  "authors": ["bbsae"],
+  "authors": ["终end"],
   "license": "MIT",
+  "contact": {
+    "homepage": "https://github.com/zhongend/bbsae",
+    "sources": "https://github.com/zhongend/bbsae"
+  },
   "environment": "client",
   "entrypoints": {
     "bbs-addon": ["dev.bbsae.BbsAeAddon"],

@@ -4,7 +4,11 @@
 > 仓库：<https://github.com/zhongend/bbsae> · Release：<https://github.com/zhongend/bbsae/releases/tag/v0.1.0>
 
 <p align="center">
-  <img src="gallery/hero.png" alt="BBS Compositor：编辑器、效果与导出" width="100%">
+  <img src="gallery/cover.png" alt="BBS Compositor（bbsae）封面" width="420">
+</p>
+
+<p align="center">
+  作者 <b>终end</b> · <a href="https://github.com/zhongend">@zhongend</a>
 </p>
 
 ## 1. 这是什么
