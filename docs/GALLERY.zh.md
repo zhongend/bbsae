@@ -165,8 +165,8 @@ framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器�
   半色调 ink/paper、浮雕中灰、Glitch/VHS 恒等性与 Phase、万花筒 4 重对称；
 - `PixelPlanTest` 逐个修改七个效果的每个参数，断言参数真的进入 shader；
 - 联系表：`verify/round8-pixel-effects.png`；
-- 构建：`gradle build` 产出 `bbsae-0.18.0.jar`（814947 字节，SHA-256
-  `1E466A8A1F22946435207E2BA41A13AA65C138BC56E5DBBF3E924AE66BFCD3F6`）。
+- 构建：`gradle build` 产出 `bbsae-0.18.0.jar`（815123 字节，SHA-256
+  `6E35DC554080068023CA9B68364F835E2789DB1F4693C6528F539677DDFE7563`）。
 
 ## 10. 安装
 
