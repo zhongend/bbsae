@@ -306,14 +306,20 @@ public class CompLayer
         {
             this.axisChannel(axis).removeAll();
         }
+
+        /* Motion templates replace the transform animation. A legacy shared channel must go too,
+         * otherwise its keys would resurface during ensureIndependentAxes() on the first insert. */
+        this.transformChannel().removeAll();
+        this.transformData = "";
     }
 
     /**
      * Converts a project written before independent axes into the new representation.
      *
-     * <p>Only migrates when no axis channel has keys, so editing one axis can never re-run the
-     * migration and duplicate the other axes. Handles/style/interpolation are copied with
-     * {@code copyOverExtra}; the curve shape is therefore preserved even for eased old projects.</p>
+     * <p>If there are no axis keys every legacy 2D component is copied. If some axes already have
+     * keys (mixed data), only the missing axes are filled; an axis the artist has edited is never
+     * overwritten. Handles/style/interpolation are copied with {@code copyOverExtra}, so the curve
+     * shape is preserved even for eased old projects.</p>
      */
     public void ensureIndependentAxes()
     {
@@ -837,9 +843,13 @@ public class CompLayer
     {
         Transform transform = new Transform();
 
-        transform.translate.set(this.x, this.y, 0F);
-        transform.scale.set(this.scaleX, this.scaleY, 1F);
-        transform.rotate.set(0F, 0F, this.rotation);
+        transform.translate.set(this.x, this.y, this.threeD ? this.z : 0F);
+        transform.scale.set(this.scaleX, this.scaleY, this.threeD ? this.scaleZ : 1F);
+        transform.rotate.set(
+            this.threeD ? this.rotationX : 0F,
+            this.threeD ? this.rotationY : 0F,
+            this.rotation
+        );
 
         return transform;
     }
@@ -899,6 +909,17 @@ public class CompLayer
             1F
         );
         transform.rotate.set(0F, 0F, CompCurves.transformValue(channel, CompCurves.AXIS_ROTATION, frame, this.rotation));
+
+        /* Legacy Transform keys never carried the 3D-only components. Fill them from the actual
+         * scalar channels/base so a motion template or parent bind does not silently plane a 3D
+         * layer to Z=0. */
+        if (this.threeD)
+        {
+            transform.translate.z = this.scalarAt("z", this.z, frame);
+            transform.rotate.x = this.scalarAt("rotationX", this.rotationX, frame);
+            transform.rotate.y = this.scalarAt("rotationY", this.rotationY, frame);
+            transform.scale.z = this.scalarAt("scaleZ", this.scaleZ, frame);
+        }
 
         return transform;
     }

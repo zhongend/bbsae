@@ -17,9 +17,9 @@ import java.util.Locale;
  * "a channel with keys and a numeric value", which is what keeps the graph math in one place and
  * the UI free of special cases.</p>
  *
- * <p>Position, rotation and scale are five separate curves derived from the same transform channel
- * (BBS stores one Transform per key). That is deliberate: AE's value graph shows them as separate
- * curves too, and each one needs its own bezier handles.</p>
+ * <p>Position and scale are separate scalar curves now (rotation is separate on Z, and X/Y for 3D).
+ * The legacy Transform channel is only a migration source; once the layer has independent axes it
+ * is never shared by several graph rows.</p>
  */
 public final class CompCurveChannel
 {

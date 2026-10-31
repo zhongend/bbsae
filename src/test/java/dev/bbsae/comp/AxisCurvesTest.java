@@ -184,6 +184,10 @@ public class AxisCurvesTest
         layer.rotationX = 15F;
         layer.scaleZ = 1.4F;
 
+        assertEquals(300F, layer.defaultTransform().translate.z, 0.0001F);
+        assertEquals(15F, layer.defaultTransform().rotate.x, 0.0001F);
+        assertEquals(1.4F, layer.defaultTransform().scale.z, 0.0001F);
+
         Transform pose = layer.defaultTransform();
         pose.translate.set(100F, 200F, 0F);
         layer.transformChannel().insertInheriting(0F, pose);

@@ -1390,12 +1390,13 @@ public class UICompCurveEditor extends UIElement
             float top = this.curveArea.y - 2F;
             float bottom = this.curveArea.ey() + 2F;
             float half = Math.max(0.55F, thickness * 0.5F);
+            float fps = this.fps();
             float previous = Float.NaN;
 
             for (int column = 0; column < columns; column++)
             {
                 float x = this.curveArea.x + column;
-                float value = this.channelValueAt(channel, (float) this.fromX(x) * this.fps());
+                float value = this.channelValueAt(channel, (float) this.fromX(x) * fps);
                 float y = this.toY(value);
 
                 if (Float.isNaN(y) || Float.isInfinite(y))
