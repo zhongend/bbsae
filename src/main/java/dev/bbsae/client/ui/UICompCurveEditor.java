@@ -1348,7 +1348,7 @@ public class UICompCurveEditor extends UIElement
         private void drawChannel(UIContext context, CompCurveChannel channel, boolean active, float opacity)
         {
             int color = channel.color;
-            int thickness = active ? 2 : 1;
+            float thickness = active ? 1.6F : 1F;
 
             if (active && DEBUG_SPANS)
             {
