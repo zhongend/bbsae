@@ -2493,6 +2493,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void writeTransform(CompLayer layer, Float scaleX, Float scaleY, Float rotation, Float translateX, Float translateY)
             {
+                layer.ensureIndependentAxes();
+
                 if (layer.hasAnyTransformKey())
                 {
                     float frame = UICompositorPanel.this.getFrame();
@@ -7129,6 +7131,14 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void selectLayer(CompLayer layer)
     {
+        if (layer != null)
+        {
+            /* Selecting a layer is the point where old shared Transform keys become independent
+             * axis channels. Doing it here means the inspector's X/Y fields and the graph agree
+             * before the first edit, not only after the keyframe drawer has been opened. */
+            layer.ensureIndependentAxes();
+        }
+
         if (layer == this.selectedLayer && this.selectedIds.size() == (layer == null ? 0 : 1))
         {
             return;
@@ -9458,6 +9468,11 @@ public class UICompositorPanel extends UIDashboardPanel
             this.buildingInspector = false;
             this.inspector.resize();
             return;
+        }
+
+        if (this.selectedLayer != null)
+        {
+            this.selectedLayer.ensureIndependentAxes();
         }
 
         switch (this.inspectorPage)
@@ -12673,6 +12688,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.beginAction("添加变换关键帧");
+        this.selectedLayer.ensureIndependentAxes();
         this.selectedLayer.insertTransformKeys(this.getFrame());
         this.refreshSheets();
         this.setStatus("已在播放头添加变换关键帧（各轴独立）");
@@ -13009,6 +13025,9 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         CompLayer layer = this.selectedLayer;
+
+        layer.ensureIndependentAxes();
+
         int axis = component;
 
         if (axis < 0 || axis >= dev.bbsae.comp.CompCurves.AXIS_COUNT)
