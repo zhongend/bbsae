@@ -146,6 +146,7 @@ public final class CompRenderCache
         if (project != null && project.settings != null)
         {
             h = mix(h, project.settings.previewBackground);
+            h = mix(h, project.settings.textureFilter);
         }
 
         if (doc.layers == null)
@@ -210,6 +211,7 @@ public final class CompRenderCache
         h = mix(h, layer.wrap ? 1 : 0);
         h = mix(h, layer.imagePath == null ? 0 : layer.imagePath.hashCode());
         h = mix(h, layer.imageFit);
+        h = mix(h, layer.textureFilter);
         h = mix(h, layer.precompId == null ? 0 : layer.precompId.hashCode());
         h = mix(h, layer.precompTimeOffset);
         h = mix(h, layer.precompTimeScale);
@@ -227,6 +229,7 @@ public final class CompRenderCache
         h = mix(h, layer.cameraFar);
         h = mix(h, layer.cameraLookAt ? 1 : 0);
         h = mix(h, layer.camera3D ? 1 : 0);
+        h = mix(h, layer.cameraStyle);
 
         h = mix(h, layer.expressionX == null ? 0 : layer.expressionX.hashCode());
         h = mix(h, layer.expressionY == null ? 0 : layer.expressionY.hashCode());

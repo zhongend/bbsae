@@ -36,7 +36,8 @@ public final class EffectRenderer
         "rgb_split", "shake", "block_shatter", "gradient_ramp", "noise_gradient",
         "checkerboard", "grid", "circle", "displacement", "bulge", "pinch", "twist",
         "wave", "linear_wipe", "radial_wipe", "dissolve", "glow", "outer_glow",
-        "drop_shadow", "stroke", "depth_matte", "depth_fog", "depth_dof"
+        "drop_shadow", "stroke", "depth_matte", "depth_fog", "depth_dof",
+        "grid_repeat", "random_repeat", "turbulent_displace", "colorama", "light_sweep"
     );
 
     public static boolean supports(String type)
@@ -98,6 +99,7 @@ public final class EffectRenderer
             case "grain":
             case "posterize":
             case "threshold":
+            case "colorama":
                 return color(input, effect, frame, context, type, space);
             case "mosaic":
             case "find_edges":
@@ -133,7 +135,13 @@ public final class EffectRenderer
             case "pinch":
             case "twist":
             case "wave":
+            case "turbulent_displace":
                 return distort(input, effect, context, type, space);
+            case "light_sweep":
+                return pixel(input, effect, context, space);
+            case "grid_repeat":
+            case "random_repeat":
+                return repeat(input, effect, type, space);
             case "linear_wipe":
             case "radial_wipe":
             case "dissolve":
@@ -292,6 +300,10 @@ public final class EffectRenderer
         program.set("NoiseAmount", 0F);
         program.set("NoiseScale", 64F);
         program.set("Seed", 0F);
+        program.set("Colorama", 0F);
+        setColor(program, "ColoramaA", 0xFF101A3A);
+        setColor(program, "ColoramaB", 0xFF2E86AB);
+        setColor(program, "ColoramaC", 0xFFFFE2A8);
 
         switch (type)
         {
@@ -367,6 +379,13 @@ public final class EffectRenderer
 
             case "threshold":
                 program.set("Threshold", effect.valueF("threshold", 0.5F));
+                break;
+
+            case "colorama":
+                program.set("Colorama", effect.valueF("amount", 1F));
+                setColor(program, "ColoramaA", effect.color("shadow", 0xFF101A3A));
+                setColor(program, "ColoramaB", effect.color("mid", 0xFF2E86AB));
+                setColor(program, "ColoramaC", effect.color("highlight", 0xFFFFE2A8));
                 break;
 
             default:
@@ -481,6 +500,15 @@ public final class EffectRenderer
                 p1 = Math.max(2F, effect.valueF("segments", 6F));
                 p3 = effect.valueF("angle", 0F);
             }
+            case "light_sweep" ->
+            {
+                amount = effect.valueF("opacity", 0.8F);
+                p1 = effect.valueF("angle", 45F);
+                p2 = Math.max(0.001F, effect.valueF("width", 0.22F));
+                p3 = effect.valueF("progress", 0.5F);
+                p4 = Math.max(0.001F, effect.valueF("softness", 0.12F));
+                dotColor = effect.color("color", 0xFFFFFFFF);
+            }
             case "vhs" ->
             {
                 amount = Math.max(0F, Math.min(1F, effect.valueF("amount", 0.5F)));
@@ -502,6 +530,8 @@ public final class EffectRenderer
             case "emboss" -> 5;
             case "mirror" -> 6;
             case "kaleidoscope" -> 7;
+            case "vhs" -> 8;
+            case "light_sweep" -> 9;
             default -> 8;
         };
 
@@ -628,7 +658,12 @@ public final class EffectRenderer
             return input;
         }
 
-        int mode = type.equals("displacement") ? 0 : type.equals("bulge") ? 1 : type.equals("pinch") ? 2 : type.equals("twist") ? 3 : 4;
+        int mode = type.equals("displacement") ? 0
+            : type.equals("bulge") ? 1
+            : type.equals("pinch") ? 2
+            : type.equals("twist") ? 3
+            : type.equals("wave") ? 4
+            : 5;
 
         output.begin();
         GlStateManager._disableBlend();
@@ -659,6 +694,48 @@ public final class EffectRenderer
         program.set("Phase", effect.valueF("phase", 0F));
         program.set("Evolution", effect.valueF("evolution", 0F));
         program.set("Vertical", effect.valueF("vertical", 0F) > 0.5F ? 1 : 0);
+        program.set("Scale", effect.valueF("size", 160F));
+        program.set("Octaves", Math.max(1, Math.min(8, Math.round(effect.valueF("complexity", 4F)))));
+        program.set("Seed", effect.valueF("seed", 0F));
+        program.drawFullscreen();
+
+        return output;
+    }
+
+    /**
+     * Grid / random repetition. The shader works in layer space, so the pattern is part of the
+     * layer and follows every transform, effect and 3D projection.
+     */
+    private static GlFramebuffer repeat(GlFramebuffer input, CompEffect effect, String type, EffectSpace space)
+    {
+        GlslProgram program = CompShaders.repeat;
+        GlFramebuffer output = FboPool.acquire(input.width, input.height);
+
+        if (program == null)
+        {
+            FboPool.release(output);
+            return input;
+        }
+
+        boolean random = "random_repeat".equals(type);
+
+        output.begin();
+        GlStateManager._disableBlend();
+        program.use();
+        PassRenderer.bind(program, "Source", 0, input);
+        space.bind(program);
+        program.set("Size", input.width, input.height);
+        program.set("Mode", random ? 1 : 0);
+        program.set("Grid",
+            Math.max(1F, effect.valueF("columns", random ? 5F : 4F)),
+            Math.max(1F, effect.valueF("rows", random ? 4F : 3F)));
+        program.set("Scale", Math.max(0.01F, effect.valueF("scale", random ? 0.75F : 0.9F)));
+        program.set("Gap", Math.max(0F, Math.min(0.95F, effect.valueF("gap", 0.04F))));
+        program.set("Rotation", effect.valueF("rotation", random ? 45F : 0F));
+        program.set("Randomness", Math.max(0F, Math.min(1F, effect.valueF("randomness", 0.4F))));
+        program.set("Opacity", Math.max(0F, Math.min(1F, effect.valueF("opacity", 1F))));
+        program.set("Seed", effect.valueF("seed", 7F));
+        program.set("Offset", effect.valueF("offset_x", 0F), effect.valueF("offset_y", 0F));
         program.drawFullscreen();
 
         return output;

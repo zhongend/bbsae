@@ -25,6 +25,7 @@ public final class CompShaders
     public static GlslProgram shatter;
     public static GlslProgram rgbSplit;
     public static GlslProgram grade;
+    public static GlslProgram repeat;
     public static GlslProgram entityKey;
 
     private CompShaders()
@@ -58,6 +59,7 @@ public final class CompShaders
         shatter = make("shatter", ShaderSources.SHATTER);
         rgbSplit = make("rgb_split", ShaderSources.RGB_SPLIT);
         grade = make("grade", ShaderSources.GRADE);
+        repeat = make("repeat", ShaderSources.REPEAT);
         entityKey = make("entity_key", ShaderSources.ENTITY_KEY);
     }
 
@@ -103,9 +105,10 @@ public final class CompShaders
         delete(shatter);
         delete(rgbSplit);
         delete(grade);
+        delete(repeat);
         delete(entityKey);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = sharpen = radial = color = key = generate = distort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = entityKey = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = sharpen = radial = color = key = generate = distort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = null;
         initialized = false;
     }
 

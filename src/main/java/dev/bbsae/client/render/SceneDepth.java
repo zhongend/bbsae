@@ -64,6 +64,11 @@ public final class SceneDepth
      */
     public void captureFrom(int readFramebuffer, int width, int height)
     {
+        if (!ShaderCompat.canCaptureWorld())
+        {
+            return;
+        }
+
         int w = width;
         int h = height;
 

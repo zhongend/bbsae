@@ -2124,3 +2124,25 @@ README 主图 `docs/gallery/hero.png`、`editor-overview.png`、`timeline.png`�
 - 实机 1920×1055 截图：`run/screenshots/round29-final-onboarding.png`、`round29-final-settings.png`。
 - `docs/gallery/onboarding.png`、`settings.png`、`hero.png` 更新为 0.18.0。
 - `gradle.properties` → `0.18.0`；README / GALLERY / features 更新。
+
+---
+
+## 39. 2026-11-01 第三十轮：赞助者 / BBS 飞行相机 / 3D 效果 / 0.19.0
+
+> 详细说明见 [`ROUND30-FINAL.zh.md`](ROUND30-FINAL.zh.md)。
+
+- **关键帧抽屉空白**：`layoutKeyframeDrawer()` 现在把 drawer 的 visible 作为
+  `(timelinePage == 0 && keyframeOpen)` 的纯函数，并主动 resize 刚恢复的编辑器；切到曲线页再回来
+  不再需要点两次按钮。
+- **3D 效果失效**：`CompLayerSourceCache` 的内容指纹加入效果栈（id/type/enabled/order/解析参数/
+  颜色）；3D 图层先烘焙非深度效果再投影，`depth_*` 投影后执行；无深度时 DEPTH shader 精确 no-op。
+- **新效果**：`grid_repeat`、`random_repeat`、`turbulent_displace`、`colorama`、`light_sweep`，
+  总数 58；`ShaderRepeatTest` 用真实 GL 验证恒等/重复/间隙/随机种子。
+- **BBS / AE 摄像机**：`CompLayer.cameraStyle` + 检查器切换；BBS 模式 F 进入/退出飞行，WASD、
+  空格/Shift、鼠标、滚轮；退出写位置/朝向/滚转/FOV 关键帧。两套相机可共存。
+- **自适应 UI / 线性过滤 / 光影兼容**：`CompUi` 响应式纯函数、头部和预览栏折叠、纹理过滤
+  auto/linear/nearest、`ShaderCompat` 与深度降级提示。
+- **赞助者页面**：独立 `UISponsors` 全屏层；名单见 `CREDITS.md`。
+- **验证**：`test` **223/223**；真实 GL 隐藏窗口 shader 测试全部通过。项目路径含中文时用
+  ASCII 副本 `C:\bbsae-test` + `GRADLE_USER_HOME=C:\gradle-home` 运行 Gradle。
+- `bbsae-0.19.0.jar` 由 `build -x test` 产出，`processResources` 使用 0.19.0 版本。

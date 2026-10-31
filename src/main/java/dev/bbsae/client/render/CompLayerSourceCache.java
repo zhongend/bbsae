@@ -619,7 +619,7 @@ public final class CompLayerSourceCache
      * a pixel of the source (text, colour, size, shapes, the frame a footage layer samples) is
      * included.</p>
      */
-    private static long signature(CompLayer layer, CompRenderContext context, int pixelWidth, int pixelHeight)
+    static long signature(CompLayer layer, CompRenderContext context, int pixelWidth, int pixelHeight)
     {
         long h = 0x9E3779B97F4A7C15L;
         float frame = context.frame;
@@ -654,9 +654,48 @@ public final class CompLayerSourceCache
         h = mix(h, layer.wrap ? 1 : 0);
         h = mix(h, layer.imagePath == null ? 0 : layer.imagePath.hashCode());
         h = mix(h, layer.imageFit);
+        /* Filtering is applied while the source raster is built, so a policy change must rebuild
+         * it. AUTO depends on the source and the raster size, both already in the fingerprint. */
+        h = mix(h, TextureFilter.resolveMode(layer, context.project));
         h = mix(h, layer.precompId == null ? 0 : layer.precompId.hashCode());
         h = mix(h, layer.trackMatteEnabled ? 1 : 0);
         h = mix(h, layer.squash);
+
+        /* Effects are baked into this raster. Leaving them out of the fingerprint was the reason
+         * every 3D-layer effect appeared "dead": changing a blur radius, adding an effect or
+         * toggling one off did not change the signature, so the old unfiltered texture was served
+         * forever. Include the resolved values (animated channels included) in draw order. */
+        h = mix(h, layer.effects == null ? 0 : layer.effects.size());
+
+        if (layer.effects != null)
+        {
+            for (CompEffect effect : layer.effects)
+            {
+                if (effect == null)
+                {
+                    h = mix(h, 0);
+                    continue;
+                }
+
+                h = mix(h, effect.id == null ? 0 : effect.id.hashCode());
+                h = mix(h, effect.type == null ? 0 : effect.type.hashCode());
+                h = mix(h, effect.enabled ? 1 : 0);
+
+                CompEffect resolved = layer.resolveEffect(effect, frame);
+
+                for (java.util.Map.Entry<String, Double> entry : resolved.params.entrySet())
+                {
+                    h = mix(h, entry.getKey() == null ? 0 : entry.getKey().hashCode());
+                    h = mix(h, entry.getValue() == null ? 0F : entry.getValue().floatValue());
+                }
+
+                for (java.util.Map.Entry<String, Integer> entry : resolved.colors.entrySet())
+                {
+                    h = mix(h, entry.getKey() == null ? 0 : entry.getKey().hashCode());
+                    h = mix(h, entry.getValue() == null ? 0 : entry.getValue());
+                }
+            }
+        }
 
         for (CompShape shape : layer.shapes)
         {

@@ -202,7 +202,10 @@ public final class CompCamera
         float cx = transform.translate.x;
         float cy = transform.translate.y;
         float roll = transform.rotate.z;
-        boolean lookAt = layer.cameraLookAt;
+        /* BBS-style cameras are flown, never aimed with a target point. This is authoritative over
+         * a stale cameraLookAt field so switching styles cannot leave the camera looking at a
+         * target the pilot is not controlling. */
+        boolean lookAt = layer.cameraStyle != CompLayer.CAMERA_BBS && layer.cameraLookAt;
         float tx = layer.scalarAt("cameraTargetX", layer.cameraTargetX, frame);
         float ty = layer.scalarAt("cameraTargetY", layer.cameraTargetY, frame);
         float tz = layer.scalarAt("cameraTargetZ", layer.cameraTargetZ, frame);

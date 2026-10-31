@@ -274,6 +274,8 @@ public class UICompCurveEditor extends UIElement
         private String readoutText = "";
         private int readoutFrame = Integer.MIN_VALUE;
         private CompCurveChannel readoutChannel;
+        /** Reused per-column Y samples; the halo and core strokes share one evaluation pass. */
+        private float[] curveSamples = new float[0];
         private long axisLabelKey;
         private float[] axisLabelValues = new float[0];
         private String[] axisLabelTexts = new String[0];
@@ -1011,18 +1013,41 @@ public class UICompCurveEditor extends UIElement
             this.updateAxis();
             this.handleDrag(context);
 
-            this.renderSurfaces(context);
-            this.renderList(context);
-            this.renderGrid(context);
-            this.renderCurves(context);
-            this.renderKeys(context);
-            this.renderHandles(context);
-            this.renderPlayhead(context);
-            this.renderMarquee(context);
-            this.renderReadout(context);
-            this.renderEmptyState(context);
+            /* Every box() in BBS's Batcher2D is a separate draw call unless a batch scope is
+             * open. The curve alone emitted two antialiased strokes per channel (one rectangle per
+             * covered row per screen column), so a full-width graph could issue several thousand
+             * draw calls per frame. One scope collapses all of those solid quads to a single draw
+             * while preserving order; text/clip calls flush the pending batch themselves. */
+            boolean outerBatch = !context.batcher.isBatching();
 
-            super.render(context);
+            if (outerBatch)
+            {
+                context.batcher.beginBatch();
+            }
+
+            try
+            {
+                this.renderSurfaces(context);
+                this.renderList(context);
+                this.renderGrid(context);
+                this.renderCurves(context);
+                this.renderKeys(context);
+                this.renderHandles(context);
+                this.renderPlayhead(context);
+                this.renderMarquee(context);
+                this.renderReadout(context);
+                this.renderEmptyState(context);
+
+                super.render(context);
+            }
+            finally
+            {
+                if (outerBatch)
+                {
+                    context.batcher.endBatch();
+                }
+            }
+
             this.updateCursor(context);
         }
 
@@ -1365,47 +1390,72 @@ public class UICompCurveEditor extends UIElement
                 dev.bbsae.BbsAeAddon.LOGGER.info(line.toString());
             }
 
-            /* A 3–4 px translucent halo under the active curve. The old painter filled one integer
-             * rectangle per column; the coverage rasterizer below gives the core a soft edge and
-             * this halo makes it read as an AE graph instead of a Minecraft 1 px strip. */
+            /* Sample the curve once per screen column, then paint the halo and the core from the
+             * same array. The previous code evaluated every key segment twice (once for each
+             * stroke), which was the most expensive per-frame work in the graph. */
+            this.sampleCurve(channel);
+
+            /* A 3–4 px translucent halo under the active curve. The coverage rasterizer below
+             * gives the core a soft edge and this halo makes it read as an AE graph instead of a
+             * Minecraft 1 px strip. */
             if (active && CompPrefs.get().glow)
             {
-                this.drawSmoothCurve(context, channel, color, 0.10F, 4.4F);
+                this.drawSmoothCurve(context, color, 0.10F, 4.4F);
             }
 
-            this.drawSmoothCurve(context, channel, color, opacity, thickness);
+            this.drawSmoothCurve(context, color, opacity, thickness);
+        }
+
+        /** Fills {@link #curveSamples} with one clamped graph Y per screen column. */
+        private void sampleCurve(CompCurveChannel channel)
+        {
+            int columns = Math.max(1, this.curveArea.w);
+
+            if (this.curveSamples.length < columns)
+            {
+                this.curveSamples = new float[columns];
+            }
+
+            float fps = this.fps();
+            float originX = this.curveArea.x;
+            float top = this.curveArea.y - 2F;
+            float bottom = this.curveArea.ey() + 2F;
+
+            for (int column = 0; column < columns; column++)
+            {
+                float value = this.channelValueAt(channel, (float) this.fromX(originX + column) * fps);
+                float y = this.toY(value);
+
+                this.curveSamples[column] = (Float.isNaN(y) || Float.isInfinite(y))
+                    ? Float.NaN
+                    : Math.max(top, Math.min(bottom, y));
+            }
         }
 
         /**
          * Anti-aliased curve rasterizer.
          *
-         * <p>At every screen column this samples the real function and writes row coverage for the
-         * vertical segment between the previous and current value. Top/bottom edges fade over one
-         * pixel, which removes the staircase without introducing a shader, framebuffer or any GL
-         * state change — the same BBS batcher and the same clip rectangle.</p>
+         * <p>At every screen column this writes row coverage for the vertical segment between the
+         * previous and current value. Top/bottom edges fade over one pixel, which removes the
+         * staircase without introducing a shader, framebuffer or any GL state change — the same
+         * BBS batcher and the same clip rectangle.</p>
          */
-        private void drawSmoothCurve(UIContext context, CompCurveChannel channel, int color, float opacity, float thickness)
+        private void drawSmoothCurve(UIContext context, int color, float opacity, float thickness)
         {
             int columns = Math.max(1, this.curveArea.w);
-            float top = this.curveArea.y - 2F;
-            float bottom = this.curveArea.ey() + 2F;
             float half = Math.max(0.55F, thickness * 0.5F);
-            float fps = this.fps();
             float previous = Float.NaN;
 
             for (int column = 0; column < columns; column++)
             {
                 float x = this.curveArea.x + column;
-                float value = this.channelValueAt(channel, (float) this.fromX(x) * fps);
-                float y = this.toY(value);
+                float y = this.curveSamples[column];
 
                 if (Float.isNaN(y) || Float.isInfinite(y))
                 {
                     previous = y;
                     continue;
                 }
-
-                y = Math.max(top, Math.min(bottom, y));
 
                 float from = Float.isNaN(previous) ? y : previous;
                 float lo = Math.min(y, from) - half;

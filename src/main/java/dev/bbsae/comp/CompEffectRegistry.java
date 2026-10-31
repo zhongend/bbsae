@@ -271,6 +271,47 @@ public final class CompEffectRegistry
             .p("range", "对焦范围", 0.01F, 1, 0.15F, 0.01F)
             .p("radius", "模糊", 0, 100, 12, 1));
 
+        /* Repetition family: the two Alight Motion modes are separate entries because their
+         * controls and intent differ (a deterministic grid vs. a seeded scatter). */
+        add(new Definition("grid_repeat", "网格重复", "重复")
+            .p("columns", "横向数量", 1, 20, 4, 1)
+            .p("rows", "纵向数量", 1, 20, 3, 1)
+            .p("scale", "单元缩放", 0.1F, 1.5F, 0.9F, 0.01F)
+            .p("gap", "单元间隙", 0, 0.8F, 0.04F, 0.01F)
+            .p("rotation", "单元旋转", -180, 180, 0, 1)
+            .p("offset_x", "内容偏移 X", -0.5F, 0.5F, 0, 0.01F)
+            .p("offset_y", "内容偏移 Y", -0.5F, 0.5F, 0, 0.01F));
+        add(new Definition("random_repeat", "随机重复", "重复")
+            .p("columns", "横向数量", 1, 20, 5, 1)
+            .p("rows", "纵向数量", 1, 20, 4, 1)
+            .p("scale", "单元缩放", 0.1F, 1.5F, 0.75F, 0.01F)
+            .p("gap", "单元间隙", 0, 0.8F, 0.05F, 0.01F)
+            .p("randomness", "随机程度", 0, 1, 0.4F, 0.01F)
+            .p("rotation", "旋转范围", 0, 180, 45, 1)
+            .p("opacity", "单元不透明度", 0, 1, 1, 0.01F)
+            .p("seed", "随机种子", 0, 9999, 7, 1));
+
+        /* EffectCraft-inspired additions. They reuse the existing shader families and therefore
+         * inherit the same layer-space / 3D / export behaviour as the rest of the catalogue. */
+        add(new Definition("turbulent_displace", "湍流置换", "扭曲")
+            .p("amount", "强度（像素）", -400, 400, 38, 1)
+            .p("size", "湍流大小（像素）", 8, 800, 160, 1)
+            .p("evolution", "演化", 0, 100, 0, 0.01F)
+            .p("complexity", "细节", 1, 8, 4, 1)
+            .p("seed", "随机种子", 0, 9999, 0, 1));
+        add(new Definition("colorama", "色彩映射", "色彩校正")
+            .p("amount", "混合", 0, 1, 1, 0.01F)
+            .c("shadow", "阴影色", 0xFF101A3A)
+            .c("mid", "中间调", 0xFF2E86AB)
+            .c("highlight", "高光色", 0xFFFFE2A8));
+        add(new Definition("light_sweep", "扫光", "风格化")
+            .p("progress", "位置", -1, 2, 0.5F, 0.01F)
+            .p("width", "宽度", 0.01F, 1, 0.22F, 0.01F)
+            .p("softness", "边缘柔化", 0.001F, 0.8F, 0.12F, 0.001F)
+            .p("angle", "角度", -180, 180, 45, 1)
+            .p("opacity", "强度", 0, 2, 0.8F, 0.01F)
+            .c("color", "扫光颜色", 0xFFFFFFFF));
+
         add(new Definition("block_shatter", "方块破碎", "风格化")
             .p("progress", "进度", 0, 1, 0.35F, 0.01F)
             .p("blocks", "方块数", 2, 60, 12, 1)

@@ -33,12 +33,40 @@ public final class SceneColor
     {
         MinecraftClient mc = MinecraftClient.getInstance();
 
-        if (mc == null || mc.getFramebuffer() == null)
+        if (mc == null)
+        {
+            return;
+        }
+
+        /* Iris renders a shadow pass with only depth bound. Copying that pass would replace the
+         * preview with a black/depth image, so it must be skipped until the colour pass arrives. */
+        if (!ShaderCompat.canCaptureWorld())
         {
             return;
         }
 
         Framebuffer framebuffer = mc.getFramebuffer();
+
+        /* BBS may point its own world framebuffer at a custom target. In the editor (custom size
+         * off) the main framebuffer is authoritative; this fallback only covers the case where
+         * Minecraft's reference is null but BBS still has a valid colour target. */
+        if (framebuffer == null)
+        {
+            try
+            {
+                framebuffer = mchorse.bbs_mod.client.BBSRendering.getFramebuffer();
+            }
+            catch (RuntimeException | LinkageError ignored)
+            {
+                framebuffer = null;
+            }
+        }
+
+        if (framebuffer == null)
+        {
+            return;
+        }
+
         int w = framebuffer.textureWidth;
         int h = framebuffer.textureHeight;
 

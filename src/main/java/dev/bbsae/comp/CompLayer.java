@@ -91,6 +91,17 @@ public class CompLayer
     public float cameraFar = 100000F;
     /** True when the camera should be evaluated with the 3D projection. */
     public boolean camera3D = false;
+
+    /** AE-style two-node camera. The original BBS-style camera (the other value) is a free fly camera. */
+    public static final int CAMERA_AE = 0;
+    public static final int CAMERA_BBS = 1;
+    /**
+     * Camera authoring model. AE uses a position + look-at target (plus optional free yaw/pitch),
+     * BBS uses a free position + yaw/pitch camera flown with WASD/mouse. Both are ordinary layers
+     * and can coexist in one composition; only {@link CompDocument#activeCameraId} decides which
+     * one drives the frame.
+     */
+    public int cameraStyle = CAMERA_AE;
     /** Anchor as a fraction of the layer bounds (0.5 = centre). */
     public float anchorX = 0.5F;
     public float anchorY = 0.5F;
@@ -114,6 +125,13 @@ public class CompLayer
 
     public String imagePath = "";
     public int imageFit = 0;
+    /**
+     * Texture sampling override for image/footage layers.
+     *
+     * <p>-1 inherits the project setting (automatic by default), 0 = automatic, 1 = linear,
+     * 2 = nearest. Kept as an int so old project files deserialize without a migration.</p>
+     */
+    public int textureFilter = -1;
     /** Precomp target. */
     public String precompId = "";
     public float precompTimeOffset = 0F;

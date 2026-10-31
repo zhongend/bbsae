@@ -60,6 +60,8 @@
   [`docs/ROUND28-ASSETS-CURVES-ICON.zh.md`](docs/ROUND28-ASSETS-CURVES-ICON.zh.md)
 - **Round 29 (onboarding / BBS-style settings / non-linear motion / editable keybinds, v0.18.0):**
   [`docs/ROUND29-UI-MOTION-ONBOARDING.zh.md`](docs/ROUND29-UI-MOTION-ONBOARDING.zh.md)
+- **Round 30 (sponsor hall / BBS flight camera / 3D effect fix / repeats / adaptive UI, v0.19.0):**
+  [`docs/ROUND30-FINAL.zh.md`](docs/ROUND30-FINAL.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -79,11 +81,11 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.18.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.18.0/bbsae-0.18.0.jar)
-   from the **v0.18.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.19.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.19.0/bbsae-0.19.0.jar)
+   from the **v0.19.0** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.18.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.19.0.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
@@ -113,11 +115,12 @@ film editor. The layout follows a Premiere-style information architecture:
   <img src="docs/gallery/timeline.png" alt="Track timeline with per-layer clips, snapping and markers" width="100%">
 </p>
 
-### 53 effects, including the Alight Motion PIXEL family
+### 58 effects, including the Alight Motion PIXEL family and repeat tools
 
 The compositor ships a curated catalogue rather than a wall of half-implemented effects. It covers
 blur, colour, keying, generate, distort, stylize, transitions and depth. Round 8 added seven
-screen/retro effects built on the shared PIXEL shader:
+screen/retro effects built on the shared PIXEL shader, and 0.19 adds **Grid Repeat**, **Random
+Repeat**, **Turbulent Displace**, **Colorama** and **Light Sweep**:
 
 **Scanlines · Glitch · VHS · Halftone · Emboss · Mirror · Kaleidoscope**
 
@@ -152,6 +155,60 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.19.0
+
+**The thank-you release: a sponsor hall, BBS-style flight cameras, a faster AE curve, adaptive
+layout, texture-filter intelligence, and a real fix for effects on 3D layers.**
+
+*Sponsor hall.* A dedicated, animated page for **星辰久梦君**, **血之书** and **Szv文森特37**.
+Deep navy stage, drifting gold light, orbital rings and three hand-composed cards; the list is
+also in the Settings → About page and `CREDITS.md`. This is deliberately not another settings
+list.
+
+*BBS flight camera.* Camera settings now switch between **AE 摄像机** (position + target) and
+**BBS 原版摄像机** (free yaw/pitch). A BBS camera shows a flight icon; press **F** to fly with
+WASD, Space/Shift and the mouse, scroll to change speed, and press **F** again to leave a
+position/rotation/FOV keyframe at the playhead. Both camera styles are ordinary layers and can
+coexist in one composition; the active camera decides the shot.
+
+*3D effects actually work.* The source-raster fingerprint omitted effect type, order, enabled
+state and resolved parameters. Every 3D layer effect appeared dead until unrelated content
+changed. The fingerprint now includes the whole resolved effect stack, depth effects are applied
+after the 3D projection instead of being skipped, and a missing depth buffer is a true no-op
+rather than erasing the layer.
+
+*New effects.* **网格重复 / 随机重复** (Alight Motion-style grid and seeded random repetition),
+**湍流置换** (EffectCraft-inspired fractal displacement), **色彩映射** (three-stop Colorama),
+and **扫光** (animated light sweep). The effect catalogue is now **58** entries; all new shaders
+have real GL pixel tests, and the repeat shader has identity/repetition/gap/seed tests.
+
+*AE curve performance.* BBS's batcher emits one draw call per solid box. The value graph was
+issuing thousands of boxes per frame (halo + core, per row, per column). The graph now opens one
+batch scope, samples each curve once and paints both strokes from the same column array. The
+vertex/draw-call count no longer scales with curve slope.
+
+*Adaptive UI.* Header actions disappear before they collide, side columns shrink around a
+preview floor, the timeline never steals the body on short windows, the settings card fits small
+panels, and the preview controls fold themselves away on narrow previews.
+
+*Texture filtering.* A new project setting **线性过滤** and per-image override choose automatic,
+linear or nearest. Automatic detects high-resolution sources (large/downscaled) and keeps
+pixel-art nearest; the settings page shows the live high-res/pixel/pending counts. The preview
+bar has a one-click `线性: 自动/线性/最近邻` chip.
+
+*Keyframe drawer and shader compatibility.* Switching to the curve page and back no longer leaves
+the keyframe drawer blank. Preview status now reports Iris/shader-pass state, shadow-pass copies
+are skipped, and a missing depth attachment is visible in the preview readout instead of silently
+turning depth effects into a black frame.
+
+<p align="center">
+  <img src="docs/gallery/sponsors.png" alt="BBS Compositor sponsor hall with three founding supporters" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/gallery/bbs-flight-camera.png" alt="BBS-style flight camera with the flight HUD and F-key hint" width="100%">
+</p>
 
 ## What's new in 0.18.0
 
@@ -628,7 +685,8 @@ entries are intermediary-remapped.
 2026-10-18 eighth pass (Alight Motion PIXEL effects, first-principles bug audit):
 
 - added seven PIXEL-family effects: **Scanlines, Glitch, VHS, Halftone, Emboss, Mirror,
-  Kaleidoscope**; the catalogue now has **53** effects;
+  Kaleidoscope**; the catalogue grew to 53 then **58** in 0.19 (repeats, turbulence, colour mapping,
+  light sweep);
 - every one operates in **layer space** through `EffectSpace` / `sampleLocal`, so the pattern
   follows the layer instead of staying glued to the composition;
 - Halftone follows Alight Motion's properties (dots across the project width, strength, angle,
@@ -742,9 +800,10 @@ Implemented now:
   opens in a drawer under the tracks when needed;
 - masks with add/subtract/intersect/exclude, feather, opacity, positive/negative expansion,
   inversion, editable points and bezier handles;
-- a curated **53-effect** catalogue (blur, color, keying, generate, distort, stylize, screen/retro,
-  transitions, depth) with real box/radial blur, unsharp sharpen, depth-aware passes and the
-  Alight Motion-style Scanlines / Glitch / VHS / Halftone / Emboss / Mirror / Kaleidoscope family;
+- a curated **58-effect** catalogue (blur, color, keying, generate, distort, stylize, screen/retro,
+  transitions, depth, grid/random repeat) with real box/radial blur, unsharp sharpen, depth-aware
+  passes and the Alight Motion-style Scanlines / Glitch / VHS / Halftone / Emboss / Mirror /
+  Kaleidoscope / Grid Repeat / Random Repeat family;
 - layer styles: drop shadow, inner shadow, outer/glow, bevel, color/gradient overlay, satin,
   stroke;
 - text with tracking, line height, wrap, per-character range/wiggle animators;

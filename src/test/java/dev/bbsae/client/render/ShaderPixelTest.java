@@ -372,6 +372,24 @@ public class ShaderPixelTest
     }
 
     @Test
+    public void lightSweepBrightensTheBandAndIsIdentityAtZeroOpacity() throws Exception
+    {
+        int[] identity = render(ShaderPixelTest::randomSource, new Setup(9).amount(0F).dotColor(0xFFFFFFFF));
+
+        assertArrayEquals(sourcePixels(ShaderPixelTest::randomSource), identity,
+            "light sweep opacity 0 must be a no-op");
+
+        int[] pixels = render((x, y) -> argb(80, 80, 80),
+            new Setup(9).amount(1F).p1(0F).p2(0.18F).p3(0.5F).p4(0.04F).dotColor(0xFFFFFFFF));
+
+        int center = red(pixel(pixels, SIZE / 2, SIZE / 2));
+        int edge = red(pixel(pixels, 1, 1));
+
+        assertTrue(center > edge + 80, "the sweep band must be brighter than the corner (center="
+            + center + ", edge=" + edge + ")");
+    }
+
+    @Test
     public void kaleidoscopeFoldsIntoFourSymmetricSectors() throws Exception
     {
         int[] pixels = render((x, y) ->

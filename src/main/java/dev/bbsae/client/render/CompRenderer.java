@@ -668,16 +668,32 @@ public final class CompRenderer
 
                 for (CompEffect effect : layer.effects)
                 {
-                    if (renderEffects && !effectsBaked && effect != null && effect.enabled)
+                    if (!renderEffects || effect == null || !effect.enabled)
                     {
-                        CompEffect resolved = layer.resolveEffect(effect, context.frame);
-                        GlFramebuffer processed = EffectRenderer.apply(layer, resolved, content, context, effectSpace);
+                        continue;
+                    }
 
-                        if (processed != content)
-                        {
-                            FboPool.release(content);
-                            content = processed;
-                        }
+                    /* Depth effects cannot run in the layer-local bake: they need the world depth
+                     * buffer and the composition-space rectangle. They are therefore applied after
+                     * the 3D quad has been projected, while every non-depth effect was already
+                     * baked. Skipping the whole loop when effectsBaked was true is why depth_fog /
+                     * depth_dof silently did nothing on 3D layers. */
+                    boolean depthEffect = effect.type != null && effect.type.startsWith("depth_");
+
+                    if (effectsBaked && !depthEffect)
+                    {
+                        continue;
+                    }
+
+                    CompEffect resolved = layer.resolveEffect(effect, context.frame);
+                    GlFramebuffer processed = depthEffect
+                        ? EffectRenderer.apply(layer, resolved, content, context, EffectSpace.identity(context))
+                        : EffectRenderer.apply(layer, resolved, content, context, effectSpace);
+
+                    if (processed != content)
+                    {
+                        FboPool.release(content);
+                        content = processed;
                     }
                 }
 

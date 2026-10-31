@@ -7,6 +7,8 @@ import dev.bbsae.client.render.CompRenderer;
 import dev.bbsae.client.render.CompScene;
 import dev.bbsae.client.render.CompViewportCamera;
 import dev.bbsae.client.render.CompViewportRenderer;
+import dev.bbsae.client.render.ImageTextureCache;
+import dev.bbsae.client.render.TextureFilter;
 import dev.bbsae.comp.CompBinding;
 import dev.bbsae.comp.CompAnimationPreset;
 import dev.bbsae.comp.CompDocument;
@@ -141,6 +143,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UiMotion panelMotion = new UiMotion();
     private UICompSettings settingsOverlay;
     private UIOnboarding onboarding;
+    private UISponsors sponsorsOverlay;
+    private UICompButton sponsorsButton;
 
     private final UICompRenderJobList queue;
     /** Output module (video or audio) chosen for the next job; shows the preset's real name. */
@@ -211,6 +215,13 @@ public class UICompositorPanel extends UIDashboardPanel
     private boolean previewControlsCollapsed;
     /** Look through the active 3D camera instead of the default front view. */
     private boolean cameraPreviewMode;
+    /** BBS-style camera flight: WASD/mouse free look, F enters and exits. */
+    private boolean cameraFlying;
+    private CompLayer flightCamera;
+    private int flightLastMouseX = Integer.MIN_VALUE;
+    private int flightLastMouseY = Integer.MIN_VALUE;
+    private long flightLastNanos;
+    private float flightSpeed = 780F;
     /** The Blender-like free viewport is open (see {@link #enter3DSpace()}). */
     private boolean viewportMode;
     /** The editor's own camera; never rendered into a frame. */
@@ -222,6 +233,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private UIToggle effectsToggle;
     private UIToggle masksToggle;
     private UIToggle bbsBackdropToggle;
+    /** Preview-bar shortcut for the project texture-filter policy (auto/linear/nearest). */
+    private UICompButton previewFilter;
     private UIIcon cameraViewButton;
     private UIIcon space3DButton;
     private UIIcon precompBack;
@@ -334,6 +347,11 @@ public class UICompositorPanel extends UIDashboardPanel
         this.focusButton = CompUi.iconButton(Icons.MAXIMIZE, "聚焦预览：把预览铺满合成器面板（F 再按还原）", () -> this.toggleFocusMode());
 
         this.settingsButton = CompUi.flat("设置", "合成器设置：导出时长、默认图层时长、界面密度、快捷键方案", () -> this.showSettings());
+        this.sponsorsButton = new UICompButton(IKey.constant("赞助"), (button) -> this.openSponsors());
+
+        this.sponsorsButton.symbol(Icons.HEART);
+        this.sponsorsButton.style(UICompButton.Style.GHOST);
+        this.sponsorsButton.tooltip(IKey.constant("赞助者殿堂：感谢支持本项目的人，也查看如何支持后续开发"));
 
         this.header = new UIElement();
         this.header.h(24);
@@ -351,7 +369,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.focusButton.relative(this.header).x(1F, -40).y(inset).w(control).h(control);
 
         this.header.add(this.title, this.replaySelector, this.play, this.prevFrame, this.nextFrame,
-            this.timecode, this.save, this.exportFilm, this.renderMode, this.settingsButton, this.focusButton);
+            this.timecode, this.save, this.exportFilm, this.renderMode, this.sponsorsButton,
+            this.settingsButton, this.focusButton);
 
         /* Left column: the two panels an editor actually browses from - effects and media.
          * The layer stack lives in the timeline's track headers; keeping a second layer list
@@ -3115,6 +3134,25 @@ public class UICompositorPanel extends UIDashboardPanel
         this.bbsBackdropToggle.relative(this.previewBar).x(124).y(1).w(58).h(18);
         this.bbsBackdropToggle.tooltip(IKey.constant("在合成后面显示 BBS 实时画面"));
 
+        /* Texture filtering is a first-class image concern, not a hidden global. The label always
+         * says which policy is active; the settings page explains the automatic detection rule. */
+        this.previewFilter = new UICompButton(IKey.constant("线性: 自动"), (button) ->
+        {
+            if (this.project == null || this.project.settings == null)
+            {
+                return;
+            }
+
+            this.project.settings.textureFilter = (this.project.settings.textureFilter + 1) % 3;
+            this.updateFilterButton();
+            this.save();
+            this.setStatus("纹理过滤：" + TextureFilter.name(this.project.settings.textureFilter)
+                + " — " + TextureFilter.describe(this.project.settings.textureFilter));
+        });
+        this.previewFilter.relative(this.previewBar).x(184).y(1).w(82).h(18);
+        this.previewFilter.tooltip(IKey.constant("自动：高分辨率素材开线性过滤，低分辨率像素素材保持最近邻。点击切换 自动 / 线性 / 最近邻"));
+        this.updateFilterButton();
+
         /* Collapse handle: the toggles cover the top-left of the frame, which is usually where the
          * composition has content. One click folds them into an arrow. */
         this.previewCollapse = new UIIcon(
@@ -3132,9 +3170,10 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.save();
             });
         this.previewCollapse.tooltip(IKey.constant("折叠/展开预览开关"));
-        this.previewCollapse.relative(this.previewBar).x(176).y(1).w(20).h(18);
+        this.previewCollapse.relative(this.previewBar).x(266).y(1).w(20).h(18);
 
-        this.previewBar.add(this.effectsToggle, this.masksToggle, this.bbsBackdropToggle, this.previewCollapse);
+        this.previewBar.relative(this.preview).x(6).y(6).w(292).h(20);
+        this.previewBar.add(this.effectsToggle, this.masksToggle, this.bbsBackdropToggle, this.previewFilter, this.previewCollapse);
         this.applyPreviewBarState();
         this.preview.add(this.previewBar);
 
@@ -3604,8 +3643,12 @@ public class UICompositorPanel extends UIDashboardPanel
         this.settingsOverlay.relative(this).x(0).y(0).w(1F).h(1F);
         this.settingsOverlay.setVisible(false);
 
+        this.sponsorsOverlay = new UISponsors(this);
+        this.sponsorsOverlay.relative(this).x(0).y(0).w(1F).h(1F);
+        this.sponsorsOverlay.setVisible(false);
+
         this.add(this.header, this.body, this.renderPanel, this.timeline, this.quickPanel, this.status,
-            this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay);
+            this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay, this.sponsorsOverlay);
 
         this.focusButton.h(18);
 
@@ -4532,6 +4575,22 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.settingsOverlay.open(category);
+    }
+
+    public void openSponsors()
+    {
+        if (this.sponsorsOverlay == null)
+        {
+            return;
+        }
+
+        if (this.settingsOverlay != null && this.settingsOverlay.isOpen())
+        {
+            this.settingsOverlay.close();
+        }
+
+        this.sponsorsOverlay.open();
+        this.setStatus("感谢赞助者：星辰久梦君、血之书、Szv文森特37");
     }
 
     public void openOnboarding()
@@ -6471,6 +6530,27 @@ public class UICompositorPanel extends UIDashboardPanel
             view = "curve";
         }
 
+        /* A verification view must be visible immediately, even on a fresh config where the
+         * first-run onboarding is still up. Debugging the camera through a welcome card is not a
+         * useful screenshot. */
+        if (!"onboarding".equals(view))
+        {
+            if (this.onboarding != null && this.onboarding.isOpen())
+            {
+                this.onboarding.close(true);
+            }
+
+            if (this.settingsOverlay != null && this.settingsOverlay.isOpen())
+            {
+                this.settingsOverlay.close();
+            }
+
+            if (this.sponsorsOverlay != null && this.sponsorsOverlay.isOpen())
+            {
+                this.sponsorsOverlay.close();
+            }
+        }
+
         /* Verification hook: force the frame-server pipeline without walking the risk dialog. */
         if (Boolean.getBoolean("bbsae.debugEncoderAe"))
         {
@@ -6532,6 +6612,30 @@ public class UICompositorPanel extends UIDashboardPanel
             case "onboarding":
                 this.openOnboarding();
                 return;
+
+            case "sponsor":
+                this.openSponsors();
+                return;
+
+            case "cameraflight":
+            {
+                CompLayer camera = this.doc.activeCamera(this.time);
+
+                if (camera == null)
+                {
+                    this.addLayer("camera");
+                    camera = this.doc.activeCamera(this.time);
+                }
+
+                if (camera != null)
+                {
+                    this.selectLayer(camera);
+                    this.applyCameraStyle(camera, CompLayer.CAMERA_BBS);
+                    this.setCameraFlying(true);
+                }
+
+                return;
+            }
 
             case "assets":
                 this.openAssetBrowser(false);
@@ -7569,6 +7673,30 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* Precomposing changes the layer stack and retimes the selected clips. State the effect
+         * before doing it instead of surprising the artist with a rearranged timeline. */
+        if (!Boolean.getBoolean("bbsae.skipPrecomposeConfirm") && this.getContext() != null)
+        {
+            String hint = "将把 " + layers.size() + " 个图层移入一个新子合成，再用一个预合成图层替换。"
+                + "原图层入点会整体对齐；父级/遮罩引用会自动重指向。此操作可用 Ctrl+Z 撤销。";
+
+            UIOverlay.addOverlay(this.getContext(), new mchorse.bbs_mod.ui.framework.elements.overlay.UIConfirmOverlayPanel(
+                IKey.constant("合并为预合成？"), IKey.constant(hint), (confirmed) ->
+            {
+                if (Boolean.TRUE.equals(confirmed))
+                {
+                    this.doPrecomposeSelection(layers);
+                }
+            }));
+
+            return;
+        }
+
+        this.doPrecomposeSelection(layers);
+    }
+
+    private void doPrecomposeSelection(List<CompLayer> layers)
+    {
         this.beginAction("预合成所选");
 
         CompLayer precomp = dev.bbsae.comp.CompLayerOps.precompose(this.project, this.doc, layers, "预合成");
@@ -7947,13 +8075,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void setKeyframeOpen(boolean open)
     {
-        if (this.keyframeOpen == open)
-        {
-            return;
-        }
-
+        /* Do not early-return when the flag already says "open": switching to the curve page
+         * hides the drawer without clearing the flag, and returning to the track page must put
+         * the drawer back. The old early return made the button say "open" while the drawer stayed
+         * invisible until it was clicked twice. */
         this.keyframeOpen = open;
-        this.keyframeDrawer.setVisible(open);
 
         if (!open)
         {
@@ -8009,20 +8135,439 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.keyframeDrawerHeight));
 
+        /* Visibility is a function of the page and the open flag here, not a one-shot side effect
+         * in setKeyframeOpen(). The page switch sets visible=false; restoring it here is what makes
+         * "switch tabs and come back" reliable. */
+        this.keyframeDrawer.setVisible(this.keyframeOpen);
+        this.keyframeHandle.setVisible(this.keyframeOpen);
+
         if (this.keyframeOpen)
         {
             this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26 - this.keyframeDrawerHeight);
             this.keyframeDrawer.relative(this.timeline).x(0).y(1F, -this.keyframeDrawerHeight).w(1F).h(this.keyframeDrawerHeight);
             this.keyframeHandle.relative(this.timeline).x(0).y(1F, -this.keyframeDrawerHeight - 2).w(1F).h(5);
-            this.keyframeHandle.setVisible(true);
         }
         else
         {
             this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
-            this.keyframeHandle.setVisible(false);
         }
 
         this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(1F, -22);
+
+        if (this.keyframeOpen)
+        {
+            /* A drawer that was hidden while the page was elsewhere has no meaningful area until
+             * it is laid out and resized. Do both here so the next draw cannot see 0×0. */
+            this.keyframeEditor.resize();
+
+            if (this.keyframeEditor.area.w > 0 && this.keyframeViewNeedsFit)
+            {
+                this.keyframeEditor.view.resize();
+                this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
+                this.keyframeViewNeedsFit = false;
+            }
+        }
+    }
+
+    /* ------------------------------------------------------------- BBS camera flight */
+
+    /** True when the selected (or active) camera is a BBS-style fly camera. */
+    public boolean canFlyCamera()
+    {
+        CompLayer camera = this.selectedLayer != null && this.selectedLayer.isCamera()
+            ? this.selectedLayer
+            : (this.doc == null ? null : this.doc.activeCamera(this.time));
+
+        return camera != null && camera.cameraStyle == CompLayer.CAMERA_BBS;
+    }
+
+    public boolean isCameraFlying()
+    {
+        return this.cameraFlying;
+    }
+
+    /**
+     * Switches a camera layer between the AE target model and the BBS free-flight model without
+     * destroying either set of keyframes. The current pose is converted so the first frame after
+     * the switch does not jump.
+     */
+    public void applyCameraStyle(CompLayer layer, int style)
+    {
+        if (layer == null)
+        {
+            return;
+        }
+
+        if (this.cameraFlying && this.flightCamera == layer)
+        {
+            this.setCameraFlying(false);
+        }
+
+        float frame = this.getFrame();
+
+        this.beginAction(style == CompLayer.CAMERA_BBS ? "切换 BBS 摄像机" : "切换 AE 摄像机");
+
+        if (style == CompLayer.CAMERA_BBS)
+        {
+            float tx = layer.scalarAt("cameraTargetX", layer.cameraTargetX, frame);
+            float ty = layer.scalarAt("cameraTargetY", layer.cameraTargetY, frame);
+            float tz = layer.scalarAt("cameraTargetZ", layer.cameraTargetZ, frame);
+            float z = layer.scalarAt("cameraZ", layer.cameraZ, frame);
+
+            if (Math.abs(z) < 0.001F)
+            {
+                z = layer.scalarAt("z", layer.z, frame);
+            }
+
+            if (Math.abs(z) < 0.001F)
+            {
+                z = this.defaultCameraZ();
+            }
+
+            Transform transform = layer.transformAt(frame);
+            float dx = tx - transform.translate.x;
+            float dy = ty - transform.translate.y;
+            float dz = tz - z;
+            float horizontal = (float) Math.sqrt(dx * dx + dz * dz);
+
+            layer.cameraStyle = CompLayer.CAMERA_BBS;
+            layer.cameraLookAt = false;
+            layer.camera3D = true;
+            layer.cameraZ = z;
+            layer.z = z;
+            layer.rotationY = (float) Math.toDegrees(Math.atan2(dx, -dz));
+            layer.rotationX = (float) Math.toDegrees(-Math.atan2(dy, Math.max(0.001F, horizontal)));
+        }
+        else
+        {
+            Transform transform = layer.transformAt(frame);
+            float yaw = (float) Math.toRadians(layer.scalarAt("rotationY", layer.rotationY, frame));
+            float pitch = (float) Math.toRadians(layer.scalarAt("rotationX", layer.rotationX, frame));
+            float z = layer.scalarAt("cameraZ", layer.cameraZ, frame);
+            float cp = (float) Math.cos(pitch);
+
+            if (Math.abs(z) < 0.001F)
+            {
+                z = layer.scalarAt("z", layer.z, frame);
+            }
+
+            if (Math.abs(z) < 0.001F)
+            {
+                z = this.defaultCameraZ();
+            }
+
+            layer.cameraStyle = CompLayer.CAMERA_AE;
+            layer.cameraLookAt = true;
+            layer.camera3D = true;
+            layer.cameraZ = z;
+            layer.z = z;
+            layer.cameraTargetX = transform.translate.x + (float) (Math.sin(yaw) * cp * 1000F);
+            layer.cameraTargetY = transform.translate.y - (float) (Math.sin(pitch) * 1000F);
+            layer.cameraTargetZ = z - (float) (Math.cos(yaw) * cp * 1000F);
+            layer.putScalar("cameraTargetX", layer.cameraTargetX);
+            layer.putScalar("cameraTargetY", layer.cameraTargetY);
+            layer.putScalar("cameraTargetZ", layer.cameraTargetZ);
+        }
+
+        this.save();
+        this.refreshInspector();
+        this.setStatus(style == CompLayer.CAMERA_BBS
+            ? "已切换到 BBS 原版摄像机；按 F 进入飞行，退出时自动打关键帧"
+            : "已切换到 AE 摄像机；目标点已根据当前朝向重建");
+    }
+
+    /**
+     * Enters/leaves the BBS-style flight camera.
+     *
+     * <p>Flight is a view authoring gesture, not a separate renderer: every frame writes the
+     * ordinary position/rotation/fov keyframes, so the same camera is evaluated by the normal
+     * {@link CompCamera} path during preview and export. Leaving flight writes one final key at
+     * the playhead, which is the "keyframe where I stopped" behaviour users expect from BBS.</p>
+     */
+    public void setCameraFlying(boolean flying)
+    {
+        if (flying)
+        {
+            CompLayer camera = this.selectedLayer != null && this.selectedLayer.isCamera()
+                ? this.selectedLayer
+                : (this.doc == null ? null : this.doc.activeCamera(this.time));
+
+            if (camera == null || camera.cameraStyle != CompLayer.CAMERA_BBS)
+            {
+                this.setStatus("请先在摄像机设置里切换到 BBS 原版摄像机");
+                return;
+            }
+
+            this.pause();
+            this.beginAction("BBS 摄像机飞行");
+            this.flightCamera = camera;
+            this.doc.activeCameraId = camera.id;
+            this.selectLayer(camera);
+            camera.cameraLookAt = false;
+            camera.camera3D = true;
+            camera.ensureIndependentAxes();
+
+            float frame = this.getFrame();
+
+            camera.rotationX = camera.scalarAt("rotationX", camera.rotationX, frame);
+            camera.rotationY = camera.scalarAt("rotationY", camera.rotationY, frame);
+            camera.cameraZ = camera.scalarAt("cameraZ", camera.cameraZ, frame);
+            camera.cameraFov = camera.scalarAt("cameraFov", camera.cameraFov, frame);
+
+            if (Math.abs(camera.cameraZ) < 1F)
+            {
+                camera.cameraZ = this.defaultCameraZ();
+                camera.z = camera.cameraZ;
+            }
+
+            this.keyCameraPose(camera);
+            this.cameraFlying = true;
+            this.cameraPreviewMode = true;
+            this.flightLastMouseX = Integer.MIN_VALUE;
+            this.flightLastNanos = System.nanoTime();
+            this.flightSpeed = Math.max(80F, Math.min(8000F, Math.abs(camera.cameraZ) * 0.55F));
+
+            try
+            {
+                mchorse.bbs_mod.graphics.window.Window.setCursorHidden("bbsae_bbs_flight", true);
+            }
+            catch (RuntimeException ignored)
+            {}
+
+            this.refreshInspector();
+            this.setStatus("BBS 飞行模式：WASD 移动，空格/Shift 升降，鼠标转动视角，滚轮调速，F 退出并打关键帧");
+        }
+        else if (this.cameraFlying)
+        {
+            this.cameraFlying = false;
+            this.flightCamera = this.flightCamera == null ? this.doc.activeCamera(this.time) : this.flightCamera;
+
+            if (this.flightCamera != null)
+            {
+                this.keyCameraPose(this.flightCamera);
+                this.openKeyframes();
+                this.onTrackEdited();
+            }
+
+            try
+            {
+                mchorse.bbs_mod.graphics.window.Window.setCursorHidden("bbsae_bbs_flight", false);
+            }
+            catch (RuntimeException ignored)
+            {}
+
+            this.flightCamera = null;
+            this.flightLastMouseX = Integer.MIN_VALUE;
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已退出 BBS 飞行模式；当前位置已写入关键帧");
+        }
+    }
+
+    private void keyCameraPose(CompLayer camera)
+    {
+        float frame = this.getFrame();
+
+        camera.ensureIndependentAxes();
+        camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_X, frame, camera.x);
+        camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_Y, frame, camera.y);
+        camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_ROTATION, frame, camera.scalarAt("rotation", camera.rotation, frame));
+        camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_ROTATION_X, frame, camera.rotationX);
+        camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_ROTATION_Y, frame, camera.rotationY);
+        camera.putScalar("cameraZ", camera.cameraZ);
+        camera.putScalar("cameraFov", camera.cameraFov);
+        camera.scalarChannel("cameraZ").insert(frame, camera.cameraZ);
+        camera.scalarChannel("cameraFov").insert(frame, camera.cameraFov);
+    }
+
+    /** Polls the physical keyboard/mouse while flying. Called once per rendered frame. */
+    private void updateCameraFlight(UIContext context)
+    {
+        CompLayer camera = this.flightCamera;
+
+        if (!this.cameraFlying || camera == null || this.doc == null)
+        {
+            return;
+        }
+
+        long now = System.nanoTime();
+        float dt = this.flightLastNanos == 0L ? 0.016F : Math.min(0.08F, (now - this.flightLastNanos) / 1.0E9F);
+
+        this.flightLastNanos = now;
+
+        /* Minecraft hands the pointer back whenever a screen opens; flight outlives that, so the
+         * hidden-cursor request is renewed every frame exactly like BBS's UIOrbitCamera. */
+        try
+        {
+            Window.setCursorHidden("bbsae_bbs_flight", true);
+        }
+        catch (RuntimeException ignored)
+        {}
+
+        /* Mouse look. The pointer is hidden by BBS's shared cursor owner; clamping a large jump
+         * prevents a window re-entry from spinning the camera by hundreds of degrees. */
+        if (this.flightLastMouseX != Integer.MIN_VALUE)
+        {
+            int dx = context.mouseX - this.flightLastMouseX;
+            int dy = context.mouseY - this.flightLastMouseY;
+
+            if (Math.abs(dx) < 160 && Math.abs(dy) < 160)
+            {
+                float yaw = camera.scalarAt("rotationY", camera.rotationY, this.getFrame());
+                float pitch = camera.scalarAt("rotationX", camera.rotationX, this.getFrame());
+
+                yaw += dx * 0.18F;
+                pitch = Math.max(-89F, Math.min(89F, pitch - dy * 0.18F));
+                camera.rotationY = yaw;
+                camera.rotationX = pitch;
+                camera.putScalar("rotationY", yaw);
+                camera.putScalar("rotationX", pitch);
+            }
+        }
+
+        this.flightLastMouseX = context.mouseX;
+        this.flightLastMouseY = context.mouseY;
+
+        boolean forward = Window.isKeyPressed(GLFW.GLFW_KEY_W) || Window.isKeyPressed(GLFW.GLFW_KEY_UP);
+        boolean back = Window.isKeyPressed(GLFW.GLFW_KEY_S) || Window.isKeyPressed(GLFW.GLFW_KEY_DOWN);
+        boolean left = Window.isKeyPressed(GLFW.GLFW_KEY_A) || Window.isKeyPressed(GLFW.GLFW_KEY_LEFT);
+        boolean right = Window.isKeyPressed(GLFW.GLFW_KEY_D) || Window.isKeyPressed(GLFW.GLFW_KEY_RIGHT);
+        boolean up = Window.isKeyPressed(GLFW.GLFW_KEY_SPACE);
+        boolean down = Window.isKeyPressed(GLFW.GLFW_KEY_LEFT_SHIFT);
+
+        float yaw = (float) Math.toRadians(camera.scalarAt("rotationY", camera.rotationY, this.getFrame()));
+        float pitch = (float) Math.toRadians(camera.scalarAt("rotationX", camera.rotationX, this.getFrame()));
+        float cp = (float) Math.cos(pitch);
+        float fx = (float) (Math.sin(yaw) * cp);
+        float fy = (float) (-Math.sin(pitch));
+        float fz = (float) (-Math.cos(yaw) * cp);
+        float rx = (float) Math.cos(yaw);
+        float rz = (float) Math.sin(yaw);
+        float speed = this.flightSpeed * dt * (CompInput.ctrlDown() ? 3F : CompInput.altDown() ? 0.3F : 1F);
+        float mx = (forward ? 1F : 0F) - (back ? 1F : 0F);
+        float my = (right ? 1F : 0F) - (left ? 1F : 0F);
+        float mz = (up ? 1F : 0F) - (down ? 1F : 0F);
+
+        camera.x += fx * mx * speed + rx * my * speed;
+        camera.y += fy * mx * speed - mz * speed;
+        camera.cameraZ += fz * mx * speed + rz * my * speed;
+        camera.z = camera.cameraZ;
+
+        if (Math.abs(camera.cameraZ) < 1F)
+        {
+            camera.cameraZ = camera.cameraZ < 0F ? -1F : 1F;
+            camera.z = camera.cameraZ;
+        }
+
+        this.keyCameraPose(camera);
+    }
+
+    private boolean hasDepthEffects()
+    {
+        if (this.doc == null)
+        {
+            return false;
+        }
+
+        for (CompLayer layer : this.doc.layers)
+        {
+            if (layer == null || layer.effects == null)
+            {
+                continue;
+            }
+
+            for (CompEffect effect : layer.effects)
+            {
+                if (effect != null && effect.enabled && effect.type != null && effect.type.startsWith("depth_"))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private String layerFilterLabel(CompLayer layer)
+    {
+        int mode = TextureFilter.layerMode(layer);
+
+        return mode == TextureFilter.SOURCE_INHERIT
+            ? "纹理过滤：跟随工程（" + TextureFilter.name(TextureFilter.projectMode(this.project)) + "）"
+            : "纹理过滤：" + TextureFilter.name(mode);
+    }
+
+    /** Public hook for the settings page after changing the automatic/linear/nearest policy. */
+    public void refreshTextureFilterUi()
+    {
+        this.updateFilterButton();
+        this.refreshInspector();
+        this.setStatus(this.describeTextureFilter());
+    }
+
+    /** Refreshes the preview-bar texture-filter chip from the project settings. */
+    private void updateFilterButton()
+    {
+        if (this.previewFilter == null)
+        {
+            return;
+        }
+
+        int mode = TextureFilter.projectMode(this.project);
+
+        this.previewFilter.label = IKey.constant("线性: " + TextureFilter.name(mode));
+        this.previewFilter.tooltip(IKey.constant(TextureFilter.describe(mode)
+            + "。点击切换 自动 / 线性 / 最近邻；自动的检测结果也会显示在设置 → 界面布局 中。"));
+    }
+
+    /**
+     * Human-readable automatic-detection summary for the settings page. It scans only image and
+     * footage layers of the current composition; textures that are not loaded yet are counted as
+     * "pending", never silently reported as low resolution.
+     */
+    public String describeTextureFilter()
+    {
+        CompProject.CompSettings settings = this.project == null ? null : this.project.settings;
+        int mode = settings == null ? TextureFilter.AUTO : settings.textureFilter;
+
+        if (mode != TextureFilter.AUTO)
+        {
+            return "当前：" + TextureFilter.name(mode) + "（所有图片/序列层）";
+        }
+
+        int high = 0;
+        int pixel = 0;
+        int pending = 0;
+
+        if (this.doc != null)
+        {
+            for (CompLayer layer : this.doc.layers)
+            {
+                if (layer == null || (!"image".equals(layer.type) && !"footage".equals(layer.type)))
+                {
+                    continue;
+                }
+
+                ImageTextureCache.Entry image = ImageTextureCache.get(
+                    this.project == null ? CompStore.DEFAULT_PROJECT : this.project.id, layer.imagePath);
+
+                if (image == null)
+                {
+                    pending++;
+                }
+                else if (TextureFilter.isHighResolution(image.width, image.height))
+                {
+                    high++;
+                }
+                else
+                {
+                    pixel++;
+                }
+            }
+        }
+
+        return "自动：高分辨率 " + high + " · 像素素材 " + pixel
+            + (pending > 0 ? " · 待检测 " + pending : "");
     }
 
     private void updateToolbarLabels()
@@ -8135,6 +8680,8 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        this.layoutHeader();
+        this.updateFilterButton();
         boolean left = this.effectColumn.isVisible();
         boolean right = this.inspectorColumn.isVisible();
         int lw = left ? this.leftPanelWidth : 0;
@@ -8142,45 +8689,33 @@ public class UICompositorPanel extends UIDashboardPanel
         int gapL = left ? 6 : 0;
         int gapR = right ? 6 : 0;
 
-        /* Keep the preview and the timeline from colliding on a short window. Without this the
-         * body's 160 px minimum ran underneath the timeline as soon as the panel was < 430 px. */
-        if (this.area.h > 200 && this.area.w > 300)
-        {
-            int maxTimeline = Math.max(140, this.area.h - 24 - 160 - 18);
-            int maxSide = Math.max(160, this.area.w - 220 - 80);
+        /* Responsive geometry is a pure calculation, shared with CompUi tests:
+         *  - the timeline never grows so tall that the preview body disappears;
+         *  - the two columns shrink proportionally before they can make the preview negative;
+         *  - on a very narrow panel the side columns still fit, but their configured widths are
+         *    capped instead of turning the preview into a zero-width strip. */
+        this.timelinePanelHeight = CompUi.fitTimelineHeight(this.area.h, this.timelinePanelHeight);
+        int maxSide = CompUi.maxSideWidth(this.area.w);
 
-            this.timelinePanelHeight = Math.min(this.timelinePanelHeight, maxTimeline);
-            this.leftPanelWidth = Math.min(this.leftPanelWidth, maxSide);
-            this.rightPanelWidth = Math.min(this.rightPanelWidth, maxSide);
-        }
+        this.leftPanelWidth = Math.min(this.leftPanelWidth, maxSide);
+        this.rightPanelWidth = Math.min(this.rightPanelWidth, maxSide);
 
-        /* Second pass: a side-by-side layout that leaves no room for the picture is not a layout.
-         * The two clamps above cap each column independently, so at ~360 logical pixels the preview
-         * was already negative and simply stopped rendering — the panel looked empty even though
-         * every widget was there. Shrink both columns proportionally until the preview has a floor. */
-        int minPreview = 160;
+        int[] columns = CompUi.fitColumns(this.area.w, lw, rw, gapL + gapR, 120);
 
-        if (this.area.w > 0 && lw + rw + gapL + gapR + minPreview > this.area.w)
-        {
-            int available = Math.max(0, this.area.w - gapL - gapR - minPreview);
-            int total = lw + rw;
-
-            if (total > 0)
-            {
-                lw = Math.max(0, lw * available / total);
-                rw = Math.max(0, available - lw);
-            }
-        }
+        lw = columns[0];
+        rw = columns[1];
 
         this.effectColumn.relative(this.body).x(0).y(0).w(lw).h(1F);
         this.preview.relative(this.body).x(lw + gapL).y(0).w(1F, -(lw + rw + gapL + gapR)).h(1F);
         this.inspectorColumn.relative(this.body).x(1F, -rw).y(0).w(rw).h(1F);
 
-        int bodyHeight = Math.max(160, this.area.h - 24 - this.timelinePanelHeight - 18);
+        this.layoutPreviewBar(Math.max(48, this.area.w - lw - rw - gapL - gapR));
+
+        int bodyHeight = CompUi.bodyHeight(this.area.h, this.timelinePanelHeight);
 
         this.body.relative(this).x(0).y(24).w(1F).h(bodyHeight);
         boolean quick = this.quickPanel != null && this.quickPanel.isVisible();
-        int quickWidth = quick ? Math.max(160, Math.min(340, this.quickPanelWidth)) : 0;
+        int quickWidth = quick ? CompUi.quickWidth(this.area.w, this.quickPanelWidth) : 0;
 
         this.timeline.relative(this).x(0).y(1F, -(this.timelinePanelHeight + 18))
             .w(1F, -quickWidth).h(this.timelinePanelHeight);
@@ -8204,6 +8739,128 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.layoutKeyframeDrawer();
         this.resize();
+    }
+
+    /**
+     * Reflows the fixed-position header for the current width.
+     *
+     * <p>The header used to be absolutely positioned for a 1920 px editor. At 800 px the replay
+     * selector, play controls and right-hand actions overlapped, and at 500 px the save/settings
+     * buttons were painted on top of the timecode. This method is the same information
+     * architecture, with lower-priority actions disappearing before they can collide.</p>
+     */
+    private void layoutHeader()
+    {
+        if (this.header == null)
+        {
+            return;
+        }
+
+        int w = this.area.w;
+        int control = CompUi.control();
+        int inset = Math.max(2, (24 - control) / 2);
+
+        boolean showTitle = w >= 880;
+        boolean showReplay = w >= 720;
+        boolean showTimecode = w >= 620;
+        boolean showFrames = w >= 480;
+        boolean showSave = w >= 980;
+        boolean showExport = w >= 860;
+        boolean showRender = w >= 780;
+        boolean showSponsors = w >= 620;
+
+        this.title.setVisible(showTitle);
+        this.replaySelector.setVisible(showReplay);
+        this.timecode.setVisible(showTimecode);
+        this.prevFrame.setVisible(showFrames);
+        this.nextFrame.setVisible(showFrames);
+        this.save.setVisible(showSave);
+        this.exportFilm.setVisible(showExport);
+        this.renderMode.setVisible(showRender);
+        this.sponsorsButton.setVisible(showSponsors);
+
+        int x = 8;
+
+        if (showTitle)
+        {
+            this.title.relative(this.header).x(x).y(inset).w(86).h(control);
+            x += 92;
+        }
+
+        if (showReplay)
+        {
+            int replayWidth = Math.max(96, Math.min(150, w - 600));
+
+            this.replaySelector.relative(this.header).x(x).y(inset).w(replayWidth).h(control);
+            x += replayWidth + 6;
+        }
+
+        this.play.relative(this.header).x(x).y(inset).w(44).h(control);
+        x += 48;
+
+        if (showFrames)
+        {
+            this.prevFrame.relative(this.header).x(x).y(inset).w(control).h(control);
+            this.nextFrame.relative(this.header).x(x + control + 2).y(inset).w(control).h(control);
+            x += control * 2 + 8;
+        }
+
+        if (showTimecode)
+        {
+            this.timecode.relative(this.header).x(x).y(inset).w(Math.max(70, Math.min(86, w - x - 330))).h(control);
+        }
+
+        /* Right cluster: anchors are derived from the right edge, and each hidden action simply
+         * leaves no gap. */
+        int right = 40;
+
+        this.focusButton.relative(this.header).x(1F, -right).y(inset).w(control).h(control);
+        right += control + 8;
+
+        this.settingsButton.relative(this.header).x(1F, -right).y(inset).w(48).h(control);
+        right += 56;
+
+        if (showSponsors)
+        {
+            this.sponsorsButton.relative(this.header).x(1F, -right).y(inset).w(54).h(control);
+            right += 60;
+        }
+
+        if (showRender)
+        {
+            this.renderMode.relative(this.header).x(1F, -right).y(inset).w(54).h(control);
+            right += 62;
+        }
+
+        if (showExport)
+        {
+            this.exportFilm.relative(this.header).x(1F, -right).y(inset).w(54).h(control);
+            right += 62;
+        }
+
+        if (showSave)
+        {
+            this.save.relative(this.header).x(1F, -right).y(inset).w(48).h(control);
+            right += 56;
+        }
+    }
+
+    /** Keeps the floating preview controls inside a very narrow preview. */
+    private void layoutPreviewBar(int previewWidth)
+    {
+        if (this.previewBar == null)
+        {
+            return;
+        }
+
+        int width = Math.max(32, Math.min(292, previewWidth - 12));
+
+        this.previewBar.relative(this.preview).x(6).y(6).w(width).h(20);
+        this.effectsToggle.setVisible(width >= 158);
+        this.masksToggle.setVisible(width >= 202);
+        this.bbsBackdropToggle.setVisible(width >= 246);
+        this.previewFilter.setVisible(width >= 278);
+        this.previewCollapse.relative(this.previewBar).x(1F, -24).y(1).w(20).h(18);
     }
 
     private void savePanelLayout()
@@ -10060,6 +10717,49 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(UI.label(IKey.constant(String.format(java.util.Locale.ROOT,
             "当前：距离 %.0f · 焦距 %.0f · 画面缩放 %.0f%%", distance, focal, focal / Math.max(1F, distance) * 100F)), 14));
 
+        /* Camera authoring model. AE cameras aim at a target; BBS cameras are free-flown and can
+         * leave a keyframe at the pilot's stopping point. Both are ordinary camera layers, so a
+         * composition can keep one of each and switch the active camera without conversion. */
+        UIElement cameraStyles = new UIElement();
+
+        cameraStyles.w(1F).h(20);
+
+        UICompButton aeStyle = new UICompButton(IKey.constant("AE 摄像机"), (button) ->
+        {
+            if (layer.cameraStyle != CompLayer.CAMERA_AE)
+            {
+                this.applyCameraStyle(layer, CompLayer.CAMERA_AE);
+            }
+        });
+        UICompButton bbsStyle = new UICompButton(IKey.constant("BBS 原版摄像机"), (button) ->
+        {
+            if (layer.cameraStyle != CompLayer.CAMERA_BBS)
+            {
+                this.applyCameraStyle(layer, CompLayer.CAMERA_BBS);
+            }
+        });
+
+        aeStyle.style(layer.cameraStyle == CompLayer.CAMERA_AE ? UICompButton.Style.SELECTED : UICompButton.Style.FLAT);
+        bbsStyle.style(layer.cameraStyle == CompLayer.CAMERA_BBS ? UICompButton.Style.SELECTED : UICompButton.Style.FLAT);
+        aeStyle.relative(cameraStyles).x(0).y(0).w(0.5F, -2).h(20);
+        bbsStyle.relative(cameraStyles).x(0.5F).y(0).w(0.5F, 0).h(20);
+        aeStyle.tooltip(IKey.constant("AE 双节点相机：位置 + 目标点，适合精确构图"));
+        bbsStyle.tooltip(IKey.constant("BBS 自由飞行相机：F 进入飞行，WASD + 鼠标控制，退出时在播放头打关键帧"));
+        cameraStyles.add(aeStyle, bbsStyle);
+        section.fields.add(cameraStyles);
+
+        if (layer.cameraStyle == CompLayer.CAMERA_BBS)
+        {
+            UICompButton flight = new UICompButton(
+                IKey.constant(this.cameraFlying ? "退出飞行（F）" : "✈ 进入飞行模式（F）"),
+                (button) -> this.setCameraFlying(!this.cameraFlying));
+
+            flight.symbol(Icons.PLANE);
+            flight.tooltip(IKey.constant("BBS 原版飞行：WASD 移动，空格/Shift 升降，鼠标转向，滚轮调速；再按 F 退出并在当前位置留下关键帧"));
+            section.fields.add(flight);
+            section.fields.add(UI.label(IKey.constant("BBS 相机使用自由偏航/俯仰；退出飞行时自动写入当前位置、朝向、滚转和 FOV 关键帧。AE 相机仍保留在轨道上，可随时切回。"), 14));
+        }
+
         UIToggle perspective = new UIToggle(IKey.constant("透视投影（关 = 正交/平面）"), layer.camera3D, (toggle) ->
         {
             layer.camera3D = toggle.getValue();
@@ -10086,31 +10786,34 @@ public class UICompositorPanel extends UIDashboardPanel
         }, 1F, 179F));
         section.fields.add(this.animatedNumberRow("旋转（滚转）", layer, "rotation", transform.rotate.z, this::setTransformRotation, -360F, 360F));
 
-        section.fields.add(UI.label(IKey.constant("目标点"), 15));
-        section.fields.add(this.animatedNumberRow("目标 X", layer, "cameraTargetX", targetX, (value) ->
+        if (layer.cameraStyle == CompLayer.CAMERA_AE)
         {
-            layer.cameraTargetX = value.floatValue();
-            this.setScalar(layer, "cameraTargetX", value.floatValue());
-        }, -100000F, 100000F));
-        section.fields.add(this.animatedNumberRow("目标 Y", layer, "cameraTargetY", targetY, (value) ->
-        {
-            layer.cameraTargetY = value.floatValue();
-            this.setScalar(layer, "cameraTargetY", value.floatValue());
-        }, -100000F, 100000F));
-        section.fields.add(this.animatedNumberRow("目标 Z", layer, "cameraTargetZ", layer.scalarAt("cameraTargetZ", layer.cameraTargetZ, frame), (value) ->
-        {
-            layer.cameraTargetZ = value.floatValue();
-            this.setScalar(layer, "cameraTargetZ", layer.cameraTargetZ);
-        }, -100000F, 100000F));
+            section.fields.add(UI.label(IKey.constant("目标点"), 15));
+            section.fields.add(this.animatedNumberRow("目标 X", layer, "cameraTargetX", targetX, (value) ->
+            {
+                layer.cameraTargetX = value.floatValue();
+                this.setScalar(layer, "cameraTargetX", value.floatValue());
+            }, -100000F, 100000F));
+            section.fields.add(this.animatedNumberRow("目标 Y", layer, "cameraTargetY", targetY, (value) ->
+            {
+                layer.cameraTargetY = value.floatValue();
+                this.setScalar(layer, "cameraTargetY", value.floatValue());
+            }, -100000F, 100000F));
+            section.fields.add(this.animatedNumberRow("目标 Z", layer, "cameraTargetZ", layer.scalarAt("cameraTargetZ", layer.cameraTargetZ, frame), (value) ->
+            {
+                layer.cameraTargetZ = value.floatValue();
+                this.setScalar(layer, "cameraTargetZ", layer.cameraTargetZ);
+            }, -100000F, 100000F));
 
-        UIToggle lookAt = new UIToggle(IKey.constant("看向目标"), layer.cameraLookAt, (toggle) ->
-        {
-            layer.cameraLookAt = toggle.getValue();
-            this.save();
-        });
+            UIToggle lookAt = new UIToggle(IKey.constant("看向目标"), layer.cameraLookAt, (toggle) ->
+            {
+                layer.cameraLookAt = toggle.getValue();
+                this.save();
+            });
 
-        lookAt.tooltip(IKey.constant("开：镜头始终对准目标点（改为自由镜头时用下面的俯仰/偏航）"));
-        section.fields.add(lookAt);
+            lookAt.tooltip(IKey.constant("开：镜头始终对准目标点（改为自由镜头时用下面的俯仰/偏航）"));
+            section.fields.add(lookAt);
+        }
 
         section.fields.add(this.animatedNumberRow("俯仰 X", layer, "rotationX", layer.scalarAt("rotationX", layer.rotationX, frame), (value) ->
         {
@@ -10143,7 +10846,7 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.cameraTargetX = this.doc.width / 2F;
             layer.cameraTargetY = this.doc.height / 2F;
             layer.cameraTargetZ = 0F;
-            layer.cameraLookAt = true;
+            layer.cameraLookAt = layer.cameraStyle != CompLayer.CAMERA_BBS;
             layer.removeChannel("cameraZ");
             layer.removeChannel("cameraTargetX");
             layer.removeChannel("cameraTargetY");
@@ -10161,7 +10864,7 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.cameraTargetX = this.doc.width / 2F;
             layer.cameraTargetY = this.doc.height / 2F;
             layer.cameraTargetZ = 0F;
-            layer.cameraLookAt = true;
+            layer.cameraLookAt = layer.cameraStyle != CompLayer.CAMERA_BBS;
             this.refreshInspector();
             this.save();
         }));
@@ -11338,6 +12041,23 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(this.textRow("序列".equals(l.type) ? "图片序列 (%04d)" : "图片路径", l.imagePath, (text) -> l.imagePath = text));
             section.fields.add(this.smallButton("导入图片…", () -> this.importImage(l)));
             section.fields.add(this.numberRow("图片适配（0 包含 1 覆盖 2 拉伸）", l.imageFit, 0, 2, true, (value) -> l.imageFit = value.intValue()));
+
+            UICompButton textureFilter = new UICompButton(IKey.constant(this.layerFilterLabel(l)), (button) ->
+            {
+                int mode = TextureFilter.layerMode(l);
+
+                mode = mode <= TextureFilter.SOURCE_INHERIT ? TextureFilter.AUTO
+                    : mode == TextureFilter.AUTO ? TextureFilter.LINEAR
+                    : mode == TextureFilter.LINEAR ? TextureFilter.NEAREST
+                    : TextureFilter.SOURCE_INHERIT;
+
+                l.textureFilter = mode;
+                button.label = IKey.constant(this.layerFilterLabel(l));
+                this.setStatus("本层纹理过滤：" + this.layerFilterLabel(l));
+                this.save();
+            });
+            textureFilter.tooltip(IKey.constant("该图片/序列层的采样过滤；「跟随工程」使用设置里的自动检测。自动会按素材分辨率和显示尺寸开启或关闭线性过滤"));
+            section.fields.add(textureFilter);
         }
         if ("bbs".equals(l.type))
         {
@@ -13475,6 +14195,15 @@ public class UICompositorPanel extends UIDashboardPanel
             return super.subMouseScrolled(context);
         }
 
+        if (this.cameraFlying && Math.abs(context.mouseWheel) > 0.001D)
+        {
+            this.flightSpeed = Math.max(20F, Math.min(20000F,
+                this.flightSpeed * (float) Math.pow(1.2D, context.mouseWheel)));
+            this.setStatus(String.format(java.util.Locale.ROOT, "飞行速度 %.0f /s", this.flightSpeed));
+
+            return true;
+        }
+
         /* Alt+wheel must work over the preview as well as over the timeline. The timeline
          * consumes it when the cursor is there; this is the fallback for the rest of the panel. */
         if (!this.startScreenOpen && !this.modalLayer.isVisible() && this.doc != null
@@ -13533,6 +14262,13 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 return super.subKeyPressed(context);
             }
+
+            return true;
+        }
+
+        if (this.sponsorsOverlay != null && this.sponsorsOverlay.isOpen())
+        {
+            this.sponsorsOverlay.subKeyPressed(context);
 
             return true;
         }
@@ -13606,6 +14342,32 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             return super.subKeyPressed(context);
         }
+
+        if (this.cameraFlying)
+        {
+            /* Flight owns the keyboard while it is active. Movement is polled from the physical
+             * keys in updateFlight(); here we only need the exit gesture, and swallowing the rest
+             * prevents editor shortcuts from firing mid-flight. */
+            if (pressed && (key == GLFW.GLFW_KEY_F || key == GLFW.GLFW_KEY_ESCAPE))
+            {
+                this.setCameraFlying(false);
+
+                return true;
+            }
+
+            return true;
+        }
+
+        /* F is the BBS flight key, exactly as in BBS's film editor. When a BBS-style camera is
+         * selected it takes priority over the global F focus shortcut; with any other selection F
+         * still toggles focus mode. */
+        if (pressed && !typing && !ctrl && !shift && !alt && key == GLFW.GLFW_KEY_F && this.canFlyCamera())
+        {
+            this.setCameraFlying(true);
+
+            return true;
+        }
+
         if (this.viewportMode && pressed && !typing && this.subViewportKey(key))
         {
             return true;
@@ -14324,6 +15086,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.applyLayout();
         }
 
+        this.updateCameraFlight(context);
         this.syncPreviewAudio();
 
         /* Opaque backdrop, unconditionally.
@@ -14421,7 +15184,12 @@ public class UICompositorPanel extends UIDashboardPanel
                 int cached = dev.bbsae.client.render.CompPrecache.cachedCount(this.project, this.doc);
                 String cachedLabel = cached > 0 ? "  ·  " + cached + " 帧缓存" : "";
 
-                this.previewInfo.label = IKey.constant(this.doc.width + "x" + this.doc.height + "  " + (int) this.doc.fps + "fps  " + effects + " FX" + cachedLabel);
+                String shader = dev.bbsae.client.render.ShaderCompat.label();
+                String depth = this.hasDepthEffects() && !dev.bbsae.client.overlay.BbsPreviewBridge.depthAvailable()
+                    ? "  ·  深度不可用（效果自动降级）" : "";
+
+                this.previewInfo.label = IKey.constant(this.doc.width + "x" + this.doc.height + "  " + (int) this.doc.fps
+                    + "fps  " + effects + " FX  ·  " + shader + depth + cachedLabel);
                 this.updatePrecacheLabel();
             }
             else
@@ -14451,7 +15219,8 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         boolean overlay = (this.onboarding != null && this.onboarding.isOpen())
-            || (this.settingsOverlay != null && this.settingsOverlay.isOpen());
+            || (this.settingsOverlay != null && this.settingsOverlay.isOpen())
+            || (this.sponsorsOverlay != null && this.sponsorsOverlay.isOpen());
 
         if (overlay)
         {
@@ -14473,6 +15242,17 @@ public class UICompositorPanel extends UIDashboardPanel
         try
         {
             super.render(context);
+
+            if (this.cameraFlying && this.preview != null)
+            {
+                int x = this.preview.area.x + 8;
+                int y = this.preview.area.ey() - 42;
+
+                context.batcher.box(x, y, x + 300, y + 34, 0xD90B1118);
+                context.batcher.outline(x, y, x + 300, y + 34, 0xFF4C9AFF);
+                context.batcher.textShadow("BBS 飞行模式  ·  F 退出并打关键帧", x + 7, y + 4, 0xFF8CC8FF);
+                context.batcher.textShadow("WASD 移动  空格/Shift 升降  鼠标转向  滚轮调速", x + 7, y + 18, 0xFFAEBBCD);
+            }
         }
         finally
         {

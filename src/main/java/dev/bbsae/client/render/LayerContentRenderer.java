@@ -150,11 +150,10 @@ final class LayerContentRenderer
 
         if (layer.imageFit == 2)
         {
-            float sx = layer.width / image.width;
-            float sy = layer.height / image.height;
             float x = -layer.width * layer.anchorX;
             float y = -layer.height * layer.anchorY;
 
+            applyTextureFilter(layer, context, image, layer.width, layer.height);
             batcher.texturedBox(image.texture.id, layer.color, x, y, layer.width, layer.height, 0F, 0F, image.width, image.height, image.width, image.height);
 
             return;
@@ -174,7 +173,24 @@ final class LayerContentRenderer
         float x = -w * layer.anchorX;
         float y = -h * layer.anchorY;
 
+        applyTextureFilter(layer, context, image, w, h);
         batcher.texturedBox(image.texture.id, layer.color, x, y, w, h, 0F, 0F, image.width, image.height, image.width, image.height);
+    }
+
+    /**
+     * Applies the layer/project texture filter immediately before its draw.
+     *
+     * <p>OpenGL filtering is texture state, not draw state, and the cache shares textures between
+     * layers. Setting it here means a low-resolution icon and a 4K photo can use different filters
+     * in the same frame without cloning either texture.</p>
+     */
+    private static void applyTextureFilter(CompLayer layer, CompRenderContext context, ImageTextureCache.Entry image,
+                                           float targetWidth, float targetHeight)
+    {
+        int mode = TextureFilter.resolveMode(layer, context == null ? null : context.project);
+        boolean linear = TextureFilter.isLinear(mode, image.width, image.height, targetWidth, targetHeight);
+
+        image.texture.setLinear(linear);
     }
 
     private static void drawShapes(CompLayer layer, CompRenderContext context, Batcher2D batcher)

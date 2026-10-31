@@ -264,6 +264,12 @@ public final class BbsPreviewBridge
         return worldDepth;
     }
 
+    /** True when the current depth copy can actually be sampled by depth effects. */
+    public static boolean depthAvailable()
+    {
+        return worldDepth != null && worldDepth.isAvailable();
+    }
+
     public static void requestWorldCapture(boolean requested)
     {
         if (requested)

@@ -14,6 +14,7 @@ import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.ScrollDirection;
+import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.utils.colors.Colors;
 import net.minecraft.client.util.math.MatrixStack;
@@ -97,7 +98,7 @@ public class UICompSettings extends UIElement
         this.title.color(0xFFF2F5FA, false);
         this.subtitle = new UILabel(IKey.constant("外观、动效、快捷键与工程默认值。修改会立即生效并保存。"));
         this.subtitle.color(0xFF8995A8, false);
-        this.footer = new UILabel(IKey.constant("BBS Compositor 0.18.0 · 设置随工程和全局偏好保存"));
+        this.footer = new UILabel(IKey.constant("BBS Compositor 0.19.0 · 设置随工程和全局偏好保存"));
         this.footer.color(0xFF687386, false);
 
         this.search = new UITextbox(96, (text) ->
@@ -223,22 +224,27 @@ public class UICompSettings extends UIElement
             return;
         }
 
-        int w = Math.min(960, Math.max(560, this.area.w - 32));
-        int h = Math.min(650, Math.max(410, this.area.h - 32));
+        /* The old minimum was 560×410 and the card overflowed every smaller panel. The card now
+         * fits the available rectangle; below 560 px the category rail narrows instead of pushing
+         * the content off-screen. */
+        int w = Math.min(960, Math.max(300, this.area.w - 16));
+        int h = Math.min(650, Math.max(240, this.area.h - 16));
         int x = this.area.x + (this.area.w - w) / 2;
         int y = this.area.y + (this.area.h - h) / 2;
+        int navWidth = Math.max(72, Math.min(164, w / 3));
+        int contentX = navWidth + 20;
 
         this.card.relative(this).x(x).y(y).w(w).h(h);
-        this.title.relative(this.card).x(20).y(12).w(1F, -100).h(22);
-        this.subtitle.relative(this.card).x(20).y(34).w(1F, -100).h(14);
-        this.close.relative(this.card).x(1F, -74).y(14).w(54).h(20);
-        this.search.relative(this.card).x(10).y(62).w(164).h(20);
-        this.scroll.relative(this.card).x(184).y(58).w(1F, -200).h(1F, -94);
-        this.footer.relative(this.card).x(184).y(1F, -26).w(1F, -200).h(14);
+        this.title.relative(this.card).x(14).y(10).w(1F, -90).h(22);
+        this.subtitle.relative(this.card).x(14).y(32).w(1F, -90).h(14);
+        this.close.relative(this.card).x(1F, -68).y(12).w(54).h(20);
+        this.search.relative(this.card).x(10).y(58).w(navWidth).h(20);
+        this.scroll.relative(this.card).x(contentX).y(54).w(1F, -contentX - 16).h(1F, -88);
+        this.footer.relative(this.card).x(contentX).y(1F, -24).w(1F, -contentX - 16).h(14);
 
         for (int i = 0; i < this.navs.size(); i++)
         {
-            this.navs.get(i).relative(this.card).x(10).y(92 + i * 26).w(164).h(22);
+            this.navs.get(i).relative(this.card).x(10).y(88 + i * 26).w(navWidth).h(22);
         }
 
         this.laidOut = true;
@@ -638,6 +644,25 @@ public class UICompSettings extends UIElement
                 settings.showGrid = value;
                 this.panel.saveSettings();
             }), 170, "预览中显示构图网格"));
+
+            UIElement textureFilter = this.segmented(new String[] {"自动", "线性", "最近邻"},
+                Math.max(0, Math.min(2, settings.textureFilter)), (value) ->
+            {
+                settings.textureFilter = value;
+                this.panel.saveSettings();
+                this.panel.refreshTextureFilterUi();
+                this.rebuild();
+                this.status("纹理过滤：" + dev.bbsae.client.render.TextureFilter.name(value));
+            });
+
+            this.add(this.row("线性过滤", textureFilter, 250,
+                "自动：检测素材是否高分辨率，高分辨率素材自动开，像素素材自动关。也显示在预览栏和图层检查器"));
+            this.add(UI.label(IKey.constant("自动检测状态 · " + this.panel.describeTextureFilter()), 14));
+            this.add(this.fullButton("重新检测当前合成素材", "重新读取当前合成的图片/序列分辨率；文件新增后立即刷新自动判断", () ->
+            {
+                this.panel.refreshTextureFilterUi();
+                this.rebuild();
+            }));
         }
 
         this.add(this.fullButton("重置面板布局", "恢复当前密度下的左右分栏、时间轴和快捷面板尺寸", () ->
@@ -813,6 +838,10 @@ public class UICompSettings extends UIElement
         });
         this.add(this.row("AE 预览代理", proxy, 220, "导出始终使用 1/1"));
 
+        this.add(this.section("光影 / 外部渲染"));
+        this.add(UI.label(IKey.constant(dev.bbsae.client.render.ShaderCompat.describe()), 14));
+        this.add(UI.label(IKey.constant("合成层通过 BBS 的 FrameOverlays 进入世界帧；预览与导出使用同一张合成图。深度不可用时深度效果会自动变为无操作，不会把画面抠黑。"), 13));
+
         this.add(this.fullButton("清空预渲染帧缓存", "删除磁盘/LRU 中的预览帧，下一次播放重新渲染", () ->
         {
             this.panel.clearPreviewCache();
@@ -837,6 +866,11 @@ public class UICompSettings extends UIElement
             this.rebuild();
         }));
         this.add(this.section("关于"));
+        this.add(this.fullButton("赞助者殿堂", "查看赞助名单与支持方式；感谢每一位让合成器继续更新的人", () ->
+        {
+            this.close();
+            this.panel.openSponsors();
+        }));
         this.add(this.fullButton("快捷键一览", "列出当前方案和所有可编辑命令", this.panel::showShortcutHelp));
         this.add(this.fullButton("查看项目文档", "打开工程内的 docs/HANDOFF.zh.md", () ->
             this.status("文档位于项目目录 docs/HANDOFF.zh.md")));

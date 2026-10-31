@@ -124,6 +124,15 @@ public class CompProject
         public int gridSize = 80;
         public boolean depthEnabled = true;
 
+        /**
+         * Texture sampling policy for image/footage layers.
+         *
+         * <p>0 = automatic (high-resolution sources get linear filtering, pixel art stays nearest),
+         * 1 = force linear, 2 = force nearest. The settings page shows the resolved automatic state
+         * and how many sources in the current composition are considered high resolution.</p>
+         */
+        public int textureFilter = 0;
+
         /** 0 = flat editor background, 1 = live BBS frame behind the composition. */
         public int previewBackground = 0;
 

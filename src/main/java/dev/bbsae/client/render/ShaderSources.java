@@ -307,6 +307,10 @@ public final class ShaderSources
         uniform float NoiseAmount;
         uniform float NoiseScale;
         uniform float Seed;
+        uniform float Colorama;
+        uniform vec4 ColoramaA;
+        uniform vec4 ColoramaB;
+        uniform vec4 ColoramaC;
         uniform vec3 LayerU;
         uniform vec3 LayerV;
         uniform vec2 LayerSize;
@@ -371,6 +375,18 @@ public final class ShaderSources
             if (Threshold >= 0.0)
             {
                 c.rgb = vec3(step(Threshold, dot(c.rgb, vec3(0.299, 0.587, 0.114))));
+            }
+
+            if (Colorama > 0.0)
+            {
+                /* A three-stop gradient map. Mapping luminance rather than RGB keeps the result
+                 * coherent with the highlight/shadow controls above and makes the effect usable as
+                 * a colour grade, not just a duotone toy. */
+                float l = clamp(dot(c.rgb, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
+                vec3 low = mix(ColoramaA.rgb, ColoramaB.rgb, smoothstep(0.0, 0.5, l));
+                vec3 palette = mix(low, ColoramaC.rgb, smoothstep(0.5, 1.0, l));
+
+                c.rgb = mix(c.rgb, palette, clamp(Colorama, 0.0, 1.0));
             }
 
             if (Vignette > 0.0)
@@ -567,6 +583,9 @@ public final class ShaderSources
         uniform float Phase;
         uniform float Evolution;
         uniform int Vertical;
+        uniform float Scale;
+        uniform int Octaves;
+        uniform float Seed;
         uniform vec3 LayerU;
         uniform vec3 LayerV;
         uniform vec2 LayerSize;
@@ -612,6 +631,28 @@ public final class ShaderSources
             f = f * f * (3.0 - 2.0 * f);
             return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
                        mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+        }
+
+        /* Fractal Brownian motion for Turbulent Displace. The loop bound is a compile-time
+         * constant so the shader stays valid on GLSL 150; Octaves is a runtime break. */
+        float fbm(vec2 p)
+        {
+            float value = 0.0;
+            float amplitude = 0.5;
+
+            for (int i = 0; i < 8; i++)
+            {
+                if (i >= Octaves)
+                {
+                    break;
+                }
+
+                value += noise(p) * amplitude;
+                p = p * 2.03 + 17.0;
+                amplitude *= 0.5;
+            }
+
+            return value;
         }
 
         void main()
@@ -676,7 +717,7 @@ public final class ShaderSources
                 float c = cos(a);
                 uv = localToCompUv(Center + mat2(c, -s, s, c) * ldir);
             }
-            else
+            else if (Mode == 4)
             {
                 /* Frequency is radians per pixel (2π / wavelength), so the wavelength parameter
                  * means the same thing on a 200 px title and a 1920 px background. */
@@ -685,6 +726,20 @@ public final class ShaderSources
                 vec2 localPx = Vertical == 1
                     ? vec2(0.0, wave / max(LayerSize.y, 1.0))
                     : vec2(wave / max(LayerSize.x, 1.0), 0.0);
+
+                uv += localDeltaToComp(localPx);
+            }
+            else
+            {
+                /* Turbulent Displace: a two-channel fractal field, in pixels. Scale is a pixel
+                 * size (larger = broader eddies), Amount is the maximum displacement, and the
+                 * field is anchored to the layer so the layer can move without the turbulence
+                 * crawling underneath it. */
+                float sizePx = max(8.0, Scale);
+                vec2 p = (luv * LayerSize + Seed * 19.37 + Evolution * 8.0) / sizePx;
+                float angle = fbm(p) * 6.2831853 + fbm(p + 41.7) * 1.7;
+                vec2 offset = vec2(cos(angle), sin(angle)) * Amount;
+                vec2 localPx = vec2(offset.x / max(LayerSize.x, 1.0), offset.y / max(LayerSize.y, 1.0));
 
                 uv += localDeltaToComp(localPx);
             }
@@ -909,6 +964,21 @@ public final class ShaderSources
                 rgb = c.rgb;
                 alpha = c.a;
             }
+            else if (Mode == 9)
+            {
+                /* Light Sweep: a soft moving specular band across the layer. Progress is the band
+                 * centre in local 0..1 space, width is its size on the same axis, and softness
+                 * feathers both sides. This is additive, so it reads on both dark and bright
+                 * footage without replacing the source colour. */
+                float angle = radians(Param.x);
+                vec2 dir = vec2(cos(angle), sin(angle));
+                float axis = dot(luv - 0.5, dir) + 0.5;
+                float width = max(0.001, Param.y);
+                float soft = max(0.001, Param.w);
+                float band = 1.0 - smoothstep(width, width + soft, abs(axis - Param.z));
+
+                rgb += DotColor.rgb * band * DotColor.a * clamp(Amount, 0.0, 2.0);
+            }
             else
             {
                 /* VHS: tracking wobble + chroma bleed + local scanlines + tape noise.
@@ -937,6 +1007,112 @@ public final class ShaderSources
             }
 
             fragColor = vec4(clamp(rgb, vec3(0.0), vec3(1.0)), clamp(alpha, 0.0, 1.0));
+        }
+        """;
+
+    /**
+     * Grid / random repetition, in the spirit of Alight Motion's Grid and Random Repeat.
+     *
+     * <p>Each output pixel belongs to one cell. The cell shows the layer's own content scaled
+     * by {@code Scale}, optionally rotated and jittered; a seed makes the random mode stable
+     * across frames. Mode 0 is deterministic tiling, mode 1 is the random variant.</p>
+     */
+    public static final String REPEAT = """
+        #version 150 core
+
+        uniform sampler2D Source;
+        uniform vec2 Size;
+        uniform int Mode;
+        uniform vec2 Grid;
+        uniform float Scale;
+        uniform float Gap;
+        uniform float Rotation;
+        uniform float Randomness;
+        uniform float Seed;
+        uniform float Opacity;
+        uniform vec2 Offset;
+        uniform vec3 LayerU;
+        uniform vec3 LayerV;
+        uniform vec2 LayerSize;
+        uniform vec2 LayerX;
+        uniform vec2 LayerY;
+        uniform vec2 LayerOrigin;
+
+        in vec2 vUv;
+        out vec4 fragColor;
+
+        vec2 layerUv(vec2 uv)
+        {
+            return vec2(dot(LayerU.xy, uv) + LayerU.z, dot(LayerV.xy, uv) + LayerV.z);
+        }
+
+        vec2 localToSource(vec2 luv)
+        {
+            vec2 lp = luv * LayerSize;
+            vec2 comp = LayerX * lp.x + LayerY * lp.y + LayerOrigin;
+
+            return vec2(comp.x / max(Size.x, 1.0), 1.0 - comp.y / max(Size.y, 1.0));
+        }
+
+        float hash21(vec2 p)
+        {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+
+        void main()
+        {
+            vec2 luv = layerUv(vUv);
+
+            if (any(lessThan(luv, vec2(0.0))) || any(greaterThan(luv, vec2(1.0))))
+            {
+                fragColor = vec4(0.0);
+                return;
+            }
+
+            vec2 grid = max(Grid, vec2(1.0));
+            vec2 cell = floor(luv * grid);
+            vec2 cuv = fract(luv * grid);
+            vec2 local = (cuv - 0.5) / max(1.0 - Gap, 0.001) + 0.5;
+
+            if (any(lessThan(local, vec2(0.0))) || any(greaterThan(local, vec2(1.0))))
+            {
+                fragColor = vec4(0.0);
+                return;
+            }
+
+            float scale = max(0.01, Scale);
+            float angle = radians(Rotation);
+            vec2 offset = vec2(0.0);
+            float alpha = clamp(Opacity, 0.0, 1.0);
+
+            if (Mode == 1)
+            {
+                float h1 = hash21(cell + Seed * 1.37);
+                float h2 = hash21(cell + Seed * 4.11 + 7.0);
+                float h3 = hash21(cell + Seed * 8.73 + 13.0);
+                float h4 = hash21(cell + Seed * 2.19 + 29.0);
+
+                angle += (h1 * 2.0 - 1.0) * radians(Rotation) * clamp(Randomness, 0.0, 1.0);
+                scale *= 1.0 + (h2 - 0.5) * clamp(Randomness, 0.0, 1.0) * 0.7;
+                offset = (vec2(h3, h4) - 0.5) * clamp(Randomness, 0.0, 1.0) * 0.45;
+                alpha *= 0.55 + 0.45 * h1;
+            }
+
+            vec2 centered = local - 0.5 - offset;
+            float s = sin(angle);
+            float c = cos(angle);
+            vec2 rotated = mat2(c, -s, s, c) * centered;
+            vec2 sourceLocal = rotated / scale + 0.5 + Offset;
+
+            if (any(lessThan(sourceLocal, vec2(0.0))) || any(greaterThan(sourceLocal, vec2(1.0))))
+            {
+                fragColor = vec4(0.0);
+                return;
+            }
+
+            vec4 color = texture(Source, clamp(localToSource(sourceLocal), vec2(0.0), vec2(1.0)));
+
+            fragColor = vec4(color.rgb, color.a * alpha);
         }
         """;
 
@@ -1041,7 +1217,17 @@ public final class ShaderSources
         void main()
         {
             vec4 c = texture(Source, vUv);
-            float d = DepthAvailable == 1 ? texture(Depth, vUv).r : 0.0;
+
+            /* No depth attachment (some Iris/alternate-framebuffer configurations) must be an
+             * exact no-op. Falling through with d = 0 previously erased the layer for depth matte
+             * and applied full fog/DOF, which looked like the effect was broken. */
+            if (DepthAvailable == 0)
+            {
+                fragColor = c;
+                return;
+            }
+
+            float d = texture(Depth, vUv).r;
 
             if (Mode == 0)
             {

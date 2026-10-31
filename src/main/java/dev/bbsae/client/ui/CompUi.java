@@ -180,6 +180,84 @@ public final class CompUi
         return density == DENSITY_COMPACT ? 232 : density == DENSITY_COMFORTABLE ? 288 : 252;
     }
 
+    /* ------------------------------------------------------------- responsive */
+
+    /**
+     * Caps the timeline so the preview body can never be squeezed out of the panel.
+     *
+     * <p>The editor has one fixed header (24 px), one status line (18 px) and a 6 px gap. Above
+     * that the preview wants at least 72 px and the timeline keeps at most 62% of the usable
+     * height. A window 300 px tall therefore gets a compact strip, not a body with a negative
+     * height that overlaps the timeline.</p>
+     */
+    public static int fitTimelineHeight(int areaHeight, int desired)
+    {
+        if (areaHeight <= 0)
+        {
+            return Math.max(80, desired);
+        }
+
+        int usable = Math.max(0, areaHeight - 24 - 18 - 6);
+        int cap = Math.max(80, Math.min(usable - 72, Math.round(usable * 0.62F)));
+
+        return Math.max(80, Math.min(Math.max(80, desired), cap));
+    }
+
+    /** Preview body height left after the header, status and fitted timeline. */
+    public static int bodyHeight(int areaHeight, int timelineHeight)
+    {
+        if (areaHeight <= 0)
+        {
+            return 160;
+        }
+
+        return Math.max(56, areaHeight - 24 - 18 - 6 - Math.max(0, timelineHeight));
+    }
+
+    /** Maximum width a side column may take without making the preview a sliver. */
+    public static int maxSideWidth(int areaWidth)
+    {
+        if (areaWidth <= 0)
+        {
+            return 360;
+        }
+
+        return Math.max(96, Math.min(420, areaWidth * 42 / 100));
+    }
+
+    /**
+     * Fits left/right columns around a preview floor.
+     *
+     * @return {@code [left, right]} widths, each possibly 0 when that column is hidden.
+     */
+    public static int[] fitColumns(int areaWidth, int left, int right, int gaps, int minPreview)
+    {
+        int l = Math.max(0, left);
+        int r = Math.max(0, right);
+        int w = Math.max(0, areaWidth);
+        int preview = Math.max(48, minPreview);
+        int available = Math.max(0, w - gaps - preview);
+
+        if (l + r <= available || l + r == 0)
+        {
+            return new int[] {l, r};
+        }
+
+        int total = l + r;
+        int newLeft = Math.max(0, available * l / total);
+        int newRight = Math.max(0, available - newLeft);
+
+        return new int[] {newLeft, newRight};
+    }
+
+    /** Quick-panel width; it yields to the timeline on narrow panels instead of hiding it. */
+    public static int quickWidth(int areaWidth, int desired)
+    {
+        int max = Math.max(0, areaWidth / 2 - 40);
+
+        return Math.max(0, Math.min(Math.max(160, desired), max));
+    }
+
     public static String densityName(int tier)
     {
         return switch (tier)

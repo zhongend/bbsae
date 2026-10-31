@@ -87,7 +87,8 @@ public class EffectCoverageTest
     public void alightMotionEffectsRoundTripThroughJson()
     {
         for (String id : new String[] {
-            "scanlines", "glitch", "vhs", "halftone", "emboss", "mirror", "kaleidoscope"
+            "scanlines", "glitch", "vhs", "halftone", "emboss", "mirror", "kaleidoscope",
+            "grid_repeat", "random_repeat", "turbulent_displace", "colorama", "light_sweep"
         })
         {
             CompEffect effect = CompEffectRegistry.create(id, 3);

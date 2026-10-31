@@ -131,6 +131,27 @@ public final class GlTexture
         this.upload(ByteBuffer.wrap(rgba));
     }
 
+    /**
+     * Sets min/mag filtering on this texture.
+     *
+     * <p>This is intentionally explicit rather than a per-texture constructor flag: the same
+     * cached image can be drawn once as a crisp pixel-art icon and once as a soft background.
+     * Callers set the policy for the draw they are about to make.</p>
+     */
+    public void setLinear(boolean linear)
+    {
+        if (this.id <= 0)
+        {
+            return;
+        }
+
+        GlStateManager._bindTexture(this.id);
+        int filter = linear ? GL11.GL_LINEAR : GL11.GL_NEAREST;
+
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, filter);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, filter);
+    }
+
     public void delete()
     {
         if (this.id > 0)

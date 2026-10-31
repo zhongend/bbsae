@@ -1,5 +1,13 @@
 # Credits
 
+## Sponsors / 赞助者
+
+- 星辰久梦君
+- 血之书
+- Szv文森特37
+
+Thank you for keeping BBS Compositor moving. / 感谢你们让合成器继续生长。
+
 - **Project / maintainer:** 终end ([@zhongend](https://github.com/zhongend))
 - **Compositor icon:** 超级大布叮
 - **Runtime:** Minecraft 1.20.1, Fabric Loader, Fabric API, BBS FS 2.7-1.20.1

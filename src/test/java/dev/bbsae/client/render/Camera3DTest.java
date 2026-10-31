@@ -80,6 +80,27 @@ public class Camera3DTest
     }
 
     @Test
+    public void bbsStyleCameraIgnoresLookAtAndFliesWithYawPitch()
+    {
+        CompDocument doc = document();
+        CompProject project = project(doc);
+        CompLayer camera = camera(doc);
+
+        camera.cameraStyle = CompLayer.CAMERA_BBS;
+        camera.cameraLookAt = true;
+        camera.rotationY = 90F;
+        camera.rotationX = 0F;
+        doc.layers.add(camera);
+        doc.activeCameraId = camera.id;
+
+        CompCamera view = CompCamera.of(doc, 0F, 0F);
+
+        assertTrue(view.hasCamera);
+        assertTrue(!view.lookAt, "BBS camera must be free, never target-locked");
+        assertTrue(view.forward.x > 0.99F, "yaw 90 must look along +X, got " + view.forward);
+    }
+
+    @Test
     public void zPlaneMapsOneToOneAtTheDefaultCameraDistance()
     {
         CompDocument doc = document();
