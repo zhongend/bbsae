@@ -163,6 +163,8 @@ public final class CompViewControls
 
     private static void writePosition(CompLayer camera, float frame, float x, float y)
     {
+        camera.ensureIndependentAxes();
+
         if (camera.hasAnyTransformKey())
         {
             camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_X, frame, x);
