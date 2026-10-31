@@ -274,6 +274,9 @@ public class CompLayer
 
     public void insertAxisKeyAt(int axis, float frame)
     {
+        /* Evaluate after migration. On an old project the legacy Transform is the current value;
+         * reading scalarAt() first would key the base field instead of the animated value. */
+        this.ensureIndependentAxes();
         this.insertAxisKey(axis, frame, this.axisAt(axis, frame, this.scalar(CompCurves.axisPath(axis), 0F)));
     }
 

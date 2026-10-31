@@ -225,6 +225,25 @@ public class AxisCurvesTest
     }
 
     @Test
+    public void keyingAtThePlayheadUsesTheLegacyAnimatedValue()
+    {
+        CompLayer layer = new CompLayer("layer", "Layer", "solid");
+        Transform a = layer.defaultTransform();
+        Transform b = layer.defaultTransform();
+
+        a.translate.set(100F, 50F, 0F);
+        b.translate.set(300F, 50F, 0F);
+        layer.transformChannel().insertInheriting(0F, a);
+        layer.transformChannel().insertInheriting(10F, b);
+
+        layer.insertAxisKeyAt(CompCurves.AXIS_X, 5F);
+
+        assertEquals(200F, layer.axisChannel(CompCurves.AXIS_X).getKeyframes().get(1).getValue(), 0.0001F);
+        assertTrue(layer.transformChannel().getKeyframes().isEmpty());
+        assertEquals(200F, layer.transformAt(5F).translate.x, 0.0001F);
+    }
+
+    @Test
     public void effectCurveCanBeFoundByItsStablePath()
     {
         CompLayer layer = new CompLayer("layer", "Layer", "solid");
