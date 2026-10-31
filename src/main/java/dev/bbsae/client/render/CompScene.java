@@ -384,10 +384,10 @@ public final class CompScene
         {
             if (effect != null && effect.enabled && "shake".equals(effect.type))
             {
-                float amount = Math.max(0F, effect.valueF("amplitude", 18F));
-                float frequency = Math.max(0.01F, effect.valueF("frequency", 6F));
-                float rotation = Math.max(0F, effect.valueF("rotation", 2F));
-                float seed = effect.valueF("seed", 0F);
+                float amount = Math.max(0F, layer.effectParam(effect.id, "amplitude", 18F, ctx.frame));
+                float frequency = Math.max(0.01F, layer.effectParam(effect.id, "frequency", 6F, ctx.frame));
+                float rotation = Math.max(0F, layer.effectParam(effect.id, "rotation", 2F, ctx.frame));
+                float seed = layer.effectParam(effect.id, "seed", 0F, ctx.frame);
                 float t = ctx.time * frequency * 6.2831855F;
                 Shake shake = new Shake();
 
