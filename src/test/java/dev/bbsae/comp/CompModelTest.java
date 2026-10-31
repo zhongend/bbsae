@@ -543,4 +543,46 @@ public class CompModelTest
         assertEquals(1F, copy.sourceTimeAt(1F, 20F), 0.0001F);
     }
 
+    /**
+     * Every animatable field must also be readable through {@link CompLayer#scalar(String, float)}.
+     *
+     * <p>{@code addScalarKey()} keys the value returned by that method. Fields missing from the
+     * switch (z, pitch/yaw, Z scale, squash, camera distance/target/FOV) returned the caller's
+     * default of 0 and inserted a key at 0 — clicking ◆ on "距离 Z" teleported the camera to the
+     * origin instead of keying its current distance.</p>
+     */
+    @Test
+    public void scalarFallbacksCoverEveryEditable3DAndCameraField()
+    {
+        CompLayer layer = new CompLayer("layer", "3D", "shape");
+
+        layer.z = 320F;
+        layer.rotationX = -15F;
+        layer.rotationY = 22F;
+        layer.scaleZ = 1.25F;
+        layer.squash = 0.2F;
+        layer.cameraZ = 1158F;
+        layer.cameraTargetX = 740F;
+        layer.cameraTargetY = 562F;
+        layer.cameraTargetZ = 100F;
+        layer.cameraFov = 50F;
+
+        assertEquals(320F, layer.scalar("z", 0F), 0.0001F);
+        assertEquals(-15F, layer.scalar("rotationX", 0F), 0.0001F);
+        assertEquals(22F, layer.scalar("rotationY", 0F), 0.0001F);
+        assertEquals(1.25F, layer.scalar("scaleZ", 0F), 0.0001F);
+        assertEquals(0.2F, layer.scalar("squash", 0F), 0.0001F);
+        assertEquals(1158F, layer.scalar("cameraZ", 0F), 0.0001F);
+        assertEquals(740F, layer.scalar("cameraTargetX", 0F), 0.0001F);
+        assertEquals(562F, layer.scalar("cameraTargetY", 0F), 0.0001F);
+        assertEquals(100F, layer.scalar("cameraTargetZ", 0F), 0.0001F);
+        assertEquals(50F, layer.scalar("cameraFov", 0F), 0.0001F);
+
+        /* A keyed field must still evaluate to the animated value, not to the fallback. */
+        layer.scalarChannel("z").insert(0F, 100F);
+        layer.scalarChannel("z").insert(20F, 300F);
+
+        assertEquals(200F, layer.scalarAt("z", layer.scalar("z", 0F), 10F), 0.5F);
+    }
+
 }

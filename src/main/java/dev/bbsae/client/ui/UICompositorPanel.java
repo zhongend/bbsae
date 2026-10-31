@@ -125,6 +125,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UICompTrackTimeline trackTimeline;
     private final UIElement keyframeDrawer;
     private final UILabel keyframeTitle;
+    private final UICompButton keyframeCurve;
     private final UIButton snapButton;
     private final UIButton keyframeButton;
     private UICompButton precacheButton;
@@ -165,6 +166,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private final List<String> filmIds = new ArrayList<>();
     private float time;
     private boolean playing;
+    /** Monotonic timestamp of the previous playback frame; 0 means "first frame after resume". */
+    private long lastPlayNanos;
     private boolean renderView;
     private int presetIndex;
     private long lastAutoSaveMs;
@@ -3209,7 +3212,14 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.keyframeTitle = new UILabel(IKey.constant("属性关键帧"));
         this.keyframeTitle.color(0xFFB8C4D6, false);
-        this.keyframeTitle.relative(this.keyframeDrawer).x(8).y(1).w(1F, -136).h(20);
+        this.keyframeTitle.relative(this.keyframeDrawer).x(8).y(1).w(1F, -250).h(20);
+
+        /* BBS's original curve picker, one click from the keyframe bar. It applies to the
+         * selected keyframes (or the key at the playhead) and is the exact menu the film
+         * editor opens from the graph icon. */
+        this.keyframeCurve = new UICompButton(IKey.constant("插值曲线"), (button) -> this.openCurveMenu());
+        this.keyframeCurve.relative(this.keyframeDrawer).x(1F, -186).y(2).w(68).h(18);
+        this.keyframeCurve.tooltip(IKey.constant("BBS 原生插值曲线：为选中的关键帧选择贝塞尔/缓动/自动等曲线"));
 
         UIIcon closeKeyframes = new UIIcon(Icons.CLOSE, (icon) -> this.toggleKeyframes());
         closeKeyframes.relative(this.keyframeDrawer).x(1F, -24).y(2).w(18).h(18);
@@ -3240,7 +3250,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(1F, -22);
 
-        this.keyframeDrawer.add(this.keyframeTitle, prevKey, addKey, nextKey, fitKeys, closeKeyframes, this.keyframeEditor);
+        this.keyframeDrawer.add(this.keyframeTitle, this.keyframeCurve, prevKey, addKey, nextKey, fitKeys, closeKeyframes, this.keyframeEditor);
 
         this.status = new UILabel(IKey.constant(""));
         this.status.color(0xFF8A94A6, false);
@@ -3569,6 +3579,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.onAppear(() ->
         {
             this.ensureBound();
+            this.lastPlayNanos = 0L;
 
             if (this.project == null)
             {
@@ -3582,12 +3593,14 @@ public class UICompositorPanel extends UIDashboardPanel
         this.onAppear(() -> dev.bbsae.client.overlay.BbsPreviewBridge.attach(this.filmPanel, this.doc));
         this.onClose(() ->
         {
+            this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.flushSave();
             dev.bbsae.client.overlay.BbsPreviewBridge.detach();
         });
         this.onDisappear(() ->
         {
+            this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.flushSave();
             dev.bbsae.client.render.CompPrecache.stop();
@@ -6230,6 +6243,10 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.debugEntityScene();
                 break;
 
+            case "quick":
+                this.debugQuick3D();
+                break;
+
             case "queue":
                 this.toggleRenderView();
                 break;
@@ -6376,6 +6393,74 @@ public class UICompositorPanel extends UIDashboardPanel
         this.time = 2F;
         this.refreshLayers();
         this.refreshInspector();
+        this.save();
+    }
+
+    /**
+     * Verification state: a 3D layer selected with real Z / pitch / yaw / Z-scale keys, the
+     * keyframe drawer open and the BBS interpolation entry point visible. Used for the quick
+     * panel 3D rows and the curve picker screenshot.
+     */
+    private void debugQuick3D()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        CompLayer layer = this.doc.getLayer("card_3d");
+
+        if (layer == null)
+        {
+            layer = new CompLayer("card_3d", "3D Card", "shape");
+            layer.x = this.doc.width * 0.5F;
+            layer.y = this.doc.height * 0.5F;
+            layer.width = 420F;
+            layer.height = 240F;
+            layer.shapes.add(CompShape.rect("quick_shape", 0F, 0F, 360F, 200F, 0xFF66CCFF));
+            this.doc.addLayer(layer);
+        }
+
+        layer.threeD = true;
+        layer.z = 320F;
+        layer.rotationX = -15F;
+        layer.rotationY = 22F;
+        layer.scaleZ = 1.1F;
+
+        float fps = Math.max(1F, this.doc.fps);
+        float end = Math.max(1F, this.doc.duration) * fps;
+
+        if (layer.scalarChannel("z").getKeyframes().isEmpty())
+        {
+            layer.scalarChannel("z").insert(0F, 120F);
+            layer.scalarChannel("z").insert(end * 0.55F, 360F);
+            layer.scalarChannel("rotationX").insert(0F, 0F);
+            layer.scalarChannel("rotationX").insert(end * 0.55F, -20F);
+            layer.scalarChannel("scaleZ").insert(0F, 1F);
+            layer.scalarChannel("scaleZ").insert(end * 0.55F, 1.2F);
+        }
+
+        this.inspectorPage = PAGE_LAYER;
+        this.timelinePage = 0;
+        this.applyTimelinePage(false);
+        this.selectLayer(layer);
+        this.time = Math.max(0F, end * 0.55F / fps);
+        this.openKeyframes();
+        this.refreshSheets();
+
+        for (Object entry : layer.scalarChannel("z").getKeyframes())
+        {
+            this.keyframeEditor.view.getGraph().selectKeyframe((Keyframe) entry);
+
+            break;
+        }
+
+        if (Boolean.getBoolean("bbsae.debugCurveMenu"))
+        {
+            this.openCurveMenu();
+        }
+
+        this.setStatus("调试：3D XYZ 快捷面板 · BBS 插值曲线");
         this.save();
     }
 
@@ -11721,8 +11806,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 return;
             }
 
-            this.setScalar(layer, path, (float) trackpad.getValue());
-            this.addScalarKey(layer, path);
+            this.addScalarKey(layer, path, (float) trackpad.getValue());
         });
 
         if (transformPath || "opacity".equals(path) || layer.hasScalarChannel(path))
@@ -11791,9 +11875,10 @@ public class UICompositorPanel extends UIDashboardPanel
 
         key.wh(16, 16);
         key.tooltip(IKey.constant("在播放头添加关键帧"));
-        key.active(layer.hasScalarChannel(path)
-            || "opacity".equals(path)
-            || ("x".equals(path) || "y".equals(path) || "rotation".equals(path) || "scaleX".equals(path) || "scaleY".equals(path)) && !layer.transformChannel().getKeyframes().isEmpty());
+        /* Every animatable path can create its FIRST key: the old gate only enabled the button
+         * once a channel already existed, so Z depth, pitch/yaw, Z scale, squash and camera
+         * distance/target/FOV could never be keyed from the inspector at all. */
+        key.active(true);
 
         return key;
     }
@@ -12033,8 +12118,17 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void addScalarKey(CompLayer layer, String path)
     {
+        this.addScalarKey(layer, path, this.scalarValue(layer, path));
+    }
+
+    /**
+     * Keys an explicit value. The inspector already shows the current animated value; passing it
+     * in keeps the undo checkpoint on the pre-action state and makes the inserted key independent
+     * of whether {@code CompLayer.scalar()} happens to know the path.
+     */
+    private void addScalarKey(CompLayer layer, String path, float value)
+    {
         this.beginAction("添加关键帧");
-        float value = this.scalarValue(layer, path);
 
         layer.scalarChannel(path).insert(this.getFrame(), value);
 
@@ -12059,6 +12153,29 @@ public class UICompositorPanel extends UIDashboardPanel
         if ("timeRemap".equals(path))
         {
             return layer.scalarAt(path, layer.sourceTimeAt(this.time, this.getFrame()), this.getFrame());
+        }
+
+        /* The 3D components live in scalar channels but CompLayer.scalar() does not know them
+         * (its fallback is the caller's default). Keying Z used to read 0 and insert 0, which
+         * teleported a layer that sat at z=500 back onto the comp plane. */
+        if ("z".equals(path))
+        {
+            return layer.scalarAt(path, layer.z, this.getFrame());
+        }
+
+        if ("rotationX".equals(path))
+        {
+            return layer.scalarAt(path, layer.rotationX, this.getFrame());
+        }
+
+        if ("rotationY".equals(path))
+        {
+            return layer.scalarAt(path, layer.rotationY, this.getFrame());
+        }
+
+        if ("scaleZ".equals(path))
+        {
+            return Math.max(0.0001F, layer.scalarAt(path, layer.scaleZ, this.getFrame()));
         }
 
         if ("cameraTargetX".equals(path))
@@ -12161,6 +12278,51 @@ public class UICompositorPanel extends UIDashboardPanel
         this.save();
     }
 
+    public void quickSetScaleX(double percent)
+    {
+        this.setTransformComponent(3, Math.max(0.01F, (float) percent / 100F));
+    }
+
+    public void quickSetScaleY(double percent)
+    {
+        this.setTransformComponent(4, Math.max(0.01F, (float) percent / 100F));
+    }
+
+    public void quickSetScaleZ(double percent)
+    {
+        if (this.selectedLayer == null)
+        {
+            return;
+        }
+
+        float scale = Math.max(0.01F, (float) percent / 100F);
+
+        this.selectedLayer.scaleZ = scale;
+        this.setScalar(this.selectedLayer, "scaleZ", scale);
+    }
+
+    public void quickSetRotationX(double degrees)
+    {
+        if (this.selectedLayer == null)
+        {
+            return;
+        }
+
+        this.selectedLayer.rotationX = (float) degrees;
+        this.setScalar(this.selectedLayer, "rotationX", (float) degrees);
+    }
+
+    public void quickSetRotationY(double degrees)
+    {
+        if (this.selectedLayer == null)
+        {
+            return;
+        }
+
+        this.selectedLayer.rotationY = (float) degrees;
+        this.setScalar(this.selectedLayer, "rotationY", (float) degrees);
+    }
+
     public void quickSetOpacity(double percent)
     {
         if (this.selectedLayer == null)
@@ -12190,6 +12352,170 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.addScalarKey(this.selectedLayer, "z");
         }
+    }
+
+    /**
+     * Position key: x/y live in the transform vector and z in its scalar channel.
+     * One discrete command/undo checkpoint, like every other key action.
+     */
+    public void quickKeyPosition()
+    {
+        CompLayer layer = this.selectedLayer;
+
+        if (layer == null)
+        {
+            return;
+        }
+
+        this.beginAction("添加位置关键帧");
+        this.insertTransformKey(layer);
+
+        if (layer.threeD)
+        {
+            this.insertScalarKey(layer, "z");
+        }
+
+        this.afterQuickKey("位置");
+    }
+
+    public void quickKeyRotation()
+    {
+        CompLayer layer = this.selectedLayer;
+
+        if (layer == null)
+        {
+            return;
+        }
+
+        this.beginAction("添加旋转关键帧");
+        this.insertTransformKey(layer);
+
+        if (layer.threeD)
+        {
+            this.insertScalarKey(layer, "rotationX");
+            this.insertScalarKey(layer, "rotationY");
+        }
+
+        this.afterQuickKey("旋转");
+    }
+
+    public void quickKeyScale()
+    {
+        CompLayer layer = this.selectedLayer;
+
+        if (layer == null)
+        {
+            return;
+        }
+
+        this.beginAction("添加缩放关键帧");
+        this.insertTransformKey(layer);
+
+        if (layer.threeD)
+        {
+            this.insertScalarKey(layer, "scaleZ");
+        }
+
+        this.afterQuickKey("缩放");
+    }
+
+    private void insertTransformKey(CompLayer layer)
+    {
+        layer.transformChannel().insert(this.getFrame(), layer.transformAt(this.getFrame()).copy());
+    }
+
+    private void insertScalarKey(CompLayer layer, String path)
+    {
+        layer.scalarChannel(path).insert(this.getFrame(), this.scalarValue(layer, path));
+    }
+
+    private void afterQuickKey(String label)
+    {
+        this.refreshSheets();
+        this.setStatus("已在播放头添加" + label + "关键帧");
+        this.save();
+    }
+
+    /* ---------------------------------------------------- BBS interpolation */
+
+    /**
+     * Opens BBS's own interpolation picker for the keyframe selection.
+     *
+     * <p>The picker is {@code UIInterpolationContextMenu}: the same graph preview, icon grid,
+     * four bezier arguments and copy/paste the film editor's keyframe properties use. It is
+     * opened from the quick panel and from the keyframe drawer header so the curve is reachable
+     * without selecting a keyframe and then hunting for the small graph icon in the inspector.</p>
+     *
+     * <p>If nothing is selected, the first key at the playhead is selected first; this makes the
+     * button useful immediately after scrubbing to an animated frame.</p>
+     */
+    public void openCurveMenu()
+    {
+        Keyframe keyframe = this.selectedKeyframeForCurve();
+
+        if (keyframe == null)
+        {
+            this.setStatus("先在关键帧栏选中一个关键帧，或把播放头移到有键的帧");
+
+            return;
+        }
+
+        mchorse.bbs_mod.utils.interps.Interpolation interpolation = keyframe.getInterpolation();
+
+        mchorse.bbs_mod.ui.framework.elements.context.UIInterpolationContextMenu menu =
+            new mchorse.bbs_mod.ui.framework.elements.context.UIInterpolationContextMenu(interpolation);
+
+        menu.callback(() -> this.applyInterpolation(interpolation));
+        this.getContext().replaceContextMenu(menu);
+    }
+
+    private Keyframe selectedKeyframeForCurve()
+    {
+        if (this.keyframeEditor == null)
+        {
+            return null;
+        }
+
+        mchorse.bbs_mod.ui.framework.elements.input.keyframes.graphs.IUIKeyframeGraph graph =
+            this.keyframeEditor.view.getGraph();
+        Keyframe selected = graph.getSelected();
+
+        if (selected != null)
+        {
+            return selected;
+        }
+
+        float frame = this.getFrame();
+
+        for (UIKeyframeSheet sheet : graph.getSheets())
+        {
+            for (Object entry : sheet.channel.getKeyframes())
+            {
+                Keyframe keyframe = (Keyframe) entry;
+
+                if (Math.abs(keyframe.getTick() - frame) < 0.5F)
+                {
+                    graph.selectKeyframe(keyframe);
+
+                    return keyframe;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** Copies the picker's interpolation onto every selected key, like BBS does per sheet. */
+    private void applyInterpolation(mchorse.bbs_mod.utils.interps.Interpolation interpolation)
+    {
+        if (this.keyframeEditor == null)
+        {
+            return;
+        }
+
+        this.keyframeEditor.view.getGraph().setInterpolation(interpolation);
+        this.keyframeEditor.view.triggerChange();
+        this.save();
     }
 
     private void setTransformX(double value) { this.setTransformComponent(0, (float) value); }
@@ -12865,6 +13191,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.playing = true;
         this.playRate = 1F;
+        /* The first frame after a resume must not consume the time spent paused. */
+        this.lastPlayNanos = 0L;
         this.updatePlayLabel();
     }
 
@@ -12872,6 +13200,7 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         this.playing = false;
         this.playRate = 0F;
+        this.lastPlayNanos = 0L;
         this.updatePlayLabel();
     }
 
@@ -12887,6 +13216,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.playing = true;
+        this.lastPlayNanos = 0L;
         this.updatePlayLabel();
     }
 
@@ -13390,12 +13720,27 @@ public class UICompositorPanel extends UIDashboardPanel
         this.importFontFile(layer, file);
     }
 
+    /**
+     * Advances the editor playhead. BBS passes {@code MinecraftClient.getTickDelta()} here, but
+     * that is the fraction of a <b>client tick</b> since the last tick, not the duration of the
+     * previous frame. Summing it made the preview speed depend on the display refresh rate (at
+     * 144 fps it ran at roughly 3.6× the film's speed, while a 30 fps window ran at 0.75×).
+     * Playback therefore uses a monotonic wall clock, exactly like BBS's tick-based player.
+     */
+    @Override
     public void startRenderFrame(float tickDelta)
     {
         if (!this.playing || this.doc == null || this.renderView)
         {
+            this.lastPlayNanos = 0L;
+
             return;
         }
+
+        long now = System.nanoTime();
+        float delta = CompTime.playbackDelta(this.lastPlayNanos, now);
+
+        this.lastPlayNanos = now;
 
         float rate = this.playRate == 0F ? 1F : this.playRate;
         float in = Math.max(0F, Math.min(this.doc.duration, this.doc.workAreaIn));
@@ -13407,7 +13752,7 @@ public class UICompositorPanel extends UIDashboardPanel
             out = this.doc.duration;
         }
 
-        this.time += tickDelta / 20F * rate;
+        this.time += delta * rate;
 
         if (this.time >= out)
         {
@@ -13631,6 +13976,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.playing = false;
         this.playRate = 0F;
+        this.lastPlayNanos = 0L;
         this.time = Math.max(0F, Math.min(this.doc.duration, frame / fps));
 
         this.updatePlayLabel();

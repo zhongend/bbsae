@@ -2002,3 +2002,48 @@ model = world(layer)            // 不含相机
 空间模式下平坦图层与 3D 图层一起按平面深度排序（同 z 稳定，保持堆叠顺序）。
 
 手势：Alt+拖动 = 环绕（球面，俯仰 ±85° 防极点），其余不变。
+
+---
+
+## 36. 2026-11-01 第二十七轮：预览时钟 / 原版曲线 / 3D XYZ / 命名（0.16.0）
+
+> 完整论述见 `docs/ROUND27-PLAYBACK-CURVES-3D.zh.md`。本轮先合入外部交付的 0.14.2
+> 修复（导出管道/音频/关键帧选择/GL 深度纹理/原生对话框/数值落盘），再做四项用户修复。
+
+### 36.1 预览速度：tickDelta 不是帧间隔
+
+`UICompositorPanel.startRenderFrame(tickDelta)` 每帧加 `tickDelta / 20`。BBS 传进来的是
+`MinecraftClient.getTickDelta()`，即"当前客户端 tick 已过去百分之几"，是每 tick 归零的
+锯齿波，不是上一帧时长。逐帧累加的结果取决于刷新率：30 fps ≈ 0.5×、60 fps ≈ 1×、
+90 fps ≈ 2.25×、144 fps ≈ 3.6×。这正是"合成器预览比 BBS 原版快"的根因。
+
+现在 `CompTime.playbackDelta(previousNanos, nowNanos)` 用 `System.nanoTime()` 推进真实秒数，
+夹在 `[0, 0.5s]`；`lastPlayNanos` 在暂停/定位/变速/切页时清零。BBS 自己的播放器是 20 tick/s，
+所以两边现在是同一时间尺度。`CompTimeTest` 复现旧公式并验证 30/60/90/144/240 fps 都等于 1×。
+
+### 36.2 效果/片段选择界面的英文串
+
+BBS `UIKeys.C_CLIP` 的键是 `bbs.ui.camera.clips.<link>`，缺失时回退为键本身。之前菜单里
+显示 `bbs.ui.camera.clips.bbsae:composition`。`BbsAeClient` 在 `RegisterL10nEvent` 中写
+`LangKey.content = "合成器"`（`getKey(key, fallback)` 不覆盖已存在的键，必须直接写 content），
+并在 `onClientReady` 兜底重写；`CompositionClip` 新片段默认标题也改为"合成器"。
+
+### 36.3 3D XYZ + BBS 原生插值曲线
+
+- `UILayerQuickPanel` 按 `layer.threeD` 自动在 2D 五栏和 3D 十栏之间切换：位置 X/Y/Z、
+  旋转 X/Y/Z、缩放 X/Y/Z、不透明度；位置/旋转/缩放各一个 ◆ 组键。
+- 关键帧抽屉标题栏和快捷面板标题栏都有“插值曲线”，打开 BBS 自己的
+  `UIInterpolationContextMenu`（曲线预览、全部图标、v1–v4、复制粘贴），通过
+  `IUIKeyframeGraph.setInterpolation()` 应用到所有选中键；没有选中时自动选播放头所在键。
+- 防回归截图：`docs/verify/round27-quick3d.png`、`round27-curve-menu.png`。
+
+### 36.4 同源标量缺陷
+
+1. ◆ 首键被 `hasScalarChannel()` 禁用：Z/俯仰/偏航/Z 缩放/挤压/相机距离/目标/FOV 永远
+   打不了第一颗键。现在所有路径都可创建首键。
+2. `CompLayer.scalar()` 未覆盖 `putScalar()` 的全部字段，`addScalarKey` 读到 0：点“距离 Z”
+   的 ◆ 会把相机键到 0。现在覆盖 z/rotationX/Y/scaleZ/squash/cameraZ/cameraTargetX/Y/Z/
+   cameraFov/cameraTargetX/Y，且检查器把当前显示值显式传给 `addScalarKey(layer, path, value)`。
+3. `quickKeyZ` 同样走 `scalarValue`，一起修。
+
+验证：`test` **191/191**；实机 1920×1080 截图与日志（两个词条均解析为“合成器”）通过。

@@ -313,6 +313,8 @@ public class CompLayer
             case "scaleZ": this.scaleZ = Math.max(0.0001F, value); break;
             case "squash": this.squash = Math.max(-0.9F, Math.min(0.9F, value)); break;
             case "cameraZ": this.cameraZ = value; break;
+            case "cameraTargetX": this.cameraTargetX = value; break;
+            case "cameraTargetY": this.cameraTargetY = value; break;
             case "cameraTargetZ": this.cameraTargetZ = value; break;
             case "cameraFov": this.cameraFov = Math.max(1F, Math.min(179F, value)); break;
             case "fontSize": this.fontSize = value; break;
@@ -484,9 +486,19 @@ public class CompLayer
             case "opacity": return this.opacity;
             case "x": return this.x;
             case "y": return this.y;
+            case "z": return this.z;
             case "rotation": return this.rotation;
+            case "rotationX": return this.rotationX;
+            case "rotationY": return this.rotationY;
             case "scaleX": return this.scaleX;
             case "scaleY": return this.scaleY;
+            case "scaleZ": return this.scaleZ;
+            case "squash": return this.squash;
+            case "cameraZ": return this.cameraZ;
+            case "cameraTargetX": return this.cameraTargetX;
+            case "cameraTargetY": return this.cameraTargetY;
+            case "cameraTargetZ": return this.cameraTargetZ;
+            case "cameraFov": return this.cameraFov;
             case "width": return this.width;
             case "height": return this.height;
             case "fontSize": return this.fontSize;

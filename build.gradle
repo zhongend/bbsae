@@ -66,6 +66,10 @@ loom {
             vmArg "-Dbbsae.debugPlay=" + (project.findProperty("bbsaePlay") ?: "false")
             vmArg "-Dbbsae.debugVideoImport=" + (project.findProperty("bbsaeVideo") ?: "")
             programArgs "--quickPlaySingleplayer", "TestWorld"
+            /* The panel is laid out for a 1920x1080 editor canvas. The default tiny dev window
+             * (854x480) clips the timeline and the quick panel, which makes verification
+             * screenshots lie about overlap. */
+            programArgs "--width", "1920", "--height", "1080"
         }
     }
 }

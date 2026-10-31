@@ -16,6 +16,7 @@ import mchorse.bbs_mod.api.client.events.BBSClientReadyEvent;
 import mchorse.bbs_mod.api.client.events.RegisterClipPanelsEvent;
 import mchorse.bbs_mod.api.client.events.RegisterDashboardPanelsEvent;
 import mchorse.bbs_mod.api.client.events.RegisterFrameOverlaysEvent;
+import mchorse.bbs_mod.api.client.events.RegisterL10nEvent;
 import mchorse.bbs_mod.api.client.events.RegisterReplayActionsEvent;
 import mchorse.bbs_mod.film.Film;
 import mchorse.bbs_mod.film.replays.Replay;
@@ -36,10 +37,32 @@ public class BbsAeClient implements BBSAddonMod
 {
     private static UICompositorPanel compositorPanel;
 
+    /**
+     * Localises the clip type in BBS's own clip/effect picker.
+     *
+     * <p>BBS labels a clip type through {@code UIKeys.C_CLIP}, whose key is
+     * {@code bbs.ui.camera.clips.<link>}. Without an entry BBS falls back to the key itself, so
+     * the add-clip menu showed the raw string
+     * {@code bbs.ui.camera.clips.bbsae:composition} — the "一串英文" the user saw. The keys are
+     * registered here (and again on ready for the case where the addon loads after BBS built its
+     * language table) so the menu shows the same name as the rest of the panel: 合成器.</p>
+     */
+    @Subscribe
+    public void onL10n(RegisterL10nEvent event)
+    {
+        localizeClipName(event.l10n);
+    }
+
     @Subscribe
     public void onClientReady(BBSClientReadyEvent event)
     {
         CompStore.ensureDemo();
+
+        if (BBSModClient.getL10n() != null)
+        {
+            localizeClipName(BBSModClient.getL10n());
+        }
+
         BbsAeAddon.LOGGER.info("BBS Compositor client ready");
 
         if (Boolean.getBoolean("bbsae.debugPreview"))
@@ -252,6 +275,33 @@ public class BbsAeClient implements BBSAddonMod
 
             return section;
         });
+    }
+
+    /**
+     * The clip-picker key is derived from the registered {@link Link}, not from the display name.
+     * Keep both the current and the historical link spelling localised so films authored with an
+     * older addon build keep showing 合成器 as well.
+     */
+    private static void localizeClipName(mchorse.bbs_mod.l10n.L10n l10n)
+    {
+        if (l10n == null)
+        {
+            return;
+        }
+
+        /* getKey(key, fallback) does not replace an already-requested key's content (BBS's
+         * UIKeys.C_CLIP requests every registered clip link at class-init time), so set the
+         * content explicitly rather than relying on the fallback. */
+        apply(l10n, "bbs.ui.camera.clips." + BbsAeAddon.CLIP_ID);
+        apply(l10n, "bbs.ui.camera.clips.composition");
+    }
+
+    private static void apply(mchorse.bbs_mod.l10n.L10n l10n, String key)
+    {
+        mchorse.bbs_mod.l10n.keys.LangKey langKey = l10n.getKey(key);
+
+        langKey.content = "合成器";
+        BbsAeAddon.LOGGER.info("Clip picker localization: {} = {}", key, langKey.content);
     }
 
     @Subscribe

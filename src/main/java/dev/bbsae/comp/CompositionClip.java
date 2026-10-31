@@ -97,7 +97,7 @@ public class CompositionClip extends CameraClip
 
         clip.project.set(projectId);
         clip.comp.set(compId);
-        clip.title.set("Compositor");
+        clip.title.set("合成器");
         clip.tick.set(0);
         clip.duration.set(duration);
         clip.layer.set(0);

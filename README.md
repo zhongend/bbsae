@@ -54,6 +54,8 @@
   [`docs/ROUND25-ENTITY-KEY-IMPORT.zh.md`](docs/ROUND25-ENTITY-KEY-IMPORT.zh.md)
 - **Round 26 (owned Win32 file dialog, sound import, layer library, true 3D camera, v0.15.0):**
   [`docs/ROUND26-IMPORT-LIBRARY-CAMERA.zh.md`](docs/ROUND26-IMPORT-LIBRARY-CAMERA.zh.md)
+- **Round 27 (playback clock / BBS-native curve picker / 3D XYZ quick panel, v0.16.0):**
+  [`docs/ROUND27-PLAYBACK-CURVES-3D.zh.md`](docs/ROUND27-PLAYBACK-CURVES-3D.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -73,11 +75,11 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.15.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.15.0/bbsae-0.15.0.jar)
-   from the **v0.15.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.16.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.16.0/bbsae-0.16.0.jar)
+   from the **v0.16.0** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.15.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.16.0.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
@@ -146,6 +148,45 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.16.0
+
+**The preview runs at the film's speed, the clip picker speaks Chinese, and 3D layers get
+their XYZ back.**
+
+*The clock was a unit error.* `startRenderFrame(tickDelta)` added `tickDelta / 20` once per
+rendered frame, but BBS passes Minecraft's **fraction of the current client tick** there, not the
+elapsed time since the previous frame. Summing the sawtooth happened to give 1× at 60 fps, ran
+**3.6× too fast at 144 fps** and 0.5× at 30 fps. Playback now advances by wall-clock seconds with
+a 0.5 s stall clamp, reset on resume/seek, so one second of composition is one second of film.
+`CompTimeTest` reproduces the old refresh-rate dependence and checks the new clock at
+30/60/90/144/240 fps.
+
+*The clip picker no longer shows a translation key.* BBS labels a clip type through
+`UIKeys.C_CLIP` (`bbs.ui.camera.clips.<link>`). A missing entry falls back to the key itself, so
+the add-clip menu showed `bbs.ui.camera.clips.bbsae:composition`. The addon now registers that
+key — and the legacy `composition` spelling — through `RegisterL10nEvent`, with a post-ready
+fallback, and new clips are titled `合成器` from the start.
+
+*The 3D layer quick panel is 3D.* The right-hand quick panel switches from five 2D rows to ten
+3D rows: position X/Y/Z, rotation X/Y/Z and scale X/Y/Z, each group with its own ◆ key button.
+Z depth, pitch, yaw and Z scale write the layer's scalar channels, the same channels the 3D scene
+graph reads.
+
+*BBS's own curve picker is one click away.* A **插值曲线** button in the keyframe drawer header
+and in the quick panel opens BBS's `UIInterpolationContextMenu`: the graph preview, the full
+icon grid (linear/hold/bezier/auto/ease/bounce/elastic/…), the four bezier arguments and
+copy/paste. It applies to every selected keyframe, or selects the key at the playhead first.
+
+*First-key buttons work.* The inspector's ◆ was disabled until a scalar channel already existed,
+and `addScalarKey` read fields `CompLayer.scalar()` did not know (`z`, `rotationX/Y`, `scaleZ`,
+`squash`, camera distance/target/FOV), inserting 0. Every scalar field is now readable, the
+current displayed value is passed explicitly, and the key action starts its undo checkpoint
+before writing.
+
+<p align="center">
+  <img src="docs/verify/round27-quick3d.png" alt="3D XYZ quick panel and BBS interpolation picker entry" width="100%">
+</p>
 
 ## What's new in 0.10.0
 
