@@ -458,7 +458,21 @@ public final class BbsPreviewBridge
                 return;
             }
 
+            /* Use the composition's fractional tick, not Minecraft's tick delta.
+             *
+             * The compositor playhead is a wall clock and the runner cursor is set to
+             * (seconds * 20); its fractional part is the exact phase of the composition frame.
+             * Minecraft's tickDelta is a different sawtooth (it restarts on the client tick), so
+             * actors could be a fraction of a tick ahead or behind the BBS world camera. BBS's
+             * film editor uses getTickDelta() because its cursor is tick-based; here the cursor
+             * is composition-time based, so the phase has to come from the same clock. */
             float tickDelta = MinecraftClient.getInstance().getTickDelta();
+            float cursor = filmPanel.getRunner().getCursor(0F);
+
+            if (cursor >= 0F)
+            {
+                tickDelta = cursor - (float) Math.floor(cursor);
+            }
 
             controller.editorController.startRenderFrame(tickDelta);
             controller.editorController.render(context);

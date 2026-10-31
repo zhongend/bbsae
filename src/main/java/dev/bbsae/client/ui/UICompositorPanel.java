@@ -13733,6 +13733,10 @@ public class UICompositorPanel extends UIDashboardPanel
         if (!this.playing || this.doc == null || this.renderView)
         {
             this.lastPlayNanos = 0L;
+            /* BBS calls this before the world pass. Seeding the film camera here (instead of
+             * waiting for the preview widget's render call) removes the one-frame lag between
+             * the BBS world frame and the composition that samples it. */
+            dev.bbsae.client.overlay.BbsPreviewBridge.sync(this.time);
 
             return;
         }
@@ -13762,6 +13766,10 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.time = out - (in - this.time) % Math.max(0.001F, out - in);
         }
+
+        /* The world is rendered after this method returns. Set the BBS film camera to the new
+         * playhead now so the world frame and the composition frame are the same instant. */
+        dev.bbsae.client.overlay.BbsPreviewBridge.sync(this.time);
 
         /* Keep the playhead visible while playing, but never fight a manual pan/zoom: revealTime
          * only scrolls when the playhead is outside the comfortable centre band. */

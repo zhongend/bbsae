@@ -2021,6 +2021,10 @@ model = world(layer)            // 不含相机
 夹在 `[0, 0.5s]`；`lastPlayNanos` 在暂停/定位/变速/切页时清零。BBS 自己的播放器是 20 tick/s，
 所以两边现在是同一时间尺度。`CompTimeTest` 复现旧公式并验证 30/60/90/144/240 fps 都等于 1×。
 
+另外，`startRenderFrame` 在世界渲染开始前被调用，而 `BbsPreviewBridge.sync` 原来在预览控件
+的 render 里才执行，世界帧因此晚一帧。现在推进时间后立刻 sync；演员的 transition 也改用
+`runner.getCursor(0F)` 的小数部分，而不是 `MinecraftClient.getTickDelta()`。
+
 ### 36.2 效果/片段选择界面的英文串
 
 BBS `UIKeys.C_CLIP` 的键是 `bbs.ui.camera.clips.<link>`，缺失时回退为键本身。之前菜单里

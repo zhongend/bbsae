@@ -43,6 +43,18 @@ this.time += tickDelta / 20F * rate;
 BBS 自己的播放器以 20 tick/s 推进，因此现在“合成器 1 秒 = 影片 1 秒”。`CompTimeTest`
 新增 4 个用例，包括对旧锯齿波公式的复现（144 fps > 3×、30 fps < 0.75×、60 fps ≈ 1×）。
 
+### 1.1 顺带修掉的一帧延迟
+
+BBS 在 **世界渲染开始前** 调用 `startRenderFrame`，而原来 `BbsPreviewBridge.sync(time)` 是在
+预览控件的 `render` 里才执行——也就是世界已经画完之后。结果是 BBS 世界/摄像机总比合成器
+时间晚一帧。现在 `startRenderFrame` 推进时间后立刻 `sync`，世界帧和合成帧是同一时刻；预览
+控件里的 `sync` 保留作为拖动/暂停时的兜底。
+
+演员的 `startRenderFrame(tickDelta)` 也改用 `runner.getCursor(0F)` 的小数部分（合成时间的
+相位），不再用 `MinecraftClient.getTickDelta()`（客户端 tick 的锯齿波）；否则摄像机和演员
+会各自落在不同的 tick 相位上。影片编辑器本身仍然使用 `getTickDelta()`，因为它的游标是
+tick 制，而合成器游标是时间制。
+
 ## 2. BBS 原版效果/片段选择界面显示英文串（P1）
 
 ### 根因
