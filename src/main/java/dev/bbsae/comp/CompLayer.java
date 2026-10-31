@@ -127,6 +127,31 @@ public class CompLayer
     /** When false the camera keeps the transform's rotation instead of looking at the target. */
     public boolean cameraLookAt = true;
 
+    /* --- Replay entity matte --------------------------------------------- */
+
+    /**
+     * Which replay entities the matte keeps.
+     *
+     * <p>{@link #ENTITY_SCOPE_ALL} keys out every enabled replay in the film;
+     * {@link #ENTITY_SCOPE_SELECTED} keys out only the ids listed in {@link #entityIds}. The scope
+     * is a mode, not a second list, so the checkbox table and the "all entities" switch can never
+     * disagree about what is shown.</p>
+     */
+    public static final int ENTITY_SCOPE_ALL = 0;
+    public static final int ENTITY_SCOPE_SELECTED = 1;
+
+    public int entityScope = ENTITY_SCOPE_ALL;
+    /** Replay ids kept by {@link #ENTITY_SCOPE_SELECTED}; comma separated, order independent. */
+    public String entityIds = "";
+    /** Occlude entities with the world depth buffer (a block in front hides the entity). */
+    public boolean entityOcclusion = true;
+    /** Shrink the matte by this many world pixels; removes the background fringe at the edge. */
+    public float entityErode = 0F;
+    /** Soften the matte edge by this many world pixels. */
+    public float entityFeather = 1.5F;
+    /** Extra depth tolerance, in blocks, for the "this pixel is the entity" test. */
+    public float entityTolerance = 0.08F;
+
     /** Parenting and matte references (stable layer ids). */
     public String parentId = "";
     public String trackMatteId = "";
@@ -960,6 +985,41 @@ public class CompLayer
         return this.visible && compTime >= this.in && compTime < this.out;
     }
 
+    /** True for a camera layer. Cameras are views: they never produce pixels. */
+    public boolean isCamera()
+    {
+        return "camera".equals(this.type);
+    }
+
+    /**
+     * Eye position of a camera in composition pixels, at {@code frame}.
+     *
+     * <p>The single source of truth for "where is the camera". The editor's gizmo, its hit test and
+     * its drag all read this, and {@code CompCamera.of()} derives the view from the very same
+     * transform, so the icon, the drag and the picture can never disagree.</p>
+     *
+     * <p>It exists because the previous call sites used {@code scalarAt("x", layer.x, frame)} — a
+     * <em>scalar channel</em> that nothing writes for position — so an animated camera left its
+     * gizmo parked at the base value while the render moved. A camera's position lives in the
+     * transform channel, like every other layer's.</p>
+     */
+    public org.joml.Vector2f cameraEye(float frame)
+    {
+        Transform transform = this.transformAt(frame);
+
+        return new org.joml.Vector2f(transform.translate.x, transform.translate.y);
+    }
+
+    /** Point of interest of a camera, honouring its scalar channels. */
+    public org.joml.Vector3f cameraTarget(float frame)
+    {
+        return new org.joml.Vector3f(
+            this.scalarAt("cameraTargetX", this.cameraTargetX, frame),
+            this.scalarAt("cameraTargetY", this.cameraTargetY, frame),
+            this.scalarAt("cameraTargetZ", this.cameraTargetZ, frame)
+        );
+    }
+
     public CompMask getMask(String maskId)
     {
         for (CompMask mask : this.masks)
@@ -1052,6 +1112,79 @@ public class CompLayer
         copy.loadTracks();
 
         return copy;
+    }
+
+    /* Replay entity matte helpers */
+
+    /** True for the depth-keyed replay entity layer. */
+    public boolean isEntityLayer()
+    {
+        return "replay".equals(this.type);
+    }
+
+    /**
+     * The replay ids kept in selected scope, as an ordered set.
+     *
+     * <p>Parsing on every call keeps the stored form a plain string: a project file stays diffable
+     * and a hand-edited id list cannot desynchronise a cached set from the JSON.</p>
+     */
+    public java.util.LinkedHashSet<String> entityIdSet()
+    {
+        java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
+
+        if (this.entityIds == null || this.entityIds.isBlank())
+        {
+            return ids;
+        }
+
+        for (String part : this.entityIds.split(","))
+        {
+            String id = part.trim();
+
+            if (!id.isEmpty())
+            {
+                ids.add(id);
+            }
+        }
+
+        return ids;
+    }
+
+    public boolean entityKeeps(String replayId)
+    {
+        if (replayId == null || replayId.isEmpty())
+        {
+            return false;
+        }
+
+        return this.entityScope == ENTITY_SCOPE_ALL || this.entityIdSet().contains(replayId);
+    }
+
+    /** Adds or removes one replay id. Keeps the stored order stable for untouched ids. */
+    public void entitySetKept(String replayId, boolean kept)
+    {
+        if (replayId == null || replayId.isEmpty())
+        {
+            return;
+        }
+
+        java.util.LinkedHashSet<String> ids = this.entityIdSet();
+
+        if (kept)
+        {
+            ids.add(replayId);
+        }
+        else
+        {
+            ids.remove(replayId);
+        }
+
+        this.entityIds = String.join(",", ids);
+    }
+
+    public void entitySelectAll(java.util.Collection<String> ids)
+    {
+        this.entityIds = ids == null ? "" : String.join(",", ids);
     }
 
     /* BBS-data serialization */

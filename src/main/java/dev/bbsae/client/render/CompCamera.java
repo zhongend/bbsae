@@ -88,8 +88,11 @@ public final class CompCamera
         this.near = near;
         this.far = far;
         this.focal = focal;
-        this.distance = distance;
-        this.zoom = focal / Math.max(0.0001F, distance);
+        /* Distance is a magnitude: a camera may sit behind the comp plane (negative Z), and that
+         * must flip the view direction, not produce a negative zoom. One pixel is the floor —
+         * a camera exactly on the plane has infinite zoom, which is not a useful frame. */
+        this.distance = Math.max(1F, Math.abs(distance));
+        this.zoom = focal / this.distance;
         this.cx = cx;
         this.cy = cy;
         this.cz = cz;
@@ -187,20 +190,7 @@ public final class CompCamera
         float near = Math.max(0.1F, layer.scalarAt("cameraNear", layer.cameraNear, frame));
         float far = Math.max(near + 1F, layer.scalarAt("cameraFar", layer.cameraFar, frame));
         float focal = focalFor(fov, height);
-        float z = layer.scalarAt("cameraZ", layer.cameraZ, frame);
-
-        if (Math.abs(z) < 0.001F)
-        {
-            /* Projects authored before the camera rewrite stored the distance in the generic z (3D
-             * layers) or expressed zoom through scaleX (2D cameras). Both are honoured so an old
-             * file opens with exactly the framing it was saved with. */
-            z = layer.scalarAt("z", layer.z, frame);
-        }
-
-        if (Math.abs(z) < 0.001F)
-        {
-            z = focal / Math.max(0.01F, Math.abs(transform.scale.x));
-        }
+        float z = distanceOf(layer, transform, frame, height);
 
         float cx = transform.translate.x;
         float cy = transform.translate.y;
@@ -213,7 +203,11 @@ public final class CompCamera
         if (!lookAt)
         {
             /* Free camera: derive the point of interest from yaw/pitch so both modes share one
-             * matrix builder. yaw>0 looks right, pitch>0 looks up (comp Y is down). */
+             * matrix builder. yaw>0 looks right, pitch>0 looks up (comp Y is down).
+             *
+             * The target is placed relative to the *signed* eye position. The old code paired an
+             * absolute eye ({@code Math.abs(z)}) with a signed target ({@code z - 1000}): with a
+             * negative camera Z the two disagreed and the camera looked exactly the wrong way. */
             float yaw = (float) Math.toRadians(layer.scalarAt("rotationY", layer.rotationY, frame));
             float pitch = (float) Math.toRadians(layer.scalarAt("rotationX", layer.rotationX, frame));
             float dirX = (float) (Math.sin(yaw) * Math.cos(pitch));
@@ -222,11 +216,59 @@ public final class CompCamera
 
             tx = cx + dirX * 1000F;
             ty = cy + dirY * 1000F;
-            tz = z - 1000F;
+            tz = z + dirZ * 1000F;
         }
 
-        return new CompCamera(true, fov, near, far, focal, Math.abs(z),
-            cx, cy, Math.abs(z), tx, ty, tz, roll, lookAt, layer.camera3D, width, height);
+        return new CompCamera(true, fov, near, far, focal, z,
+            cx, cy, z, tx, ty, tz, roll, lookAt, layer.camera3D, width, height);
+    }
+
+    /**
+     * Eye position of a camera layer in composition space (X, Y, Z).
+     *
+     * <p>This is the single definition of "where the camera is": the renderer, the viewport gizmo
+     * and the camera drag all call it, so a dragged eye cannot drift from the rendered view.</p>
+     */
+    public static Vector3f eyeOf(CompLayer layer, float frame, float compHeight)
+    {
+        Transform transform = layer.transformAt(frame);
+
+        return new Vector3f(transform.translate.x, transform.translate.y, distanceOf(layer, transform, frame, compHeight));
+    }
+
+    /**
+     * Z of the camera, in priority order:
+     * <ol>
+     *   <li>the {@code cameraZ} channel — it exists, so its value is the answer even when it is 0;</li>
+     *   <li>the {@code cameraZ} field (a camera created by the inspector always fills it);</li>
+     *   <li>the generic 3D {@code z} (files authored before the camera rewrite stored it there);</li>
+     *   <li>{@code focal / scaleX} (the original 2D camera expressed zoom through scale).</li>
+     * </ol>
+     *
+     * <p>The old code tested "is cameraZ non-zero" instead of "does cameraZ exist", so a keyframed
+     * dolly that passed through 0 snapped to a completely different distance for one frame.</p>
+     */
+    public static float distanceOf(CompLayer layer, Transform transform, float frame, float compHeight)
+    {
+        float fov = Math.max(1F, Math.min(179F, layer.scalarAt("cameraFov", layer.cameraFov, frame)));
+        float focal = focalFor(fov, compHeight);
+        float z = layer.cameraZ;
+
+        if (layer.hasScalarChannel("cameraZ"))
+        {
+            z = layer.scalarAt("cameraZ", z, frame);
+        }
+        else if (Math.abs(z) < 0.001F)
+        {
+            z = layer.scalarAt("z", layer.z, frame);
+        }
+
+        if (Math.abs(z) < 0.001F)
+        {
+            z = focal / Math.max(0.01F, Math.abs(transform.scale.x));
+        }
+
+        return z;
     }
 
     /** Framing used when the composition has no camera: centre, 1:1, no roll. */

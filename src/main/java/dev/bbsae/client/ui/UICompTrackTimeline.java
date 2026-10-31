@@ -54,6 +54,9 @@ public class UICompTrackTimeline extends UIElement
     private static final int MODE_REORDER = 6;
     private static final int MODE_WORK_IN = 7;
     private static final int MODE_WORK_OUT = 8;
+    private static final int MODE_AUDIO_MOVE = 9;
+    private static final int MODE_AUDIO_TRIM_IN = 10;
+    private static final int MODE_AUDIO_TRIM_OUT = 11;
     /** Width of the drag grip at the left edge of a track header. */
     private static final int REORDER_GRIP = 14;
 
@@ -71,6 +74,11 @@ public class UICompTrackTimeline extends UIElement
     private float knownDuration = -1F;
 
     private int dragMode = MODE_NONE;
+    /** Audio clip being dragged, plus its start/offset/length at the moment the drag began. */
+    private dev.bbsae.comp.CompAudio dragAudio;
+    private float dragAudioStart;
+    private float dragAudioOffset;
+    private float dragAudioLength;
     private String dragId;
     private int dragStartX;
     private int dragStartY;
@@ -199,6 +207,68 @@ public class UICompTrackTimeline extends UIElement
         return this.laneArea.y + index * this.rowHeight - this.scrollY;
     }
 
+    /* --------------------------------------------------------------- audio track
+     *
+     * The composition has an audio track (doc.audio) but the timeline only ever enumerated layers,
+     * so imported music and voice-over existed in the inspector and nowhere on the screen: no bar,
+     * no in/out, nothing to drag. The audio lane is therefore a <b>virtual row</b> appended after
+     * the last layer: same row height, same scroll, same time axis, so it behaves like a track
+     * without inventing a second timeline.
+     */
+
+    /** One extra row for the audio track whenever a composition is bound. */
+    private boolean hasAudioRow()
+    {
+        return this.doc() != null;
+    }
+
+    private int audioRowIndex()
+    {
+        return this.hasAudioRow() ? this.rows().size() : -1;
+    }
+
+    /** Layers + the audio lane: the only place that knows how many rows exist. */
+    private int rowCount()
+    {
+        return this.rows().size() + (this.hasAudioRow() ? 1 : 0);
+    }
+
+    /** Length drawn for a clip: an explicit duration, or the rest of the composition. */
+    private float audioLength(dev.bbsae.comp.CompAudio clip)
+    {
+        return Math.max(this.frame(), clip.length(this.duration()));
+    }
+
+    private dev.bbsae.comp.CompAudio audioAt(int mouseX)
+    {
+        CompDocument doc = this.doc();
+
+        if (doc == null)
+        {
+            return null;
+        }
+
+        dev.bbsae.comp.CompAudio hit = null;
+
+        for (dev.bbsae.comp.CompAudio clip : doc.audio)
+        {
+            if (clip == null)
+            {
+                continue;
+            }
+
+            int x1 = this.toX(clip.start);
+            int x2 = this.toX(clip.start + this.audioLength(clip));
+
+            if (mouseX >= Math.min(x1, x2) - 2 && mouseX <= Math.max(x1, x2) + 2)
+            {
+                hit = clip;
+            }
+        }
+
+        return hit;
+    }
+
     private int rowAt(int mouseY)
     {
         if (mouseY < this.laneArea.y || mouseY >= this.laneArea.ey())
@@ -207,9 +277,8 @@ public class UICompTrackTimeline extends UIElement
         }
 
         int index = (mouseY - this.laneArea.y + this.scrollY) / Math.max(1, this.rowHeight);
-        int size = this.rows().size();
 
-        return index >= 0 && index < size ? index : -1;
+        return index >= 0 && index < this.rowCount() ? index : -1;
     }
 
     /**
@@ -266,7 +335,7 @@ public class UICompTrackTimeline extends UIElement
 
     private void clampScroll()
     {
-        int total = this.rows().size() * this.rowHeight;
+        int total = this.rowCount() * this.rowHeight;
         int max = Math.max(0, total - this.laneArea.h);
 
         this.scrollY = Math.max(0, Math.min(max, this.scrollY));
@@ -322,15 +391,117 @@ public class UICompTrackTimeline extends UIElement
         this.xAxis.anchor(0F);
     }
 
+    /**
+     * Time zoom, one "step" per key press or wheel notch.
+     *
+     * <h2>Why this multiplies instead of adding</h2>
+     * <p>BBS's {@code Scale.zoom(delta, min, max)} <b>adds</b> to the zoom value, and that value is
+     * <b>pixels per second</b>. The old code passed {@code +1} / {@code -1} straight through, so a
+     * shortcut changed the scale by one pixel per second — at a fitted 12-second comp (~67 px/s)
+     * that is 1.5 %, i.e. invisible. Every wheel notch and every key press "did nothing", which is
+     * exactly the reported bug. A zoom step has to be relative: 1.35× per step, applied through the
+     * same additive API BBS expects.</p>
+     */
     public void zoom(double steps)
     {
-        if (this.laneArea.w <= 0)
+        this.zoomAt(0.5F, steps);
+    }
+
+    private void zoomAt(float anchor, double steps)
+    {
+        if (this.laneArea.w <= 0 || Math.abs(steps) < 0.0001D)
+        {
+            return;
+        }
+
+        double current = this.xAxis.getZoom();
+        double target = zoomTarget(current, steps);
+
+        if (Math.abs(target - current) < 0.0001D)
         {
             return;
         }
 
         this.fitMode = false;
-        this.xAxis.zoomAnchor(0.5F, steps);
+        this.xAxis.zoomAnchor(anchor, target - current, 0.05D, 200_000D);
+
+        if (Boolean.getBoolean("bbsae.debugEncoder"))
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.info("timeline zoom: steps={} current={} target={} after={}",
+                steps, current, target, this.xAxis.getZoom());
+        }
+
+        double fit = this.laneArea.w / Math.max(0.001D, this.duration());
+
+        this.panel.setStatus(String.format(Locale.ROOT, "时间轴 %d%%（%.0f px/s）",
+            Math.round(target / Math.max(0.001D, fit) * 100D), target));
+    }
+
+    /**
+     * Keyboard equivalent of Alt+wheel: the row height, i.e. "track zoom".
+     *
+     * <p>The reported bug was "tracks cannot be zoomed with the keyboard". Time zoom existed but
+     * did nothing (it added ±1 px/s); vertical zoom only existed on Alt+wheel. Both are now on the
+     * keyboard, with the same key pair and Alt as the modifier that distinguishes them.</p>
+     */
+    public void stepRowHeight(int step)
+    {
+        int next = Math.max(ROW_MIN, Math.min(ROW_MAX, this.rowHeight + step));
+
+        if (next == this.rowHeight)
+        {
+            return;
+        }
+
+        this.rowHeight = next;
+        this.clampScroll();
+        this.panel.setStatus("轨道高度 " + this.rowHeight + "px（Alt+加号/减号）");
+    }
+
+    /**
+     * Zoom value after {@code steps} multiplicative steps.
+     *
+     * <p>Extracted so the arithmetic can be tested without a UI: the bug this fixes was a unit
+     * error (adding 1 px/s instead of multiplying), and a test is the only thing that keeps the
+     * unit honest. 0.05 px/s is "a year per pixel"; 200 000 px/s is "one frame fills the lane".</p>
+     */
+    static double zoomTarget(double current, double steps)
+    {
+        double target = current * Math.pow(1.35D, steps);
+
+        return Math.max(0.05D, Math.min(200_000D, target));
+    }
+
+    /**
+     * Scrolls the audio lane into view.
+     *
+     * <p>A track appended below the layers is easy to miss: with ten tracks the audio row sits
+     * below the fold, so importing music looked like nothing happened. Selecting a clip (from the
+     * inspector or right after an import) brings the lane up.</p>
+     */
+    public void revealAudio()
+    {
+        int index = this.audioRowIndex();
+
+        if (index < 0)
+        {
+            return;
+        }
+
+        int top = index * this.rowHeight;
+        int bottom = top + this.rowHeight;
+
+        if (bottom > this.scrollY + this.laneArea.h)
+        {
+            this.scrollY = bottom - this.laneArea.h;
+        }
+
+        if (top < this.scrollY)
+        {
+            this.scrollY = top;
+        }
+
+        this.clampScroll();
     }
 
     public boolean isSnapping()
@@ -591,8 +762,17 @@ public class UICompTrackTimeline extends UIElement
 
         if (rows.isEmpty())
         {
-            EmptyStateRenderer.renderHint(context, this.laneArea, IKey.constant("点击左上角＋新建图层；拖动片段移动，拖两端裁剪"));
-            return;
+            /* No layers yet: the empty-state hint lives in the space above the audio lane instead
+             * of replacing the whole area, otherwise the audio track would vanish exactly when a
+             * project is new. */
+            int audioY = this.hasAudioRow() ? this.rowY(this.audioRowIndex()) : this.laneArea.ey();
+            Area hintArea = new Area(this.laneArea.x, this.laneArea.y, this.laneArea.w,
+                Math.max(0, audioY - this.laneArea.y));
+
+            if (hintArea.h > 24)
+            {
+                EmptyStateRenderer.renderHint(context, hintArea, IKey.constant("点击左上角＋新建图层；拖动片段移动，拖两端裁剪"));
+            }
         }
 
         int first = Math.max(0, this.scrollY / Math.max(1, this.rowHeight));
@@ -624,6 +804,18 @@ public class UICompTrackTimeline extends UIElement
             this.renderLaneRow(context, layer, y, selected);
         }
 
+        int audioIndex = this.audioRowIndex();
+
+        if (audioIndex >= 0)
+        {
+            int y = this.rowY(audioIndex);
+
+            if (y + this.rowHeight > this.laneArea.y && y < this.laneArea.ey())
+            {
+                this.renderAudioRow(context, y);
+            }
+        }
+
         if (this.dragMode == MODE_REORDER && this.dragReorderTarget >= 0)
         {
             int lineY = this.laneArea.y + this.dragReorderTarget * this.rowHeight - this.scrollY;
@@ -634,6 +826,91 @@ public class UICompTrackTimeline extends UIElement
 
             context.batcher.box(this.headerArea.x + 2, lineY, this.laneArea.ex(), lineY + 2, color);
             context.batcher.box(this.headerArea.x + 2, lineY - 2, this.headerArea.x + 8, lineY + 4, color);
+        }
+    }
+
+    /**
+     * The audio lane: a header that says how many clips there are, and one bar per clip.
+     *
+     * <p>Bars use the same time axis as the tracks, so dragging inside them behaves like trimming a
+     * layer: body moves the in-point, edges change start/offset or length. A clip without an explicit
+     * duration is drawn to the end of the composition (that is how it plays).</p>
+     */
+    private void renderAudioRow(UIContext context, int y)
+    {
+        CompDocument doc = this.doc();
+        int bottom = Math.min(y + this.rowHeight, this.laneArea.ey());
+        boolean hover = context.mouseX >= this.headerArea.x && context.mouseX < this.headerArea.ex()
+            && context.mouseY >= y && context.mouseY < bottom;
+
+        context.batcher.clip(this.headerArea, context);
+
+        try
+        {
+            context.batcher.box(this.headerArea.x, y, this.headerArea.ex(), bottom,
+                hover ? BBSSettings.deepSurface() : BBSSettings.baseSurface());
+            context.batcher.box(this.headerArea.x, y, this.headerArea.ex(), y + 1, BBSSettings.dividerColor());
+            context.batcher.icon(Icons.SOUND, Colors.setA(Colors.WHITE, 0.8F),
+                this.headerArea.x + 15, y + (this.rowHeight - 16) / 2);
+
+            int count = doc == null || doc.audio == null ? 0 : doc.audio.size();
+            String label = count == 0 ? "音频（空）" : "音频 (" + count + ")";
+            int nameX = this.headerArea.x + 34;
+
+            context.batcher.textShadow(label, nameX, y + (this.rowHeight - 8) / 2,
+                count == 0 ? Colors.setA(Colors.WHITE, 0.5F) : Colors.WHITE);
+        }
+        finally
+        {
+            context.batcher.unclip(context);
+        }
+
+        context.batcher.clip(this.laneArea, context);
+
+        try
+        {
+            context.batcher.box(this.laneArea.x, y, this.laneArea.ex(), Math.min(bottom, this.laneArea.ey()), 0x0C6BE0A0);
+
+            if (doc == null || doc.audio == null || doc.audio.isEmpty())
+            {
+                context.batcher.textShadow("导入音频后，片段会出现在这条轨道上（可拖动、可裁剪）",
+                    this.laneArea.x + 8, y + (this.rowHeight - 8) / 2, 0x66FFFFFF);
+
+                return;
+            }
+
+            int barH = Math.max(10, this.rowHeight - 6);
+            int barY = y + (this.rowHeight - barH) / 2;
+
+            for (dev.bbsae.comp.CompAudio clip : doc.audio)
+            {
+                if (clip == null)
+                {
+                    continue;
+                }
+
+                int x1 = this.toX(clip.start);
+                int x2 = this.toX(clip.start + this.audioLength(clip));
+                int left = Math.min(x1, x2);
+                int right = Math.max(x1, x2 + 1);
+                boolean selected = this.panel.getSelectedAudio() == clip;
+                int color = clip.muted ? 0xFF3A4A44 : (selected ? 0xFF2F7D57 : 0xFF2A5C44);
+                int edge = selected ? BBSSettings.primaryColor() : 0xFF16241D;
+
+                context.batcher.box(left, barY, right, barY + barH, color);
+                context.batcher.box(left, barY, right, barY + 1, edge);
+                context.batcher.box(left, barY + barH - 1, right, barY + barH, edge);
+
+                if (right - left > 26)
+                {
+                    context.batcher.textShadow(clip.name + (clip.muted ? "（静音）" : ""),
+                        left + 4, barY + (barH - 8) / 2, selected ? 0xFFFFFFFF : 0xFFCFE9DA);
+                }
+            }
+        }
+        finally
+        {
+            context.batcher.unclip(context);
         }
     }
 
@@ -1162,6 +1439,13 @@ public class UICompTrackTimeline extends UIElement
         List<CompLayer> rows = this.rows();
         float time = this.fromX(context.mouseX);
 
+        if (row >= 0 && row == this.audioRowIndex())
+        {
+            this.clickAudioLane(context);
+
+            return;
+        }
+
         if (row < 0 || row >= rows.size())
         {
             this.panel.clearSelection();
@@ -1244,6 +1528,98 @@ public class UICompTrackTimeline extends UIElement
         }
 
         this.xAxis.stopZoom();
+    }
+
+    /**
+     * Audio lane click: select the clip under the cursor, then arm a move or an edge trim.
+     *
+     * <p>Same three zones as a layer bar (8 px at either end), because a user who has learned to
+     * trim a layer should not have to learn a second gesture for a music cue.</p>
+     */
+    private void clickAudioLane(UIContext context)
+    {
+        dev.bbsae.comp.CompAudio clip = this.audioAt(context.mouseX);
+
+        if (clip == null)
+        {
+            this.panel.selectAudioClip(null);
+            this.panel.setFrame(Math.round(this.fromX(context.mouseX) * this.fps()));
+
+            return;
+        }
+
+        this.panel.selectAudioClip(clip);
+
+        int start = this.toX(clip.start);
+        int finish = this.toX(clip.start + this.audioLength(clip));
+
+        this.dragAudio = clip;
+        this.dragStartX = context.mouseX;
+        this.dragAudioStart = clip.start;
+        this.dragAudioOffset = clip.offset;
+        this.dragAudioLength = this.audioLength(clip);
+
+        if (context.mouseX - start <= EDGE)
+        {
+            this.dragMode = MODE_AUDIO_TRIM_IN;
+        }
+        else if (finish - context.mouseX <= EDGE)
+        {
+            this.dragMode = MODE_AUDIO_TRIM_OUT;
+        }
+        else
+        {
+            this.dragMode = MODE_AUDIO_MOVE;
+        }
+
+        this.xAxis.stopZoom();
+    }
+
+    private void dragAudioClip(UIContext context)
+    {
+        dev.bbsae.comp.CompAudio clip = this.dragAudio;
+
+        if (clip == null)
+        {
+            this.endDrag();
+
+            return;
+        }
+
+        float delta = this.fromX(context.mouseX) - this.fromX(this.dragStartX);
+        float frame = 1F / this.fps();
+        float duration = this.duration();
+        float length = Math.max(frame, this.dragAudioLength);
+
+        if (this.dragMode == MODE_AUDIO_MOVE)
+        {
+            clip.start = this.clamp(this.quantize(this.dragAudioStart + delta), 0F, Math.max(0F, duration - frame));
+            this.panel.setStatus(String.format(Locale.ROOT, "音频 %s 入点 %.2fs", clip.name, clip.start));
+        }
+        else if (this.dragMode == MODE_AUDIO_TRIM_IN)
+        {
+            float newStart = this.clamp(this.quantize(this.dragAudioStart + delta), 0F, this.dragAudioStart + length - frame);
+            float shift = newStart - this.dragAudioStart;
+            float newOffset = this.dragAudioOffset + shift;
+
+            /* Dragging the in-point left of the source start cannot invent audio: stop at 0 and
+             * keep the tail where it was. */
+            if (newOffset < 0F)
+            {
+                newStart -= newOffset;
+                newOffset = 0F;
+            }
+
+            clip.start = Math.max(0F, newStart);
+            clip.offset = Math.max(0F, newOffset);
+            clip.duration = Math.max(frame, length - (clip.start - this.dragAudioStart));
+            this.panel.setStatus(String.format(Locale.ROOT, "音频入点 %.2fs（源偏移 %.2fs）", clip.start, clip.offset));
+        }
+        else
+        {
+            clip.duration = this.clamp(this.quantize(length + delta), frame, Math.max(frame, duration - clip.start));
+            this.panel.setStatus(String.format(Locale.ROOT, "音频时长 %.2fs", clip.duration));
+        }
     }
 
     private void beginScrub(int mouseX)
@@ -1344,6 +1720,13 @@ public class UICompTrackTimeline extends UIElement
             return;
         }
 
+        if (this.dragMode == MODE_AUDIO_MOVE || this.dragMode == MODE_AUDIO_TRIM_IN || this.dragMode == MODE_AUDIO_TRIM_OUT)
+        {
+            this.dragAudioClip(context);
+
+            return;
+        }
+
         CompLayer layer = this.findLayer(this.dragId);
 
         if (layer == null)
@@ -1428,7 +1811,8 @@ public class UICompTrackTimeline extends UIElement
     {
         boolean reorder = this.dragMode == MODE_REORDER;
         boolean edited = this.dragMode == MODE_MOVE || this.dragMode == MODE_TRIM_IN || this.dragMode == MODE_TRIM_OUT
-            || this.dragMode == MODE_WORK_IN || this.dragMode == MODE_WORK_OUT;
+            || this.dragMode == MODE_WORK_IN || this.dragMode == MODE_WORK_OUT
+            || this.dragMode == MODE_AUDIO_MOVE || this.dragMode == MODE_AUDIO_TRIM_IN || this.dragMode == MODE_AUDIO_TRIM_OUT;
 
         if (reorder)
         {
@@ -1442,6 +1826,7 @@ public class UICompTrackTimeline extends UIElement
 
         this.dragMode = MODE_NONE;
         this.dragId = null;
+        this.dragAudio = null;
         this.dragReorderTarget = -1;
         this.snapGuide = Float.NaN;
 
@@ -1549,15 +1934,11 @@ public class UICompTrackTimeline extends UIElement
         }
         else if (alt)
         {
-            this.fitMode = false;
-            this.xAxis.animateZoom(anchor, wheel);
-            this.panel.setStatus("时间轴缩放 " + Math.round(this.xAxis.getZoom() * 100D) + "%");
+            this.zoomAt(anchor, wheel);
         }
         else if (ctrl)
         {
-            this.fitMode = false;
-            this.xAxis.animateZoom(anchor, wheel);
-            this.panel.setStatus("时间轴缩放 " + Math.round(this.xAxis.getZoom() * 100D) + "%");
+            this.zoomAt(anchor, wheel);
         }
         else if (shift)
         {
@@ -1674,6 +2055,7 @@ public class UICompTrackTimeline extends UIElement
             case "null" -> 0xFF5A6270;
             case "camera" -> 0xFF8A6A3E;
             case "bbs" -> 0xFF3E7A8A;
+            case "replay" -> 0xFF3E8A5E;
             default -> 0xFF44546A;
         };
     }
@@ -1691,6 +2073,7 @@ public class UICompTrackTimeline extends UIElement
             case "adjustment" -> Icons.SUN;
             case "camera" -> Icons.CAMERA;
             case "bbs" -> Icons.FILM;
+            case "replay" -> Icons.SPHERE;
             default -> Icons.SQUARE;
         };
     }

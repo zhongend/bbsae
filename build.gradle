@@ -45,6 +45,28 @@ loom {
             vmArg "-Dbbsae.debugPreview=true"
             programArgs "--quickPlaySingleplayer", "TestWorld"
         }
+
+        /*
+         * Verification run: opens the compositor and drives it into one state, so the state can be
+         * screenshotted. "it compiles" proves nothing about a curve being drawn or a button row
+         * overlapping.
+         *
+         *   ./gradlew runClientView -PbbsaeView=curve|assets|camera|queue
+         */
+        clientView {
+            client()
+            vmArg "-Dbbsae.debugPreview=true"
+            vmArg "-Dbbsae.debugView=" + (project.findProperty("bbsaeView") ?: "curve")
+            vmArg "-Dbbsae.debugCurve=true"
+            vmArg "-Dbbsae.debugEncoder=true"
+            vmArg "-Dbbsae.debugEncoderAe=" + (project.findProperty("bbsaeEncoder") ?: "false")
+            vmArg "-Dbbsae.debugAeExport=" + (project.findProperty("bbsaeExport") ?: "false")
+            vmArg "-Dbbsae.debugProxy=" + (project.findProperty("bbsaeProxy") ?: "1")
+            vmArg "-Dbbsae.debugAudio=" + (project.findProperty("bbsaeAudio") ?: "")
+            vmArg "-Dbbsae.debugPlay=" + (project.findProperty("bbsaePlay") ?: "false")
+            vmArg "-Dbbsae.debugVideoImport=" + (project.findProperty("bbsaeVideo") ?: "")
+            programArgs "--quickPlaySingleplayer", "TestWorld"
+        }
     }
 }
 

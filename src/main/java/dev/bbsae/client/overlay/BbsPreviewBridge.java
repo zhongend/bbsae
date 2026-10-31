@@ -60,6 +60,8 @@ public final class BbsPreviewBridge
     private static boolean backdropRequested;
     /** True while a depth effect needs the world depth buffer. */
     private static boolean depthRequested;
+    /** Per-frame depth request from a path that cannot run {@link #syncRequests}. */
+    private static boolean depthForced;
     /** Copy of the world depth attachment, filled together with {@link SceneColor}. */
     private static dev.bbsae.client.render.SceneDepth worldDepth;
 
@@ -90,7 +92,7 @@ public final class BbsPreviewBridge
         document = comp;
         active = true;
         renderFailureLogged = false;
-        worldCaptureRequested = hasBbsPreviewLayer(comp);
+        worldCaptureRequested = needsWorldFrame(comp);
 
         BbsAeAddon.LOGGER.info("BBS preview attached: film={}, comp={}x{}",
             panel == null || panel.getData() == null ? "-" : panel.getData().getId(),
@@ -146,7 +148,7 @@ public final class BbsPreviewBridge
 
         if (comp != null)
         {
-            worldCaptureRequested = hasBbsPreviewLayer(comp);
+            worldCaptureRequested = needsWorldFrame(comp);
         }
     }
 
@@ -174,16 +176,48 @@ public final class BbsPreviewBridge
     {
         document = comp;
 
-        boolean world = hasBbsPreviewLayer(comp);
+        boolean world = needsWorldFrame(comp);
         boolean depth = needsDepth(comp);
 
         worldCaptureRequested = world || depth;
         depthRequested = depth;
 
+        /* Carry the entity selection over to the world pass: the AFTER_ENTITIES listener needs to
+         * know which replays to render before this frame's overlay can ask. */
+        dev.bbsae.client.render.ReplayEntityMask.request(project, comp);
+
         if (project != null && project.settings != null)
         {
             backdropRequested = project.settings.previewBackground == 1;
         }
+    }
+
+    /**
+     * True when the composition samples the world frame itself: a BBS preview layer or a replay
+     * entity layer. Both are pictures of the live film frame, so the colour copy is required for
+     * either one.
+     */
+    public static boolean needsWorldFrame(CompDocument comp)
+    {
+        if (comp == null || comp.layers == null)
+        {
+            return false;
+        }
+
+        for (dev.bbsae.comp.CompLayer layer : comp.layers)
+        {
+            if (layer == null || !layer.visible)
+            {
+                continue;
+            }
+
+            if ("bbs".equals(layer.type) || layer.isEntityLayer())
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static boolean needsDepth(CompDocument comp)
@@ -195,7 +229,19 @@ public final class BbsPreviewBridge
 
         for (dev.bbsae.comp.CompLayer layer : comp.layers)
         {
-            if (layer == null || layer.effects == null)
+            if (layer == null)
+            {
+                continue;
+            }
+
+            /* The entity matte is a depth test against the world buffer; without it the layer
+             * would key every entity through walls. */
+            if (layer.visible && layer.isEntityLayer())
+            {
+                return true;
+            }
+
+            if (layer.effects == null)
             {
                 continue;
             }
@@ -224,6 +270,34 @@ public final class BbsPreviewBridge
         {
             worldCaptureRequested = true;
         }
+    }
+
+    /**
+     * Asks for a depth copy for the frame currently being rendered.
+     *
+     * <p>The frame overlay runs after the world, so it cannot call {@link #syncRequests}; it
+     * requests the copy for the <em>next</em> frame, which is why this flag is sticky until the
+     * next capture consumes it.</p>
+     */
+    public static void requestDepth(boolean requested)
+    {
+        if (requested)
+        {
+            depthForced = true;
+        }
+    }
+
+    /**
+     * Renders the replay entity depth mask for this world frame.
+     *
+     * <p>Registered as its own {@code AFTER_ENTITIES} listener, immediately after the actor pass:
+     * it must run whether or not the compositor panel is the one on screen (the film editor and
+     * the F6 recorder need it too), and it must run after BBS drew the actors so the pose stack
+     * and the transition are the ones the world frame used.</p>
+     */
+    public static void renderEntityMask(net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext context)
+    {
+        dev.bbsae.client.render.ReplayEntityMask.render(context);
     }
 
     public static boolean hasBbsPreviewLayer(CompDocument comp)
@@ -278,6 +352,8 @@ public final class BbsPreviewBridge
         active = false;
         backdropRequested = false;
         depthRequested = false;
+        depthForced = false;
+        dev.bbsae.client.render.ReplayEntityMask.clearRequest();
         filmPanel = null;
         document = null;
     }
@@ -421,9 +497,10 @@ public final class BbsPreviewBridge
             /* Depth is copied in the same pass, from the same framebuffer, so colour and depth can
              * never come from different frames. It is only requested when an effect samples it:
              * a 1080p depth blit per frame for nothing is a measurable cost. */
-            if (depthRequested)
+            if (depthRequested || depthForced)
             {
                 captureDepthNow();
+                depthForced = false;
             }
 
             if (Boolean.getBoolean("bbsae.traceExport"))

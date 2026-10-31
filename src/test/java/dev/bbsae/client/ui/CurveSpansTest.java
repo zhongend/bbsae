@@ -20,12 +20,30 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class CurveSpansTest
 {
     @Test
+    public void spansAreNormalisedToTheGraphOriginOnce()
+    {
+        CurveSpans spans = new CurveSpans();
+
+        spans.ensure(4);
+
+        /* The sampler answers in absolute graph Y (like the keyframe dots); the graph itself
+         * starts 200 px down the panel. A curve at absolute y = 260 must be stored at 60. */
+        spans.build(0, 3, 200, (column) -> 260);
+
+        for (int column = 0; column < 4; column++)
+        {
+            assertEquals(60, spans.lo(column), "column " + column + " must be graph-relative");
+            assertEquals(61, spans.hi(column), "flat curves keep a 1px thickness");
+        }
+    }
+
+    @Test
     public void oneSpanPerColumn()
     {
         CurveSpans spans = new CurveSpans();
 
         spans.ensure(10);
-        spans.build(0, 9, (column) -> 100 - column);
+        spans.build(0, 9, 0, (column) -> 100 - column);
 
         assertEquals(10, spans.columns());
 
@@ -52,7 +70,7 @@ public class CurveSpansTest
 
         spans.ensure(8);
         /* 0 -> 700 over eight columns: 100 px per column. */
-        spans.build(0, 7, (column) -> 700 - column * 100);
+        spans.build(0, 7, 0, (column) -> 700 - column * 100);
 
         for (int column = 0; column < 7; column++)
         {
@@ -72,11 +90,11 @@ public class CurveSpansTest
         CurveSpans spans = new CurveSpans();
 
         spans.ensure(20);
-        spans.build(0, 19, (column) -> 50);
+        spans.build(0, 19, 0, (column) -> 50);
 
         int before = spans.lo(2);
 
-        spans.build(10, 12, (column) -> 400);
+        spans.build(10, 12, 0, (column) -> 400);
 
         assertEquals(before, spans.lo(2), "column outside the dirty range changed");
         assertEquals(400, spans.lo(10));
@@ -90,8 +108,7 @@ public class CurveSpansTest
         CurveSpans spans = new CurveSpans();
 
         spans.ensure(10);
-        spans.build(0, 9, (column) -> 10);
-        spans.stamp = 7L;
+        spans.build(0, 9, 0, (column) -> 10);
 
         assertTrue(spans.has(0));
 
@@ -107,7 +124,7 @@ public class CurveSpansTest
         CurveSpans spans = new CurveSpans();
 
         spans.ensure(5);
-        spans.build(0, 4, (column) -> 1);
+        spans.build(0, 4, 0, (column) -> 1);
         spans.clear();
 
         for (int column = 0; column < 5; column++)

@@ -16,12 +16,21 @@ import java.util.Arrays;
  * vertical span {@code [lo, hi]} that the curve covers. Drawing is then one rectangle per run of
  * similar columns — the vertex count is bounded by the width of the graph, not by the data.</p>
  *
- * <p>The array is kept across frames and only rebuilt when the view or the data changes. A handle
- * drag rebuilds the columns of the affected segment only.</p>
+ * <h2>Coordinate contract (this is where the curve used to disappear)</h2>
+ * <p>The sampler answers in <b>absolute</b> graph Y — the same space the keyframe glyphs use, so
+ * the two can never disagree. {@link #build} subtracts the graph's origin <b>once</b> and stores
+ * area-relative spans. The previous version stored absolute spans while the painter added the
+ * origin back, which pushed every curve exactly {@code graphY} pixels below the clip: the graph
+ * showed the keyframe dots and no line at all.</p>
+ *
+ * <p>The editor refills this array once per frame (800 samples is a fraction of a millisecond, and
+ * a stale cache is a much worse bug than a cheap rebuild). The type stays a plain container so the
+ * mapping from "time → value → pixel" lives in exactly one place, where it can be tested without a
+ * game: see {@code CurveGeometryReproTest}.</p>
  */
 final class CurveSpans
 {
-    /** Maps a screen column to the curve's pixel Y in the graph's coordinate space. */
+    /** Maps a screen column to the curve's absolute pixel Y in graph coordinates. */
     interface Sampler
     {
         int yAt(int column);
@@ -31,11 +40,6 @@ final class CurveSpans
     private short[] lo = new short[0];
     private short[] hi = new short[0];
     private byte[] flags = new byte[0];
-
-    /** Data stamp this array was built from; {@link Long#MIN_VALUE} means "never built". */
-    long stamp = Long.MIN_VALUE;
-    /** Packed view description (time range, value range, size, graph mode). */
-    long viewKey;
 
     int columns()
     {
@@ -69,14 +73,11 @@ final class CurveSpans
         this.lo = new short[this.columns];
         this.hi = new short[this.columns];
         this.flags = new byte[this.columns];
-        this.stamp = Long.MIN_VALUE;
-        this.viewKey = 0L;
     }
 
     void clear()
     {
         Arrays.fill(this.flags, (byte) 0);
-        this.stamp = Long.MIN_VALUE;
     }
 
     /**
@@ -85,8 +86,11 @@ final class CurveSpans
      * <p>Each column stores the span between its own sample and the next one, so a near-vertical
      * segment is still continuous (no gaps between adjacent columns) without ever emitting more
      * than one rectangle per column.</p>
+     *
+     * @param originY absolute Y of the graph's top edge; subtracted here so callers can never
+     *                double-offset (or forget to offset) the spans.
      */
-    void build(int from, int to, Sampler sampler)
+    void build(int from, int to, int originY, Sampler sampler)
     {
         if (this.columns <= 0)
         {
@@ -98,8 +102,8 @@ final class CurveSpans
 
         for (int column = first; column <= last; column++)
         {
-            int a = sampler.yAt(column);
-            int b = sampler.yAt(Math.min(this.columns - 1, column + 1));
+            int a = sampler.yAt(column) - originY;
+            int b = sampler.yAt(Math.min(this.columns - 1, column + 1)) - originY;
             int top = Math.min(a, b);
             int bottom = Math.max(a, b);
 

@@ -5,6 +5,8 @@ import dev.bbsae.client.export.CompExportManager;
 import dev.bbsae.client.render.CompCamera;
 import dev.bbsae.client.render.CompRenderer;
 import dev.bbsae.client.render.CompScene;
+import dev.bbsae.client.render.CompViewportCamera;
+import dev.bbsae.client.render.CompViewportRenderer;
 import dev.bbsae.comp.CompBinding;
 import dev.bbsae.comp.CompAnimationPreset;
 import dev.bbsae.comp.CompDocument;
@@ -128,13 +130,15 @@ public class UICompositorPanel extends UIDashboardPanel
     private UICompButton precacheButton;
     private final UIElement renderPanel;
     private UIAssetBrowser assetBrowser;
+    private UIImportBrowser importBrowser;
     private final UIElement modalLayer;
     private final UIElement modalBox;
     private final UILabel modalTitle;
     private final UILabel modalHint;
 
     private final UICompRenderJobList queue;
-    private final UITextbox queuePreset;
+    /** Output module (video or audio) chosen for the next job; shows the preset's real name. */
+    private final mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton<String> queuePreset;
     private final UITextbox queueName;
     private final UITrackpad queueStart;
     private final UITrackpad queueEnd;
@@ -153,6 +157,7 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Multi-selection, in click order; {@link #selectedLayer} is always its primary member. */
     private final java.util.LinkedHashSet<String> selectedIds = new java.util.LinkedHashSet<>();
     private CompRenderJob selectedJob;
+    private dev.bbsae.comp.CompAudio selectedAudio;
     private mchorse.bbs_mod.ui.film.UIFilmPanel filmPanel;
     private mchorse.bbs_mod.film.Film film;
     private mchorse.bbs_mod.film.replays.Replay replay;
@@ -198,6 +203,14 @@ public class UICompositorPanel extends UIDashboardPanel
     private boolean previewControlsCollapsed;
     /** Look through the active 3D camera instead of the default front view. */
     private boolean cameraPreviewMode;
+    /** The Blender-like free viewport is open (see {@link #enter3DSpace()}). */
+    private boolean viewportMode;
+    /** The editor's own camera; never rendered into a frame. */
+    private final dev.bbsae.client.render.CompViewportCamera viewportCamera = new dev.bbsae.client.render.CompViewportCamera();
+    /** Red "AE 编码器" chip over the preview; visible only while the frame server drives the view. */
+    private UIElement encoderBadge;
+    /** True while the preview is auditioning the composition's mix. */
+    private boolean previewAudioRunning;
     private UIToggle effectsToggle;
     private UIToggle masksToggle;
     private UIToggle bbsBackdropToggle;
@@ -246,6 +259,15 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private static final int TIMELINE_HEIGHT = 250;
 
+    /* Last size the three-column layout was computed for. The panel is laid out once during bind(),
+     * when the dashboard has not given it a real area yet, so the body kept its 160 px floor and a
+     * blank strip sat between the preview and the timeline until something forced a re-layout
+     * (dragging a splitter). Re-applying when the area actually changes removes that whole class of
+     * "only looks right after you touch it" bug. */
+    private int lastLayoutWidth = -1;
+    private int lastLayoutHeight = -1;
+    private UILayerQuickPanel quickPanel;
+    private int quickPanelWidth = 210;
     private int leftPanelWidth = 190;
     private int rightPanelWidth = 300;
     private int timelinePanelHeight = 250;
@@ -354,6 +376,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
             this.openAssetBrowser(true);
         }));
+        assetSection.fields.add(new UICompButton(IKey.constant("导入视频…"), (button) -> this.importVideo())
+            .tooltip(IKey.constant("把 mp4/mov/mkv/webm 拆成逐帧图片，并新建一条 footage 轨道（按合成帧率、合成尺寸）")));
         this.assetPanel.add(assetSection);
 
         this.leftTabs = new UICompTabBar();
@@ -413,17 +437,64 @@ public class UICompositorPanel extends UIDashboardPanel
             private float startScreenAngle;
             private float cameraStartTargetX;
             private float cameraStartTargetY;
+
+            /* 3D viewport navigation state. Absolute snapshots are used instead of incremental
+             * deltas: applying "delta since the last event" to a camera that already moved makes
+             * orbiting accelerate away, which is the classic broken-orbit feel. */
+            /* Raw button state, polled every frame. BBS's UI event routing is not guaranteed to
+             * deliver non-left buttons to a custom element (and a right click also opens context
+             * menus), so navigation cannot depend on subMouseClicked alone. Polling the window is
+             * what makes "right drag orbits" work everywhere, including look-through. */
+            private boolean vpRightWasDown;
+            private boolean vpMiddleWasDown;
+            private boolean vpLeftWasDown;
+            /** The current drag started on empty canvas (so a click without movement deselects). */
+            private boolean vpFromEmpty;
+            private boolean vpMoved;
+
+            private static final int VP_NONE = 0;
+            private static final int VP_ORBIT = 10;
+            private static final int VP_PAN = 11;
+            private static final int VP_MOVE = 12;
+            private static final int VP_CAM_BODY = 13;
+            private static final int VP_CAM_TARGET = 14;
+            private int vpMode = VP_NONE;
+            private int vpButton;
+            private int vpStartX;
+            private int vpStartY;
+            private float vpStartYaw;
+            private float vpStartPitch;
+            private final org.joml.Vector3f vpStartTarget = new org.joml.Vector3f();
+            private final org.joml.Vector3f vpStartEye = new org.joml.Vector3f();
+            private String vpCameraId;
             /** Start x/y of every selected layer, for a multi-layer drag. */
             private final java.util.LinkedHashMap<String, float[]> dragStarts = new java.util.LinkedHashMap<>();
 
             @Override
             public void render(UIContext context)
             {
+                this.pollViewportInput(context);
                 this.applyDrag(context);
                 this.renderBackground(context);
-                this.renderSafeArea(context);
-                this.renderGuides(context);
-                this.renderSelection(context);
+
+                if (UICompositorPanel.this.is3DSpace())
+                {
+                    /* One overlay for the whole 3D workspace: it projects through the viewport
+                     * camera, so it is not the 2D safe-area/guides/selection path. */
+                    this.renderViewportOverlay(context);
+                }
+                else
+                {
+                    this.renderSafeArea(context);
+                    this.renderGuides(context);
+                    this.renderSelection(context);
+
+                    /* Say which view this is: "dragging does nothing" was really "this is the 2D
+                     * editor, not the 3D workspace". */
+                    context.batcher.textShadow("2D 编辑视图 · 右键拖动进入 3D 视口",
+                        this.area.ex() - 190, this.area.ey() - 16, 0x77B9C6DA);
+                }
+
                 this.updateCursor(context);
                 super.render(context);
             }
@@ -437,7 +508,15 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 int cursor = -1;
 
-                if (this.dragMode == DRAG_MOVE)
+                if (this.vpMode == VP_MOVE || this.vpMode == VP_CAM_BODY || this.vpMode == VP_CAM_TARGET)
+                {
+                    cursor = org.lwjgl.glfw.GLFW.GLFW_HAND_CURSOR;
+                }
+                else if (this.vpMode == VP_ORBIT || this.vpMode == VP_PAN)
+                {
+                    cursor = org.lwjgl.glfw.GLFW.GLFW_HRESIZE_CURSOR;
+                }
+                else if (this.dragMode == DRAG_MOVE)
                 {
                     cursor = org.lwjgl.glfw.GLFW.GLFW_HAND_CURSOR;
                 }
@@ -586,41 +665,108 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     MatrixStack stack = context.batcher.getContext().getMatrices();
 
-                    if (settings != null && settings.previewBackground == 1)
+                    /* The world backdrop is a BBS-mode feature: in AE mode the stage is the
+                     * composition's own colour, because the frame that gets encoded must not depend
+                     * on what the game happened to draw behind the panel. */
+                    if (settings != null && settings.previewBackground == 1 && !UICompositorPanel.this.usesAeEncoder()
+                        && !UICompositorPanel.this.is3DSpace())
                     {
                         this.renderBbsBackdrop(context);
                     }
 
-                    stack.push();
-                    stack.translate(this.area.x, this.area.y, 0F);
-
-                    try
+                    if (UICompositorPanel.this.is3DSpace() && !UICompositorPanel.this.cameraPreviewMode)
                     {
-                        /* Cached preview: one textured quad while nothing changed, one render per
-                         * composition frame while playing. */
-                        CompRenderer.renderCached(
-                            UICompositorPanel.this.project,
-                            UICompositorPanel.this.doc,
-                            UICompositorPanel.this.time,
-                            1F,
-                            this.area.w,
-                            this.area.h,
-                            0,
-                            UICompositorPanel.this.previewEffects,
-                            UICompositorPanel.this.previewMasks,
-                            UICompositorPanel.this.cameraPreviewMode,
-                            context.batcher
-                        );
-                    }
-                    catch (RuntimeException e)
-                    {
-                        dev.bbsae.BbsAeAddon.LOGGER.error("Composition preview failed", e);
-                    }
+                        /* Free viewport: a draft render through the editor camera. This is the
+                         * only path that runs while orbiting, and it costs one textured draw per
+                         * layer instead of the whole composition graph. */
+                        context.batcher.clip(this.area, context);
 
-                    stack.pop();
+                        try
+                        {
+                            CompViewportRenderer.draw(
+                                context.batcher,
+                                UICompositorPanel.this.project,
+                                UICompositorPanel.this.doc,
+                                UICompositorPanel.this.viewportCamera,
+                                UICompositorPanel.this.time,
+                                this.area.x,
+                                this.area.y,
+                                Math.max(1, this.area.w),
+                                Math.max(1, this.area.h)
+                            );
+                        }
+                        finally
+                        {
+                            context.batcher.unclip(context);
+                        }
+                    }
+                    else
+                    {
+                        stack.push();
+                        stack.translate(this.area.x, this.area.y, 0F);
+
+                        try
+                        {
+                            if (UICompositorPanel.this.usesAeEncoder())
+                            {
+                                /* AE mode: the playhead's frame, at composition resolution, from the
+                                 * same function the encoder calls. */
+                                CompRenderer.renderFrameCached(
+                                    UICompositorPanel.this.project,
+                                    UICompositorPanel.this.doc,
+                                    UICompositorPanel.this.time,
+                                    1F,
+                                    this.area.w,
+                                    this.area.h,
+                                    0,
+                                    UICompositorPanel.this.encoderProxy(),
+                                    context.batcher
+                                );
+                            }
+                            else
+                            {
+                                /* Cached preview: one textured quad while nothing changed, one render
+                                 * per composition frame while playing. */
+                                CompRenderer.renderCached(
+                                    UICompositorPanel.this.project,
+                                    UICompositorPanel.this.doc,
+                                    UICompositorPanel.this.time,
+                                    1F,
+                                    this.area.w,
+                                    this.area.h,
+                                    0,
+                                    UICompositorPanel.this.previewEffects,
+                                    UICompositorPanel.this.previewMasks,
+                                    UICompositorPanel.this.cameraPreviewMode,
+                                    context.batcher
+                                );
+                            }
+                        }
+                        catch (RuntimeException e)
+                        {
+                            dev.bbsae.BbsAeAddon.LOGGER.error("Composition preview failed", e);
+                        }
+
+                        stack.pop();
+                    }
                 }
 
-                this.render3DGrid(context);
+                if (UICompositorPanel.this.encoderBadge != null)
+                {
+                    UICompositorPanel.this.encoderBadge.setVisible(UICompositorPanel.this.usesAeEncoder());
+                }
+
+                if (UICompositorPanel.this.previewInfo != null)
+                {
+                    /* The 3D HUD owns the bottom strip; two readouts on top of each other read as
+                     * a rendering bug. */
+                    UICompositorPanel.this.previewInfo.setVisible(!UICompositorPanel.this.is3DSpace());
+                }
+
+                if (!UICompositorPanel.this.is3DSpace())
+                {
+                    this.render3DGrid(context);
+                }
 
                 context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 1F, 0xFF2A303A);
                 context.batcher.box(this.area.x, this.area.ey() - 1F, this.area.ex(), this.area.ey(), 0xFF2A303A);
@@ -735,7 +881,12 @@ public class UICompositorPanel extends UIDashboardPanel
                 {
                     for (CompLayer layer : UICompositorPanel.this.doc.layers)
                     {
-                        if (!layer.activeAt(UICompositorPanel.this.time) || !layer.visible)
+                        /* A camera gizmo is drawn even when the track's eye is off or the playhead
+                         * is outside its trim: the camera still drives the view (see
+                         * CompDocument#activeCamera), so hiding its gizmo would leave the user with
+                         * a transformed picture and no handle to fix it. */
+                        if (!"camera".equals(layer.type)
+                            && (!layer.activeAt(UICompositorPanel.this.time) || !layer.visible))
                         {
                             continue;
                         }
@@ -771,12 +922,18 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             /**
-             * The camera gizmo.
+             * The camera gizmo, drawn in <b>composition space</b>.
              *
-             * <p>We always look <em>through</em> the active camera, so its body sits at the frame
-             * centre — exactly like AE's camera view. The gizmo draws the frustum from the eye to
-             * the composition rectangle, the point of interest as a crosshair, and the camera body
-             * as a draggable square in the middle. Dragging the body pans, the crosshair aims.</p>
+             * <p>The old version projected the gizmo through the camera itself, so the eye always
+             * landed on the exact centre of the frame — the icon never moved when the camera was
+             * panned, and the frustum lines connected the centre to the four comp corners (which
+             * are only correct for a 1:1, unrotated camera). A view is the wrong space for a
+             * diagram of the view: the gizmo must live where the camera <em>is</em>, so its
+             * position, its hit area and the drag all agree.</p>
+             *
+             * <p>So: eye and target are comp-space points mapped straight onto the comp rectangle
+             * (no camera transform), and the frustum is eye → comp corners. Dragging the body pans,
+             * dragging the crosshair aims.</p>
              */
             private void renderCameraGizmo(UIContext context, CompRenderContext renderContext, CompLayer layer, float ox, float oy, float scale)
             {
@@ -791,28 +948,33 @@ public class UICompositorPanel extends UIDashboardPanel
                 CompCamera camera = CompScene.camera(renderContext);
                 boolean selected = UICompositorPanel.this.selectedLayer == layer;
                 int color = selected ? 0xFFFFC14D : 0xB3FFC14D;
-                float cx = this.area.x + ox + doc.width * 0.5F * scale;
-                float cy = this.area.y + oy + doc.height * 0.5F * scale;
+                /* The animated transform, not the base field: an animated camera must move its
+                 * gizmo with the picture (see CompLayer#cameraEye). */
+                org.joml.Vector2f eye = layer.cameraEye(UICompositorPanel.this.getFrame());
+                float eyeX = eye.x;
+                float eyeY = eye.y;
+                float cx = this.area.x + ox + eyeX * scale;
+                float cy = this.area.y + oy + eyeY * scale;
 
                 for (int i = 0; i < 4; i++)
                 {
                     float wx = i == 1 || i == 2 ? doc.width : 0F;
                     float wy = i >= 2 ? doc.height : 0F;
-                    org.joml.Vector2f corner = CompScene.projectWorld(renderContext, new org.joml.Vector3f(wx, wy, 0F));
 
-                    if (corner != null)
-                    {
-                        this.line(context, cx, cy, this.area.x + ox + corner.x * scale, this.area.y + oy + corner.y * scale, 0x33FFC14D);
-                    }
+                    this.line(context, cx, cy,
+                        this.area.x + ox + wx * scale,
+                        this.area.y + oy + wy * scale, 0x33FFC14D);
                 }
 
-                org.joml.Vector2f target = CompScene.projectWorld(renderContext, new org.joml.Vector3f(camera.tx, camera.ty, camera.tz));
-
-                if (target != null)
+                /* The point of interest is a comp-space point too (that is what cameraTargetX/Y
+                 * mean), so it needs no projection and can never end up behind the camera. */
+                if (layer.cameraLookAt || camera.lookAt)
                 {
+                    org.joml.Vector3f target = layer.cameraTarget(UICompositorPanel.this.getFrame());
                     float tx = this.area.x + ox + target.x * scale;
                     float ty = this.area.y + oy + target.y * scale;
 
+                    this.line(context, cx, cy, tx, ty, 0x55FFC14D);
                     context.batcher.box(tx - 6F, ty - 1F, tx + 6F, ty + 1F, color);
                     context.batcher.box(tx - 1F, ty - 6F, tx + 1F, ty + 6F, color);
                     context.batcher.box(tx - 2F, ty - 2F, tx + 2F, ty + 2F, 0xFF101014);
@@ -825,6 +987,300 @@ public class UICompositorPanel extends UIDashboardPanel
                 context.batcher.textShadow("🎥 " + UICompositorPanel.this.layerLabel(layer)
                     + "  " + (camera.perspective ? "透视" : "正交")
                     + "  " + Math.round(camera.zoom * 100F) + "%", cx + 10F, cy - 6F, color);
+            }
+
+            /**
+             * The 3D workspace overlay: selection outlines, the camera gizmo and the position HUD.
+             *
+             * <p>Everything is projected through the same {@link CompViewportCamera} that drew the
+             * scene, so an outline can never drift from the quad it belongs to. Nothing here draws
+             * per-pixel boxes: lines are rotated quads (see {@link #line}), which is what keeps a
+             * gizmo from costing thousands of vertices per frame.</p>
+             */
+            private void renderViewportOverlay(UIContext context)
+            {
+                CompDocument doc = UICompositorPanel.this.doc;
+                CompProject project = UICompositorPanel.this.project;
+
+                if (doc == null || project == null)
+                {
+                    return;
+                }
+
+                UICompositorPanel.this.syncViewportSize();
+                UICompositorPanel.this.viewportCamera.setViewport(
+                    Math.max(1, this.area.w), Math.max(1, this.area.h));
+                UICompositorPanel.this.viewportCamera.update();
+
+                context.batcher.clip(this.area, context);
+
+                try
+                {
+                    if (UICompositorPanel.this.cameraPreviewMode)
+                    {
+                        this.renderLookThroughFrame(context, doc);
+
+                        return;
+                    }
+
+                    CompRenderContext renderContext = new CompRenderContext(project, doc, UICompositorPanel.this.time, null, null, null);
+                    dev.bbsae.client.render.CompViewportCamera camera = UICompositorPanel.this.viewportCamera;
+
+                    for (CompLayer layer : UICompositorPanel.this.getSelectedLayers())
+                    {
+                        if (layer == null)
+                        {
+                            continue;
+                        }
+
+                        float[] quad = dev.bbsae.client.render.CompViewportRenderer.layerQuad(
+                            renderContext, layer, camera, this.area.x, this.area.y);
+
+                        if (quad == null)
+                        {
+                            continue;
+                        }
+
+                        int color = layer.locked ? 0xFF8A6A6A : 0xFF55AAFF;
+
+                        for (int i = 0; i < 4; i++)
+                        {
+                            int j = (i + 1) % 4;
+
+                            this.line(context, quad[i * 2], quad[i * 2 + 1], quad[j * 2], quad[j * 2 + 1], color);
+                        }
+
+                        for (int i = 0; i < 4; i++)
+                        {
+                            context.batcher.box(quad[i * 2] - 2F, quad[i * 2 + 1] - 2F,
+                                quad[i * 2] + 2F, quad[i * 2 + 1] + 2F, color);
+                        }
+                    }
+
+                    CompLayer cameraLayer = doc.activeCamera(UICompositorPanel.this.time);
+
+                    if (cameraLayer != null)
+                    {
+                        this.renderCameraMotionPath(context, cameraLayer, doc);
+                    }
+
+                    /* Every camera layer gets a gizmo, not only the active one: a second camera
+                     * that is invisible in the viewport is a camera you cannot select or move. */
+                    for (CompLayer layer : doc.layers)
+                    {
+                        if ("camera".equals(layer.type) && layer.visible)
+                        {
+                            this.renderViewportCameraGizmo(context, layer, doc, layer == cameraLayer);
+                        }
+                    }
+
+                    this.renderViewportHud(context, doc, cameraLayer);
+                }
+                finally
+                {
+                    context.batcher.unclip(context);
+                }
+            }
+
+            /** Look-through: the exact frame is drawn by the normal graph; this is the frame chrome. */
+            private void renderLookThroughFrame(UIContext context, CompDocument doc)
+            {
+                float scale = this.fitScale();
+
+                if (scale <= 0F)
+                {
+                    return;
+                }
+
+                float w = doc.width * scale;
+                float h = doc.height * scale;
+                float x = this.area.x + (this.area.w - w) / 2F;
+                float y = this.area.y + (this.area.h - h) / 2F;
+
+                context.batcher.outline(x - 1F, y - 1F, x + w + 1F, y + h + 1F, 0xAAFF6B6B);
+                context.batcher.box(x + 6F, y + 6F, x + 6F + 5F, y + 6F + 2F, 0xFFFF6B6B);
+
+                /* Bottom-left, above the frame edge: the top strip is where the preview bar's
+                 * FX/mask/BBS toggles live, and a label underneath them is unreadable. */
+                context.batcher.textShadow("看穿摄像机 · 最终画面", x + 8F, y + h - 26F, 0xFFFFB4B4);
+                context.batcher.textShadow("按 0 回到自由视图", x + 8F, y + h - 14F, 0x99FFB4B4);
+            }
+
+            /**
+             * Motion path: where the camera's eye travels over the composition, plus a dot on every
+             * transform keyframe.
+             *
+             * <p>This is a <b>read</b> of the same animation the renderer plays ({@code cameraEye}
+             * samples the transform channel), not a stored path, so it can never disagree with the
+             * shot. Sampling is capped (40 segments) because it runs every frame while the viewport
+             * is open, and a polyline is exactly the resolution the eye can read.</p>
+             */
+            private void renderCameraMotionPath(UIContext context, CompLayer layer, CompDocument doc)
+            {
+                dev.bbsae.client.render.CompViewportCamera camera = UICompositorPanel.this.viewportCamera;
+                float fps = Math.max(1F, doc.fps);
+                float from = Math.max(0F, layer.in);
+                float to = Math.min(doc.duration, layer.out > layer.in ? layer.out : doc.duration);
+
+                if (to - from < 1F && doc.duration > 0F)
+                {
+                    from = 0F;
+                    to = doc.duration;
+                }
+
+                if (to <= from)
+                {
+                    return;
+                }
+
+                boolean selected = UICompositorPanel.this.isLayerSelected(layer);
+                int pathColor = selected ? 0xCCFFC14D : 0x55FFC14D;
+                int dotColor = selected ? 0xFFFFC14D : 0x99FFC14D;
+                int samples = 40;
+                float lastX = 0F;
+                float lastY = 0F;
+                boolean hasLast = false;
+
+                for (int i = 0; i <= samples; i++)
+                {
+                    float time = from + (to - from) * (i / (float) samples);
+                    org.joml.Vector3f eye = CompCamera.eyeOf(layer, time * fps, doc.height);
+                    org.joml.Vector2f point = camera.project(eye);
+
+                    if (point == null)
+                    {
+                        hasLast = false;
+
+                        continue;
+                    }
+
+                    float x = this.area.x + point.x;
+                    float y = this.area.y + point.y;
+
+                    if (hasLast)
+                    {
+                        this.line(context, lastX, lastY, x, y, pathColor);
+                    }
+
+                    lastX = x;
+                    lastY = y;
+                    hasLast = true;
+                }
+
+                /* Keyframe dots: one per transform key, at the frame the key lives on. */
+                for (Object entry : layer.transformChannel().getKeyframes())
+                {
+                    if (!(entry instanceof mchorse.bbs_mod.utils.keyframes.Keyframe<?> key))
+                    {
+                        continue;
+                    }
+
+                    org.joml.Vector3f eye = CompCamera.eyeOf(layer, key.getTick(), doc.height);
+                    org.joml.Vector2f point = camera.project(eye);
+
+                    if (point == null)
+                    {
+                        continue;
+                    }
+
+                    float x = this.area.x + point.x;
+                    float y = this.area.y + point.y;
+
+                    context.batcher.box(x - 3F, y - 3F, x + 3F, y + 3F, 0xFF101014);
+                    context.batcher.box(x - 2F, y - 2F, x + 2F, y + 2F, dotColor);
+                }
+            }
+
+            /** Camera body + frustum + target crosshair, all in viewport pixels. */
+            private void renderViewportCameraGizmo(UIContext context, CompLayer layer, CompDocument doc, boolean active)
+            {
+                dev.bbsae.client.render.CompViewportCamera camera = UICompositorPanel.this.viewportCamera;
+                org.joml.Vector3f eye = CompCamera.eyeOf(layer, UICompositorPanel.this.getFrame(), doc.height);
+                org.joml.Vector2f eyeScreen = camera.project(eye);
+
+                if (eyeScreen == null)
+                {
+                    return;
+                }
+
+                float ex = this.area.x + eyeScreen.x;
+                float ey = this.area.y + eyeScreen.y;
+                int color = UICompositorPanel.this.isLayerSelected(layer) ? 0xFFFFC14D
+                    : active ? 0xCCFFC14D : 0x77FFC14D;
+
+                /* The frame the camera sees: four lines from the eye to the composition corners.
+                 * Cheap (four segments) and it reads as a frustum from any angle, which a drawn
+                 * pyramid of the wrong aspect would not. */
+                for (int i = 0; i < 4; i++)
+                {
+                    float wx = (i == 1 || i == 2) ? doc.width : 0F;
+                    float wy = i >= 2 ? doc.height : 0F;
+                    org.joml.Vector2f corner = camera.project(new org.joml.Vector3f(wx, wy, 0F));
+
+                    if (corner != null)
+                    {
+                        this.line(context, ex, ey, this.area.x + corner.x, this.area.y + corner.y, 0x44FFC14D);
+                    }
+                }
+
+                org.joml.Vector3f target = layer.cameraTarget(UICompositorPanel.this.getFrame());
+                org.joml.Vector2f targetScreen = camera.project(target);
+
+                if (targetScreen != null)
+                {
+                    float tx = this.area.x + targetScreen.x;
+                    float ty = this.area.y + targetScreen.y;
+
+                    this.line(context, ex, ey, tx, ty, 0x77FFC14D);
+                    context.batcher.box(tx - 6F, ty - 1F, tx + 6F, ty + 1F, color);
+                    context.batcher.box(tx - 1F, ty - 6F, tx + 1F, ty + 6F, color);
+                    context.batcher.box(tx - 2F, ty - 2F, tx + 2F, ty + 2F, 0xFF101014);
+                    context.batcher.textShadow("⌖ 目标", tx + 9F, ty - 4F, color);
+                }
+
+                context.batcher.box(ex - 8F, ey - 6F, ex + 8F, ey + 6F, 0xFF101014);
+                context.batcher.outline(ex - 8F, ey - 6F, ex + 8F, ey + 6F, color);
+                context.batcher.box(ex - 2F, ey - 2F, ex + 2F, ey + 2F, color);
+
+                /* Position readout next to the icon: the user asked to always know where the
+                 * camera is, and a number that follows the gizmo beats an inspector row. */
+                String label = String.format(java.util.Locale.ROOT, "🎥 %s  %.0f, %.0f, %.0f",
+                    UICompositorPanel.this.layerLabel(layer), eye.x, eye.y, eye.z);
+
+                context.batcher.textShadow(label, ex + 12F, ey - 12F, color);
+            }
+
+            /** Bottom-left HUD: mode, camera pose and the navigation keys. */
+            private void renderViewportHud(UIContext context, CompDocument doc, CompLayer cameraLayer)
+            {
+                dev.bbsae.client.render.CompViewportCamera camera = UICompositorPanel.this.viewportCamera;
+                int x = this.area.x + 8;
+                int y = this.area.ey() - 46;
+
+                String mode = "3D 空间 · 草稿（效果/蒙版跳过）" + (camera.ortho ? " · 正交" : " · 透视");
+                String pose;
+
+                if (cameraLayer == null)
+                {
+                    pose = "没有摄像机 · 点击左侧球体新建";
+                }
+                else
+                {
+                    org.joml.Vector3f eye = CompCamera.eyeOf(cameraLayer, UICompositorPanel.this.getFrame(), doc.height);
+
+                    pose = String.format(java.util.Locale.ROOT,
+                        "摄像机  X %.0f   Y %.0f   Z %.0f   FOV %.0f°   视图距离 %.0f",
+                        eye.x, eye.y, eye.z,
+                        cameraLayer.scalarAt("cameraFov", cameraLayer.cameraFov, UICompositorPanel.this.getFrame()),
+                        camera.distance);
+                }
+
+                String hint = "右键拖动环绕 · Shift+右键平移 · 滚轮缩放 · 0 看穿 · 5 正交 · Ctrl+Home 全览";
+
+                context.batcher.box(x - 4F, y - 4F, this.area.ex() - 8F, y + 40F, 0x990A0D12);
+                context.batcher.textShadow(mode, x, y, 0xFFB9C6DA);
+                context.batcher.textShadow(pose, x, y + 13, 0xFFFFC14D);
+                context.batcher.textShadow(hint, x, y + 26, 0xFF7E8BA0);
             }
 
             private void renderSelection(UIContext context)
@@ -960,7 +1416,19 @@ public class UICompositorPanel extends UIDashboardPanel
                 {
                     if (pointGizmo)
                     {
-                        org.joml.Vector2f anchor = CompScene.project(renderContext, layer, 0F, 0F, 0F);
+                        /* A camera is drawn where it sits in composition space (see
+                         * renderCameraGizmo): projecting it through its own view would put the
+                         * selection box at the frame centre no matter where the eye is. */
+                        org.joml.Vector2f anchor;
+
+                        if ("camera".equals(layer.type))
+                        {
+                            anchor = layer.cameraEye(UICompositorPanel.this.getFrame());
+                        }
+                        else
+                        {
+                            anchor = CompScene.project(renderContext, layer, 0F, 0F, 0F);
+                        }
 
                         if (anchor == null)
                         {
@@ -1012,26 +1480,27 @@ public class UICompositorPanel extends UIDashboardPanel
                         return -1;
                     }
 
-                    CompRenderContext renderContext = new CompRenderContext(
-                        UICompositorPanel.this.project, UICompositorPanel.this.doc, UICompositorPanel.this.time, null, null, null
-                    );
-                    CompCamera camera = CompScene.camera(renderContext);
                     float scale = Math.max(0.0001F, this.fitScale());
                     float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
                     float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
                     float compX = (context.mouseX - this.area.x - ox) / scale;
                     float compY = (context.mouseY - this.area.y - oy) / scale;
-                    org.joml.Vector2f poi = CompScene.projectWorld(renderContext, new Vector3f(camera.tx, camera.ty, camera.tz));
+                    float frame = UICompositorPanel.this.getFrame();
+                    org.joml.Vector2f eye = layer.cameraEye(frame);
+                    org.joml.Vector3f target = layer.cameraTarget(frame);
 
-                    if (poi != null
-                        && Math.abs(poi.x - compX) * scale <= 12F
-                        && Math.abs(poi.y - compY) * scale <= 12F)
+                    /* Same space as the drawn gizmo: comp pixels, not view pixels. The old hit test
+                     * compared the cursor against the frame centre, so the only draggable camera
+                     * was one whose eye happened to be centred. */
+                    if (layer.cameraLookAt
+                        && Math.abs(target.x - compX) * scale <= 12F
+                        && Math.abs(target.y - compY) * scale <= 12F)
                     {
                         return 41;
                     }
 
-                    if (Math.abs(compX - UICompositorPanel.this.doc.width * 0.5F) * scale <= 14F
-                        && Math.abs(compY - UICompositorPanel.this.doc.height * 0.5F) * scale <= 14F)
+                    if (Math.abs(eye.x - compX) * scale <= 14F
+                        && Math.abs(eye.y - compY) * scale <= 14F)
                     {
                         return 40;
                     }
@@ -1184,35 +1653,38 @@ public class UICompositorPanel extends UIDashboardPanel
                 return inside;
             }
 
+            /**
+             * A line, as <b>one</b> rotated quad.
+             *
+             * <p>The old version stepped along the segment and emitted a 2×2 box every two pixels:
+             * a 700 px frustum edge cost 350 quads, and the 3D grid emitted tens of thousands per
+             * frame. Rotating the matrix stack once and drawing a single box is the same picture
+             * for one quad — this alone was a measurable part of "the camera view crawls".</p>
+             */
             private void line(UIContext context, float x1, float y1, float x2, float y2, int color)
             {
-                float length = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
-                int steps = Math.max(1, (int) (length / 2F));
+                float dx = x2 - x1;
+                float dy = y2 - y1;
+                float length = (float) Math.sqrt(dx * dx + dy * dy);
 
-                for (int i = 0; i <= steps; i++)
+                if (length < 0.01F)
                 {
-                    float t = i / (float) steps;
-                    float x = x1 + (x2 - x1) * t;
-                    float y = y1 + (y2 - y1) * t;
-
-                    context.batcher.box(x, y, x + 2F, y + 2F, color);
+                    return;
                 }
+
+                MatrixStack stack = context.batcher.getContext().getMatrices();
+
+                stack.push();
+                stack.translate(x1, y1, 0F);
+                stack.multiply(new org.joml.Quaternionf().rotateZ((float) Math.atan2(dy, dx)));
+                context.batcher.box(0F, -0.75F, length, 0.75F, color);
+                stack.pop();
             }
 
-            /** Faint reference lines (3D grid): fewer, slightly thicker segments. */
+            /** Faint reference lines (3D grid). Kept as one quad per segment, like {@link #line}. */
             private void coarseLine(UIContext context, float x1, float y1, float x2, float y2, int color)
             {
-                float length = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
-                int steps = Math.max(1, (int) (length / 6F));
-
-                for (int i = 0; i <= steps; i++)
-                {
-                    float t = i / (float) steps;
-                    float x = x1 + (x2 - x1) * t;
-                    float y = y1 + (y2 - y1) * t;
-
-                    context.batcher.box(x, y, x + 3F, y + 1.5F, color);
-                }
+                this.line(context, x1, y1, x2, y2, color);
             }
 
             private float fitScale()
@@ -1222,6 +1694,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void applyDrag(UIContext context)
             {
+                if (this.vpMode != VP_NONE)
+                {
+                    this.applyViewportDrag(context);
+
+                    return;
+                }
+
                 if (this.dragMode == DRAG_NONE)
                 {
                     return;
@@ -1427,6 +1906,447 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
             }
 
+            /* ------------------------------------------------------- 3D viewport */
+
+            /**
+             * Starts viewport navigation from raw mouse state.
+             *
+             * <p>Right button orbits (middle too). This runs before anything else in the frame, so
+             * a press is seen even if the framework consumed the click for a context menu. Look-
+             * through is exited on the press, exactly like Blender's numpad-0 view.</p>
+             */
+            private void pollViewportInput(UIContext context)
+            {
+                if (!UICompositorPanel.this.is3DSpace() || Boolean.getBoolean("bbsae.debugViewLock"))
+                {
+                    this.vpRightWasDown = false;
+                    this.vpMiddleWasDown = false;
+                    this.vpLeftWasDown = false;
+
+                    return;
+                }
+
+                /* Verification hook: orbit without any input. If the picture does not move with
+                 * this on, the problem is the camera/render path; if it moves, the problem is
+                 * input delivery. */
+                String autoOrbit = System.getProperty("bbsae.debugOrbit", "");
+
+                if (!autoOrbit.isBlank())
+                {
+                    try
+                    {
+                        float amount = Float.parseFloat(autoOrbit);
+
+                        UICompositorPanel.this.viewportCamera.orbit(amount, 0F);
+                        UICompositorPanel.this.viewportCamera.update();
+                    }
+                    catch (NumberFormatException ignored)
+                    {
+                        /* a bad value must not break the viewport */
+                    }
+                }
+
+                boolean right = Window.isMouseButtonPressed(1);
+                boolean middle = Window.isMouseButtonPressed(2);
+                boolean left = Window.isMouseButtonPressed(0);
+                boolean inside = this.area.isInside(context);
+
+                if (this.vpMode == VP_NONE && inside)
+                {
+                    if (right && !this.vpRightWasDown)
+                    {
+                        if (UICompositorPanel.this.cameraPreviewMode)
+                        {
+                            UICompositorPanel.this.toggleViewportLookThrough();
+                        }
+
+                        this.beginViewportDrag(context, CompInput.shiftDown() ? VP_PAN : VP_ORBIT, 1);
+                    }
+                    else if (middle && !this.vpMiddleWasDown)
+                    {
+                        this.beginViewportDrag(context, CompInput.shiftDown() ? VP_PAN : VP_ORBIT, 2);
+                    }
+                    else if (left && !this.vpLeftWasDown)
+                    {
+                        /* Left drag is the gesture everybody tries first. On empty canvas (or with
+                         * Alt held) it orbits; on a layer it keeps its old meaning (move the
+                         * layer), which the click handler decides. This is also the only way to
+                         * naviate on a two-button trackpad where the right click is emulated. */
+                        boolean empty = this.viewportCameraHandle(context) < 0
+                            && dev.bbsae.client.render.CompViewportRenderer.pick(
+                                this.viewportContext(), this.viewport(), this.area.x, this.area.y,
+                                context.mouseX, context.mouseY) == null;
+
+                        if (empty || CompInput.altDown())
+                        {
+                            if (UICompositorPanel.this.cameraPreviewMode)
+                            {
+                                UICompositorPanel.this.toggleViewportLookThrough();
+                            }
+
+                            this.vpFromEmpty = empty;
+                            this.vpMoved = false;
+                            this.beginViewportDrag(context, CompInput.shiftDown() ? VP_PAN : VP_ORBIT, 0);
+                        }
+                    }
+                }
+
+                this.vpRightWasDown = right;
+                this.vpMiddleWasDown = middle;
+                this.vpLeftWasDown = left;
+            }
+
+            private boolean viewportActive()
+            {
+                return UICompositorPanel.this.is3DSpace() && !UICompositorPanel.this.cameraPreviewMode
+                    && !Boolean.getBoolean("bbsae.debugViewLock");
+            }
+
+            private dev.bbsae.client.render.CompViewportCamera viewport()
+            {
+                dev.bbsae.client.render.CompViewportCamera camera = UICompositorPanel.this.viewportCamera;
+
+                camera.setViewport(Math.max(1, this.area.w), Math.max(1, this.area.h));
+                camera.update();
+
+                return camera;
+            }
+
+            private CompRenderContext viewportContext()
+            {
+                return new CompRenderContext(UICompositorPanel.this.project, UICompositorPanel.this.doc,
+                    UICompositorPanel.this.time, null, null, null);
+            }
+
+            private void beginViewportDrag(UIContext context, int mode, int button)
+            {
+                if (this.vpMode != VP_NONE)
+                {
+                    /* The poller and the click event can both see the same press; the second one
+                     * must not reset the drag origin (that makes the view jitter). */
+                    return;
+                }
+
+                dev.bbsae.client.render.CompViewportCamera camera = this.viewport();
+                CompDocument doc = UICompositorPanel.this.doc;
+
+                if (Boolean.getBoolean("bbsae.debugViewport"))
+                {
+                    dev.bbsae.BbsAeAddon.LOGGER.info("viewport input: drag start mode={} button={} at {},{}",
+                        mode, button, context.mouseX, context.mouseY);
+                }
+
+                this.vpMode = mode;
+                this.vpButton = button;
+                this.vpStartX = context.mouseX;
+                this.vpStartY = context.mouseY;
+                this.vpStartYaw = camera.yaw;
+                this.vpStartPitch = camera.pitch;
+                this.vpStartTarget.set(camera.target);
+
+                CompLayer active = doc == null ? null : doc.activeCamera(UICompositorPanel.this.time);
+
+                this.vpCameraId = active == null ? null : active.id;
+
+                if (active != null)
+                {
+                    this.vpStartEye.set(CompCamera.eyeOf(active, UICompositorPanel.this.getFrame(), doc.height));
+                }
+
+                if (mode == VP_MOVE)
+                {
+                    this.dragStarts.clear();
+
+                    for (CompLayer moving : UICompositorPanel.this.getSelectedLayers())
+                    {
+                        Transform start = moving.transformAt(UICompositorPanel.this.getFrame());
+
+                        this.dragStarts.put(moving.id, new float[] {
+                            start.translate.x,
+                            start.translate.y,
+                            moving.scalarAt("z", moving.z, UICompositorPanel.this.getFrame())
+                        });
+                    }
+                }
+            }
+
+            private void endViewportDrag()
+            {
+                boolean moved = this.vpMode != VP_NONE;
+
+                if (moved && Boolean.getBoolean("bbsae.debugViewport"))
+                {
+                    dev.bbsae.BbsAeAddon.LOGGER.info("viewport input: drag end mode={} moved={}", this.vpMode, this.vpMoved);
+                }
+
+                /* A left press on empty canvas that did not move is still a click: clear the
+                 * selection, exactly like before the orbit existed. */
+                if (this.vpMode == VP_ORBIT && this.vpButton == 0 && this.vpFromEmpty && !this.vpMoved)
+                {
+                    UICompositorPanel.this.clearSelection();
+                }
+
+                this.vpFromEmpty = false;
+                this.vpMoved = false;
+                this.vpMode = VP_NONE;
+
+                if (moved)
+                {
+                    UICompositorPanel.this.saveViewportPose();
+                    UICompositorPanel.this.refreshInspector();
+                    UICompositorPanel.this.savePanelLayout();
+                }
+            }
+
+            /**
+             * Orbit / pan / object drag, all computed from the drag start.
+             *
+             * <p>Object and camera drags intersect the cursor ray with the plane that contains the
+             * object and faces the view. That is why they track the cursor exactly at any zoom,
+             * FOV or angle — a screen-delta times a scale constant (the old approach) drifts as
+             * soon as the view is not square-on.</p>
+             */
+            private void applyViewportDrag(UIContext context)
+            {
+                CompDocument doc = UICompositorPanel.this.doc;
+
+                if (doc == null || !Window.isMouseButtonPressed(this.vpButton))
+                {
+                    this.endViewportDrag();
+
+                    return;
+                }
+
+                dev.bbsae.client.render.CompViewportCamera camera = this.viewport();
+                float dx = context.mouseX - this.vpStartX;
+                float dy = context.mouseY - this.vpStartY;
+
+                if (Math.abs(dx) > 3F || Math.abs(dy) > 3F)
+                {
+                    this.vpMoved = true;
+                }
+                float localX = context.mouseX - this.area.x;
+                float localY = context.mouseY - this.area.y;
+                float startLocalX = this.vpStartX - this.area.x;
+                float startLocalY = this.vpStartY - this.area.y;
+
+                switch (this.vpMode)
+                {
+                    case VP_ORBIT ->
+                    {
+                        camera.setPose(
+                            this.vpStartYaw - dx * dev.bbsae.client.render.CompViewportCamera.ORBIT_DEGREES_PER_PIXEL,
+                            this.vpStartPitch + dy * dev.bbsae.client.render.CompViewportCamera.ORBIT_DEGREES_PER_PIXEL,
+                            camera.distance);
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                            "环绕  偏航 %.0f°  俯仰 %.0f°", camera.yaw, camera.pitch));
+                    }
+                    case VP_PAN ->
+                    {
+                        camera.target.set(this.vpStartTarget);
+                        camera.pan(dx, dy);
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                            "平移  目标 %.0f, %.0f, %.0f", camera.target.x, camera.target.y, camera.target.z));
+                    }
+                    case VP_MOVE -> this.dragLayersInViewport(doc, camera, startLocalX, startLocalY, localX, localY, false);
+                    case VP_CAM_BODY -> this.dragCameraInViewport(doc, camera, startLocalX, startLocalY, localX, localY);
+                    case VP_CAM_TARGET -> this.aimCameraInViewport(doc, camera, localX, localY);
+                    default -> { }
+                }
+            }
+
+            /** Moves the selected layers on the plane that faces the view. */
+            private void dragLayersInViewport(CompDocument doc, dev.bbsae.client.render.CompViewportCamera camera,
+                                              float startX, float startY, float mouseX, float mouseY, boolean vertical)
+            {
+                CompLayer primary = UICompositorPanel.this.selectedLayer;
+
+                if (primary == null)
+                {
+                    return;
+                }
+
+                CompRenderContext context = this.viewportContext();
+                Matrix4f world = CompScene.world(context, primary);
+                org.joml.Vector3f origin = new org.joml.Vector3f();
+
+                world.transformPosition(origin);
+
+                org.joml.Vector3f normal = new org.joml.Vector3f(0F, 0F, 1F);
+
+                world.transformDirection(normal);
+                normal.normalize();
+
+                org.joml.Vector3f from = camera.unprojectPlane(startX, startY, origin, normal);
+                org.joml.Vector3f to = camera.unprojectPlane(mouseX, mouseY, origin, normal);
+
+                if (from == null || to == null)
+                {
+                    return;
+                }
+
+                float dx = to.x - from.x;
+                float dy = to.y - from.y;
+                float dz = to.z - from.z;
+
+                for (CompLayer moving : UICompositorPanel.this.getSelectedLayers())
+                {
+                    float[] start = this.dragStarts.get(moving.id);
+
+                    if (start == null || moving.locked)
+                    {
+                        continue;
+                    }
+
+                    org.joml.Vector2f delta = dev.bbsae.comp.CompParenting.toLocalDelta(doc, moving,
+                        UICompositorPanel.this.getFrame(), dx, dy);
+
+                    this.writeTransform(moving, null, null, null, start[0] + delta.x, start[1] + delta.y);
+
+                    /* A 3D layer also has a z channel; the drag's depth component is applied there
+                     * so the object stays under the cursor while the view is tilted. The start value
+                     * comes from the drag snapshot — reading the live channel would add the delta
+                     * again on every mouse event and the layer would fly away. */
+                    if (moving.threeD && start.length > 2 && Math.abs(dz) > 0.0001F)
+                    {
+                        float z = start[2] + dz;
+
+                        moving.z = z;
+                        UICompositorPanel.this.setScalar(moving, "z", z);
+                    }
+                }
+
+                UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                    "X %.0f  Y %.0f  Z %.0f", primary.x, primary.y, primary.z));
+            }
+
+            /** Moves the composition camera's eye; the point of interest follows, so the aim holds. */
+            private void dragCameraInViewport(CompDocument doc, dev.bbsae.client.render.CompViewportCamera camera,
+                                              float startX, float startY, float mouseX, float mouseY)
+            {
+                CompLayer layer = this.vpCameraId == null ? null : doc.getLayer(this.vpCameraId);
+
+                if (layer == null)
+                {
+                    return;
+                }
+
+                org.joml.Vector3f delta;
+
+                if (CompInput.shiftDown())
+                {
+                    /* Shift = along the view direction (Blender's "move along local Z"). */
+                    float amount = -(mouseY - startY) * camera.worldPerPixel();
+
+                    delta = new org.joml.Vector3f(camera.forward).mul(-amount);
+                }
+                else
+                {
+                    org.joml.Vector3f from = camera.unprojectPlane(startX, startY, this.vpStartEye, camera.forward);
+                    org.joml.Vector3f to = camera.unprojectPlane(mouseX, mouseY, this.vpStartEye, camera.forward);
+
+                    if (from == null || to == null)
+                    {
+                        return;
+                    }
+
+                    delta = to.sub(from);
+                }
+
+                float x = this.vpStartEye.x + delta.x;
+                float y = this.vpStartEye.y + delta.y;
+                float z = this.vpStartEye.z + delta.z;
+
+                this.writeTransform(layer, null, null, null, x, y);
+
+                /* The distance channel is the camera's Z; writing it through setScalar keeps it
+                 * animatable and keeps the inspector row in sync. */
+                layer.cameraZ = z;
+                layer.z = z;
+                UICompositorPanel.this.setScalar(layer, "cameraZ", z);
+
+                if (layer.cameraLookAt)
+                {
+                    float tx = this.vpStartTarget.x + delta.x;
+                    float ty = this.vpStartTarget.y + delta.y;
+                    float tz = this.vpStartTarget.z + delta.z;
+
+                    layer.cameraTargetX = tx;
+                    layer.cameraTargetY = ty;
+                    layer.cameraTargetZ = tz;
+                    UICompositorPanel.this.setScalar(layer, "cameraTargetX", tx);
+                    UICompositorPanel.this.setScalar(layer, "cameraTargetY", ty);
+                    UICompositorPanel.this.setScalar(layer, "cameraTargetZ", tz);
+                }
+
+                UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                    "摄像机  X %.0f  Y %.0f  Z %.0f", x, y, z));
+            }
+
+            /** Drags the crosshair on the target's own Z plane. */
+            private void aimCameraInViewport(CompDocument doc, dev.bbsae.client.render.CompViewportCamera camera,
+                                             float mouseX, float mouseY)
+            {
+                CompLayer layer = this.vpCameraId == null ? null : doc.getLayer(this.vpCameraId);
+
+                if (layer == null)
+                {
+                    return;
+                }
+
+                org.joml.Vector3f point = camera.unproject(mouseX, mouseY, this.vpStartTarget.z);
+
+                layer.cameraLookAt = true;
+                layer.cameraTargetX = point.x;
+                layer.cameraTargetY = point.y;
+                layer.cameraTargetZ = point.z;
+                UICompositorPanel.this.setScalar(layer, "cameraTargetX", point.x);
+                UICompositorPanel.this.setScalar(layer, "cameraTargetY", point.y);
+                UICompositorPanel.this.setScalar(layer, "cameraTargetZ", point.z);
+                UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                    "目标点  %.0f, %.0f, %.0f", point.x, point.y, point.z));
+            }
+
+            /** The camera icon / crosshair under the cursor, if any. */
+            private int viewportCameraHandle(UIContext context)
+            {
+                CompDocument doc = UICompositorPanel.this.doc;
+
+                if (doc == null)
+                {
+                    return -1;
+                }
+
+                CompLayer active = doc.activeCamera(UICompositorPanel.this.time);
+
+                if (active == null)
+                {
+                    return -1;
+                }
+
+                dev.bbsae.client.render.CompViewportCamera camera = this.viewport();
+                org.joml.Vector3f eye = CompCamera.eyeOf(active, UICompositorPanel.this.getFrame(), doc.height);
+                org.joml.Vector2f eyeScreen = camera.project(eye);
+
+                if (eyeScreen != null
+                    && Math.abs(this.area.x + eyeScreen.x - context.mouseX) <= 14F
+                    && Math.abs(this.area.y + eyeScreen.y - context.mouseY) <= 14F)
+                {
+                    return 40;
+                }
+
+                org.joml.Vector2f target = camera.project(active.cameraTarget(UICompositorPanel.this.getFrame()));
+
+                if (target != null
+                    && Math.abs(this.area.x + target.x - context.mouseX) <= 12F
+                    && Math.abs(this.area.y + target.y - context.mouseY) <= 12F)
+                {
+                    return 41;
+                }
+
+                return -1;
+            }
+
             /**
              * Camera drag.
              *
@@ -1437,10 +2357,6 @@ public class UICompositorPanel extends UIDashboardPanel
              */
             private void dragCamera(UIContext context, CompLayer layer, float scale)
             {
-                CompRenderContext renderContext = new CompRenderContext(
-                    UICompositorPanel.this.project, UICompositorPanel.this.doc, UICompositorPanel.this.time, null, null, null
-                );
-                CompCamera camera = CompScene.camera(renderContext);
                 float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
                 float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
                 float compX = (context.mouseX - this.area.x - ox) / scale;
@@ -1448,8 +2364,12 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (this.dragMode == DRAG_CAMERA_BODY)
                 {
-                    float dxComp = (context.mouseX - this.dragStartX) / Math.max(0.0001F, camera.zoom);
-                    float dyComp = (context.mouseY - this.dragStartY) / Math.max(0.0001F, camera.zoom);
+                    /* 1:1 with the cursor: the gizmo is drawn in comp pixels, so a drag of N screen
+                     * pixels must move the eye by N / fitScale comp pixels. Dividing by the camera
+                     * zoom (the old code) made the icon lag behind the cursor as soon as the camera
+                     * was dollied, because zoom is the projection scale, not the editor scale. */
+                    float dxComp = (context.mouseX - this.dragStartX) / Math.max(0.0001F, scale);
+                    float dyComp = (context.mouseY - this.dragStartY) / Math.max(0.0001F, scale);
                     float x = this.layerStartX + dxComp;
                     float y = this.layerStartY + dyComp;
 
@@ -1463,15 +2383,16 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
-                float targetZ = layer.scalarAt("cameraTargetZ", layer.cameraTargetZ, UICompositorPanel.this.getFrame());
-                org.joml.Vector3f world = camera.unproject(compX, compY, UICompositorPanel.this.doc.width, UICompositorPanel.this.doc.height, targetZ);
-
+                /* Aim: the crosshair follows the cursor in comp space. Unprojecting through the
+                 * camera (the old behaviour) meant the handle jumped away from the cursor the
+                 * moment the camera was panned, and did nothing at all when the point was behind
+                 * the near plane. */
                 layer.cameraLookAt = true;
-                layer.cameraTargetX = world.x;
-                layer.cameraTargetY = world.y;
-                UICompositorPanel.this.setScalar(layer, "cameraTargetX", world.x);
-                UICompositorPanel.this.setScalar(layer, "cameraTargetY", world.y);
-                UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "目标点 %.0f, %.0f", world.x, world.y));
+                layer.cameraTargetX = compX;
+                layer.cameraTargetY = compY;
+                UICompositorPanel.this.setScalar(layer, "cameraTargetX", compX);
+                UICompositorPanel.this.setScalar(layer, "cameraTargetY", compY);
+                UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "目标点 %.0f, %.0f", compX, compY));
             }
 
             /** Writes translation/scale/rotation either into the base fields or the native channel. */
@@ -1559,30 +2480,18 @@ public class UICompositorPanel extends UIDashboardPanel
                         continue;
                     }
 
-                    /* Cameras have no content rectangle. In camera view the camera is the eye, so
-                     * its own gizmo would project behind the near plane; treat the view centre as
-                     * its handle instead, which is what makes dragging inside the camera view pan
-                     * the camera. */
+                    /* Cameras have no content rectangle: they are picked by the same gizmo the
+                     * editor draws (see renderCameraGizmo / handleAt). Re-implementing that geometry
+                     * here is how the old build ended up with a hit test that only worked when the
+                     * camera happened to be centred — clicking the visible camera body did nothing. */
                     if ("camera".equals(layer.type))
                     {
-                        /* Cameras are picked by their gizmo, not by a content rectangle: the body
-                         * sits at the frame centre (we look through the camera) and the point of
-                         * interest is projected like any other world point. Content layers still
-                         * win, because the body only covers a small square. */
                         if (doc.activeCamera(UICompositorPanel.this.time) != layer)
                         {
                             continue;
                         }
 
-                        float bodyX = screenX - doc.width * 0.5F;
-                        float bodyY = screenY - doc.height * 0.5F;
-                        boolean bodyHit = Math.abs(bodyX) * scale <= 14F && Math.abs(bodyY) * scale <= 14F;
-                        org.joml.Vector2f poi = CompScene.projectWorld(renderContext, new Vector3f(camera.tx, camera.ty, camera.tz));
-                        boolean poiHit = poi != null
-                            && Math.abs(poi.x - screenX) * scale <= 12F
-                            && Math.abs(poi.y - screenY) * scale <= 12F;
-
-                        if (bodyHit || poiHit)
+                        if (this.handleAt(context, layer) >= 40)
                         {
                             return layer;
                         }
@@ -1656,7 +2565,52 @@ public class UICompositorPanel extends UIDashboardPanel
             @Override
             protected boolean subMouseClicked(UIContext context)
             {
-                if (context.mouseButton != 0 || !this.area.isInside(context))
+                if (!this.area.isInside(context))
+                {
+                    return super.subMouseClicked(context);
+                }
+
+                if (!UICompositorPanel.this.is3DSpace() && context.mouseButton == 1
+                    && !Boolean.getBoolean("bbsae.debugViewLock"))
+                {
+                    /* Right-drag is the orbit gesture everywhere in the preview. In the 2D editor it
+                     * enters the 3D workspace first, so "drag to look around" can never silently do
+                     * nothing because the mode was not what the user assumed. */
+                    UICompositorPanel.this.enter3DSpace();
+                    this.beginViewportDrag(context, CompInput.shiftDown() ? VP_PAN : VP_ORBIT, 1);
+                    UICompositorPanel.this.setStatus("已进入 3D 视口：拖动即可环绕");
+
+                    return true;
+                }
+
+                if (UICompositorPanel.this.is3DSpace() && (context.mouseButton == 1 || context.mouseButton == 2)
+                    && !Boolean.getBoolean("bbsae.debugViewLock"))
+                {
+                    /* Both right (1) and middle (2) orbit; consuming them here also stops BBS from
+                     * opening a context menu on the same click, which would eat the drag. */
+                    if (UICompositorPanel.this.cameraPreviewMode)
+                    {
+                        UICompositorPanel.this.toggleViewportLookThrough();
+                    }
+
+                    this.beginViewportDrag(context, CompInput.shiftDown() ? VP_PAN : VP_ORBIT, context.mouseButton);
+
+                    return true;
+                }
+
+                if (this.viewportActive())
+                {
+                    /* The poller may already have armed an orbit from this same press; consuming the
+                     * click here keeps it from deselecting or starting a layer move mid-orbit. */
+                    if (this.vpMode != VP_NONE)
+                    {
+                        return true;
+                    }
+
+                    return this.viewportMouseClicked(context);
+                }
+
+                if (context.mouseButton != 0)
                 {
                     return super.subMouseClicked(context);
                 }
@@ -1735,6 +2689,69 @@ public class UICompositorPanel extends UIDashboardPanel
                 return true;
             }
 
+            /**
+             * Viewport click routing: middle = orbit/pan, left = pick and drag.
+             *
+             * <p>Middle-drag is Blender's orbit and Shift+middle is pan; keeping the left button for
+             * selection means a 3D viewport never "moves the world by accident" while you are
+             * trying to click a layer.</p>
+             */
+            private boolean viewportMouseClicked(UIContext context)
+            {
+                if (context.mouseButton != 0 || UICompositorPanel.this.doc == null)
+                {
+                    return super.subMouseClicked(context);
+                }
+
+                CompDocument doc = UICompositorPanel.this.doc;
+                int handle = this.viewportCameraHandle(context);
+
+                if (handle >= 0)
+                {
+                    CompLayer active = doc.activeCamera(UICompositorPanel.this.time);
+
+                    if (active != null)
+                    {
+                        UICompositorPanel.this.selectLayer(active);
+                    }
+
+                    this.beginViewportDrag(context, handle == 40 ? VP_CAM_BODY : VP_CAM_TARGET, 0);
+
+                    return true;
+                }
+
+                dev.bbsae.client.render.CompViewportCamera camera = this.viewport();
+                CompLayer hit = dev.bbsae.client.render.CompViewportRenderer.pick(
+                    this.viewportContext(), camera, this.area.x, this.area.y, context.mouseX, context.mouseY);
+
+                if (hit == null)
+                {
+                    UICompositorPanel.this.clearSelection();
+
+                    return true;
+                }
+
+                if (Window.isCtrlPressed())
+                {
+                    UICompositorPanel.this.toggleLayerSelection(hit);
+                }
+                else if (!UICompositorPanel.this.isLayerSelected(hit))
+                {
+                    UICompositorPanel.this.selectLayer(hit);
+                }
+
+                if (hit.locked)
+                {
+                    UICompositorPanel.this.setStatus("图层已锁定，解锁后才能拖动");
+
+                    return true;
+                }
+
+                this.beginViewportDrag(context, VP_MOVE, 0);
+
+                return true;
+            }
+
             private void beginHandleDrag(UIContext context, CompLayer layer, int handle)
             {
                 if (layer == null)
@@ -1806,6 +2823,7 @@ public class UICompositorPanel extends UIDashboardPanel
             @Override
             protected boolean subMouseReleased(UIContext context)
             {
+                this.endViewportDrag();
                 this.endDrag();
 
                 return super.subMouseReleased(context);
@@ -1824,6 +2842,52 @@ public class UICompositorPanel extends UIDashboardPanel
                 if (!this.area.isInside(context) || UICompositorPanel.this.doc == null)
                 {
                     return super.subMouseScrolled(context);
+                }
+
+                if (this.viewportActive())
+                {
+                    double viewportWheel = context.mouseWheel;
+
+                    if (Math.abs(viewportWheel) < 0.0001D)
+                    {
+                        return false;
+                    }
+
+                    dev.bbsae.client.render.CompViewportCamera camera = this.viewport();
+                    CompLayer shot = UICompositorPanel.this.doc.activeCamera(UICompositorPanel.this.time);
+
+                    if (CompInput.altDown() && shot != null)
+                    {
+                        /* Alt: the shot's field of view (same mapping as the camera view). */
+                        float fov = shot.scalarAt("cameraFov", shot.cameraFov, UICompositorPanel.this.getFrame());
+                        float next = Math.max(5F, Math.min(120F, fov - (float) viewportWheel * 2F));
+
+                        UICompositorPanel.this.setScalar(shot, "cameraFov", next);
+                        shot.cameraFov = next;
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "视场 %.0f°", next));
+
+                        return true;
+                    }
+
+                    if (CompInput.ctrlDown() && shot != null)
+                    {
+                        /* Ctrl: dolly the shot towards/away from its target. */
+                        float z = shot.scalarAt("cameraZ", shot.cameraZ, UICompositorPanel.this.getFrame());
+                        float next = z * (float) Math.pow(0.9D, viewportWheel);
+
+                        shot.cameraZ = next;
+                        shot.z = next;
+                        UICompositorPanel.this.setScalar(shot, "cameraZ", next);
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "摄像机距离 %.0f", next));
+
+                        return true;
+                    }
+
+                    camera.zoomAt(context.mouseX - this.area.x, context.mouseY - this.area.y, (float) viewportWheel);
+                    UICompositorPanel.this.saveViewportPose();
+                    UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "视图距离 %.0f", camera.distance));
+
+                    return true;
                 }
 
                 CompLayer camera = UICompositorPanel.this.doc.activeCamera(UICompositorPanel.this.time);
@@ -1887,6 +2951,33 @@ public class UICompositorPanel extends UIDashboardPanel
         };
         this.preview.h(1F);
 
+        /* The mode has to be visible at a glance: AE mode changes what the picture and the export
+         * mean, so it gets a red chip on the image itself rather than a line in a settings dialog. */
+        this.encoderBadge = new UIElement()
+        {
+            @Override
+            public void render(UIContext context)
+            {
+                CompDocument doc = UICompositorPanel.this.doc;
+                int frame = dev.bbsae.client.render.CompFrameServer.frameOf(doc, UICompositorPanel.this.time);
+                int total = dev.bbsae.client.render.CompFrameServer.frameCount(doc);
+
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xE6B3261E);
+                context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFFFF8A80);
+                float proxy = UICompositorPanel.this.encoderProxy();
+                String factor = proxy >= 0.999F ? "" : " · 代理 " + proxyLabel(proxy);
+
+                context.batcher.textShadow("AE 编码器" + factor, this.area.x + 6, this.area.y + 4, 0xFFFFFFFF);
+                context.batcher.textShadow("帧 " + frame + " / " + total, this.area.x + 6, this.area.y + 14, 0xFFFFD9D5);
+
+                super.render(context);
+            }
+        };
+        this.encoderBadge.relative(this.preview).x(1F, -126).y(6).w(120).h(24);
+        this.encoderBadge.tooltip(IKey.constant("AE 编码器：预览与导出来自同一个帧服务器（第 N 帧 = N / 帧率）；点“设置”可切回 BBS 原生"));
+        this.encoderBadge.setVisible(false);
+        this.preview.add(this.encoderBadge);
+
         this.previewBar = new UIElement()
         {
             @Override
@@ -1946,21 +3037,13 @@ public class UICompositorPanel extends UIDashboardPanel
             () -> this.cameraPreviewMode ? Icons.CAMERA : Icons.FRUSTUM,
             (button) ->
             {
-                /* The camera itself is always live; this button now shows/hides the 3D workspace
-                 * overlays (ground grid + frustum lines) and makes the selected camera active. */
-                this.cameraPreviewMode = !this.cameraPreviewMode;
-
-                if (this.doc != null && this.selectedLayer != null && "camera".equals(this.selectedLayer.type))
-                {
-                    this.doc.activeCameraId = this.selectedLayer.id;
-                }
-
-                this.setStatus(this.cameraPreviewMode ? "3D 空间：网格 + 摄像机线框" : "编辑视图：隐藏 3D 辅助线");
-                this.save();
+                /* Look through the shot / back to the free view. This is Blender's numpad 0: the
+                 * camera itself is always live; this only decides whose view fills the panel. */
+                this.toggleViewportLookThrough();
             });
 
         this.cameraViewButton.relative(this.preview).x(1F, -28).y(6).w(20).h(20);
-        this.cameraViewButton.tooltip(IKey.constant("切换摄像机视图 / 编辑视图；摄像机视图下 3D 图层按透视渲染"));
+        this.cameraViewButton.tooltip(IKey.constant("看穿摄像机（最终画面）/ 回到自由视图；数字键盘 0 同效"));
         this.preview.add(this.cameraViewButton);
 
         /* One-click 3D workspace: live Minecraft frame as the virtual stage, a real perspective
@@ -1977,7 +3060,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         });
         this.space3DButton.relative(this.preview).x(1F, -50).y(6).w(20).h(20);
-        this.space3DButton.tooltip(IKey.constant("进入/退出 3D 空间：世界底图 + 透视摄像机 + 地面网格；滚轮推拉，Alt+滚轮改视场"));
+        this.space3DButton.tooltip(IKey.constant("进入/退出 3D 空间（自由视口：右键拖动环绕、Shift+右键平移、滚轮缩放、0 看穿摄像机）"));
         this.preview.add(this.space3DButton);
 
         this.previewInfo = new UILabel(IKey.constant("预览"));
@@ -2095,12 +3178,10 @@ public class UICompositorPanel extends UIDashboardPanel
         this.queue = new UICompRenderJobList((list) ->
         {
             this.selectedJob = list.isEmpty() ? null : list.get(0);
-        });
-        this.queue.relative(this.renderPanel).x(0).y(44).w(1F).h(1F, -96);
+        }, this::presetLabel);
+        this.queue.relative(this.renderPanel).x(0).y(76).w(1F).h(1F, -128);
         this.queue.background();
 
-        this.queuePreset = new UITextbox(64, (text) -> {});
-        this.queuePreset.setText("review_h264");
         this.queueName = new UITextbox(128, (text) -> {});
         this.queueName.setText("comp_render");
         this.queueStart = new UITrackpad();
@@ -2108,15 +3189,46 @@ public class UICompositorPanel extends UIDashboardPanel
         this.queueEnd = new UITrackpad();
         this.queueEnd.setValue(-1);
 
-        UIElement queueFields = new UIElement();
-        queueFields.relative(this.renderPanel).x(0).y(22).w(1F).h(22);
-        queueFields.row(4);
-        queueFields.add(
-            this.fieldRow("预设", 110, this.queuePreset),
-            this.fieldRow("名称", 140, this.queueName),
-            this.fieldRow("开始", 60, this.queueStart),
-            this.fieldRow("结束（-1 全片）", 60, this.queueEnd)
+        /* The output module is a real chooser, not a text field.
+         *
+         * Typing an internal preset id ("review_h264") was the only way to pick an output — nobody
+         * can guess those, and an invalid id silently fell back to the first preset, so "export as
+         * audio" and "export with alpha" looked identical. The choice button lists every module by
+         * its display name, video modules first, audio modules last. */
+        this.queuePreset = new mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton<>(
+            java.util.List.of("review_h264", "master_prores", "alpha_prores", "png_sequence", "audio_wav", "audio_m4a"),
+            (id) -> this.presetKind(id).startsWith("音频") ? Icons.SOUND : Icons.FILM,
+            (id) -> IKey.constant(this.presetLabel(id))
         );
+        this.queuePreset.callback((id) ->
+        {
+            if (id != null)
+            {
+                this.queueName.setText(this.defaultOutputName(id));
+            }
+        });
+        this.queuePreset.setValue("review_h264");
+
+        /* Absolute positions, two rows.
+         *
+         * This used to be one {@code row(4)} of four label+field rows. BBS's row() ignores a
+         * child's requested width and divides the container equally, so each 110-px label column
+         * lived inside a quarter-width box and the fields beside them got negative widths: the
+         * preset/name/range boxes overlapped each other and the labels. Explicit two columns per
+         * row is boring and always correct. */
+        UIElement queueFields = new UIElement();
+        queueFields.relative(this.renderPanel).x(0).y(22).w(1F).h(48);
+
+        UIElement presetRow = this.fieldRow("输出模块", 110, this.queuePreset);
+        UIElement nameRow = this.fieldRow("名称", 110, this.queueName);
+        UIElement startRow = this.fieldRow("开始（秒）", 110, this.queueStart);
+        UIElement endRow = this.fieldRow("结束（-1 = 全片）", 110, this.queueEnd);
+
+        presetRow.relative(queueFields).x(0).y(0).w(0.56F, -4).h(22);
+        nameRow.relative(queueFields).x(0.56F, 4).y(0).w(0.44F, 0).h(22);
+        startRow.relative(queueFields).x(0).y(24).w(0.34F, -4).h(22);
+        endRow.relative(queueFields).x(0.34F, 4).y(24).w(0.66F, 0).h(22);
+        queueFields.add(presetRow, nameRow, startRow, endRow);
 
         this.queueAdd = new UICompButton(IKey.constant("添加任务"), (button) -> this.addRenderJob());
         this.queueAdd.w(68);
@@ -2140,7 +3252,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.queueCancel.w(58);
         this.queueOpen = new UICompButton(IKey.constant("打开文件夹"), (button) -> this.openExportFolder());
         this.queueOpen.w(56);
-        this.queuePresetCycle = new UICompButton(IKey.constant("预设…"), (button) -> this.cyclePreset());
+        this.queuePresetCycle = new UICompButton(IKey.constant("预设…"), (button) -> this.queuePreset.open());
+        this.queuePresetCycle.tooltip(IKey.constant("选择输出模块：视频（H.264 / ProRes / PNG 序列）或音频（WAV / M4A）"));
         this.queuePresetCycle.w(68);
         this.queueRemove = new UICompButton(IKey.constant("移除"), (button) ->
         {
@@ -2190,6 +3303,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.timeline = new UIElement();
         this.timeline.relative(this).x(0).y(1F, -268).w(1F).h(TIMELINE_HEIGHT);
+
+        /* Transform values live next to the tracks: keyframing a move should not require a trip to
+         * the bottom of the inspector and back. */
+        this.quickPanel = new UILayerQuickPanel(this);
+        this.quickPanel.setVisible(false);
+        this.quickPanel.relative(this).x(1F, -this.quickPanelWidth).y(1F, -268)
+            .w(this.quickPanelWidth).h(TIMELINE_HEIGHT);
 
         this.trackTimeline = new UICompTrackTimeline(this);
         this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
@@ -2364,7 +3484,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.startScreen.relative(this).x(0).y(0).w(1F).h(1F);
         this.startScreen.setVisible(false);
 
-        this.add(this.header, this.body, this.renderPanel, this.timeline, this.status, this.modalLayer, this.startScreen);
+        this.add(this.header, this.body, this.renderPanel, this.timeline, this.quickPanel, this.status, this.modalLayer, this.startScreen);
 
         this.focusButton.h(18);
 
@@ -2450,13 +3570,16 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.project = CompStore.loadFilmProject(film.getId(), film.getId(), width, height, fps, duration);
 
-        /* A compositor composites *the film*, so the film frame is the default stage. Projects
-         * written before this flag existed never chose a background and would otherwise stay on
-         * the flat black stage, which is exactly the "this preview is not BBS's preview"
-         * complaint. One-time migration, then the user's toggle wins forever. */
+        /* The stage colour, decided once per project.
+         *
+         * A compositor's preview is a picture of the frame that will be exported, so it starts on
+         * the composition's own background. The old migration defaulted to the live BBS world
+         * behind a transparent stage; with a film open that reads as "the compositor is
+         * transparent / the panel is broken", and with no film it is just a grey void. The world
+         * backdrop is still one click away in the preview bar (预览背景 → BBS 实时画面). */
         if (this.project.settings != null && !this.project.settings.previewBackgroundChosen)
         {
-            this.project.settings.previewBackground = 1;
+            this.project.settings.previewBackground = 0;
             this.project.settings.previewBackgroundChosen = true;
         }
 
@@ -2506,6 +3629,13 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshSheets();
         this.refreshQueue();
         this.updatePlayLabel();
+
+        /* A project may have been saved in AE mode: drop the frames of the previous document and
+         * put the badge / export label back in sync before the first draw. */
+        dev.bbsae.client.render.CompFrameServer.invalidate();
+        dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+        this.refreshEncoderState();
+
         dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
 
         if (this.bbsBackdropToggle != null)
@@ -2940,6 +4070,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void exportFilm()
     {
+        if (this.usesAeEncoder())
+        {
+            this.exportWithAeEncoder();
+
+            return;
+        }
+
         if (this.filmPanel == null)
         {
             this.filmPanel = this.dashboard.getPanel(mchorse.bbs_mod.ui.film.UIFilmPanel.class);
@@ -2952,6 +4089,247 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.showExportDialog();
+    }
+
+    /* ------------------------------------------------------------ encoder mode */
+
+    /** True while the compositor's own frame server drives preview and export. */
+    public boolean usesAeEncoder()
+    {
+        return this.project != null
+            && this.project.settings != null
+            && CompProject.ENCODER_AE.equals(this.project.settings.encoder);
+    }
+
+    /** AE preview proxy factor; 1 outside AE mode or when the setting is missing. */
+    public float encoderProxy()
+    {
+        if (this.project == null || this.project.settings == null || !this.usesAeEncoder())
+        {
+            return 1F;
+        }
+
+        return Math.max(0.1F, Math.min(1F, this.project.settings.encoderProxy <= 0F ? 1F : this.project.settings.encoderProxy));
+    }
+
+    /** Human label for a proxy factor: 1/1, 3/4, 1/2, 1/4. */
+    static String proxyLabel(float proxy)
+    {
+        if (proxy >= 0.999F) return "1/1";
+        if (proxy >= 0.74F) return "3/4";
+        if (proxy >= 0.49F) return "1/2";
+
+        return "1/4";
+    }
+
+    private String currentEncoder()
+    {
+        return this.project == null || this.project.settings == null || this.project.settings.encoder == null
+            ? CompProject.ENCODER_BBS
+            : this.project.settings.encoder;
+    }
+
+    /** Keeps the badge, the export button and the status line in sync with the setting. */
+    private void refreshEncoderState()
+    {
+        boolean ae = this.usesAeEncoder();
+
+        if (this.encoderBadge != null)
+        {
+            this.encoderBadge.setVisible(ae);
+        }
+
+        if (this.exportFilm != null)
+        {
+            this.exportFilm.label = IKey.constant(ae ? "AE 导出" : "导出");
+        }
+
+        if (this.play != null)
+        {
+            this.play.tooltip(IKey.constant(ae
+                ? "播放 / 暂停（AE 编码器：按合成帧率取帧）"
+                : "播放 / 暂停合成预览（空格）"));
+        }
+
+        /* A toggle that cannot change the picture is worse than no toggle: in AE mode the frame
+         * server always renders effects and masks, and the stage never shows the world backdrop
+         * (see the risk list). Hide them instead of letting the user click into a no-op. */
+        if (this.effectsToggle != null)
+        {
+            this.effectsToggle.setVisible(!ae);
+            this.masksToggle.setVisible(!ae);
+            this.bbsBackdropToggle.setVisible(!ae);
+        }
+    }
+
+    /** Choice-button entry point: AE needs an explicit acknowledgement before it is applied. */
+    private void requestEncoder(String encoder)
+    {
+        String next = CompProject.ENCODER_AE.equals(encoder) ? CompProject.ENCODER_AE : CompProject.ENCODER_BBS;
+
+        if (next.equals(this.currentEncoder()))
+        {
+            return;
+        }
+
+        if (CompProject.ENCODER_AE.equals(next)
+            && (this.project == null || this.project.settings == null || !this.project.settings.encoderRiskAcknowledged))
+        {
+            /* Closing the settings dialog makes the rejected choice unambiguous: there is no
+             * half-selected state to explain. */
+            this.closeModal();
+            this.showEncoderRisk();
+
+            return;
+        }
+
+        this.applyEncoder(next);
+
+        /* Rebuild the dialog so the hint under the chooser describes the pipeline that is now
+         * active; keeping the old sentence would be the exact kind of stale label this mode is
+         * supposed to remove. */
+        this.showSettings();
+    }
+
+    private void applyEncoder(String encoder)
+    {
+        if (this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        this.project.settings.encoder = encoder;
+
+        if (CompProject.ENCODER_AE.equals(encoder))
+        {
+            this.project.settings.encoderRiskAcknowledged = true;
+        }
+
+        /* The two pipelines keep different caches; crossing over with either still populated would
+         * mix frames from two different meanings of "frame N". */
+        dev.bbsae.client.render.CompFrameServer.invalidate();
+        dev.bbsae.client.render.CompRenderCache.clear();
+        dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+
+        this.refreshEncoderState();
+        this.save();
+
+        this.setStatus(CompProject.ENCODER_AE.equals(encoder)
+            ? "已启用 AE 编码器：预览与导出都走合成帧服务器（第 N 帧 = N / 帧率）"
+            : "已切回 BBS 原生：合成作为影片叠加层，由 BBS 录像器导出");
+    }
+
+    /** The risk list shown once, before AE mode is enabled. */
+    private void showEncoderRisk()
+    {
+        this.openModalSized("启用 AE 编码器前请先读这些",
+            "这不是换一个导出按钮，而是换掉整条渲染 / 编码管线。", 660, 392);
+
+        String[] risks = {
+            "① 导出不再经过 BBS 录像器（F6）。成片分辨率 = 合成分辨率，帧率 = 合成帧率；BBS 的录制设置、相机路径、loop 区间不再影响它。",
+            "② 3D 世界与演员只能通过“BBS 预览”图层进入：该图层是游戏主帧缓冲的拷贝，预览时实时，离线导出时是最后一帧静态画面；依赖世界深度的效果在导出里退化为无深度。",
+            "③ 预览按合成分辨率全量渲染（1080p 每帧约 8 MB）。复杂合成可能掉帧，但帧号永远正确，不会再出现半帧或撕裂。",
+            "④ 效果 / 蒙版对比开关、BBS 世界底图、参考层在 AE 模式下不参与成片；参考层只在编辑视图里可见。",
+            "⑤ 合成时长 / 帧率与 BBS 影片不一致时，两者不再自动对齐；在 BBS 影片里播放时仍然按 BBS 模式渲染。",
+            "⑥ 随时可以在 设置 → 渲染 / 编码管线 切回 BBS 原生，两个模式共用同一份工程文件。"
+        };
+
+        int y = 52;
+
+        for (String risk : risks)
+        {
+            UILabel line = new UILabel(IKey.constant(risk));
+
+            line.color(0xFFFFB4A9, false);
+            line.relative(this.modalBox).x(18).y(y).w(1F, -36).h(32);
+            this.modalBox.add(line);
+            y += 34;
+        }
+
+        UIButton cancel = CompUi.flat("取消", "保持 BBS 原生管线（不做任何修改）", () ->
+        {
+            this.closeModal();
+            this.showSettings();
+        });
+        cancel.relative(this.modalBox).x(18).y(348).w(120).h(20);
+
+        UIButton accept = CompUi.flat("我了解风险，启用 AE 编码器", "接受上面六条，切换到合成帧服务器管线", () ->
+        {
+            this.applyEncoder(CompProject.ENCODER_AE);
+            this.closeModal();
+        });
+        accept.relative(this.modalBox).x(146).y(348).w(300).h(20);
+
+        this.modalBox.add(cancel, accept);
+    }
+
+    /**
+     * AE-mode export: queue the composition through the encoder instead of the BBS recorder.
+     *
+     * <p>Same queue, same presets, same FFmpeg — the difference is where the frames come from. The
+     * queue already asks {@code CompRenderer.renderForExport}, which since this round is
+     * frame-indexed, so the file contains exactly the frames the preview showed.</p>
+     */
+    private void exportWithAeEncoder()
+    {
+        if (this.project == null || this.doc == null)
+        {
+            return;
+        }
+
+        String presetId = this.project.settings == null || this.project.settings.defaultOutputPreset == null
+            || this.project.settings.defaultOutputPreset.isBlank()
+            ? "review_h264"
+            : this.project.settings.defaultOutputPreset;
+
+        CompOutputPreset chosen = this.project.getPreset(presetId);
+
+        /* "AE 导出" means a video. If the project's default module happens to be an audio one
+         * (exporting a music bed is a legitimate default), fall back to the review video module
+         * instead of silently writing a WAV from a button that says "export". */
+        if (chosen == null || "audio".equals(chosen.kind) || "wav".equalsIgnoreCase(chosen.container))
+        {
+            presetId = "review_h264";
+        }
+
+        CompRenderJob job = new CompRenderJob(
+            "job_" + (this.project.renderQueue.size() + 1),
+            this.project.id,
+            this.doc.id,
+            presetId
+        );
+
+        job.outputName = this.doc.id + "_ae";
+        job.rangeStart = 0F;
+        job.rangeEnd = this.doc.duration;
+
+        this.project.renderQueue.add(job);
+        this.selectedJob = job;
+        this.refreshQueue();
+        this.save();
+        this.toggleRenderView();
+
+        boolean staticWorld = false;
+
+        for (CompLayer layer : this.doc.layers)
+        {
+            if (layer != null && "bbs".equals(layer.type) && layer.visible)
+            {
+                staticWorld = true;
+                break;
+            }
+        }
+
+        if (CompExportManager.start(this.project, job))
+        {
+            this.setStatus("AE 导出：" + job.outputName + " · " + Math.round(this.doc.width) + "×" + Math.round(this.doc.height)
+                + " @" + Math.round(this.doc.fps) + "fps"
+                + (staticWorld ? " · 注意：BBS 预览层是静态帧" : ""));
+        }
+        else
+        {
+            this.notifyError("AE 导出启动失败（渲染队列忙？）");
+        }
     }
 
     /* Modal helpers */
@@ -2986,7 +4364,7 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     private void showSettings()
     {
-        this.openModalSized("合成器设置", "设置会随当前工程保存；没有工程时先进入工程列表。", 520, 452);
+        this.openModalSized("合成器设置", "设置会随当前工程保存；没有工程时先进入工程列表。", 520, 520);
 
         if (this.project != null && this.project.settings == null)
         {
@@ -3207,10 +4585,98 @@ public class UICompositorPanel extends UIDashboardPanel
         applyExportDuration.relative(this.modalBox).x(18).y(330).w(250).h(20);
         applyExportDuration.tooltip(IKey.constant("三个地方使用同一时长，BBS 原版录制按钮也不会再截断"));
 
+        /* ---- render / encoder pipeline ------------------------------------------------
+         * The most consequential switch in the editor, so it gets its own row, a red hint and a
+         * risk dialog instead of being one more toggle among "show grid". */
+        UILabel encoderLabel = new UILabel(IKey.constant("渲染 / 编码管线"));
+        encoderLabel.relative(this.modalBox).x(18).y(398).w(160).h(18);
+
+        mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton<String> encoder =
+            new mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton<>(
+                java.util.List.of(CompProject.ENCODER_BBS, CompProject.ENCODER_AE),
+                (value) -> CompProject.ENCODER_AE.equals(value) ? Icons.SERVER : Icons.FILM,
+                (value) -> IKey.constant(CompProject.ENCODER_AE.equals(value) ? "AE 编码器（帧服务器）" : "BBS 原生（默认）"));
+
+        encoder.callback(this::requestEncoder);
+        encoder.setValue(this.currentEncoder());
+        encoder.relative(this.modalBox).x(190).y(396).w(190).h(20);
+        encoder.tooltip(IKey.constant("BBS：合成是影片叠加层，BBS 录像器导出。AE：合成自带帧服务器，预览与导出逐帧一致（有风险，首次切换会提示）"));
+
+        /* Proxy is a *preview* option and says so: export always renders at 1/1, so the only thing
+         * the factor changes is how many pixels the viewer spends. */
+        java.util.List<String> proxies = java.util.List.of("1.0", "0.75", "0.5", "0.25");
+
+        mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton<String> proxy =
+            new mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton<>(
+                proxies,
+                (value) -> Icons.IMAGE,
+                (value) -> IKey.constant("代理 " + proxyLabel(Float.parseFloat(value))));
+
+        proxy.callback((value) ->
+        {
+            if (this.project == null || this.project.settings == null || value == null)
+            {
+                return;
+            }
+
+            this.project.settings.encoderProxy = Math.max(0.1F, Math.min(1F, Float.parseFloat(value)));
+            dev.bbsae.client.render.CompFrameServer.invalidate();
+            this.save();
+            this.setStatus("AE 预览代理：" + proxyLabel(this.project.settings.encoderProxy) + "（导出始终 1/1）");
+            this.showSettings();
+        });
+
+        float storedProxy = this.project == null || this.project.settings == null || this.project.settings.encoderProxy <= 0F
+            ? 1F
+            : this.project.settings.encoderProxy;
+
+        proxy.setValue(proxies.contains(String.valueOf(storedProxy)) ? String.valueOf(storedProxy) : "1.0");
+        proxy.relative(this.modalBox).x(390).y(396).w(112).h(20);
+        proxy.tooltip(IKey.constant("AE 预览分辨率：1/2 表示按合成分辨率的一半渲染并放大显示。导出永远是全分辨率，徽标会标出代理倍率"));
+
+        CompDocument encoderDoc = this.doc;
+        boolean ae = CompProject.ENCODER_AE.equals(this.currentEncoder());
+
+        UILabel encoderHint = new UILabel(IKey.constant(ae
+            ? "AE：预览 = 导出，分辨率 / 帧率取合成；不经过 BBS 录像器。"
+            : "BBS：合成作为影片叠加层，由 BBS 的 FFmpeg 录像器写出。"));
+        encoderHint.color(ae ? 0xFFFF8A80 : 0xFF8A94A6, false);
+        encoderHint.relative(this.modalBox).x(18).y(420).w(1F, -36).h(30);
+
+        UIButton clearFrames = CompUi.flat("清理帧缓存", "删除磁盘上的 AE 帧缓存（config/bbsae/cache/frames）与显存缓存；不影响工程和素材", () ->
+        {
+            dev.bbsae.client.render.CompFrameDisk.clear();
+            dev.bbsae.client.render.CompFrameServer.invalidate();
+            this.setStatus("帧缓存已清理（磁盘 + 显存）；下一次预览会重新渲染");
+        });
+        clearFrames.relative(this.modalBox).x(18).y(452).w(120).h(18);
+
+        UIToggle previewAudio = new UIToggle(IKey.constant("预览音频"), settings.previewAudio, (toggle) ->
+        {
+            if (this.project == null || this.project.settings == null)
+            {
+                return;
+            }
+
+            this.project.settings.previewAudio = toggle.getValue();
+
+            if (!toggle.getValue())
+            {
+                dev.bbsae.client.audio.CompAudioPlayer.stop();
+                this.previewAudioRunning = false;
+            }
+
+            this.save();
+        });
+        previewAudio.relative(this.modalBox).x(150).y(451).w(110).h(20);
+        previewAudio.tooltip(IKey.constant("AE 模式下播放时试听合成音频轨（导出时无论如何都会混入）"));
+
+        this.modalBox.add(encoderLabel, encoder, proxy, clearFrames, previewAudio, encoderHint);
+
         this.modalBox.add(durationLabel, duration, durationHint, external, schemeLabel, scheme,
             autoSave, safeArea, grid, previewLabel, background, resetLayout, openProjects, shortcuts, note,
             exportLabel, exportDuration, exportHint, applyExportDuration, densityLabel, density, densityHint,
-            this.modalButton("关闭", 18, 400, 484, this::closeModal));
+            this.modalButton("关闭", 18, 484, 484, this::closeModal));
     }
 
     private UIButton modalButton(String label, int x, int y, int w, Runnable action)
@@ -3246,6 +4712,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
             },
             this::importLibraryImage,
+            this::importLibraryImagePath,
             () ->
             {
                 if (this.assetBrowser != null)
@@ -3265,46 +4732,219 @@ public class UICompositorPanel extends UIDashboardPanel
     /**
      * Copies a TTF/OTF into BBS's own fonts folder. The text renderer then loads it through
      * {@code BBSModClient.getFonts()}, so the glyph atlas, fallback and hot reload are all BBS's.
+     *
+     * <p>Uses the in-game browser like every other importer: the OS dialog is a native window that
+     * may never come back with a result inside a fullscreen game (see {@link UIImportBrowser}).</p>
      */
     private void importFont(CompLayer layer)
     {
-        mchorse.bbs_mod.ui.utils.UIFileDialogs.pickFile(
-            IKey.constant("导入字体"),
-            java.nio.file.Path.of(".").toFile(),
-            new String[] {"*.ttf", "*.otf"},
-            IKey.constant("字体"),
+        if (layer == null)
+        {
+            return;
+        }
+
+        NativeFileDialog.pickFile(
+            "导入字体",
+            new String[] {"ttf", "otf"},
             (file) ->
             {
-                if (file == null || !file.isFile())
+                if (file != null && file.isFile())
                 {
-                    return;
+                    this.importFontFile(layer, file);
+                }
+            },
+            () -> this.openFontBrowser(layer)
+        );
+    }
+
+    /** Fallback path: the in-game browser, used when the OS dialog cannot be shown. */
+    private void openFontBrowser(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return;
+        }
+
+        if (this.importBrowser != null)
+        {
+            this.closeImportBrowser();
+        }
+
+        this.importBrowser = new UIImportBrowser(
+            "导入字体",
+            new String[] {"ttf", "otf"},
+            (file) ->
+            {
+                if (file != null && file.isFile())
+                {
+                    this.importFontFile(layer, file);
                 }
 
-                try
+                this.closeImportBrowser();
+            },
+            this::closeImportBrowser
+        );
+
+        this.importBrowser.relative(this).x(0).y(0).w(1F).h(1F);
+        this.add(this.importBrowser);
+        this.resize();
+    }
+
+    private void importFontFile(CompLayer layer, java.io.File file)
+    {
+        try
+        {
+            java.io.File folder = mchorse.bbs_mod.fonts.FontManager.getFolder();
+
+            java.nio.file.Files.createDirectories(folder.toPath());
+
+            String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+            String lower = name.toLowerCase(java.util.Locale.ROOT);
+
+            if (!lower.endsWith(".ttf") && !lower.endsWith(".otf"))
+            {
+                name = name + ".ttf";
+            }
+
+            java.nio.file.Path target = folder.toPath().resolve(name);
+
+            if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
+            {
+                java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            layer.fontName = name;
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已导入字体：" + name);
+        }
+        catch (Exception e)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.error("Could not import font {}", file, e);
+            this.setStatus("字体导入失败：" + e.getMessage());
+        }
+    }
+
+    /** Video import: pick a file, then extract frames into a footage layer. */
+    private void importVideo()
+    {
+        if (this.project == null || this.doc == null)
+        {
+            return;
+        }
+
+        if (dev.bbsae.client.export.CompVideoImport.isRunning())
+        {
+            this.setStatus("已经有一个视频正在导入，请等它完成");
+
+            return;
+        }
+
+        NativeFileDialog.pickFile(
+            "导入视频",
+            new String[] {"mp4", "mov", "mkv", "webm", "avi", "m4v"},
+            (file) ->
+            {
+                if (file != null && file.isFile())
                 {
-                    java.io.File folder = mchorse.bbs_mod.fonts.FontManager.getFolder();
+                    this.importVideoFile(file);
+                }
+            },
+            this::openVideoBrowser
+        );
+    }
 
-                    java.nio.file.Files.createDirectories(folder.toPath());
+    /** Fallback path: the in-game browser, used when the OS dialog cannot be shown. */
+    private void openVideoBrowser()
+    {
+        if (this.importBrowser != null)
+        {
+            this.closeImportBrowser();
+        }
 
-                    String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+        this.importBrowser = new UIImportBrowser(
+            "导入视频（拆帧为 footage 轨道）",
+            new String[] {"mp4", "mov", "mkv", "webm", "avi", "m4v"},
+            (file) ->
+            {
+                if (file != null && file.isFile())
+                {
+                    this.importVideoFile(file);
+                }
 
-                    if (!name.toLowerCase(java.util.Locale.ROOT).endsWith(".ttf") && !name.toLowerCase(java.util.Locale.ROOT).endsWith(".otf"))
+                this.closeImportBrowser();
+            },
+            this::closeImportBrowser
+        );
+
+        this.importBrowser.relative(this).x(0).y(0).w(1F).h(1F);
+        this.add(this.importBrowser);
+        this.resize();
+    }
+
+    /**
+     * Extracts frames on a worker thread and creates the footage layer on the client thread.
+     *
+     * <p>The layer is only created if the same composition is still open: the extraction can take
+     * tens of seconds, and dropping a clip into a project the user has since switched away from is
+     * worse than telling them it was cancelled.</p>
+     */
+    private void importVideoFile(java.io.File file)
+    {
+        final CompDocument target = this.doc;
+        final CompProject project = this.project;
+
+        this.setStatus("正在用 FFmpeg 拆帧：" + file.getName() + "（最长 "
+            + Math.round(dev.bbsae.client.export.CompVideoImport.MAX_SECONDS) + " 秒）");
+
+        dev.bbsae.client.export.CompVideoImport.start(project, target, file,
+            new dev.bbsae.client.export.CompVideoImport.Callback()
+            {
+                @Override
+                public void done(String pattern, int frames, int width, int height, float fps)
+                {
+                    net.minecraft.client.MinecraftClient.getInstance().execute(() ->
                     {
-                        name = name + ".ttf";
-                    }
+                        if (UICompositorPanel.this.doc != target || UICompositorPanel.this.project != project)
+                        {
+                            UICompositorPanel.this.setStatus("视频已拆帧，但工程已切换，未创建轨道：" + pattern);
 
-                    java.nio.file.Path target = folder.toPath().resolve(name);
+                            return;
+                        }
 
-                    java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        CompLayer layer = new CompLayer("footage", file.getName(), "footage");
 
-                    layer.fontName = name;
-                    this.refreshInspector();
-                    this.save();
-                    this.setStatus("已导入字体：" + name);
+                        layer.imagePath = pattern;
+                        layer.width = width;
+                        layer.height = height;
+                        layer.x = target.width / 2F;
+                        layer.y = target.height / 2F;
+                        layer.in = 0F;
+                        layer.out = Math.min(target.duration, Math.max(1F / fps, frames / fps));
+                        layer.imageFit = 0;
+                        layer.name = file.getName();
+
+                        target.addLayer(layer);
+
+                        dev.bbsae.BbsAeAddon.LOGGER.info("video import: {} frames @ {} fps -> out {}s ({}x{})",
+                            frames, Math.round(fps), layer.out, width, height);
+                        UICompositorPanel.this.selectedIds.clear();
+                        UICompositorPanel.this.selectedIds.add(layer.id);
+                        UICompositorPanel.this.selectedLayer = layer;
+                        UICompositorPanel.this.selectedAudio = null;
+                        UICompositorPanel.this.refreshLayers();
+                        UICompositorPanel.this.refreshInspector();
+                        UICompositorPanel.this.save();
+                        UICompositorPanel.this.setStatus("视频已导入：" + frames + " 帧 · " + width + "×" + height
+                            + " · " + Math.round(fps) + "fps → 已创建 footage 轨道");
+                    });
                 }
-                catch (Exception e)
+
+                @Override
+                public void failed(String message)
                 {
-                    this.setStatus("字体导入失败：" + e.getMessage());
+                    net.minecraft.client.MinecraftClient.getInstance().execute(() ->
+                        UICompositorPanel.this.notifyError("视频导入失败：" + message));
                 }
             });
     }
@@ -3316,39 +4956,136 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        mchorse.bbs_mod.ui.utils.UIFileDialogs.pickFile(
-            IKey.constant("导入图片"),
-            java.nio.file.Path.of(".").toFile(),
-            new String[] {"*.png", "*.jpg", "*.jpeg", "*.gif"},
-            IKey.constant("图片"),
+        NativeFileDialog.pickFile(
+            "导入图片",
+            new String[] {"png", "jpg", "jpeg", "gif"},
             (file) ->
             {
-                if (file == null || !file.isFile())
+                if (file != null && file.isFile())
                 {
-                    return;
+                    this.importLibraryFile(file);
+                }
+            },
+            this::openLibraryImageBrowser
+        );
+    }
+
+    /** Fallback path: the in-game browser, used when the OS dialog cannot be shown. */
+    private void openLibraryImageBrowser()
+    {
+        if (this.importBrowser != null)
+        {
+            this.closeImportBrowser();
+        }
+
+        this.importBrowser = new UIImportBrowser(
+            "导入图片",
+            new String[] {"png", "jpg", "jpeg", "gif"},
+            (file) ->
+            {
+                if (file != null && file.isFile())
+                {
+                    this.importLibraryFile(file);
                 }
 
-                try
-                {
-                    java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve("images");
+                this.closeImportBrowser();
+            },
+            this::closeImportBrowser
+        );
 
-                    java.nio.file.Files.createDirectories(folder);
+        this.importBrowser.relative(this).x(0).y(0).w(1F).h(1F);
+        this.add(this.importBrowser);
+        this.resize();
+    }
 
-                    String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
-                    java.nio.file.Path target = folder.resolve(name);
+    private void closeImportBrowser()
+    {
+        if (this.importBrowser != null)
+        {
+            this.importBrowser.removeFromParent();
+            this.importBrowser = null;
+        }
+    }
 
-                    java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    /**
+     * Imports from a typed path.
+     *
+     * <p>The native dialog is the nice path, but it is also a black box: on a system where
+     * tinyfd cannot open a window it returns nothing and the callback never fires, so the button
+     * looks dead. This gives the user a path that always works, and it is also the only way to
+     * import when the game runs in a sandbox without a desktop portal.</p>
+     */
+    private void importLibraryImagePath(String path)
+    {
+        if (this.project == null || path == null || path.isBlank())
+        {
+            return;
+        }
 
-                    if (this.assetBrowser != null)
-                    {
-                        this.assetBrowser.refresh();
-                    }
-                }
-                catch (Exception e)
-                {
-                    this.notifyError("导入失败：" + e.getMessage());
-                }
-            });
+        java.io.File file = new java.io.File(path.trim());
+
+        if (!file.isFile())
+        {
+            this.notifyError("找不到文件：" + path);
+
+            return;
+        }
+
+        this.importLibraryFile(file);
+    }
+
+    private void importLibraryFile(java.io.File file)
+    {
+        try
+        {
+            if (this.project == null)
+            {
+                return;
+            }
+
+            String name = this.copyIntoProjectImages(file);
+
+            if (this.assetBrowser != null)
+            {
+                this.assetBrowser.refresh();
+                /* Show the file that was just imported, selected. Without this the library simply
+                 * re-listed itself and the new picture was one anonymous tile among hundreds. */
+                this.assetBrowser.selectPath("assets/images/" + name);
+            }
+
+            this.setStatus("已导入：" + name + "（已在素材库选中，双击插入）");
+            this.save();
+        }
+        catch (Exception e)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.error("Could not import {}", file, e);
+            this.notifyError("导入失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * Copies a file into {@code assets/images} and returns the stored file name.
+     *
+     * <p>One copy path for every importer (library, layer, audio): the asset browser, the layer
+     * inspector and the render queue all resolve "images/name" through
+     * {@link dev.bbsae.client.render.ImageTextureCache}, so a second naming scheme would produce
+     * files that exist but never load.</p>
+     */
+    private String copyIntoProjectImages(java.io.File file) throws java.io.IOException
+    {
+        java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve("images");
+
+        java.nio.file.Files.createDirectories(folder);
+
+        String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+        java.nio.file.Path target = folder.resolve(name);
+
+        if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
+        {
+            java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        return name;
     }
 
     private void addImageLayer(String path)
@@ -4272,6 +6009,316 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /** Temporary verification hook: a clean comp with BBS preview, a gradient shape and a null. */
+    /**
+     * Development-only: drives the panel into one of the states a screenshot has to prove.
+     *
+     * <p>Part of the same harness as {@link #debugDemoEffects()}: the compositor is an editor, so
+     * "it compiles" says nothing about whether a curve is drawn or a button overlaps. These
+     * states are reachable only through the mouse otherwise.</p>
+     *
+     * @param view {@code curve} (keyed layer + curve editor), {@code assets} (asset library),
+     *             {@code camera} (3D space) or {@code queue} (render queue).
+     */
+    public void debugView(String view)
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        if (view == null)
+        {
+            view = "curve";
+        }
+
+        /* Verification hook: force the frame-server pipeline without walking the risk dialog. */
+        if (Boolean.getBoolean("bbsae.debugEncoderAe"))
+        {
+            this.applyEncoder(CompProject.ENCODER_AE);
+
+            /* Verification hooks for the preview audio path: add a clip and press play. */
+            String audio = System.getProperty("bbsae.debugAudio", "");
+
+            if (!audio.isBlank() && this.doc != null)
+            {
+                dev.bbsae.comp.CompAudio clip = new dev.bbsae.comp.CompAudio("debug_audio", "debug", audio);
+
+                clip.start = 0F;
+                this.doc.audio.add(clip);
+                dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+                this.setStatus("调试音频已加入：" + audio);
+            }
+
+            float proxy = Float.parseFloat(System.getProperty("bbsae.debugProxy", "1"));
+
+            if (proxy > 0F && proxy < 0.999F && this.project != null && this.project.settings != null)
+            {
+                this.project.settings.encoderProxy = Math.max(0.1F, Math.min(1F, proxy));
+                dev.bbsae.client.render.CompFrameServer.invalidate();
+                this.save();
+            }
+        }
+
+        /* Verification hook: run one AE export through the raw-frame pipe and leave the file on
+         * disk, so "the encoder path works" is checked by a real mp4 instead of by inspection. */
+        if (Boolean.getBoolean("bbsae.debugAeExport"))
+        {
+            this.debugAeExport();
+        }
+
+        /* Verification hook: import a video file, so the frame extraction and the footage layer it
+         * creates can be checked without a file dialog. */
+        String video = System.getProperty("bbsae.debugVideoImport", "");
+
+        if (!video.isBlank())
+        {
+            this.importVideoFile(new java.io.File(video));
+        }
+
+        switch (view)
+        {
+            case "assets":
+                this.openAssetBrowser(false);
+                break;
+
+            case "camera":
+                this.enter3DSpace();
+
+                /* Verification only: give the camera a real move so the motion path has something
+                 * to draw. Never runs during normal use (-Dbbsae.debugViewLock is a test flag). */
+                if (Boolean.getBoolean("bbsae.debugViewLock"))
+                {
+                    CompLayer camera = this.doc.activeCamera(this.time);
+
+                    if (camera != null && camera.transformChannel().getKeyframes().isEmpty())
+                    {
+                        float end = Math.max(1F, this.doc.duration);
+                        float[] xs = {this.doc.width * 0.5F, this.doc.width * 0.28F, this.doc.width * 0.72F, this.doc.width * 0.5F};
+                        float[] ys = {this.doc.height * 0.62F, this.doc.height * 0.42F, this.doc.height * 0.5F, this.doc.height * 0.38F};
+
+                        for (int i = 0; i < xs.length; i++)
+                        {
+                            mchorse.bbs_mod.utils.pose.Transform pose = camera.transformAt(0F).copy();
+
+                            pose.translate.x = xs[i];
+                            pose.translate.y = ys[i];
+                            camera.transformChannel().insert(Math.round(end * i / (xs.length - 1) * Math.max(1F, this.doc.fps)), pose);
+                        }
+
+                        this.refreshSheets();
+                    }
+                }
+
+                break;
+
+            case "gradtest":
+            case "gradlook":
+            {
+                /* Controlled A/B scene: one solid with one gradient, so "the gradient is wrong in
+                 * 3D" can be judged against the composition view instead of against a busy demo. */
+                this.debugGradientScene();
+                this.enter3DSpace();
+
+                if ("gradlook".equals(view))
+                {
+                    this.toggleViewportLookThrough();
+                }
+
+                break;
+            }
+
+            case "cameralook":
+                /* Verification: the free viewport, then Blender's numpad 0. */
+                this.enter3DSpace();
+                this.toggleViewportLookThrough();
+                break;
+
+            case "entity":
+                this.debugEntityScene();
+                break;
+
+            case "queue":
+                this.toggleRenderView();
+                break;
+
+            case "curve":
+            default:
+            {
+                CompLayer layer = this.doc.getLayer("motion_card");
+
+                if (layer == null)
+                {
+                    layer = new CompLayer("motion_card", "Motion Card", "shape");
+                    layer.x = this.doc.width * 0.3F;
+                    layer.y = this.doc.height * 0.55F;
+                    layer.width = 420F;
+                    layer.height = 240F;
+                    layer.shapes.add(CompShape.rect("motion_shape", 0F, 0F, 300F, 180F, 0xFFFFFFFF));
+                    this.doc.layers.add(layer);
+                }
+
+                /* Three eased position keys across the whole composition, so the graph has a real
+                 * curve at a readable scale (and handles to drag). */
+                if (layer.transformChannel().getKeyframes().isEmpty())
+                {
+                    float fps = Math.max(1F, this.doc.fps);
+                    float end = Math.max(0.5F, this.doc.duration);
+                    float[][] keys = {
+                        {0F, 380F, 620F},
+                        {end * 0.45F * fps, 960F, 380F},
+                        {end * 0.9F * fps, 1500F, 720F}
+                    };
+
+                    for (float[] key : keys)
+                    {
+                        Transform transform = layer.defaultTransform().copy();
+
+                        transform.translate.x = key[1];
+                        transform.translate.y = key[2];
+                        layer.transformChannel().insert(key[0], transform);
+                    }
+
+                    dev.bbsae.comp.CompCurves.applyEase(layer.transformChannel(),
+                        (List) layer.transformChannel().getKeyframes(), dev.bbsae.comp.CompCurves.EASE_BOTH,
+                        dev.bbsae.comp.CompCurves.DEFAULT_INFLUENCE);
+                }
+
+                this.selectLayer(layer);
+                this.timelinePage = 1;
+                this.applyTimelinePage(true);
+                this.curveEditor.refresh();
+                this.refreshSheets();
+                this.time = 1.5F;
+                this.updatePlayLabel();
+
+                if (Boolean.getBoolean("bbsae.debugPlay"))
+                {
+                    this.togglePlay();
+                }
+
+                if (Boolean.getBoolean("bbsae.debugCurve"))
+                {
+                    StringBuilder keys = new StringBuilder();
+
+                    for (Object key : layer.transformChannel().getKeyframes())
+                    {
+                        keys.append(((mchorse.bbs_mod.utils.keyframes.Keyframe<?>) key).getTick()).append(' ');
+                    }
+
+                    dev.bbsae.BbsAeAddon.LOGGER.info("debugView curve: comp fps={} duration={} keys(tick)={} durationTicks={}",
+                        this.doc.fps, this.doc.duration, keys, this.getDurationTicks());
+                }
+                break;
+            }
+        }
+
+        this.save();
+    }
+
+    /** Development-only: queue the whole composition through the AE encoder. */
+    public void debugAeExport()
+    {
+        if (this.project == null || this.doc == null)
+        {
+            return;
+        }
+
+        this.applyEncoder(CompProject.ENCODER_AE);
+        this.exportWithAeEncoder();
+    }
+
+    /** A single gradient layer and a camera: the A/B scene for "gradient in 3D". */
+    public void debugGradientScene()
+    {
+        if (this.project == null)
+        {
+            return;
+        }
+
+        CompDocument doc = this.doc;
+
+        doc.layers.clear();
+        doc.audio.clear();
+
+        CompLayer card = new CompLayer("grad", "Gradient", "solid");
+
+        card.x = doc.width / 2F;
+        card.y = doc.height / 2F;
+        card.width = 900F;
+        card.height = 600F;
+        card.color = 0xFFFFFFFF;
+        card.threeD = true;
+        card.out = doc.duration;
+
+        CompEffect gradient = CompEffectRegistry.create("gradient_ramp", 1);
+
+        gradient.putColor("start", 0xFFFF3366);
+        gradient.putColor("end", 0xFF3366FF);
+        /* Vertical on purpose: a vertical flip is invisible on a horizontal ramp, so the A/B test
+         * has to use an angle where top and bottom differ. */
+        gradient.put("angle", 90D);
+        gradient.put("softness", 1D);
+        card.effects.add(gradient);
+        doc.layers.add(card);
+
+        CompLayer camera = new CompLayer("cam", "Camera", "camera");
+
+        camera.threeD = true;
+        camera.camera3D = true;
+        camera.x = doc.width / 2F;
+        camera.y = doc.height / 2F;
+        camera.cameraZ = this.defaultCameraZ();
+        camera.z = camera.cameraZ;
+        camera.cameraTargetX = doc.width / 2F;
+        camera.cameraTargetY = doc.height / 2F;
+        camera.cameraTargetZ = 0F;
+        camera.cameraFov = 50F;
+        camera.out = doc.duration;
+        doc.layers.add(camera);
+        doc.activeCameraId = camera.id;
+
+        this.selectedLayer = card;
+        this.time = 2F;
+        this.refreshLayers();
+        this.refreshInspector();
+        this.save();
+    }
+
+    /** Verification state: a replay entity layer selected, so its table and matte are visible. */
+    private void debugEntityScene()
+    {
+        CompLayer layer = null;
+
+        for (CompLayer candidate : this.doc.layers)
+        {
+            if (candidate.isEntityLayer())
+            {
+                layer = candidate;
+            }
+        }
+
+        if (layer == null)
+        {
+            this.addLayer("replay");
+
+            for (CompLayer candidate : this.doc.layers)
+            {
+                if (candidate.isEntityLayer())
+                {
+                    layer = candidate;
+                }
+            }
+        }
+
+        if (layer != null)
+        {
+            this.inspectorPage = PAGE_LAYER;
+            this.selectLayer(layer);
+            this.refreshInspector();
+            this.setStatus("调试：回放实体图层 · 本帧抠出 " + dev.bbsae.client.render.ReplayEntityMask.entityCount() + " 个实体");
+        }
+    }
+
     public void debugDemoEffects()
     {
         this.project = CompStore.demo("dev-effects");
@@ -4334,6 +6381,47 @@ public class UICompositorPanel extends UIDashboardPanel
         this.doc.activeCameraId = camera.id;
         this.project.settings.cameraPreviewMode = true;
         this.cameraPreviewMode = true;
+
+        /* Verification only: an ellipse used as a mask on the 3D card, so the intersection is
+         * visible in a screenshot (and the shape itself is hidden, as the button does). */
+        if (Boolean.getBoolean("bbsae.debugViewLock"))
+        {
+            CompLayer mask = new CompLayer("mask_ellipse", "Mask Ellipse", "shape");
+
+            mask.x = this.doc.width / 2F;
+            mask.y = this.doc.height / 2F;
+            mask.width = 200F;
+            mask.height = 120F;
+            mask.shapes.add(CompShape.ellipse("mask_shape", 0F, 0F, 180F, 110F, 0xFFFFFFFF));
+            this.doc.layers.add(mask);
+
+            /* The big gradient card is the one that makes "ellipse vs rectangle" obvious. */
+            CompLayer gradientCard = null;
+
+            for (CompLayer layer : this.doc.layers)
+            {
+                if ("gradient_shape".equals(layer.id))
+                {
+                    gradientCard = layer;
+                }
+            }
+
+            if (gradientCard != null)
+            {
+                gradientCard.trackMatteId = mask.id;
+                gradientCard.trackMatteEnabled = true;
+                gradientCard.trackMatteMode = CompLayer.MATTE_ALPHA;
+            }
+
+            /* Mask the 3D card as well: it is the one at the camera's target, so the ellipse is
+             * unmistakable in a screenshot. */
+            card3D.trackMatteId = mask.id;
+            card3D.trackMatteEnabled = true;
+            card3D.trackMatteMode = CompLayer.MATTE_ALPHA;
+
+            mask.visible = false;
+            mask.guide = true;
+        }
 
         this.selectedLayer = card3D;
         this.time = 2F;
@@ -4459,11 +6547,49 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /** Click: the clicked layer becomes the only selected one. */
+    /** Audio clip currently selected on the timeline's audio lane, or null. */
+    public dev.bbsae.comp.CompAudio getSelectedAudio()
+    {
+        return this.selectedAudio;
+    }
+
+    /**
+     * Selects an audio clip (or clears the selection with null).
+     *
+     * <p>Selecting audio clears the layer selection: the two share the Delete key and the
+     * inspector's focus, and "which thing am I editing" must have exactly one answer.</p>
+     */
+    public void selectAudioClip(dev.bbsae.comp.CompAudio clip)
+    {
+        this.selectedAudio = clip;
+
+        if (clip != null)
+        {
+            this.selectedIds.clear();
+            this.selectedLayer = null;
+            this.inspectorPage = PAGE_COMP;
+            this.setStatus("音频：" + clip.name + String.format(java.util.Locale.ROOT, " · 入点 %.2fs", clip.start));
+
+            if (this.trackTimeline != null)
+            {
+                this.trackTimeline.revealAudio();
+            }
+        }
+
+        this.refreshInspector();
+        this.refreshLayers();
+    }
+
     public void selectLayer(CompLayer layer)
     {
         if (layer == this.selectedLayer && this.selectedIds.size() == (layer == null ? 0 : 1))
         {
             return;
+        }
+
+        if (layer != null)
+        {
+            this.selectedAudio = null;
         }
 
         this.selectedIds.clear();
@@ -5427,6 +7553,24 @@ public class UICompositorPanel extends UIDashboardPanel
             this.rightPanelWidth = Math.min(this.rightPanelWidth, maxSide);
         }
 
+        /* Second pass: a side-by-side layout that leaves no room for the picture is not a layout.
+         * The two clamps above cap each column independently, so at ~360 logical pixels the preview
+         * was already negative and simply stopped rendering — the panel looked empty even though
+         * every widget was there. Shrink both columns proportionally until the preview has a floor. */
+        int minPreview = 160;
+
+        if (this.area.w > 0 && lw + rw + gapL + gapR + minPreview > this.area.w)
+        {
+            int available = Math.max(0, this.area.w - gapL - gapR - minPreview);
+            int total = lw + rw;
+
+            if (total > 0)
+            {
+                lw = Math.max(0, lw * available / total);
+                rw = Math.max(0, available - lw);
+            }
+        }
+
         this.effectColumn.relative(this.body).x(0).y(0).w(lw).h(1F);
         this.preview.relative(this.body).x(lw + gapL).y(0).w(1F, -(lw + rw + gapL + gapR)).h(1F);
         this.inspectorColumn.relative(this.body).x(1F, -rw).y(0).w(rw).h(1F);
@@ -5434,7 +7578,17 @@ public class UICompositorPanel extends UIDashboardPanel
         int bodyHeight = Math.max(160, this.area.h - 24 - this.timelinePanelHeight - 18);
 
         this.body.relative(this).x(0).y(24).w(1F).h(bodyHeight);
-        this.timeline.relative(this).x(0).y(1F, -(this.timelinePanelHeight + 18)).w(1F).h(this.timelinePanelHeight);
+        boolean quick = this.quickPanel != null && this.quickPanel.isVisible();
+        int quickWidth = quick ? Math.max(160, Math.min(340, this.quickPanelWidth)) : 0;
+
+        this.timeline.relative(this).x(0).y(1F, -(this.timelinePanelHeight + 18))
+            .w(1F, -quickWidth).h(this.timelinePanelHeight);
+
+        if (quick)
+        {
+            this.quickPanel.relative(this).x(1F, -quickWidth).y(1F, -(this.timelinePanelHeight + 18))
+                .w(quickWidth).h(this.timelinePanelHeight);
+        }
         this.renderPanel.relative(this).x(0).y(24).w(1F).h(bodyHeight);
 
         if (this.leftHandle != null)
@@ -5464,6 +7618,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.project.settings.keyframeDrawerHeight = this.keyframeDrawerHeight;
         this.project.settings.cameraPreviewMode = this.cameraPreviewMode;
         this.project.settings.timelinePage = this.timelinePage;
+        this.saveViewportPose();
         this.save();
     }
 
@@ -5501,14 +7656,19 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void loadPanelLayout()
     {
+        /* Source textures are keyed by comp + layer id; a different project must not reuse them. */
+        dev.bbsae.client.render.CompLayerSourceCache.clear();
         CompUi.configure(CompUi.preferenceOf(this.project));
         if (this.project != null && this.project.settings != null)
         {
             this.leftPanelWidth = Math.max(140, this.project.settings.leftPanelWidth);
+            this.quickPanelWidth = Math.max(160, Math.min(340, this.project.settings.quickPanelWidth));
             this.rightPanelWidth = Math.max(296, this.project.settings.rightPanelWidth);
             this.timelinePanelHeight = Math.max(140, this.project.settings.timelineHeight);
             this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, this.project.settings.keyframeDrawerHeight);
             this.cameraPreviewMode = this.project.settings.cameraPreviewMode;
+            this.viewportMode = this.project.settings.viewport3D;
+            this.restoreViewportPose();
             this.timelinePage = Math.max(0, Math.min(1, this.project.settings.timelinePage));
         }
 
@@ -5652,69 +7812,98 @@ public class UICompositorPanel extends UIDashboardPanel
         this.save();
     }
 
-    /** BBS's native OS file picker, copied into the film's own asset folder. */
+    /**
+     * Imports a picture into an existing layer through the in-game browser.
+     *
+     * <p>The OS dialog is not used anywhere any more: see {@link UIImportBrowser} for why a native
+     * window cannot be the primary import path inside a fullscreen game.</p>
+     */
     private void importImage(CompLayer layer)
     {
-        if (this.project == null)
+        if (this.project == null || layer == null)
         {
             return;
         }
 
-        mchorse.bbs_mod.ui.utils.UIFileDialogs.pickFile(
-            IKey.constant("导入图片"),
-            java.nio.file.Path.of(".").toFile(),
-            new String[] {"*.png", "*.jpg", "*.jpeg", "*.gif"},
-            IKey.constant("图片"),
+        NativeFileDialog.pickFile(
+            "导入图片到图层",
+            new String[] {"png", "jpg", "jpeg", "gif"},
             (file) ->
             {
-                if (file == null || !file.isFile())
+                if (file != null && file.isFile())
                 {
-                    return;
+                    this.importFileIntoLayer(layer, file);
                 }
-
-                try
-                {
-                    java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve("images");
-                    java.nio.file.Files.createDirectories(folder);
-
-                    String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
-                    java.nio.file.Path target = folder.resolve(name);
-
-                    if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
-                    {
-                        java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    }
-
-                    /* Importing into a text/shape/solid layer used to write imagePath that the
-                     * renderer ignored, so the button looked dead. Promote the layer to an image
-                     * layer; transform, effects and timing are preserved. */
-                    if (!"image".equals(layer.type) && !"footage".equals(layer.type))
-                    {
-                        layer.type = "image";
-                    }
-
-                    layer.imagePath = "assets/images/" + name;
-
-                    java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(target.toFile());
-
-                    if (image != null)
-                    {
-                        float scale = Math.min(1F, Math.min(this.doc.width * 0.8F / image.getWidth(), this.doc.height * 0.8F / image.getHeight()));
-
-                        layer.width = Math.max(16F, image.getWidth() * scale);
-                        layer.height = Math.max(16F, image.getHeight() * scale);
-                    }
-
-                    this.refreshInspector();
-                    this.save();
-                }
-                catch (Exception e)
-                {
-                    dev.bbsae.BbsAeAddon.LOGGER.error("Could not import image {}", file, e);
-                    this.notifyError("图片导入失败：" + e.getMessage());
-                }
-            }
+            },
+            () -> this.openImageBrowser(layer)
         );
+    }
+
+    /** Fallback path: the in-game browser, used when the OS dialog cannot be shown. */
+    private void openImageBrowser(CompLayer layer)
+    {
+        if (this.importBrowser != null)
+        {
+            this.closeImportBrowser();
+        }
+
+        this.importBrowser = new UIImportBrowser(
+            "导入图片到图层",
+            new String[] {"png", "jpg", "jpeg", "gif"},
+            (file) ->
+            {
+                if (file != null && file.isFile())
+                {
+                    this.importFileIntoLayer(layer, file);
+                }
+
+                this.closeImportBrowser();
+            },
+            this::closeImportBrowser
+        );
+
+        this.importBrowser.relative(this).x(0).y(0).w(1F).h(1F);
+        this.add(this.importBrowser);
+        this.resize();
+    }
+
+    /** Copies the file into the project, then points the layer at it and fits its size. */
+    private void importFileIntoLayer(CompLayer layer, java.io.File file)
+    {
+        try
+        {
+            String name = this.copyIntoProjectImages(file);
+
+            /* Importing into a text/shape/solid layer used to write imagePath that the renderer
+             * ignored, so the button looked dead. Promote the layer to an image layer; transform,
+             * effects and timing are preserved. */
+            if (!"image".equals(layer.type) && !"footage".equals(layer.type))
+            {
+                layer.type = "image";
+            }
+
+            layer.imagePath = "assets/images/" + name;
+
+            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(
+                CompStore.assetRoot(this.project.id).resolve("images").resolve(name).toFile());
+
+            if (image != null)
+            {
+                float scale = Math.min(1F, Math.min(this.doc.width * 0.8F / image.getWidth(), this.doc.height * 0.8F / image.getHeight()));
+
+                layer.width = Math.max(16F, image.getWidth() * scale);
+                layer.height = Math.max(16F, image.getHeight() * scale);
+            }
+
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已导入到图层：" + name);
+        }
+        catch (Exception e)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.error("Could not import image {}", file, e);
+            this.notifyError("图片导入失败：" + e.getMessage());
+        }
     }
 
     private void openAddLayerMenu(UIIcon icon)
@@ -5742,6 +7931,7 @@ public class UICompositorPanel extends UIDashboardPanel
             manager.action(Icons.FILM, IKey.constant("图片序列"), () -> this.addLayer("footage"));
             manager.action(Icons.FILM, IKey.constant("预合成"), () -> this.addLayer("precomp"));
             manager.action(Icons.FILM, IKey.constant("BBS 预览层"), () -> this.addLayer("bbs"));
+            manager.action(Icons.FILM, IKey.constant("回放实体层（深度抠像）"), () -> this.addLayer("replay"));
             manager.action(Icons.SPHERE, IKey.constant("空对象"), () -> this.addLayer("null"));
             manager.action(Icons.CAMERA, IKey.constant("摄像机"), () -> this.addLayer("camera"));
             manager.action(Icons.SUN, IKey.constant("调整图层"), () -> this.addLayer("adjustment"));
@@ -5768,7 +7958,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {"path", "贝塞尔"}, {"text", "文字"}, {"image", "图片"},
         {"footage", "序列"}, {"precomp", "预合成"}, {"null", "空对象"},
         {"camera", "摄像机"}, {"adjustment", "调整层"}, {"bbs", "BBS 预览"},
-        {"panel", "HUD 面板"}, {"bar", "进度条"}
+        {"replay", "回放实体"}, {"panel", "HUD 面板"}, {"bar", "进度条"}
     };
 
     /** Grouped chooser: 20 flat buttons in one grid were impossible to scan. */
@@ -5776,7 +7966,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {"常用", "solid", "text", "image", "shape", "null", "adjustment"},
         {"生成", "gradient", "checker", "grid", "noise"},
         {"形状", "ellipse", "star", "polygon", "path"},
-        {"媒体", "footage", "precomp", "bbs"},
+        {"媒体", "footage", "precomp", "bbs", "replay"},
         {"界面", "panel", "bar"},
         {"摄像机", "camera"}
     };
@@ -5888,6 +8078,7 @@ public class UICompositorPanel extends UIDashboardPanel
             case "null" -> "空对象";
             case "adjustment" -> "调整层";
             case "bbs" -> "BBS 预览";
+            case "replay" -> "回放实体";
             case "camera" -> "摄像机";
             case "panel" -> "HUD 面板";
             case "bar" -> "进度条";
@@ -6027,6 +8218,16 @@ public class UICompositorPanel extends UIDashboardPanel
                 layer.imageFit = 0;
                 layer.name = "BBS 预览";
                 break;
+            case "replay":
+                /* The entity layer is a full-frame plate by definition: it keys the film frame,
+                 * so a 640x324 default would letterbox the world and key a postage stamp. */
+                layer.width = this.doc.width;
+                layer.height = this.doc.height;
+                layer.imageFit = 0;
+                layer.entityScope = CompLayer.ENTITY_SCOPE_ALL;
+                layer.entityIds = "";
+                layer.name = "回放实体";
+                break;
             case "camera":
                 layer.width = 100F;
                 layer.height = 100F;
@@ -6152,6 +8353,23 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void deleteSelected()
     {
+        /* One Delete key, two kinds of selection: audio first, because selecting a clip clears the
+         * layer selection (see selectAudioClip), so this order cannot delete the wrong thing. */
+        if (this.selectedAudio != null && this.doc != null && this.doc.audio != null
+            && this.doc.audio.contains(this.selectedAudio))
+        {
+            dev.bbsae.comp.CompAudio clip = this.selectedAudio;
+
+            this.doc.audio.remove(clip);
+            this.selectedAudio = null;
+            dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已移除音频：" + clip.name);
+
+            return;
+        }
+
         this.deleteLayer(this.selectedLayer);
     }
 
@@ -6240,10 +8458,13 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /**
-     * 3D workspace. The Minecraft frame is the stage: the BBS world already gives real 3D
-     * geometry, lighting and depth, so the compositor only has to add a perspective camera,
-     * 3D-projected layers and a ground grid. If the comp has no camera yet, one is created at
-     * the focal distance so the switch is non-destructive.
+     * Opens the 3D workspace.
+     *
+     * <p>This is a viewport, not a camera view: the editor gets its own orbit camera
+     * ({@link #viewportCamera}) and the composition camera becomes an object you can see, select
+     * and drag like any other layer. Blender's split between "where I am looking from" and "what
+     * the shot sees" is the whole point — without it, navigating means moving the shot, which is
+     * both wrong and (because every mouse move re-renders the shot) unusably slow.</p>
      */
     public void enter3DSpace()
     {
@@ -6266,42 +8487,361 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.doc.activeCameraId = camera.id;
-        this.cameraPreviewMode = true;
-        this.project.settings.cameraPreviewMode = true;
-        this.project.settings.previewBackground = 1;
+        this.viewportMode = true;
+        /* Enter on the free view. Look-through is one key away (numpad 0) and is the only mode that
+         * renders the exact frame; starting there would make the first orbit drag re-render the
+         * graph, which is the bug this round removes. */
+        this.cameraPreviewMode = false;
+        this.project.settings.viewport3D = true;
+        this.project.settings.cameraPreviewMode = false;
         this.project.settings.show3DGrid = true;
-        this.bbsBackdropToggle.setValue(true);
+
+        /* The stage stays the composition's own colour. Turning the world backdrop on here used to
+         * make "3D space" mean "transparent stage", which is the one thing a compositor preview
+         * must not be: you cannot judge a frame against the game world. The backdrop is a separate,
+         * explicit toggle in the preview bar. */
+        this.bbsBackdropToggle.setValue(this.project.settings.previewBackground == 1);
+        this.restoreViewportPose();
+
+        if (!this.project.settings.viewportPoseValid || Boolean.getBoolean("bbsae.debugViewLock"))
+        {
+            /* A verification run needs the same framing every time, independent of whatever pose a
+             * previous run happened to save. */
+            this.frameViewportOnComposition();
+            this.project.settings.viewportPoseValid = true;
+        }
+
         this.selectLayer(camera);
         this.refreshInspector();
-        this.save();
-        this.setStatus("3D 空间：拖摄像机本体平移、拖准星瞄准、滚轮推拉、Alt+滚轮改视场；图层开启 3D 后才会跟随透视");
+        this.savePanelLayout();
+        this.setStatus("3D 空间：右键拖动环绕（中键同效）· Shift+拖动平移 · 滚轮缩放 · 0 看穿摄像机 · 1/3/7 前/右/顶 · 5 正交");
     }
 
-    /** True when the world backdrop + grid + camera-view combination is active. */
+    /** True when the free 3D viewport (not the shot camera view) is the active preview. */
     private boolean is3DSpace()
     {
-        return this.cameraPreviewMode && this.project != null && this.project.settings != null && this.project.settings.show3DGrid;
+        return this.viewportMode;
     }
 
     public void exit3DSpace()
     {
+        this.viewportMode = false;
         this.cameraPreviewMode = false;
 
         if (this.project != null && this.project.settings != null)
         {
+            this.project.settings.viewport3D = false;
             this.project.settings.cameraPreviewMode = false;
-            this.project.settings.previewBackground = 0;
             this.project.settings.show3DGrid = false;
         }
 
         if (this.bbsBackdropToggle != null)
         {
-            this.bbsBackdropToggle.setValue(false);
+            this.bbsBackdropToggle.setValue(this.project != null && this.project.settings != null && this.project.settings.previewBackground == 1);
         }
 
+        this.saveViewportPose();
         this.refreshInspector();
         this.save();
         this.setStatus("已退出 3D 空间");
+    }
+
+    /** Current preview rectangle in screen pixels; the viewport camera needs it for its aspect. */
+    private void syncViewportSize()
+    {
+        /* Before the first layout pass the preview has no size; framing against 1×1 would pick a
+         * wildly wrong distance that then gets persisted. Fall back to 16:9 until it is real. */
+        int width = this.preview.area.w;
+        int height = this.preview.area.h;
+
+        if (width < 32 || height < 32)
+        {
+            width = 800;
+            height = 450;
+        }
+
+        this.viewportCamera.setViewport(width, height);
+    }
+
+    private void restoreViewportPose()
+    {
+        CompProject.CompSettings settings = this.project == null ? null : this.project.settings;
+
+        if (settings == null)
+        {
+            return;
+        }
+
+        this.viewportCamera.setTarget(settings.viewportTargetX, settings.viewportTargetY, settings.viewportTargetZ);
+        this.viewportCamera.setPose(settings.viewportYaw, settings.viewportPitch,
+            settings.viewportDistance > 1F ? settings.viewportDistance : 2000F);
+        this.viewportCamera.ortho = settings.viewportOrtho;
+        this.syncViewportSize();
+        this.viewportCamera.update();
+    }
+
+    private void saveViewportPose()
+    {
+        CompProject.CompSettings settings = this.project == null ? null : this.project.settings;
+
+        if (settings == null)
+        {
+            return;
+        }
+
+        this.viewportCamera.update();
+        settings.viewportYaw = this.viewportCamera.yaw;
+        settings.viewportPitch = this.viewportCamera.pitch;
+        settings.viewportDistance = this.viewportCamera.distance;
+        settings.viewportTargetX = this.viewportCamera.target.x;
+        settings.viewportTargetY = this.viewportCamera.target.y;
+        settings.viewportTargetZ = this.viewportCamera.target.z;
+        settings.viewportOrtho = this.viewportCamera.ortho;
+        settings.viewport3D = this.viewportMode;
+    }
+
+    /** Frames the whole composition from a 3/4 angle; used on first enter and by Home. */
+    private void frameViewportOnComposition()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        this.syncViewportSize();
+        this.viewportCamera.setPose(32F, 20F, Math.max(1000F, this.doc.height * 2F));
+
+        this.viewportCamera.frame(new org.joml.Vector3f(0F, 0F, 0F),
+            new org.joml.Vector3f(this.doc.width, this.doc.height, 0F));
+
+        /* Keep the composition centred, then widen only as much as needed to also show the
+         * camera. Framing the union of "comp + camera" pushed the comp off to one side; framing
+         * only the comp left a camera parked far in front of the plane outside the view, so
+         * entering the workspace showed no gizmo and the camera looked broken. */
+        CompLayer camera = this.doc.activeCamera(this.time);
+
+        if (camera != null)
+        {
+            org.joml.Vector3f eye = CompCamera.eyeOf(camera, this.getFrame(), this.doc.height);
+            int w = this.viewportCamera.width;
+            int h = this.viewportCamera.height;
+
+            for (int i = 0; i < 10; i++)
+            {
+                org.joml.Vector2f point = this.viewportCamera.project(eye);
+
+                if (point != null && point.x > w * 0.06F && point.x < w * 0.94F
+                    && point.y > h * 0.06F && point.y < h * 0.94F)
+                {
+                    break;
+                }
+
+                this.viewportCamera.setPose(this.viewportCamera.yaw, this.viewportCamera.pitch,
+                    this.viewportCamera.distance * 1.3F);
+            }
+        }
+    }
+
+    /** Frames the current selection, or the composition when nothing is selected. */
+    private void frameViewportOnSelection()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        CompLayer layer = this.selectedLayer;
+
+        if (layer == null)
+        {
+            this.frameViewportOnComposition();
+
+            return;
+        }
+
+        CompRenderContext context = new CompRenderContext(this.project, this.doc, this.time, null, null, null);
+
+        try
+        {
+            org.joml.Matrix4f world = CompScene.world(context, layer);
+            float halfWidth = Math.max(1F, layer.width) * 0.5F;
+            float halfHeight = Math.max(1F, layer.height) * 0.5F;
+            org.joml.Vector3f min = new org.joml.Vector3f(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE);
+            org.joml.Vector3f max = new org.joml.Vector3f(-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE);
+
+            for (int i = 0; i < 4; i++)
+            {
+                org.joml.Vector3f corner = new org.joml.Vector3f(
+                    (i == 1 || i == 2) ? halfWidth : -halfWidth,
+                    i >= 2 ? halfHeight : -halfHeight,
+                    0F
+                );
+
+                world.transformPosition(corner);
+                min.min(corner);
+                max.max(corner);
+            }
+
+            this.syncViewportSize();
+            this.viewportCamera.frame(min, max);
+        }
+        catch (RuntimeException e)
+        {
+            this.frameViewportOnComposition();
+
+            return;
+        }
+    }
+
+    /** Blender's numpad 0: look through the composition camera, or back to the free view. */
+    private void toggleViewportLookThrough()
+    {
+        if (!this.viewportMode)
+        {
+            this.enter3DSpace();
+        }
+
+        this.cameraPreviewMode = !this.cameraPreviewMode;
+
+        if (this.project != null && this.project.settings != null)
+        {
+            this.project.settings.cameraPreviewMode = this.cameraPreviewMode;
+        }
+
+        if (this.cameraPreviewMode)
+        {
+            CompRenderContext context = new CompRenderContext(this.project, this.doc, this.time, null, null, null);
+
+            /* The look-through pose is adopted (that is Blender's numpad 0), but the viewport's
+             * ortho/perspective choice belongs to the editor, not to the shot. */
+            boolean ortho = this.viewportCamera.ortho;
+
+            this.syncViewportSize();
+            this.viewportCamera.lookThrough(CompScene.camera(context));
+            this.viewportCamera.setOrtho(ortho);
+            this.viewportCamera.update();
+            this.setStatus("看穿摄像机：这是最终画面（含效果与蒙版）；再按 0 回到自由视图");
+        }
+        else
+        {
+            this.setStatus("自由视图（草稿）：中键环绕 · Shift+中键平移 · 滚轮缩放");
+        }
+
+        this.savePanelLayout();
+    }
+
+    /**
+     * Viewport navigation keys, Blender's numpad layout (top-row digits work too, so a laptop
+     * without a numpad can still use the workspace).
+     *
+     * <p>Deliberately parsed here rather than through BBS's keybind registry: these keys only mean
+     * something while the 3D workspace is open, and registering them globally would steal digits
+     * from every other panel.</p>
+     */
+    private boolean subViewportKey(int key)
+    {
+        if (Boolean.getBoolean("bbsae.debugViewLock"))
+        {
+            return false;
+        }
+
+        boolean ctrl = CompInput.ctrlDown();
+
+        if (key == GLFW.GLFW_KEY_KP_0 || key == GLFW.GLFW_KEY_0)
+        {
+            this.toggleViewportLookThrough();
+
+            return true;
+        }
+
+        if (key == GLFW.GLFW_KEY_KP_1 || key == GLFW.GLFW_KEY_1)
+        {
+            this.viewportCamera.snap(ctrl ? 1 : 0);
+            this.afterViewportSnap("前视图");
+
+            return true;
+        }
+
+        if (key == GLFW.GLFW_KEY_KP_3 || key == GLFW.GLFW_KEY_3)
+        {
+            this.viewportCamera.snap(ctrl ? 3 : 2);
+            this.afterViewportSnap("右视图");
+
+            return true;
+        }
+
+        if (key == GLFW.GLFW_KEY_KP_7 || key == GLFW.GLFW_KEY_7)
+        {
+            this.viewportCamera.snap(ctrl ? 5 : 4);
+            this.afterViewportSnap("顶视图");
+
+            return true;
+        }
+
+        if (key == GLFW.GLFW_KEY_KP_5 || key == GLFW.GLFW_KEY_5)
+        {
+            this.viewportCamera.setOrtho(!this.viewportCamera.ortho);
+            this.viewportCamera.update();
+            this.saveViewportPose();
+            this.savePanelLayout();
+            this.setStatus(this.viewportCamera.ortho ? "正交视图" : "透视视图");
+
+            return true;
+        }
+
+        /* Keyboard navigation: a guaranteed path when a mouse has no middle button and the user
+         * does not discover right-drag. Blender-ish and conflict-free inside the workspace. */
+        if (key == GLFW.GLFW_KEY_A || key == GLFW.GLFW_KEY_D || key == GLFW.GLFW_KEY_W || key == GLFW.GLFW_KEY_S)
+        {
+            float step = ctrl ? 16F : 4F;
+            float yaw = key == GLFW.GLFW_KEY_A ? step : key == GLFW.GLFW_KEY_D ? -step : 0F;
+            float pitch = key == GLFW.GLFW_KEY_W ? step : key == GLFW.GLFW_KEY_S ? -step : 0F;
+
+            this.viewportCamera.orbit(-yaw, pitch);
+            this.viewportCamera.update();
+            this.saveViewportPose();
+            this.setStatus(String.format(java.util.Locale.ROOT, "环绕  偏航 %.0f°  俯仰 %.0f°",
+                this.viewportCamera.yaw, this.viewportCamera.pitch));
+
+            return true;
+        }
+
+        if (key == GLFW.GLFW_KEY_Q || key == GLFW.GLFW_KEY_E)
+        {
+            this.viewportCamera.dolly(key == GLFW.GLFW_KEY_Q ? 1F : -1F);
+            this.viewportCamera.update();
+            this.saveViewportPose();
+            this.setStatus(String.format(java.util.Locale.ROOT, "视图距离 %.0f", this.viewportCamera.distance));
+
+            return true;
+        }
+
+        if (key == GLFW.GLFW_KEY_KP_DECIMAL)
+        {
+            this.frameViewportOnSelection();
+            this.saveViewportPose();
+            this.setStatus("框住所选");
+
+            return true;
+        }
+
+        if (key == GLFW.GLFW_KEY_HOME && ctrl)
+        {
+            this.frameViewportOnComposition();
+            this.saveViewportPose();
+            this.setStatus("框住整个合成");
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private void afterViewportSnap(String label)
+    {
+        this.viewportCamera.update();
+        this.saveViewportPose();
+        this.setStatus(label + "：" + (this.viewportCamera.ortho ? "正交" : "透视"));
     }
 
     /**
@@ -6534,6 +9074,175 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         return section;
+    }
+
+    /* --------------------------------------------------------------- replay entity matte */
+
+    /**
+     * The "key out replay entities" table.
+     *
+     * <p>Two controls, one meaning: the switch decides whether <em>every</em> replay is keyed, and
+     * the checkbox table decides which ones. They cannot contradict each other because editing a
+     * row while "all" is on first materialises the full list and then removes that one row — the
+     * switch is a shortcut for "check everything", not a second source of truth.</p>
+     */
+    private void appendEntityControls(UISection section, CompLayer layer)
+    {
+        section.fields.add(UI.label(IKey.constant("深度抠像 · 只保留勾选的回放实体，其余像素透明"), 15));
+        section.fields.add(UI.label(IKey.constant("判断依据是“实体深度 = 世界深度”：方块挡在前面时两个深度不同，实体自然被挡住；全程不比较颜色，所以换光影、换材质都不影响。"), 13));
+
+        boolean all = layer.entityScope == CompLayer.ENTITY_SCOPE_ALL;
+
+        section.fields.add(new UIToggle(IKey.constant("抠出所有回放实体"), all, (toggle) ->
+        {
+            if (toggle.getValue())
+            {
+                layer.entityScope = CompLayer.ENTITY_SCOPE_ALL;
+            }
+            else
+            {
+                /* Leaving "all" must not blank the layer: start from every replay checked, then
+                 * the user unchecks what should not be keyed. */
+                layer.entityScope = CompLayer.ENTITY_SCOPE_SELECTED;
+
+                if (layer.entityIdSet().isEmpty())
+                {
+                    layer.entitySelectAll(this.replayIds());
+                }
+            }
+
+            this.save();
+            this.refreshInspector();
+        }));
+
+        java.util.List<mchorse.bbs_mod.film.replays.Replay> replays = this.film == null
+            ? java.util.Collections.emptyList()
+            : this.film.replays.getList();
+
+        if (this.film == null)
+        {
+            section.fields.add(UI.label(IKey.constant("没有绑定影片：请从影片的回放属性里打开合成器。"), 13));
+        }
+        else if (replays.isEmpty())
+        {
+            section.fields.add(UI.label(IKey.constant("这部影片还没有回放，先在影片编辑器里添加一个。"), 13));
+        }
+        else
+        {
+            section.fields.add(UI.label(IKey.constant("回放实体（勾选 = 抠出；取消勾选任意一项会自动切到“仅勾选”）"), 13));
+
+            for (mchorse.bbs_mod.film.replays.Replay replay : replays)
+            {
+                String id = replay.getId();
+                boolean enabled = Boolean.TRUE.equals(replay.enabled.get());
+                boolean hasForm = replay.form.get() != null;
+                boolean kept = all || layer.entityIdSet().contains(id);
+                String label = replay.getName() + (enabled ? "" : " · 已禁用") + (hasForm ? "" : " · 无形态");
+
+                section.fields.add(new UIToggle(IKey.constant(label), kept, (toggle) ->
+                {
+                    if (layer.entityScope == CompLayer.ENTITY_SCOPE_ALL)
+                    {
+                        layer.entityScope = CompLayer.ENTITY_SCOPE_SELECTED;
+                        layer.entitySelectAll(this.replayIds());
+                    }
+
+                    layer.entitySetKept(id, toggle.getValue());
+                    this.save();
+                    this.refreshInspector();
+                }));
+            }
+
+            section.fields.add(UI.row(
+                this.smallButton("全选", () ->
+                {
+                    layer.entityScope = CompLayer.ENTITY_SCOPE_SELECTED;
+                    layer.entitySelectAll(this.replayIds());
+                    this.save();
+                    this.refreshInspector();
+                }),
+                this.smallButton("全不选", () ->
+                {
+                    layer.entityScope = CompLayer.ENTITY_SCOPE_SELECTED;
+                    layer.entityIds = "";
+                    this.save();
+                    this.refreshInspector();
+                })
+            ));
+        }
+
+        section.fields.add(new UIToggle(IKey.constant("世界深度遮挡（实体在方块后会被挡住）"), layer.entityOcclusion, (toggle) ->
+        {
+            layer.entityOcclusion = toggle.getValue();
+            this.save();
+        }));
+
+        section.fields.add(this.numberRow("羽化（像素）", layer.entityFeather, 0D, 32D, false, (value) ->
+        {
+            layer.entityFeather = (float) Math.max(0D, value);
+            this.save();
+        }));
+        section.fields.add(this.numberRow("收缩（像素）", layer.entityErode, 0D, 32D, false, (value) ->
+        {
+            layer.entityErode = (float) Math.max(0D, value);
+            this.save();
+        }));
+        section.fields.add(this.numberRow("深度容差（方块）", layer.entityTolerance, 0.001D, 4D, false, (value) ->
+        {
+            layer.entityTolerance = (float) Math.max(0.001D, value);
+            this.save();
+        }));
+        section.fields.add(this.numberRow("适配（0 包含 1 覆盖 2 拉伸）", layer.imageFit, 0D, 2D, true, (value) -> layer.imageFit = value.intValue()));
+
+        section.fields.add(UI.label(IKey.constant(this.entityStatus(layer)), 13));
+    }
+
+    private java.util.List<String> replayIds()
+    {
+        java.util.List<String> ids = new java.util.ArrayList<>();
+
+        if (this.film != null)
+        {
+            for (mchorse.bbs_mod.film.replays.Replay replay : this.film.replays.getList())
+            {
+                if (replay.getId() != null && !replay.getId().isBlank())
+                {
+                    ids.add(replay.getId());
+                }
+            }
+        }
+
+        return ids;
+    }
+
+    /** One line that says whether the matte currently has anything to show, and why not. */
+    private String entityStatus(CompLayer layer)
+    {
+        if (!dev.bbsae.client.overlay.BbsPreviewBridge.hasCapturedWorld())
+        {
+            return "等待世界帧：让影片预览跑起来后才有可抠的画面。";
+        }
+
+        int count = dev.bbsae.client.render.ReplayEntityMask.entityCount();
+
+        if (count <= 0)
+        {
+            return "本帧没有抠出实体：检查回放是否启用、是否勾选、播放头是否在实体出现的时间段。";
+        }
+
+        String status = "本帧抠出 " + count + " 个实体";
+
+        if (layer.entityOcclusion)
+        {
+            dev.bbsae.client.render.SceneDepth depth = dev.bbsae.client.overlay.BbsPreviewBridge.depth();
+
+            if (depth == null || !depth.isAvailable())
+            {
+                status += " · 世界深度不可用，已退化为无遮挡（可在上面关闭遮挡）";
+            }
+        }
+
+        return status;
     }
 
     private UISection fragmentSection(CompLayer layer)
@@ -7400,10 +10109,28 @@ public class UICompositorPanel extends UIDashboardPanel
             this.project.outputPresets.add(preset);
             this.refreshInspector();
         }));
+        section.fields.add(this.smallButton("添加音频 WAV（48k 立体声）", () ->
+        {
+            CompOutputPreset preset = CompOutputPreset.audioWav();
+
+            preset.id = CompStore.uniquePresetId(this.project, "audio_wav");
+            preset.name = preset.id;
+            this.project.outputPresets.add(preset);
+            this.refreshInspector();
+        }));
+        section.fields.add(this.smallButton("添加音频 M4A（AAC 192k）", () ->
+        {
+            CompOutputPreset preset = CompOutputPreset.audioM4a();
+
+            preset.id = CompStore.uniquePresetId(this.project, "audio_m4a");
+            preset.name = preset.id;
+            this.project.outputPresets.add(preset);
+            this.refreshInspector();
+        }));
 
         for (CompOutputPreset preset : this.project.outputPresets)
         {
-            section.fields.add(UI.label(IKey.constant("[" + preset.id + "]"), 14));
+            section.fields.add(UI.label(IKey.constant("[" + preset.id + "]  " + ("audio".equals(preset.kind) ? "音频模块" : "视频模块")), 14));
             section.fields.add(this.textRow("名称", preset.name, (value) -> preset.name = value));
             section.fields.add(this.textRow("容器", preset.container, (value) -> preset.container = value));
             section.fields.add(this.textRow("编码器", preset.codec, (value) -> preset.codec = value));
@@ -7412,6 +10139,10 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(this.numberRow("画质 CRF", preset.crf, 0, 63, true, (value) -> preset.crf = value.intValue()));
             section.fields.add(this.textRow("码率", preset.bitrate, (value) -> preset.bitrate = value));
             section.fields.add(this.textRow("像素格式", preset.pixelFormat, (value) -> preset.pixelFormat = value));
+            /* Audio is a property of the module, not of the composition: the mix always comes from
+             * the comp's audio track, the codec comes from here. */
+            section.fields.add(this.textRow("音频编码（aac / pcm_s16le）", preset.audioCodec, (value) -> preset.audioCodec = value));
+            section.fields.add(this.textRow("音频码率（如 192k，可空）", preset.audioBitrate, (value) -> preset.audioBitrate = value));
             section.fields.add(this.numberRow("宽度（0 = 跟随合成）", preset.width, 0, 16384, true, (value) -> preset.width = value.intValue()));
             section.fields.add(this.numberRow("高度（0 = 跟随合成）", preset.height, 0, 16384, true, (value) -> preset.height = value.intValue()));
             section.fields.add(this.numberRow("缩放", preset.scale, 0.05F, 4F, false, (value) -> preset.scale = value.floatValue()));
@@ -7499,7 +10230,321 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(new UIToggle(IKey.constant("自动保存"), settings.autoSave, (toggle) -> settings.autoSave = toggle.getValue()));
         }
 
+        this.appendAudioSection(section, comp);
+
         return section;
+    }
+
+    /* --------------------------------------------------------------- audio track */
+
+    /**
+     * Audio lives on the composition, not on the output module.
+     *
+     * <p>A music bed has an in-point, a duration and a gain exactly like a layer does, and the same
+     * mix has to feed three places: the video export's AAC track, the standalone WAV module and the
+     * keep-frames option of the PNG sequence. Storing it once on the document is what makes those
+     * three agree; storing it in the preset would duplicate it per output format.</p>
+     */
+    private void appendAudioSection(UISection section, CompDocument comp)
+    {
+        section.fields.add(UI.label(IKey.constant("音频轨道 · 导出视频时自动混入"), 15));
+        section.fields.add(this.smallButton("导入音频…", this::importAudioFile));
+
+        if (comp.audio.isEmpty())
+        {
+            section.fields.add(UI.label(IKey.constant("还没有音频。支持 WAV / OGG；其它格式请先转换。"), 13));
+        }
+
+        for (dev.bbsae.comp.CompAudio clip : new ArrayList<>(comp.audio))
+        {
+            section.fields.add(this.audioRow(comp, clip));
+        }
+
+        if (!comp.audio.isEmpty())
+        {
+            /* Outside the per-clip block on purpose: exporting the mix must not require selecting
+             * a clip first. It used to appear only after a clip was picked, so "audio export" was
+             * invisible in exactly the state a new user is in. */
+            section.fields.add(this.smallButton("导出音频（WAV 48k）", this::exportAudioOnly));
+        }
+
+        dev.bbsae.comp.CompAudio clip = this.selectedAudio;
+
+        if (clip == null || !comp.audio.contains(clip))
+        {
+            return;
+        }
+
+        section.fields.add(UI.label(IKey.constant("选中：" + clip.name), 14));
+        section.fields.add(this.numberRow("入点（秒）", clip.start, 0D, 36000D, false, (value) ->
+        {
+            clip.start = Math.max(0F, value.floatValue());
+            this.save();
+        }));
+        section.fields.add(this.numberRow("源偏移（秒）", clip.offset, 0D, 36000D, false, (value) ->
+        {
+            clip.offset = Math.max(0F, value.floatValue());
+            this.save();
+        }));
+        section.fields.add(this.numberRow("时长（-1 全长）", clip.duration, -1D, 36000D, false, (value) ->
+        {
+            clip.duration = value.floatValue() <= 0F ? -1F : value.floatValue();
+            this.save();
+        }));
+        section.fields.add(this.numberRow("增益（%）", clip.gain * 100F, 0D, 400D, true, (value) ->
+        {
+            clip.gain = Math.max(0F, value.floatValue() / 100F);
+            this.save();
+        }));
+        section.fields.add(this.numberRow("淡入（秒）", clip.fadeIn, 0D, 60D, false, (value) ->
+        {
+            clip.fadeIn = Math.max(0F, value.floatValue());
+            this.save();
+        }));
+        section.fields.add(this.numberRow("淡出（秒）", clip.fadeOut, 0D, 60D, false, (value) ->
+        {
+            clip.fadeOut = Math.max(0F, value.floatValue());
+            this.save();
+        }));
+
+        UIToggle loop = new UIToggle(IKey.constant("循环"), clip.loop, (toggle) ->
+        {
+            clip.loop = toggle.getValue();
+            this.save();
+        });
+        section.fields.add(loop);
+
+        UIToggle muted = new UIToggle(IKey.constant("静音"), clip.muted, (toggle) ->
+        {
+            clip.muted = toggle.getValue();
+            this.save();
+        });
+        section.fields.add(muted);
+
+        section.fields.add(this.smallButton("移除这条音频", () ->
+        {
+            comp.audio.remove(clip);
+            this.selectedAudio = null;
+            dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已移除音频");
+        }));
+
+    }
+
+    /** One clickable row per clip: name selects it, the × removes it. */
+    private UIElement audioRow(CompDocument comp, dev.bbsae.comp.CompAudio clip)
+    {
+        UIElement row = new UIElement();
+
+        row.w(1F).h(CompUi.control());
+
+        UICompButton name = new UICompButton(IKey.constant((clip.muted ? "（静音）" : "") + clip.name), (button) ->
+        {
+            this.selectedAudio = clip;
+            this.inspectorPage = PAGE_COMP;
+            this.refreshInspector();
+        });
+
+        name.relative(row).x(0).y(0).w(1F, -24).h(CompUi.control());
+        name.tooltip(IKey.constant(clip.path + " · 入点 " + String.format(java.util.Locale.ROOT, "%.2fs", clip.start)));
+
+        UICompIconButton remove = CompUi.iconButton(Icons.X, "移除这条音频", () ->
+        {
+            comp.audio.remove(clip);
+
+            if (this.selectedAudio == clip)
+            {
+                this.selectedAudio = null;
+            }
+
+            this.refreshInspector();
+            this.save();
+        });
+
+        remove.relative(row).x(1F, -22).y(0).w(20).h(CompUi.control());
+        row.add(name, remove);
+
+        return row;
+    }
+
+    /**
+     * Runs the in-game browser for audio files, copies the pick into {@code assets/audio} and adds
+     * a clip at the playhead.
+     */
+    private void importAudioFile()
+    {
+        if (this.project == null || this.doc == null)
+        {
+            return;
+        }
+
+        NativeFileDialog.pickFile(
+            "导入音频",
+            new String[] {"wav", "ogg"},
+            (file) ->
+            {
+                if (file != null && file.isFile())
+                {
+                    this.addAudioClip(file);
+                }
+            },
+            this::openAudioBrowser
+        );
+    }
+
+    /** Fallback path: the in-game browser, used when the OS dialog cannot be shown. */
+    private void openAudioBrowser()
+    {
+        if (this.importBrowser != null)
+        {
+            this.closeImportBrowser();
+        }
+
+        this.importBrowser = new UIImportBrowser(
+            "导入音频",
+            new String[] {"wav", "ogg"},
+            (file) ->
+            {
+                if (file != null && file.isFile())
+                {
+                    this.addAudioClip(file);
+                }
+
+                this.closeImportBrowser();
+            },
+            this::closeImportBrowser
+        );
+
+        this.importBrowser.relative(this).x(0).y(0).w(1F).h(1F);
+        this.add(this.importBrowser);
+        this.resize();
+    }
+
+    private void addAudioClip(java.io.File file)
+    {
+        try
+        {
+            java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve("audio");
+
+            java.nio.file.Files.createDirectories(folder);
+
+            String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+            java.nio.file.Path target = folder.resolve(name);
+
+            if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
+            {
+                java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            dev.bbsae.comp.CompAudio clip = new dev.bbsae.comp.CompAudio(
+                "audio_" + (this.doc.audio.size() + 1),
+                name,
+                "audio/" + name
+            );
+
+            clip.start = this.time;
+            clip.name = name.substring(0, name.lastIndexOf('.') > 0 ? name.lastIndexOf('.') : name.length());
+
+            /* Store the real length now: the timeline draws it and the mixer plays it, so a clip
+             * without an explicit duration must not be a guess in two different places. */
+            float length = dev.bbsae.client.export.CompAudioMixer.probeDuration(target);
+
+            if (length > 0F)
+            {
+                clip.duration = length;
+            }
+
+            this.doc.audio.add(clip);
+            this.selectedAudio = clip;
+            this.inspectorPage = PAGE_COMP;
+            dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已导入音频：" + name + "（入点 " + String.format(java.util.Locale.ROOT, "%.2fs", clip.start) + "）");
+        }
+        catch (Exception e)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.error("Could not import audio {}", file, e);
+            this.notifyError("音频导入失败：" + e.getMessage());
+        }
+    }
+
+    /** Queues an audio-only render of the current composition and shows the render view. */
+    private void exportAudioOnly()
+    {
+        if (this.project == null || this.doc == null)
+        {
+            return;
+        }
+
+        if (this.doc.audio == null || this.doc.audio.isEmpty())
+        {
+            this.notifyError("这条合成还没有音频：先在“合成”页导入音频，再导出");
+
+            return;
+        }
+
+        String presetId = "audio_wav";
+        boolean found = false;
+
+        for (CompOutputPreset preset : this.project.outputPresets)
+        {
+            if (preset != null && "audio".equals(preset.kind) && preset.id != null && preset.id.startsWith("audio_wav"))
+            {
+                presetId = preset.id;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            for (CompOutputPreset preset : this.project.outputPresets)
+            {
+                if (preset != null && "audio".equals(preset.kind))
+                {
+                    presetId = preset.id;
+                    break;
+                }
+            }
+        }
+
+        /* A project created before audio modules existed has video presets only. Add the WAV module
+         * on demand, otherwise the job would fall back to the first video preset. */
+        if (this.project.getPreset(presetId) == null)
+        {
+            CompOutputPreset wav = CompOutputPreset.audioWav();
+
+            this.project.outputPresets.add(wav);
+            presetId = wav.id;
+        }
+
+        CompRenderJob job = new CompRenderJob(
+            "job_" + (this.project.renderQueue.size() + 1),
+            this.project.id,
+            this.doc.id,
+            presetId
+        );
+
+        job.outputName = this.doc.id + "_audio";
+        job.rangeStart = 0F;
+        job.rangeEnd = this.doc.duration;
+        this.project.renderQueue.add(job);
+        this.selectedJob = job;
+        this.refreshQueue();
+        this.save();
+        this.toggleRenderView();
+
+        if (CompExportManager.start(this.project, job))
+        {
+            this.setStatus("正在导出音频：" + job.outputName);
+        }
+        else
+        {
+            this.notifyError("音频导出启动失败（渲染队列忙？）");
+        }
     }
 
     private UISection layerSection()
@@ -7589,6 +10634,32 @@ public class UICompositorPanel extends UIDashboardPanel
         parent.tooltip(IKey.constant("选择一个空对象或其它图层作为父级；子级会继承父级的移动、缩放、旋转"));
         section.fields.add(this.fieldRow("父级", parent));
 
+        /* Mask / Exclude, the way Alight Motion presents it: pick the shape layer, press one button,
+         * and the layer underneath is clipped by it (intersection) or cut out of it (difference).
+         * The manual "track matte" rows below stay for advanced cases. */
+        section.fields.add(UI.label(IKey.constant("蒙版 / 排除：选中一个形状层，作用到它下面那一层"), 14));
+        section.fields.add(UI.row(
+            this.smallButton("用作蒙版（交集）", () -> this.applyMatteToBelow(l, false)),
+            this.smallButton("用作排除（差集）", () -> this.applyMatteToBelow(l, true))
+        ));
+
+        if (l.trackMatteEnabled && !l.trackMatteId.isEmpty())
+        {
+            CompLayer source = this.doc == null ? null : this.doc.getLayer(l.trackMatteId);
+
+            section.fields.add(UI.label(IKey.constant("当前：" + (source == null ? "（缺失）" : this.layerLabel(source))
+                + " · " + matteName(l.trackMatteMode)), 13));
+            section.fields.add(this.smallButton("清除蒙版", () ->
+            {
+                this.beginAction("清除蒙版");
+                l.trackMatteEnabled = false;
+                l.trackMatteId = "";
+                this.refreshInspector();
+                this.save();
+                this.setStatus("已清除蒙版");
+            }));
+        }
+
         CompLayer matteLayer = this.doc == null || l.trackMatteId == null || l.trackMatteId.isEmpty() ? null : this.doc.getLayer(l.trackMatteId);
         UIButton matte = new UICompButton(IKey.constant(matteLayer == null ? "无" : this.layerLabel(matteLayer) + "  ·  " + matteLayer.id), (button) -> this.chooseMatte(l));
         matte.tooltip(IKey.constant("选择作为遮罩的图层；开启下面的“使用遮罩”后生效"));
@@ -7617,6 +10688,10 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             section.fields.add(UI.label(IKey.constant("显示 BBS 影片编辑器当前的预览帧；可作为底层参考或与合成混合。"), 14));
             section.fields.add(this.numberRow("适配（0 包含 1 覆盖 2 拉伸）", l.imageFit, 0, 2, true, (value) -> l.imageFit = value.intValue()));
+        }
+        if (l.isEntityLayer())
+        {
+            this.appendEntityControls(section, l);
         }
         if ("precomp".equals(l.type))
         {
@@ -8896,6 +11971,81 @@ public class UICompositorPanel extends UIDashboardPanel
         this.save();
     }
 
+    /* ------------------------------------------------------- quick panel API */
+
+    /** Width of the quick panel; the panel itself calls this while its grip is dragged. */
+    public void setQuickPanelWidth(int width)
+    {
+        this.quickPanelWidth = Math.max(160, Math.min(340, width));
+        this.applyLayout();
+
+        if (this.project != null && this.project.settings != null)
+        {
+            this.project.settings.quickPanelWidth = this.quickPanelWidth;
+        }
+    }
+
+    public void quickSetX(double value) { this.setTransformX(value); }
+    public void quickSetY(double value) { this.setTransformY(value); }
+    public void quickSetRotation(double value) { this.setTransformRotation(value); }
+
+    public void quickSetZ(double value)
+    {
+        if (this.selectedLayer == null)
+        {
+            return;
+        }
+
+        this.selectedLayer.z = (float) value;
+        this.setScalar(this.selectedLayer, "z", (float) value);
+        this.save();
+    }
+
+    public void quickSetScale(double percent)
+    {
+        if (this.selectedLayer == null)
+        {
+            return;
+        }
+
+        float scale = Math.max(0.01F, (float) percent / 100F);
+
+        this.setTransformComponent(3, scale);
+        this.setTransformComponent(4, scale);
+        this.save();
+    }
+
+    public void quickSetOpacity(double percent)
+    {
+        if (this.selectedLayer == null)
+        {
+            return;
+        }
+
+        float opacity = Math.max(0F, Math.min(1F, (float) percent / 100F));
+
+        this.selectedLayer.opacity = opacity;
+
+        if (!this.selectedLayer.opacityChannel().getKeyframes().isEmpty())
+        {
+            this.selectedLayer.opacityChannel().insert(this.getFrame(), opacity);
+        }
+
+        this.refreshSheets();
+        this.save();
+    }
+
+    public void quickKeyTransform() { this.addTransformKey(true); }
+    public void quickKeyOpacity() { this.addOpacityKey(); }
+
+    public void quickKeyZ()
+    {
+        if (this.selectedLayer != null)
+        {
+            this.addScalarKey(this.selectedLayer, "z");
+        }
+    }
+
     private void setTransformX(double value) { this.setTransformComponent(0, (float) value); }
     private void setTransformY(double value) { this.setTransformComponent(1, (float) value); }
     private void setTransformRotation(double value) { this.setTransformComponent(2, (float) value); }
@@ -8972,11 +12122,18 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        String presetId = this.queuePreset.getValue();
+
+        if (presetId == null || presetId.isBlank())
+        {
+            presetId = "review_h264";
+        }
+
         CompRenderJob job = new CompRenderJob(
             "job_" + (this.project.renderQueue.size() + 1),
             this.project.id,
             this.doc.id,
-            this.queuePreset.getText().isBlank() ? "review_h264" : this.queuePreset.getText()
+            presetId
         );
 
         job.outputName = this.queueName.getText().isBlank() ? this.doc.id : this.queueName.getText();
@@ -8986,21 +12143,50 @@ public class UICompositorPanel extends UIDashboardPanel
         this.selectedJob = job;
         this.refreshQueue();
         this.save();
+
+        CompOutputPreset preset = this.project.getPreset(presetId);
+
+        this.setStatus("已添加任务：" + job.outputName + " · " + (preset == null ? presetId : preset.name));
     }
 
-    private void cyclePreset()
+    /* Output-module naming, shared by the chooser, the queue rows and the buttons. */
+
+    /** Display name of an output module id; unknown ids show themselves rather than lying. */
+    private String presetLabel(String id)
     {
-        if (this.project == null || this.project.outputPresets.isEmpty())
+        CompOutputPreset preset = this.project == null ? null : this.project.getPreset(id);
+
+        if (preset == null || preset.name == null || preset.name.isBlank())
         {
-            return;
+            return id;
         }
 
-        this.presetIndex = (this.presetIndex + 1) % this.project.outputPresets.size();
+        return preset.name;
+    }
 
-        CompOutputPreset preset = this.project.outputPresets.get(this.presetIndex);
+    /** "视频" / "音频" for the chooser icon and the queue list. */
+    private String presetKind(String id)
+    {
+        CompOutputPreset preset = this.project == null ? null : this.project.getPreset(id);
 
-        this.queuePreset.setText(preset.id);
-        this.queueName.setText(this.doc == null ? "comp" : this.doc.id);
+        if (preset == null)
+        {
+            return id != null && id.startsWith("audio") ? "音频" : "视频";
+        }
+
+        if ("audio".equals(preset.kind))
+        {
+            return "音频";
+        }
+
+        return "wav".equalsIgnoreCase(preset.container) ? "音频" : "视频";
+    }
+
+    private String defaultOutputName(String presetId)
+    {
+        String name = this.doc == null ? "comp" : this.doc.id;
+
+        return "音频".equals(this.presetKind(presetId)) ? name + "_audio" : name;
     }
 
     private void openExportFolder()
@@ -9021,6 +12207,43 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /* Host lifecycle */
+
+    /**
+     * Keeps preview audio on the playhead.
+     *
+     * <p>One place instead of a hook in every transport action: the audio is a function of
+     * {@code (playing, ae mode, has audio, playhead)}, so it is derived every frame. Scrubbing while
+     * paused therefore never starts a sound, and any code that sets {@code playing = false} stops it
+     * without having to remember to.</p>
+     */
+    private void syncPreviewAudio()
+    {
+        CompProject.CompSettings settings = this.project == null ? null : this.project.settings;
+        boolean enabled = this.playing
+            && this.usesAeEncoder()
+            && settings != null && settings.previewAudio
+            && this.doc != null && dev.bbsae.client.audio.CompAudioPlayer.hasAudio(this.doc);
+
+        if (enabled)
+        {
+            if (!this.previewAudioRunning)
+            {
+                this.previewAudioRunning = true;
+                dev.bbsae.client.audio.CompAudioPlayer.play(this.project, this.doc, this.time);
+            }
+
+            dev.bbsae.client.audio.CompAudioPlayer.sync(this.time);
+        }
+        else if (this.previewAudioRunning)
+        {
+            this.previewAudioRunning = false;
+            dev.bbsae.client.audio.CompAudioPlayer.pause();
+        }
+
+        /* Drains the mixer thread; must run even when disabled so a mix started a moment ago is
+         * picked up (or dropped) instead of leaking. */
+        dev.bbsae.client.audio.CompAudioPlayer.tick();
+    }
 
     /** The keyframe editor is built before the panel is laid out: adding sheets at 0x0 leaves its
      *  dope sheet cache empty, which is why the timeline looked blank until something was clicked.
@@ -9303,6 +12526,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (key == GLFW.GLFW_KEY_ESCAPE && pressed)
         {
+            if (this.importBrowser != null)
+            {
+                this.closeImportBrowser();
+
+                return true;
+            }
+
             if (this.assetBrowser != null)
             {
                 this.assetBrowser.removeFromParent();
@@ -9345,10 +12575,15 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         }
 
-        if (this.assetBrowser != null || this.modalLayer.isVisible())
+        if (this.assetBrowser != null || this.importBrowser != null || this.modalLayer.isVisible())
         {
             return super.subKeyPressed(context);
         }
+        if (this.viewportMode && pressed && !typing && this.subViewportKey(key))
+        {
+            return true;
+        }
+
         boolean repeatable = key == GLFW.GLFW_KEY_LEFT || key == GLFW.GLFW_KEY_RIGHT
             || key == GLFW.GLFW_KEY_UP || key == GLFW.GLFW_KEY_DOWN;
 
@@ -9376,8 +12611,23 @@ public class UICompositorPanel extends UIDashboardPanel
             if (key == GLFW.GLFW_KEY_M && shift) { this.jumpMarker(1); return true; }
             if (key == GLFW.GLFW_KEY_C && !alt) { this.splitSelectedAtPlayhead(); return true; }
             if (key == GLFW.GLFW_KEY_BACKSLASH) { this.trackTimeline.fit(); return true; }
-            if (key == GLFW.GLFW_KEY_EQUAL || key == GLFW.GLFW_KEY_KP_ADD) { this.trackTimeline.zoom(1D); return true; }
-            if (key == GLFW.GLFW_KEY_MINUS || key == GLFW.GLFW_KEY_KP_SUBTRACT) { this.trackTimeline.zoom(-1D); return true; }
+            /* =/- zoom time; Alt+=/- zoom the tracks themselves (row height), mirroring
+             * Alt+wheel. Both used to be "nothing happens" (see UICompTrackTimeline.zoomAt). */
+            if (key == GLFW.GLFW_KEY_EQUAL || key == GLFW.GLFW_KEY_KP_ADD)
+            {
+                if (alt) this.trackTimeline.stepRowHeight(2);
+                else this.trackTimeline.zoom(1D);
+
+                return true;
+            }
+
+            if (key == GLFW.GLFW_KEY_MINUS || key == GLFW.GLFW_KEY_KP_SUBTRACT)
+            {
+                if (alt) this.trackTimeline.stepRowHeight(-2);
+                else this.trackTimeline.zoom(-1D);
+
+                return true;
+            }
             if (key == GLFW.GLFW_KEY_LEFT_BRACKET && !alt) { this.trimSelectedToPlayhead(true); return true; }
             if (key == GLFW.GLFW_KEY_RIGHT_BRACKET && !alt) { this.trimSelectedToPlayhead(false); return true; }
             if (key == GLFW.GLFW_KEY_COMMA) { this.navigateKeyframe(-1); return true; }
@@ -9834,7 +13084,8 @@ public class UICompositorPanel extends UIDashboardPanel
         list.add(new String[] {"S", "吸附开关"});
         list.add(new String[] {"M", "添加合成标记"});
         list.add(new String[] {"Shift + M / Ctrl + Shift + M", "下一个 / 上一个标记"});
-        list.add(new String[] {"= / -", "时间轴放大 / 缩小"});
+        list.add(new String[] {"= / -", "时间轴放大 / 缩小（1.35× 一档）"});
+        list.add(new String[] {"Alt + = / -", "轨道高度放大 / 缩小（同 Alt+滚轮）"});
         list.add(new String[] {"\\", "时间轴适配全长"});
         list.add(new String[] {"F", "聚焦预览"});
         list.add(new String[] {"Alt + K", "在播放头添加变换关键帧"});
@@ -9866,6 +13117,125 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.modalBox.add(scroll);
         this.modalBox.add(this.modalButton("关闭", 16, 394, 488, this::closeModal));
+    }
+
+    /**
+     * Files dropped on the game window.
+     *
+     * <p>Routing by extension is the whole feature: a user drags a png, an mp4, a wav or a font and
+     * it becomes the thing that type means here — an image layer, a footage layer (via the FFmpeg
+     * importer), an audio clip, a text layer with that font. No dialog, no "which menu was it in".</p>
+     */
+    public void handleDroppedFiles(java.util.List<java.nio.file.Path> files)
+    {
+        if (this.project == null || this.doc == null)
+        {
+            this.setStatus("先打开一个工程，再把文件拖进来");
+
+            return;
+        }
+
+        int imported = 0;
+
+        for (java.nio.file.Path path : files)
+        {
+            if (path == null || !java.nio.file.Files.isRegularFile(path))
+            {
+                continue;
+            }
+
+            String name = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+
+            try
+            {
+                if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".gif"))
+                {
+                    this.importDroppedImage(path.toFile());
+                    imported++;
+                }
+                else if (name.endsWith(".mp4") || name.endsWith(".mov") || name.endsWith(".mkv")
+                    || name.endsWith(".webm") || name.endsWith(".avi") || name.endsWith(".m4v"))
+                {
+                    this.importVideoFile(path.toFile());
+                    imported++;
+                }
+                else if (name.endsWith(".wav") || name.endsWith(".ogg"))
+                {
+                    this.addAudioClip(path.toFile());
+                    imported++;
+                }
+                else if (name.endsWith(".ttf") || name.endsWith(".otf"))
+                {
+                    this.dropFont(path.toFile());
+                    imported++;
+                }
+                else
+                {
+                    this.setStatus("不支持的文件类型：" + path.getFileName());
+                }
+            }
+            catch (Exception e)
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.error("Could not import dropped file {}", path, e);
+                this.notifyError("导入失败：" + path.getFileName() + " · " + e.getMessage());
+            }
+        }
+
+        if (imported > 0)
+        {
+            this.refreshLayers();
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已从拖放导入 " + imported + " 个文件");
+        }
+    }
+
+    /** A dropped picture becomes an image layer sized to fit the composition. */
+    private void importDroppedImage(java.io.File file) throws java.io.IOException
+    {
+        String name = this.copyIntoProjectImages(file);
+        CompLayer layer = new CompLayer("image", name, "image");
+
+        layer.imagePath = "assets/images/" + name;
+        layer.x = this.doc.width / 2F;
+        layer.y = this.doc.height / 2F;
+        layer.out = this.doc.duration;
+
+        java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(
+            CompStore.assetRoot(this.project.id).resolve("images").resolve(name).toFile());
+
+        if (image != null)
+        {
+            float scale = Math.min(1F, Math.min(this.doc.width * 0.8F / image.getWidth(), this.doc.height * 0.8F / image.getHeight()));
+
+            layer.width = Math.max(16F, image.getWidth() * scale);
+            layer.height = Math.max(16F, image.getHeight() * scale);
+        }
+
+        this.doc.addLayer(layer);
+        this.selectLayer(layer);
+        this.setStatus("已拖入图片：" + name);
+    }
+
+    /** A dropped font applies to the selected text layer, or creates one. */
+    private void dropFont(java.io.File file)
+    {
+        CompLayer layer = this.selectedLayer;
+
+        if (layer == null || !"text".equals(layer.type))
+        {
+            CompLayer text = new CompLayer("text", file.getName(), "text");
+
+            text.text = "Sample Text";
+            text.x = this.doc.width / 2F;
+            text.y = this.doc.height / 2F;
+            text.out = this.doc.duration;
+            this.doc.addLayer(text);
+            this.selectLayer(text);
+            layer = text;
+        }
+
+        this.importFontFile(layer, file);
     }
 
     public void startRenderFrame(float tickDelta)
@@ -9907,6 +13277,34 @@ public class UICompositorPanel extends UIDashboardPanel
     @Override
     public void render(UIContext context)
     {
+        boolean wantQuick = this.selectedLayer != null && !this.renderView && !this.focusMode;
+
+        if (this.quickPanel != null && this.quickPanel.isVisible() != wantQuick)
+        {
+            this.quickPanel.setVisible(wantQuick);
+            this.applyLayout();
+        }
+
+        if (this.area.w > 0 && this.area.h > 0
+            && (this.area.w != this.lastLayoutWidth || this.area.h != this.lastLayoutHeight))
+        {
+            this.lastLayoutWidth = this.area.w;
+            this.lastLayoutHeight = this.area.h;
+            this.applyLayout();
+        }
+
+        this.syncPreviewAudio();
+
+        /* Opaque backdrop, unconditionally.
+         *
+         * The dashboard draws its own background from BBSSettings, which is intentionally a
+         * translucent dark layer over the (blurred) world so BBS panels feel like an overlay. That
+         * is wrong for an editor: a compositor UI with the game shining through makes every label
+         * harder to read and makes the preview look like it is floating. Painting the panel's own
+         * rect here means "no transparency" does not depend on a global setting the user cannot
+         * find. */
+        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF0E1116);
+
         this.primeTimeline();
         this.reconcileTimelinePage();
         this.captureSnapshot();
@@ -10053,6 +13451,11 @@ public class UICompositorPanel extends UIDashboardPanel
         float duration = this.doc == null ? 1F : Math.max(0.001F, this.doc.duration);
 
         this.time = Math.max(0F, Math.min(duration, time));
+
+        if (this.previewAudioRunning)
+        {
+            dev.bbsae.client.audio.CompAudioPlayer.seek(this.time);
+        }
     }
 
     public float getFrame()
@@ -10115,6 +13518,51 @@ public class UICompositorPanel extends UIDashboardPanel
             case CompLayer.BLEND_COLOR_BURN -> "颜色加深";
             default -> "正常";
         };
+    }
+
+    /**
+     * Applies the selected layer as a mask (intersection) or an exclude (difference) for the layer
+     * directly <b>below</b> it.
+     *
+     * <p>Layer order is bottom-first: index 0 is drawn first, so "visually below" is {@code index-1}
+     * and "above" is {@code index+1}. Alight Motion's flow is "put the shape above, select it, press
+     * mask", which means the *target* is the previous element.</p>
+     *
+     * <p>The shape itself stops being visible (it becomes a guide) — otherwise the fill would cover
+     * exactly the region it is supposed to reveal. Toggling its eye brings it back for editing.</p>
+     */
+    private void applyMatteToBelow(CompLayer source, boolean exclude)
+    {
+        if (this.doc == null || source == null)
+        {
+            return;
+        }
+
+        int index = this.doc.layers.indexOf(source);
+        CompLayer target = index > 0 ? this.doc.layers.get(index - 1) : null;
+
+        if (target == null)
+        {
+            this.setStatus("这一层下面没有图层：把形状层放到要蒙版的图层上方");
+
+            return;
+        }
+
+        this.beginAction(exclude ? "排除蒙版" : "蒙版");
+        target.trackMatteId = source.id;
+        target.trackMatteEnabled = true;
+        target.trackMatteMode = exclude ? CompLayer.MATTE_ALPHA_INVERTED : CompLayer.MATTE_ALPHA;
+
+        /* The shape becomes a guide: visible while editing, never part of the frame. */
+        source.guide = true;
+        source.visible = false;
+
+        this.selectLayer(target);
+        this.refreshLayers();
+        this.refreshInspector();
+        this.save();
+        this.setStatus((exclude ? "排除" : "蒙版") + "：" + this.layerLabel(target)
+            + " ← " + this.layerLabel(source) + "（形状层已隐藏，点眼睛可显示）");
     }
 
     private static String matteName(int mode)

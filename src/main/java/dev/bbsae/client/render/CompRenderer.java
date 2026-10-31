@@ -106,6 +106,11 @@ public final class CompRenderer
             return;
         }
 
+        /* The entity matte is a per-frame product of the world render. Normally the
+         * AFTER_ENTITIES pass already produced it; this only renders when the frame has not been
+         * masked yet (the first frame after opening a project or changing the selection). */
+        dev.bbsae.client.render.ReplayEntityMask.ensureCurrent(project, doc);
+
         float fps = Math.max(1F, doc.fps);
         int frameIndex = Math.round(Math.max(0F, time) * fps);
 
@@ -119,9 +124,14 @@ public final class CompRenderer
             return;
         }
 
+        /* A composition that samples the live world (a BBS preview layer or a depth-keyed entity
+         * layer) must not be served from the content cache: its pixels change when the film moves
+         * even though the document did not. */
+        boolean liveWorld = CompPrecache.dependsOnLiveWorld(doc);
+
         /* 2. A curve edit outside the playhead's segment cannot change this frame. Reuse the
          *    pixels instead of hashing the document and re-running the graph. */
-        if (CompRenderCache.reuseForTime(time, frameIndex))
+        if (!liveWorld && CompRenderCache.reuseForTime(time, frameIndex))
         {
             blit(batcher, CompRenderCache.get(), doc, alpha, frameWidth, frameHeight, fit);
 
@@ -131,7 +141,7 @@ public final class CompRenderer
         float scale = previewScale(doc, frameWidth, frameHeight, fit);
         long signature = CompRenderCache.signature(project, doc, time, renderEffects, renderMasks, fit, Math.round(frameWidth), Math.round(frameHeight), cameraOverlays) ^ ((long) Math.round(scale * 1000F) << 48);
 
-        if (CompRenderCache.matches(signature, doc, doc.width, doc.height))
+        if (!liveWorld && CompRenderCache.matches(signature, doc, doc.width, doc.height))
         {
             blit(batcher, CompRenderCache.get(), doc, alpha, frameWidth, frameHeight, fit);
 
@@ -147,8 +157,54 @@ public final class CompRenderer
 
         /* The cache owns this framebuffer now; releasing it here would hand a live texture back to
          * the pool and the next layer would draw over the cached frame. */
-        CompRenderCache.put(composition, signature, doc, doc.width, doc.height, frameIndex);
+        if (!liveWorld)
+        {
+            CompRenderCache.put(composition, signature, doc, doc.width, doc.height, frameIndex);
+        }
+
         blit(batcher, composition, doc, alpha, frameWidth, frameHeight, fit);
+    }
+
+    /**
+     * AE-encoder preview: the playhead's <b>frame</b>, not a slice of screen time.
+     *
+     * <p>BBS mode ({@link #renderCached}) renders at the panel's resolution and at whatever moment
+     * the display refresh lands on, because it is an overlay on a game frame. AE mode renders the
+     * composition's own frame at the composition's own resolution and displays it scaled — which is
+     * why the picture cannot drift from the export, and why scrubbing back to a frame is free once
+     * the pre-render cache or the frame server has it.</p>
+     *
+     * <p>Effects and masks are always on here: an A/B toggle that changes the preview but not the
+     * exported file is exactly the surprise this mode exists to remove.</p>
+     */
+    public static void renderFrameCached(CompProject project, CompDocument doc, float time, float alpha, float frameWidth, float frameHeight, int fit, float proxy, Batcher2D batcher)
+    {
+        if (project == null || doc == null || batcher == null || frameWidth <= 0F || frameHeight <= 0F)
+        {
+            return;
+        }
+
+        dev.bbsae.client.render.ReplayEntityMask.ensureCurrent(project, doc);
+
+        int frame = CompFrameServer.frameOf(doc, time);
+        float scale = Math.max(0.05F, Math.min(1F, proxy));
+
+        /* Green-bar pre-render first: it is a disk cache of exactly these frames. */
+        GlTexture precached = CompPrecache.texture(project, doc, frame);
+
+        if (precached != null)
+        {
+            blitTexture(batcher, precached.id, doc, alpha, frameWidth, frameHeight, fit);
+
+            return;
+        }
+
+        GlFramebuffer framebuffer = CompFrameServer.frame(project, doc, frame, false, scale);
+
+        if (framebuffer != null)
+        {
+            blitTexture(batcher, framebuffer.color.id, doc, alpha, frameWidth, frameHeight, fit);
+        }
     }
 
     /**
@@ -190,10 +246,15 @@ public final class CompRenderer
 
     private static GlFramebuffer renderToTexture(CompProject project, CompDocument doc, float time, boolean captureDepth, boolean renderEffects, boolean renderMasks, boolean preview, Matrix4f projection)
     {
-        return renderToTexture(project, doc, time, captureDepth, renderEffects, renderMasks, preview, projection, 1F);
+        return renderToTexture(project, doc, time, captureDepth, renderEffects, renderMasks, preview, projection, 1F, false);
     }
 
     private static GlFramebuffer renderToTexture(CompProject project, CompDocument doc, float time, boolean captureDepth, boolean renderEffects, boolean renderMasks, boolean preview, Matrix4f projection, float scale)
+    {
+        return renderToTexture(project, doc, time, captureDepth, renderEffects, renderMasks, preview, projection, scale, false);
+    }
+
+    private static GlFramebuffer renderToTexture(CompProject project, CompDocument doc, float time, boolean captureDepth, boolean renderEffects, boolean renderMasks, boolean preview, Matrix4f projection, float scale, boolean transparentStage)
     {
         if (project == null || doc == null || doc.layers == null || doc.layers.isEmpty())
         {
@@ -237,7 +298,7 @@ public final class CompRenderer
 
             try
             {
-                composition = renderCompToFbo(project, doc, time, depth, projection, client.gameRenderer.getCamera(), new HashSet<>(), fboBatcher, 0, renderEffects, renderMasks, preview, scale);
+                composition = renderCompToFbo(project, doc, time, depth, projection, client.gameRenderer.getCamera(), new HashSet<>(), fboBatcher, 0, renderEffects, renderMasks, preview, scale, transparentStage);
             }
             finally
             {
@@ -351,6 +412,72 @@ public final class CompRenderer
 
     public static GlFramebuffer renderOffscreen(CompProject project, CompDocument doc, float time, Batcher2D batcher)
     {
+        return renderOffscreen(project, doc, time, batcher, false);
+    }
+
+    /**
+     * @param transparentStage true for alpha output modules: the frame keeps transparency instead
+     *        of being flattened onto the document background.
+     */
+    public static GlFramebuffer renderOffscreen(CompProject project, CompDocument doc, float time, Batcher2D batcher, boolean transparentStage)
+    {
+        if (doc == null)
+        {
+            return null;
+        }
+
+        return renderFrame(project, doc, frameIndex(doc, time), transparentStage);
+    }
+
+    /** Quantised frame index for a time, clamped to the composition. */
+    public static int frameIndex(CompDocument doc, float time)
+    {
+        if (doc == null)
+        {
+            return 0;
+        }
+
+        int frames = Math.max(1, Math.round(Math.max(0.01F, doc.duration) * Math.max(1F, doc.fps)));
+
+        return Math.max(0, Math.min(frames - 1, Math.round(Math.max(0F, time) * doc.fps)));
+    }
+
+    /**
+     * One composition frame, deterministically.
+     *
+     * <p>This is the only way a frame leaves the compositor: frame N is evaluated at N / fps, at
+     * composition resolution, with editor chrome (empty-precomp placeholders, guide layers,
+     * selection) suppressed. The preview's AE mode and the render queue both call it, so "what the
+     * playhead shows" and "what the encoder writes" are the same function of (document, frame) --
+     * the property that makes a compositor usable as an editor instead of a screen recorder.</p>
+     *
+     * @param transparentStage true for alpha output modules (the stage keeps its alpha).
+     */
+    public static GlFramebuffer renderFrame(CompProject project, CompDocument doc, int frame, boolean transparentStage)
+    {
+        return renderFrame(project, doc, frame, transparentStage, 1F);
+    }
+
+    /**
+     * Same frame, rendered into a smaller raster.
+     *
+     * <p>The scale only exists for the AE preview's proxy mode (see {@code settings.encoderProxy});
+     * an export always asks for {@code 1}. It is a parameter here rather than a separate path so a
+     * proxy frame and a full frame can never disagree about <em>what</em> they show — only about
+     * how many pixels they use to show it.</p>
+     */
+    public static GlFramebuffer renderFrame(CompProject project, CompDocument doc, int frame, boolean transparentStage, float scale)
+    {
+        if (project == null || doc == null)
+        {
+            return null;
+        }
+
+        float fps = Math.max(1F, doc.fps);
+        int frames = Math.max(1, Math.round(Math.max(0.01F, doc.duration) * fps));
+        int clamped = Math.max(0, Math.min(frames - 1, frame));
+        float clampedScale = Math.max(0.05F, Math.min(1F, scale));
+
         try (GlStateGuard guard = new GlStateGuard())
         {
             CompShaders.init();
@@ -358,7 +485,7 @@ public final class CompRenderer
 
             try
             {
-                return renderCompToFbo(project, doc, time, null, null, null, new HashSet<>(), batcher, 0, true, true, true, 1F);
+                return renderToTexture(project, doc, clamped / fps, false, true, true, false, null, clampedScale, transparentStage);
             }
             finally
             {
@@ -419,6 +546,15 @@ public final class CompRenderer
 
     static GlFramebuffer renderCompToFbo(CompProject project, CompDocument comp, float time, SceneDepth depth, Matrix4f projection, Camera camera, Set<String> stack, Batcher2D batcher, int recursion, boolean renderEffects, boolean renderMasks, boolean preview, float scale)
     {
+        return renderCompToFbo(project, comp, time, depth, projection, camera, stack, batcher, recursion, renderEffects, renderMasks, preview, scale, false);
+    }
+
+    /**
+     * @param transparentStage clears the stage with alpha 0 instead of {@link CompDocument#background}.
+     *        Used by the BBS-backdrop preview (the world must show through) and by alpha exports.
+     */
+    static GlFramebuffer renderCompToFbo(CompProject project, CompDocument comp, float time, SceneDepth depth, Matrix4f projection, Camera camera, Set<String> stack, Batcher2D batcher, int recursion, boolean renderEffects, boolean renderMasks, boolean preview, float scale, boolean transparentStage)
+    {
         if (comp == null || comp.layers == null || comp.layers.isEmpty() || recursion > 8 || stack.contains(comp.id))
         {
             return null;
@@ -438,7 +574,7 @@ public final class CompRenderer
 
         GL11.glGetIntegerv(GL11.GL_VIEWPORT, previousViewport);
 
-        accumulation.begin(comp.background);
+        accumulation.begin(stageColor(project, comp, preview, transparentStage));
 
         boolean solo = false;
 
@@ -525,9 +661,14 @@ public final class CompRenderer
 
                 Matrix4f effectSpace = effectSpace(context, layer, model);
 
+                /* 3D layers with effects were drawn from the layer-space raster above, which
+                 * already contains them; applying them again in composition space would double the
+                 * effect and re-introduce the sliding gradient. */
+                boolean effectsBaked = layer.threeD && hasEnabledEffects(layer);
+
                 for (CompEffect effect : layer.effects)
                 {
-                    if (renderEffects && effect != null && effect.enabled)
+                    if (renderEffects && !effectsBaked && effect != null && effect.enabled)
                     {
                         CompEffect resolved = layer.resolveEffect(effect, context.frame);
                         GlFramebuffer processed = EffectRenderer.apply(layer, resolved, content, context, effectSpace);
@@ -578,6 +719,35 @@ public final class CompRenderer
     }
 
     /**
+     * Colour the composition stage is cleared with.
+     *
+     * <p>Three different questions, one answer each:</p>
+     * <ul>
+     *   <li><b>BBS backdrop preview</b> — the world frame is drawn <em>behind</em> the composition,
+     *       so the stage must be transparent or the backdrop is invisible. This is why making the
+     *       document background opaque cannot simply be the whole story.</li>
+     *   <li><b>Alpha export</b> — the file must carry transparency, so the stage is cleared to 0
+     *       regardless of the document colour.</li>
+     *   <li><b>Everything else</b> — the document's own background, which is an opaque colour by
+     *       default (a transparent stage made the preview read as "the compositor is empty").</li>
+     * </ul>
+     */
+    private static int stageColor(CompProject project, CompDocument comp, boolean preview, boolean transparentStage)
+    {
+        if (transparentStage)
+        {
+            return 0;
+        }
+
+        if (preview && project != null && project.settings != null && project.settings.previewBackground == 1)
+        {
+            return 0;
+        }
+
+        return comp == null ? 0xFF000000 : comp.background;
+    }
+
+    /**
      * Effects and styles work in layer-local UV space. For 2D layers that space is the camera-view
      * model matrix; a 3D layer keeps its world matrix (a perspective homography cannot be expressed
      * as the affine map those effects expect).
@@ -592,7 +762,7 @@ public final class CompRenderer
      * their stack position, because an adjustment layer affects exactly the pixels accumulated
      * before it.
      */
-    private static List<CompLayer> orderLayers(CompDocument comp, CompRenderContext context)
+    static List<CompLayer> orderLayers(CompDocument comp, CompRenderContext context)
     {
         List<CompLayer> order = new ArrayList<>(comp.layers);
         int start = 0;
@@ -640,7 +810,7 @@ public final class CompRenderer
 
         /* Ascending depth = far first. CompScene caches the value for this frame, so the comparator
          * does a map lookup instead of rebuilding two matrices per comparison. */
-        three.sort((a, b) -> Float.compare(CompScene.depth(context, a), CompScene.depth(context, b)));
+        three.sort((a, b) -> Float.compare(CompScene.planeDepth(context, a), CompScene.planeDepth(context, b)));
 
         for (int i = 0; i < slots.size(); i++)
         {
@@ -655,6 +825,21 @@ public final class CompRenderer
 
     private static GlFramebuffer renderLayerContent(CompLayer layer, CompRenderContext context, Matrix4f model, Matrix4f layerProjection, Set<String> stack, Batcher2D batcher)
     {
+        /* A 3D layer with effects is drawn from its layer-space raster.
+         *
+         * <p>Effects are a property of the layer's pixels, not of the composition: a gradient must
+         * stay glued to the layer when the camera moves. The composition pipeline used to apply
+         * them in composition space (because it rasterized there), which made every 3D layer's
+         * gradient slide across the plane while the shot moved. The viewport already bakes them in
+         * layer space; this path makes the exported frame agree with it.</p>
+         */
+        GlFramebuffer baked = renderBaked3D(layer, context, model, layerProjection, batcher);
+
+        if (baked != null)
+        {
+            return baked;
+        }
+
         GlFramebuffer target = FboPool.acquire(context.renderWidth(), context.renderHeight());
 
         target.begin();
@@ -684,6 +869,115 @@ public final class CompRenderer
         }
 
         return target;
+    }
+
+    /** Cells per axis when a baked 3D layer is drawn as a projected quad. */
+    private static final int BAKED_CELLS = 8;
+
+    /**
+     * Draws a 3D layer from its layer-space raster (content + effects), or returns null when the
+     * layer has no enabled effects (the direct path is cheaper and already correct).
+     */
+    private static GlFramebuffer renderBaked3D(CompLayer layer, CompRenderContext context, Matrix4f model,
+                                               Matrix4f layerProjection, Batcher2D batcher)
+    {
+        if (!layer.threeD || layer.effects == null || layer.effects.isEmpty() || "camera".equals(layer.type)
+            || "adjustment".equals(layer.type))
+        {
+            return null;
+        }
+
+        boolean hasEffect = false;
+
+        for (CompEffect effect : layer.effects)
+        {
+            if (effect != null && effect.enabled)
+            {
+                hasEffect = true;
+
+                break;
+            }
+        }
+
+        if (!hasEffect)
+        {
+            return null;
+        }
+
+        CompLayerSourceCache.Entry source = CompLayerSourceCache.get(layer, context, batcher);
+
+        if (source == null)
+        {
+            return null;
+        }
+
+        GlFramebuffer target = FboPool.acquire(context.renderWidth(), context.renderHeight());
+        MatrixStack stack = batcher.getContext().getMatrices();
+
+        target.begin();
+        BufferRenderer.resetCurrentVertexBuffer();
+
+        stack.push();
+        stack.peek().getPositionMatrix().set(model);
+        RenderSystem.setProjectionMatrix(layerProjection, VertexSorter.BY_Z);
+
+        try
+        {
+            float x0 = source.localX;
+            float y0 = source.localY;
+            float w = Math.max(1F, source.localWidth);
+            float h = Math.max(1F, source.localHeight);
+            float texW = source.texture.width;
+            float texH = source.texture.height;
+            float stepX = w / BAKED_CELLS;
+            float stepY = h / BAKED_CELLS;
+
+            for (int j = 0; j < BAKED_CELLS; j++)
+            {
+                for (int i = 0; i < BAKED_CELLS; i++)
+                {
+                    float lx0 = x0 + i * stepX;
+                    float ly0 = y0 + j * stepY;
+                    float lx1 = lx0 + stepX;
+                    float ly1 = ly0 + stepY;
+
+                    /* straight alpha raster: u across, v up (the raster was drawn y-down).
+                     *
+                     * texturedBox takes the two UV *corners* in the same order as the quad corners
+                     * (top-left first): (u, v) is the top-left, (uw, uh) the bottom-right. Passing
+                     * them the other way round flipped every baked 3D layer vertically — invisible
+                     * on a horizontal gradient, but a vertical/diagonal gradient came out with its
+                     * colours reversed and any text upside down. */
+                    float u0 = (lx0 - x0) / w;
+                    float u1 = (lx1 - x0) / w;
+                    float vTop = 1F - (ly0 - y0) / h;
+                    float vBottom = 1F - (ly1 - y0) / h;
+
+                    batcher.texturedBox(source.texture.color.id, 0xFFFFFFFF,
+                        lx0, ly0, stepX, stepY,
+                        u0 * texW, vTop * texH, u1 * texW, vBottom * texH,
+                        (int) texW, (int) texH);
+                }
+            }
+
+            batcher.flush();
+        }
+        finally
+        {
+            stack.pop();
+            RenderSystem.setProjectionMatrix(GlStateGuard.ortho(context.width, context.height), VertexSorter.BY_Z);
+            BufferRenderer.resetCurrentVertexBuffer();
+        }
+
+        /* Straight alpha content in a transparent target: same conversion every other layer does. */
+        GlFramebuffer straightened = PassRenderer.unpremultiply(target);
+
+        if (straightened != target)
+        {
+            FboPool.release(target);
+        }
+
+        return straightened;
     }
 
     private static GlFramebuffer applyAdjustment(CompLayer layer, GlFramebuffer original, CompRenderContext context, Set<String> stack, Batcher2D batcher)
@@ -774,6 +1068,24 @@ public final class CompRenderer
         }
 
         return content;
+    }
+
+    private static boolean hasEnabledEffects(CompLayer layer)
+    {
+        if (layer.effects == null)
+        {
+            return false;
+        }
+
+        for (CompEffect effect : layer.effects)
+        {
+            if (effect != null && effect.enabled)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static float opacityAt(CompLayer layer, CompRenderContext context)
@@ -882,6 +1194,10 @@ public final class CompRenderer
     /** Called from BBS resource reload / client shutdown. */
     public static void clearCaches()
     {
+        /* The viewport's source textures own FBOs from the pool; return them before the pool is
+         * wiped, otherwise a later acquire can hand out a deleted texture. */
+        CompLayerSourceCache.clear();
+        CompViewportRenderer.clearCaches();
         FboPool.clear();
         CompRenderCache.clear();
         CompPrecache.clearAll();
@@ -902,6 +1218,11 @@ public final class CompRenderer
     /** Exposed for the render queue, which needs a composition texture without drawing it. */
     public static GlFramebuffer renderForExport(CompProject project, CompDocument comp, float time, Batcher2D batcher)
     {
-        return renderOffscreen(project, comp, time, batcher);
+        return renderForExport(project, comp, time, batcher, false);
+    }
+
+    public static GlFramebuffer renderForExport(CompProject project, CompDocument comp, float time, Batcher2D batcher, boolean alpha)
+    {
+        return renderFrame(project, comp, frameIndex(comp, time), alpha);
     }
 }

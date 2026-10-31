@@ -124,7 +124,7 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
                         continue;
                     }
 
-                    if (BbsPreviewBridge.hasBbsPreviewLayer(doc))
+                    if (BbsPreviewBridge.needsWorldFrame(doc))
                     {
                         BbsPreviewBridge.requestWorldCapture(true);
 
@@ -135,6 +135,15 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
                         {
                             BbsPreviewBridge.captureWorldNow();
                         }
+                    }
+
+                    if (hasEntityLayer(doc))
+                    {
+                        /* The depth copy and the entity mask are both per world frame. Ask for
+                         * the depth for the next one, and let the mask re-render itself here if
+                         * this frame predates the composition (first frame of an export). */
+                        BbsPreviewBridge.requestDepth(true);
+                        dev.bbsae.client.render.ReplayEntityMask.ensureCurrent(project, doc);
                     }
 
                     CompRenderer.render(project, doc, time, instance.opacity, width, height, instance.fit, false, true, worldProjection, batcher);
@@ -180,6 +189,25 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
 
             ui.pop();
         }
+    }
+
+    /** True when the composition keys replay entities, i.e. it needs the depth mask. */
+    private static boolean hasEntityLayer(CompDocument doc)
+    {
+        if (doc == null || doc.layers == null)
+        {
+            return false;
+        }
+
+        for (dev.bbsae.comp.CompLayer layer : doc.layers)
+        {
+            if (layer != null && layer.visible && layer.isEntityLayer())
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static long lastTrace;

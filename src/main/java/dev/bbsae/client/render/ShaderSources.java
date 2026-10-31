@@ -1320,4 +1320,130 @@ public final class ShaderSources
         }
         """;
 
+    /**
+     * Depth-keyed replay entity matte.
+     *
+     * <p>The layer has three inputs from the same rendered frame: the world colour, the world
+     * depth and a depth-only pass that contains <b>only the selected replay entities</b>. A pixel
+     * belongs to an entity when its entity depth equals the world depth — that is the whole
+     * idea. It is lighting independent because no colour is ever compared, and it is occluded by
+     * construction: if a block is in front, the world depth is nearer than the entity depth, the
+     * two values differ, and the pixel is rejected. The same test also rejects an entity that is
+     * hidden behind another entity that was not selected.</p>
+     *
+     * <p>Depth is compared in <b>view-space units</b>, not in NDC: near the far plane one NDC unit
+     * is hundreds of blocks, so an NDC epsilon would either leak the whole background or reject a
+     * distant actor. The tolerance scales with distance, which covers the 24-bit quantisation of
+     * the captured depth buffer.</p>
+     */
+    public static final String ENTITY_KEY = """
+        #version 150 core
+
+        uniform sampler2D WorldColor;
+        uniform sampler2D WorldDepth;
+        uniform sampler2D EntityDepth;
+        uniform mat4 InvMvp;
+        uniform vec4 Rect;
+        uniform vec2 DepthTexel;
+        uniform float Near;
+        uniform float Far;
+        uniform float Tolerance;
+        uniform float Erode;
+        uniform float Feather;
+        uniform int UseOcclusion;
+        uniform vec4 Tint;
+
+        in vec2 vUv;
+        out vec4 fragColor;
+
+        float linearDepth(float d)
+        {
+            return (Near * Far) / max(Far - d * (Far - Near), 0.0001);
+        }
+
+        float coverage(vec2 uv)
+        {
+            float de = texture(EntityDepth, uv).r;
+
+            /* Nothing was rendered at this texel (the mask target is cleared to 1). */
+            if (de >= 0.9999995)
+            {
+                return 0.0;
+            }
+
+            if (UseOcclusion == 0)
+            {
+                return 1.0;
+            }
+
+            float dw = texture(WorldDepth, uv).r;
+
+            /* Sky/void in the world frame: the entity cannot be in front of it. */
+            if (dw >= 0.9999995)
+            {
+                return 0.0;
+            }
+
+            float le = linearDepth(de);
+            float lw = linearDepth(dw);
+            float tol = max(Tolerance, le * 0.0015);
+
+            return 1.0 - smoothstep(tol, tol + max(tol, le * 0.003), abs(lw - le));
+        }
+
+        void main()
+        {
+            /* Screen position -> layer-local composition pixels -> world-frame UV. The layer
+             * target is drawn with the layer's own model/projection, so its inverse is the only
+             * thing needed to know which world pixel a fragment samples. */
+            vec2 ndc = vUv * 2.0 - 1.0;
+            vec4 local = InvMvp * vec4(ndc, 0.0, 1.0);
+            vec2 uv = (local.xy - Rect.xy) / Rect.zw;
+
+            if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+            {
+                fragColor = vec4(0.0);
+                return;
+            }
+
+            /* Framebuffer copies are bottom-up; composition space is top-down. */
+            vec2 suv = vec2(uv.x, 1.0 - uv.y);
+            float a = coverage(suv);
+
+            if (Erode > 0.5)
+            {
+                vec2 e = DepthTexel * Erode;
+
+                a = min(a, coverage(suv + vec2(e.x, 0.0)));
+                a = min(a, coverage(suv - vec2(e.x, 0.0)));
+                a = min(a, coverage(suv + vec2(0.0, e.y)));
+                a = min(a, coverage(suv - vec2(0.0, e.y)));
+            }
+
+            if (Feather > 0.5)
+            {
+                vec2 f = DepthTexel * Feather;
+
+                a = (a
+                    + coverage(suv + vec2(f.x, 0.0))
+                    + coverage(suv - vec2(f.x, 0.0))
+                    + coverage(suv + vec2(0.0, f.y))
+                    + coverage(suv - vec2(0.0, f.y))) / 5.0;
+            }
+
+            if (a <= 0.001)
+            {
+                fragColor = vec4(0.0);
+                return;
+            }
+
+            vec3 rgb = texture(WorldColor, suv).rgb * Tint.rgb;
+
+            /* Premultiplied: the layer pipeline un-premultiplies every content target once, so
+             * writing straight alpha here would divide the colour a second time and glow the
+             * matte edges. */
+            fragColor = vec4(rgb * a, a);
+        }
+        """;
+
 }

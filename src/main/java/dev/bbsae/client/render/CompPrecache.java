@@ -311,7 +311,7 @@ public final class CompPrecache
                 continue;
             }
 
-            if ("bbs".equals(layer.type))
+            if ("bbs".equals(layer.type) || layer.isEntityLayer())
             {
                 return true;
             }

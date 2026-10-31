@@ -18,6 +18,58 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class CompModelTest
 {
     @Test
+    public void entityLayerKeepsEveryReplayInAllScope()
+    {
+        CompLayer layer = new CompLayer("replay", "Entities", "replay");
+
+        layer.entityScope = CompLayer.ENTITY_SCOPE_ALL;
+        layer.entityIds = "";
+
+        /* "All" is a mode, not a list: a stale id list must not narrow it. */
+        assertTrue(layer.isEntityLayer());
+        assertTrue(layer.entityKeeps("replay_a"));
+        assertTrue(layer.entityKeeps("replay_b"));
+    }
+
+    @Test
+    public void entityLayerSelectionIsTheOnlySourceInSelectedScope()
+    {
+        CompLayer layer = new CompLayer("replay", "Entities", "replay");
+
+        layer.entityScope = CompLayer.ENTITY_SCOPE_SELECTED;
+        layer.entitySetKept("replay_a", true);
+        layer.entitySetKept("replay_b", true);
+        layer.entitySetKept("replay_a", false);
+
+        assertEquals("replay_b", layer.entityIds);
+        assertFalse(layer.entityKeeps("replay_a"));
+        assertTrue(layer.entityKeeps("replay_b"));
+
+        layer.entitySelectAll(java.util.List.of("replay_a", "replay_b"));
+
+        assertEquals("replay_a,replay_b", layer.entityIds);
+        assertTrue(layer.entityKeeps("replay_a"));
+    }
+
+    @Test
+    public void entityIdListSurvivesRoundTripAndJunk()
+    {
+        CompLayer layer = new CompLayer("replay", "Entities", "replay");
+
+        layer.entityIds = " replay_a , ,replay_b,replay_a ";
+
+        assertEquals(2, layer.entityIdSet().size());
+        assertTrue(layer.entityKeeps("replay_a"));
+        assertTrue(layer.entityKeeps("replay_b"));
+
+        CompLayer copy = layer.duplicate();
+
+        assertEquals(2, copy.entityIdSet().size());
+        assertEquals(layer.entityScope, copy.entityScope);
+        assertEquals(layer.entityFeather, copy.entityFeather, 0.0001F);
+    }
+
+    @Test
     public void compInstanceTimeUsesTicksAndTimeScale()
     {
         CompInstance instance = new CompInstance("demo", "main", 20F, 0, 1F, 1F, 0, true);

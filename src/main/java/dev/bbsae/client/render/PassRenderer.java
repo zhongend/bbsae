@@ -107,6 +107,32 @@ public final class PassRenderer
         return alphaConvert(input, CompShaders.unpremultiply);
     }
 
+    /**
+     * Un-premultiply into an existing target.
+     *
+     * <p>Used by the viewport's source cache: an animated layer (footage, animated text) rebuilds
+     * every frame, and allocating two framebuffers per frame kept the pool permanently at its
+     * limit — visible as stutter while a video played. With a stable pair of targets the same
+     * layer re-renders into the same textures.</p>
+     */
+    public static GlFramebuffer unpremultiplyInto(GlFramebuffer input, GlFramebuffer output)
+    {
+        GlslProgram program = CompShaders.unpremultiply;
+
+        if (program == null || input == null || output == null || input == output)
+        {
+            return input;
+        }
+
+        output.begin();
+        GlStateManager._disableBlend();
+        program.use();
+        bind(program, "Source", 0, input);
+        program.drawFullscreen();
+
+        return output;
+    }
+
     private static GlFramebuffer alphaConvert(GlFramebuffer input, GlslProgram program)
     {
         if (input == null)

@@ -21,6 +21,8 @@ public final class GlFramebuffer
     public final GlTexture color;
     public final int width;
     public final int height;
+    /** True while the framebuffer sits in {@link FboPool}. Guards against double releases. */
+    boolean pooled;
 
     public GlFramebuffer(int width, int height)
     {
@@ -131,6 +133,33 @@ public final class GlFramebuffer
         {
             MemoryUtil.memFree(buffer);
         }
+    }
+
+    /**
+     * Reads the target as top-down RGBA bytes — the layout FFmpeg's {@code rawvideo} input wants.
+     *
+     * <p>Row reversal only: no channel swap and no per-pixel Java loop, so a 1080p frame costs a
+     * thousand {@code arraycopy}s instead of two million bounds-checked reads. The encoder pipe
+     * runs this for every frame, which is exactly where that difference matters.</p>
+     */
+    public byte[] readTopDownRgba()
+    {
+        byte[] raw = this.readRawBytes();
+        int stride = this.width * 4;
+
+        if (this.height <= 1)
+        {
+            return raw;
+        }
+
+        byte[] output = new byte[raw.length];
+
+        for (int y = 0; y < this.height; y++)
+        {
+            System.arraycopy(raw, (this.height - 1 - y) * stride, output, y * stride, stride);
+        }
+
+        return output;
     }
 
     public void delete()

@@ -18,7 +18,7 @@ public final class EffectRenderer
 
     public static GlFramebuffer apply(CompLayer layer, CompEffect effect, GlFramebuffer input, CompRenderContext context)
     {
-        return apply(layer, effect, input, context, null);
+        return apply(layer, effect, input, context, (org.joml.Matrix4f) null);
     }
 
     /**
@@ -51,6 +51,19 @@ public final class EffectRenderer
 
     public static GlFramebuffer apply(CompLayer layer, CompEffect effect, GlFramebuffer input, CompRenderContext context, org.joml.Matrix4f world)
     {
+        return apply(layer, effect, input, context, EffectSpace.of(layer, world, context));
+    }
+
+    /**
+     * Explicit effect space.
+     *
+     * <p>The composition pipeline lets {@link EffectSpace#of} decide (composition space for 3D
+     * layers, layer space for 2D ones). The 3D viewport bakes effects into a <b>layer-local</b>
+     * source texture, where composition space does not exist yet — it passes the mapping that
+     * belongs to that raster directly.</p>
+     */
+    public static GlFramebuffer apply(CompLayer layer, CompEffect effect, GlFramebuffer input, CompRenderContext context, EffectSpace space)
+    {
         if (effect == null || !effect.enabled || input == null)
         {
             return input;
@@ -58,7 +71,6 @@ public final class EffectRenderer
 
         String type = effect.type == null ? "" : effect.type;
         float frame = context.frame;
-        EffectSpace space = EffectSpace.of(layer, world, context);
 
         switch (type)
         {

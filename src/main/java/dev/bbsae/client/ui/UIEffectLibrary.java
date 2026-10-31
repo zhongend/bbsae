@@ -1,5 +1,6 @@
 package dev.bbsae.client.ui;
 
+import dev.bbsae.comp.CompEffect;
 import dev.bbsae.comp.CompEffectRegistry;
 import dev.bbsae.comp.CompLayer;
 import mchorse.bbs_mod.l10n.keys.IKey;
@@ -39,6 +40,7 @@ public class UIEffectLibrary extends UIElement
     private final UILabel status;
     private final UIButton apply;
     private final UIIcon clear;
+    private final EffectPreview preview = new EffectPreview();
 
     private String filter = "";
     private final Set<String> expanded = new LinkedHashSet<>();
@@ -79,8 +81,11 @@ public class UIEffectLibrary extends UIElement
         this.searchLabel.relative(this).x(PAD).y(1).w(1F, -PAD * 2).h(16);
         this.search.relative(this).x(PAD).y(18).w(1F, -PAD * 2 - 21).h(18);
         this.clear.relative(this).x(1F, -PAD - 18).y(18).w(18).h(18);
-        this.list.relative(this).x(PAD).y(42).w(1F, -PAD * 2).h(1F, -80);
-        this.status.relative(this).x(PAD).y(1F, -36).w(1F, -PAD * 2).h(14);
+        /* The list gives up 62 px so the selected effect can show what it does. Browsing a wall of
+         * effect names without seeing their output is guessing; one visible preview is enough. */
+        this.list.relative(this).x(PAD).y(42).w(1F, -PAD * 2).h(1F, -142);
+        this.preview.relative(this).x(PAD).y(1F, -104).w(1F, -PAD * 2).h(56);
+        this.status.relative(this).x(PAD).y(1F, -42).w(1F, -PAD * 2).h(14);
         this.apply.relative(this).x(PAD).y(1F, -22).w(1F, -PAD * 2).h(18);
 
         this.expanded.add("最近使用");
@@ -90,7 +95,7 @@ public class UIEffectLibrary extends UIElement
             this.expanded.add(CATEGORIES.keySet().iterator().next());
         }
 
-        this.add(this.searchLabel, this.search, this.clear, this.list, this.status, this.apply);
+        this.add(this.searchLabel, this.search, this.clear, this.list, this.preview, this.status, this.apply);
 
         this.refreshStatus();
         this.rebuild();
@@ -103,6 +108,92 @@ public class UIEffectLibrary extends UIElement
         for (CompEffectRegistry.Definition definition : CompEffectRegistry.all())
         {
             CATEGORIES.computeIfAbsent(definition.category, (key) -> new ArrayList<>()).add(definition);
+        }
+    }
+
+    /** The row the user last clicked, or null. */
+    private CompEffectRegistry.Definition selectedDefinition()
+    {
+        EffectRow row = this.list.getCurrentFirst();
+
+        return row == null ? null : row.definition;
+    }
+
+    /**
+     * The effect instance to render: the one already on the selected layer (so the thumbnail shows
+     * the user's own values), or a default instance of that type.
+     */
+    private CompEffect previewEffect(CompEffectRegistry.Definition definition)
+    {
+        CompLayer layer = this.panel.getSelectedLayer();
+
+        if (layer != null)
+        {
+            for (CompEffect effect : layer.effects)
+            {
+                if (effect != null && definition.id.equals(effect.type))
+                {
+                    return effect;
+                }
+            }
+        }
+
+        return CompEffectRegistry.create(definition.id, 1);
+    }
+
+    /**
+     * The thumbnail box. Reads the selection every frame — the list owns the state, this only
+     * draws — and falls back to a hint when nothing is selected.
+     */
+    private final class EffectPreview extends UIElement
+    {
+        @Override
+        public void render(UIContext context)
+        {
+            context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF141920);
+            context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF2A303A);
+
+            CompEffectRegistry.Definition definition = UIEffectLibrary.this.selectedDefinition();
+
+            if (definition == null)
+            {
+                context.batcher.textShadow("单击上面的效果名，这里显示它的实际画面",
+                    this.area.x + 6, this.area.y + 8, 0xFF7C8798);
+
+                return;
+            }
+
+            CompEffect effect = UIEffectLibrary.this.previewEffect(definition);
+            dev.bbsae.client.render.GlFramebuffer frame = effect == null
+                ? null
+                : dev.bbsae.client.render.CompEffectPreview.frame(effect);
+
+            int pad = 3;
+            int boxW = this.area.w - pad * 2;
+            int boxH = this.area.h - 16 - pad;
+
+            if (frame != null)
+            {
+                float fit = Math.min(boxW / (float) frame.width, boxH / (float) frame.height);
+                int w = Math.max(1, Math.round(frame.width * fit));
+                int h = Math.max(1, Math.round(frame.height * fit));
+                int x = this.area.x + (this.area.w - w) / 2;
+                int y = this.area.y + pad + (boxH - h) / 2;
+
+                /* The composition FBO is bottom-up, so v is flipped — same convention as the
+                 * preview blit in CompRenderer. */
+                context.batcher.texturedBox(frame.color.id, 0xFFFFFFFF, x, y, w, h,
+                    0F, frame.height, frame.width, 0F, frame.width, frame.height);
+            }
+
+            String label = definition.name;
+
+            if (label.length() > 18)
+            {
+                label = label.substring(0, 17) + "…";
+            }
+
+            context.batcher.textShadow(label, this.area.x + 5, this.area.ey() - 13, 0xFFB8C4D6);
         }
     }
 
@@ -305,7 +396,65 @@ public class UIEffectLibrary extends UIElement
         @Override
         protected int indent(EffectRow element)
         {
-            return element.definition == null ? 0 : 10;
+            /* Room for the per-effect thumbnail on the left of every row (Alight Motion shows the
+             * effect itself, not an icon). */
+            return element.definition == null ? 0 : 26;
+        }
+
+        /**
+         * Per-row effect thumbnails, like Alight Motion's effect browser.
+         *
+         * <p>Rows are drawn by BBS's list; the thumbnails are painted afterwards using the list's
+         * own {@link #visible()} / {@link #areaOf(int, mchorse.bbs_mod.ui.utils.Area)} geometry, so
+         * they follow filtering, folding and scrolling exactly (a hand-rolled row index would drift
+         * the moment a category collapses).</p>
+         *
+         * <p>{@code CompEffectPreview.frame(type)} already caches one rendered frame per effect
+         * type, which is why this is affordable at 20+ rows.</p>
+         */
+        @Override
+        public void render(UIContext context)
+        {
+            super.render(context);
+
+            java.util.List<EffectRow> rows = this.visible();
+            mchorse.bbs_mod.ui.utils.Area cell = new mchorse.bbs_mod.ui.utils.Area();
+
+            for (int i = 0; i < rows.size(); i++)
+            {
+                EffectRow row = rows.get(i);
+
+                if (row == null || row.definition == null)
+                {
+                    continue;
+                }
+
+                this.areaOf(i, cell);
+
+                /* areaOf() reports the row in *content* coordinates (x from 0, y from the top of
+                 * the scrolled content), so the screen position is area + cell - scroll. Using the
+                 * raw cell put every thumbnail outside the panel — the first build drew nothing. */
+                int rowY = this.area.y + cell.y - (int) this.scroll.getScroll();
+                int rowH = cell.h;
+
+                if (rowY + rowH < this.area.y || rowY > this.area.ey())
+                {
+                    continue;
+                }
+
+                dev.bbsae.client.render.GlFramebuffer frame = dev.bbsae.client.render.CompEffectPreview.frame(row.definition.id);
+
+                int size = Math.max(10, Math.min(16, rowH - 2));
+                int x = this.area.x + 6;
+                int y = rowY + (rowH - size) / 2;
+
+                if (frame != null)
+                {
+                    context.batcher.texturedBox(frame.color.id, 0xFFFFFFFF, x, y, size, size,
+                        0F, frame.height, frame.width, 0F, frame.width, frame.height);
+                    context.batcher.outline(x - 1, y - 1, x + size + 1, y + size + 1, 0x552A303A);
+                }
+            }
         }
 
         @Override

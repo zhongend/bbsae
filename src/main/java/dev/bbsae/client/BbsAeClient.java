@@ -46,14 +46,11 @@ public class BbsAeClient implements BBSAddonMod
         {
             final int[] ticks = {0};
             final boolean[] opened = {false};
+            final int[] afterOpen = {0};
+            final String view = System.getProperty("bbsae.debugView", "");
 
             ClientTickEvents.END_CLIENT_TICK.register((client) ->
             {
-                if (client.player == null || client.world == null)
-                {
-                    return;
-                }
-
                 if (client.player == null || client.world == null)
                 {
                     return;
@@ -73,9 +70,84 @@ public class BbsAeClient implements BBSAddonMod
                     {
                         compositorPanel.debugDemoEffects();
                     }
+
+                    return;
+                }
+
+                /* A requested verification state is applied after the panel has been laid out for
+                 * a few frames: the curve editor's geometry is only valid once it has a size.
+                 * Several views may be requested ("curve,assets"): one is applied every 8 seconds
+                 * so a single client run can be screenshotted in each of them. */
+                if (opened[0] && !view.isBlank())
+                {
+                    final String[] views = view.split(",");
+                    final int[] applied = {0};
+
+                    /* One view = one application. Re-applying it every eight seconds used to
+                     * re-enter the workspace and fight whatever the user was doing (and a live
+                     * window receives real mouse input), which made verification screenshots
+                     * non-deterministic. A list still cycles, for multi-shot runs. */
+                    if (++afterOpen[0] == 20 + applied[0] * 160 && (views.length > 1 || applied[0] == 0))
+                    {
+                        compositorPanel.debugView(views[applied[0] % views.length].trim());
+                        applied[0]++;
+                    }
                 }
             });
         }
+
+        /* Verification hook: save one screenshot after a fixed number of ticks, so a rendering
+         * change can be checked by looking at it instead of by trusting a log line.
+         *
+         *   ./gradlew runClientView -PbbsaeView=camera -Dbbsae.debugShot=viewport
+         */
+        String shot = System.getProperty("bbsae.debugShot", "");
+
+        if (!shot.isBlank())
+        {
+            int shotAt = Integer.getInteger("bbsae.debugShotTicks", 260);
+            final int[] shotTicks = {0};
+
+            ClientTickEvents.END_CLIENT_TICK.register((client) ->
+            {
+                if (client.world == null || client.player == null)
+                {
+                    return;
+                }
+
+                if (++shotTicks[0] == shotAt)
+                {
+                    net.minecraft.client.util.ScreenshotRecorder.saveScreenshot(
+                        client.runDirectory,
+                        shot,
+                        client.getFramebuffer(),
+                        (text) -> BbsAeAddon.LOGGER.info("screenshot: {}", text.getString())
+                    );
+                }
+            });
+        }
+
+        /* OS drag & drop: one GLFW callback, routed to the compositor when it is the open screen. */
+        dev.bbsae.client.ui.CompFileDrop.install((files) ->
+        {
+            if (compositorPanel == null)
+            {
+                BbsAeAddon.LOGGER.info("Ignored a file drop: the compositor panel was never built");
+
+                return;
+            }
+
+            /* Only when the compositor is the panel on screen: dropping a file into a dashboard
+             * page the user is not looking at would edit a project invisibly. */
+            if (compositorPanel.isVisible())
+            {
+                compositorPanel.handleDroppedFiles(files);
+            }
+            else
+            {
+                BbsAeAddon.LOGGER.info("Ignored a file drop: open the compositor first");
+            }
+        });
 
         ClientTickEvents.END_CLIENT_TICK.register((client) -> CompExportManager.tick());
         ClientLifecycleEvents.CLIENT_STOPPING.register((client) ->
@@ -87,7 +159,13 @@ public class BbsAeClient implements BBSAddonMod
         /* The compositor's "BBS preview" layer shows BBS's own frame. Replay actors are drawn by
          * the film editor controller into the world pass, so the bridge needs the same hook the
          * film panel uses; it is inert while the compositor is not on screen. */
+        WorldRenderEvents.START.register((context) -> dev.bbsae.client.render.ReplayEntityMask.beginFrame());
         WorldRenderEvents.AFTER_ENTITIES.register(BbsPreviewBridge::renderFilmActors);
+
+        /* The replay entity matte needs a second, depth-only pass of the film's actors. It runs
+         * after the actor pass so the pose stack, the camera and the transition are exactly the
+         * ones the world frame used, which is what makes its depth comparable with the world's. */
+        WorldRenderEvents.AFTER_ENTITIES.register(BbsPreviewBridge::renderEntityMask);
 
         /* AFTER_ENTITIES draws the replays; AFTER_TRANSLUCENT runs after translucents/particles
          * but still inside the world pass, before BBS's FrameOverlays draw the composition. Using

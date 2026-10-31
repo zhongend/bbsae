@@ -35,7 +35,12 @@ public final class FboPool
         if (deque != null && !deque.isEmpty())
         {
             idle -= 1;
-            return deque.pop();
+
+            GlFramebuffer framebuffer = deque.pop();
+
+            framebuffer.pooled = false;
+
+            return framebuffer;
         }
 
         return new GlFramebuffer(w, h);
@@ -47,6 +52,21 @@ public final class FboPool
         {
             return;
         }
+
+        /* A double release puts the same target in the pool twice, so two later consumers render
+         * into one texture — the classic "random UI flicker, no GL error" bug. Detect it loudly
+         * instead of corrupting the frame. */
+        if (framebuffer.pooled)
+        {
+            org.slf4j.LoggerFactory.getLogger("bbsae").warn(
+                "FboPool: double release of framebuffer {} ({}x{})",
+                framebuffer.id, framebuffer.width, framebuffer.height,
+                Boolean.getBoolean("bbsae.debugFbo") ? new Throwable("double release") : null);
+
+            return;
+        }
+
+        framebuffer.pooled = true;
 
         long key = ((long) framebuffer.width << 32) | (framebuffer.height & 0xFFFFFFFFL);
         Deque<GlFramebuffer> deque = CACHE.computeIfAbsent(key, (k) -> new ArrayDeque<>());

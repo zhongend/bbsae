@@ -295,6 +295,7 @@ public final class CompStore
             if (comp.layers == null) comp.layers = new java.util.ArrayList<>();
             if (comp.markers == null) comp.markers = new java.util.ArrayList<>();
             if (comp.parameters == null) comp.parameters = new java.util.ArrayList<>();
+            if (comp.audio == null) comp.audio = new java.util.ArrayList<>();
 
             for (CompLayer layer : comp.layers)
             {
@@ -594,7 +595,7 @@ public final class CompStore
         comp.fps = 60F;
         comp.duration = 12F;
         comp.workAreaOut = comp.duration;
-        comp.background = 0x00000000;
+        comp.background = 0xFF000000;
 
         return comp;
     }
@@ -607,6 +608,8 @@ public final class CompStore
         presets.add(CompOutputPreset.masterProRes());
         presets.add(CompOutputPreset.alphaProRes());
         presets.add(CompOutputPreset.pngSequence());
+        presets.add(CompOutputPreset.audioWav());
+        presets.add(CompOutputPreset.audioM4a());
 
         return presets;
     }
@@ -656,14 +659,47 @@ public final class CompStore
         return uniqueId(base, project.outputPresets, (preset) -> preset.id);
     }
 
-    private static void migrate(CompProject project)
+    /**
+     * Brings a loaded project up to {@link CompProject#VERSION}.
+     *
+     * <p>Package-private on purpose: this is the one place where a version bump can silently break
+     * opening an old file, so it is worth testing without a game running (see
+     * {@code CompStoreMigrationTest}).</p>
+     */
+    static void migrate(CompProject project)
     {
+        /* The version the file was written with. Any one-time conversion below keys off it, so a
+         * project saved after the conversion is never converted twice. */
+        int previousVersion = project.version;
+
         project.format = CompProject.FORMAT;
         project.version = CompProject.VERSION;
 
         if (project.outputPresets == null || project.outputPresets.isEmpty())
         {
             project.outputPresets = defaultPresets();
+        }
+        else
+        {
+            /* v5: audio output modules. A project written before they existed has a non-empty
+             * preset list, so the branch above never ran for it — and asking for "audio_wav" then
+             * fell back to the first video preset, i.e. "export audio" silently rendered a video. */
+            boolean hasAudio = false;
+
+            for (CompOutputPreset preset : project.outputPresets)
+            {
+                if (preset != null && "audio".equals(preset.kind))
+                {
+                    hasAudio = true;
+                    break;
+                }
+            }
+
+            if (!hasAudio)
+            {
+                project.outputPresets.add(CompOutputPreset.audioWav());
+                project.outputPresets.add(CompOutputPreset.audioM4a());
+            }
         }
 
         if (project.animationPresets == null)
@@ -686,6 +722,15 @@ public final class CompStore
             project.renderQueue = new java.util.ArrayList<>();
         }
 
+        /* v5: the preview stage stopped being the live BBS world. Version 4 files were migrated to
+         * previewBackground = 1 (world behind a transparent stage), so without this they would keep
+         * looking transparent forever even though the default changed. */
+        if (previousVersion < 5 && project.settings != null)
+        {
+            project.settings.previewBackground = 0;
+            project.settings.previewBackgroundChosen = true;
+        }
+
         if (project.comps == null)
         {
             project.comps = new java.util.ArrayList<>();
@@ -696,7 +741,15 @@ public final class CompStore
             if (comp.layers == null) comp.layers = new java.util.ArrayList<>();
             if (comp.markers == null) comp.markers = new java.util.ArrayList<>();
             if (comp.parameters == null) comp.parameters = new java.util.ArrayList<>();
+            if (comp.audio == null) comp.audio = new java.util.ArrayList<>();
             if (comp.workAreaOut <= 0F) comp.workAreaOut = comp.duration;
+
+            /* v4: the stage stopped being transparent. Only files written before v4 are touched;
+             * a project saved with a deliberately transparent stage keeps it. */
+            if (previousVersion < 4 && (comp.background >>> 24) == 0)
+            {
+                comp.background = 0xFF000000;
+            }
 
             for (CompLayer layer : comp.layers)
             {
@@ -743,7 +796,7 @@ public final class CompStore
         comp.height = 1080;
         comp.duration = 12F;
         comp.workAreaOut = 12F;
-        comp.background = 0x00000000;
+        comp.background = 0xFF000000;
 
         CompLayer panel = new CompLayer("panel", "Backdrop", "panel");
 

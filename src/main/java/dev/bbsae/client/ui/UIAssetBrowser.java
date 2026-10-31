@@ -3,11 +3,11 @@ package dev.bbsae.client.ui;
 import dev.bbsae.client.render.ImageTextureCache;
 import dev.bbsae.comp.CompStore;
 import mchorse.bbs_mod.l10n.keys.IKey;
-import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
+import mchorse.bbs_mod.ui.framework.elements.overlay.UIPromptOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UISoundOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
@@ -28,6 +28,23 @@ import java.util.stream.Stream;
 
 /**
  * Photo-library style asset browser: categories, a thumbnail grid, insert/replace at the bottom.
+ *
+ * <h2>Layout: one sliding page, not a form</h2>
+ * <p>The first version pinned every control to a 620×400 rectangle. That rectangle ran off the
+ * bottom of a 432-px logical screen (GUI scale 2 on a 1536×864 window), so 关闭/刷新 and the whole
+ * action row were <b>outside the visible area</b> — "the import button does nothing" was really
+ * "the button is not reachable". Paging with ‹ › made it worse: the two page buttons were the first
+ * things to fall off.</p>
+ *
+ * <p>So the browser is now a single page whose parts are laid out from the panel's real size:</p>
+ * <ul>
+ *   <li>header (title + search) and footer (actions) are anchored to the panel edges;</li>
+ *   <li>the category strip <b>slides horizontally</b> (wheel, drag or the ‹ › zones) and never wraps
+ *       into a second row that would push the grid down;</li>
+ *   <li>the thumbnail grid <b>slides vertically</b> with the wheel or by dragging empty space, and
+ *       uses whatever height is left;</li>
+ *   <li>every label shortens as the panel narrows, so no two controls can overlap.</li>
+ * </ul>
  *
  * <p>It indexes three sources: the project's own {@code assets} folder, the client's resource packs
  * (item / block / entity / GUI / particle / effect / painting / environment / misc / map textures),
@@ -51,34 +68,41 @@ public class UIAssetBrowser extends UIElement
     private static final int PROJECT_CATEGORY = 0;
     private static final int BBS_CATEGORY = 11;
     private static final int SOUND_CATEGORY = 12;
-    private static final int CATEGORY_COLUMNS = 6;
 
-    private static final int COLUMNS = 5;
-    /* Three rows keep the 400px-tall panel inside a 432px logical screen (MC GUI scale 2 on a
-     * 1536x864 window). Four rows pushed the action buttons below the screen. */
-    private static final int ROWS = 3;
-    private static final int TILE_W = 100;
-    private static final int TILE_H = 62;
+    private static final int TILE_W = 96;
+    private static final int TILE_H = 60;
+    private static final int TILE_GAP = 6;
+
+    private static final int PAD = 10;
+    private static final int HEADER = 40;
+    private static final int STRIP_H = 22;
+    private static final int FOOTER_H = 24;
 
     private final Supplier<String> projectId;
     private final BiConsumer<String, Boolean> onUse;
     private final boolean replaceMode;
     private final Runnable onImport;
+    private final java.util.function.Consumer<String> onImportPath;
     private final Runnable onClose;
 
     private final UIElement box;
     private final UILabel title;
     private final UILabel hint;
     private final UITextbox search;
-    private final List<UIButton> categories = new ArrayList<>();
+    private final Strip strip;
     private final Grid grid;
-    private final UILabel pageLabel;
+    private final UILabel countLabel;
     private final UIButton importButton;
+    private final UIButton pathButton;
     private final UIButton insertButton;
     private final UIButton replaceButton;
+    private final UIButton refreshButton;
+    private final UIButton closeButton;
 
     private int category;
-    private int page;
+    /** Last laid-out size; the modal re-lays itself when the panel resizes. */
+    private int laidOutWidth = -1;
+    private int laidOutHeight = -1;
 
     private final List<Asset> assets = new ArrayList<>();
     private final List<Asset> filtered = new ArrayList<>();
@@ -110,11 +134,12 @@ public class UIAssetBrowser extends UIElement
         }
     }
 
-    public UIAssetBrowser(Supplier<String> projectId, BiConsumer<String, Boolean> onUse, Runnable onImport, Runnable onClose, boolean replaceMode)
+    public UIAssetBrowser(Supplier<String> projectId, BiConsumer<String, Boolean> onUse, Runnable onImport, java.util.function.Consumer<String> onImportPath, Runnable onClose, boolean replaceMode)
     {
         this.projectId = projectId;
         this.onUse = onUse;
         this.onImport = onImport;
+        this.onImportPath = onImportPath;
         this.onClose = onClose;
         this.replaceMode = replaceMode;
 
@@ -135,61 +160,51 @@ public class UIAssetBrowser extends UIElement
             }
         };
 
-        this.box.relative(this).x(0.5F, -310).y(0.5F, -200).w(620).h(400);
+        this.box.relative(this).x(0).y(0).w(1F).h(1F);
 
         this.title = new UILabel(IKey.constant("素材库"));
-        this.title.relative(this.box).x(16).y(10).w(140).h(18);
+        this.title.relative(this.box).x(PAD).y(9).w(120).h(16);
 
-        this.hint = new UILabel(IKey.constant(replaceMode
-            ? "单击选择，双击替换当前图层；搜索会跨分类查找"
-            : "单击选择，双击插入；搜索会跨分类查找"));
+        this.hint = new UILabel(IKey.constant(replaceMode ? "单击选择，双击替换；滚轮滑动" : "单击选择，双击插入；滚轮滑动"));
         this.hint.color(0xFF8A94A6, false);
-        this.hint.relative(this.box).x(16).y(28).w(400).h(14);
+        this.hint.relative(this.box).x(PAD).y(26).w(200).h(12);
+
+        /* Built before anything that touches it: the old constructor registered the search callback
+         * (which calls grid.scrollToTop()) before the grid existed, which did not compile. */
+        this.grid = new Grid();
+        this.strip = new Strip();
 
         this.search = new UITextbox();
-        this.search.relative(this.box).x(372).y(10).w(232).h(20);
-        this.search.placeholder(IKey.constant("搜索素材 / 音效…"));
+        this.search.placeholder(IKey.constant("搜索…"));
         this.search.callback = (text) ->
         {
-            this.page = 0;
+            this.grid.scrollToTop();
             this.rebuild();
         };
         this.search.tooltip(IKey.constant("按名称或路径搜索；无匹配时自动跨分类"));
+        this.search.relative(this.box).x(200).y(8).w(200).h(18);
 
-        for (int i = 0; i < CATEGORY_LABELS.length; i++)
-        {
-            final int index = i;
-            UIButton button = new UICompButton(IKey.constant(CATEGORY_LABELS[i]), (b) -> this.selectCategory(index));
+        this.countLabel = new UILabel(IKey.constant(""));
+        this.countLabel.color(0xFF9AA6B8, false);
+        this.countLabel.relative(this.box).x(PAD).y(100).w(200).h(12);
 
-            button.relative(this.box).x(16 + (i % CATEGORY_COLUMNS) * 96).y(48 + (i / CATEGORY_COLUMNS) * 22).w(92).h(20);
-            button.tooltip(IKey.constant("浏览" + CATEGORY_LABELS[i] + "素材"));
-            this.categories.add(button);
-            this.box.add(button);
-        }
-
-        this.grid = new Grid();
-        this.grid.relative(this.box).x(16).y(120).w(COLUMNS * TILE_W + (COLUMNS - 1) * 6).h(ROWS * TILE_H + (ROWS - 1) * 4);
-
-        this.pageLabel = new UILabel(IKey.constant("1 / 1"));
-        this.pageLabel.color(0xFF9AA6B8, false);
-        this.pageLabel.relative(this.box).x(92).y(322).w(150).h(18);
-
-        this.importButton = this.button("导入图片…", 16, 348, 100, this::importAction);
-        this.insertButton = this.button("插入为新图层", 122, 348, 122, () -> this.useSelected(false));
-        this.replaceButton = this.button("替换当前图层", 250, 348, 122, () -> this.useSelected(true));
+        this.importButton = this.button("导入图片…", this::importAction);
+        this.pathButton = this.button("按路径…", this::importByPath);
+        this.insertButton = this.button("插入为新图层", () -> this.useSelected(false));
+        this.replaceButton = this.button("替换当前图层", () -> this.useSelected(true));
+        this.refreshButton = this.button("刷新", this::refresh);
+        this.closeButton = this.button("关闭", this.onClose);
 
         this.insertButton.tooltip(IKey.constant("把所选素材作为新图层插入"));
         this.replaceButton.tooltip(IKey.constant("替换所选图片图层的素材"));
-        this.importButton.tooltip(IKey.constant("把本地图片复制到工程 assets 目录"));
+        this.importButton.tooltip(IKey.constant("打开导入浏览器（游戏内选择文件）"));
+        this.pathButton.tooltip(IKey.constant("直接粘贴完整路径导入"));
+        this.refreshButton.tooltip(IKey.constant("重新扫描项目素材与资源包"));
+        this.closeButton.tooltip(IKey.constant("关闭素材库"));
 
-        this.box.add(
-            this.title, this.hint, this.search, this.grid, this.pageLabel,
-            this.button("‹", 16, 322, 32, () -> this.turn(-1)),
-            this.button("›", 54, 322, 32, () -> this.turn(1)),
-            this.importButton, this.insertButton, this.replaceButton,
-            this.button("关闭", 614, 348, 70, this.onClose),
-            this.button("刷新", 614, 322, 70, this::refresh)
-        );
+        this.box.add(this.title, this.hint, this.search, this.strip, this.grid, this.countLabel,
+            this.importButton, this.pathButton, this.insertButton, this.replaceButton,
+            this.refreshButton, this.closeButton);
 
         this.add(this.box);
         this.rebuild();
@@ -198,18 +213,100 @@ public class UIAssetBrowser extends UIElement
     @Override
     public void render(UIContext context)
     {
-        /* Dim/blur the editor behind the library so the 620x400 panel reads as a modal. The
-         * blur follows BBS's interface-blur setting; the dark scrim is always present. */
+        this.layout();
+
+        /* Dim/blur the editor behind the library so the panel reads as a modal. The blur follows
+         * BBS's interface-blur setting; the dark scrim is always present. */
         InterfaceBlur.applyUnder();
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0x66000000);
         super.render(context);
     }
 
-    private UIButton button(String label, int x, int y, int w, Runnable action)
+    /**
+     * Lays every control out from the panel's real size.
+     *
+     * <p>All positions are absolute (see HANDOFF 24.2: {@code UIElement.row()} ignores child
+     * {@code w()}), and every size shrinks with the panel, so a narrow window stacks/shortens
+     * instead of pushing the footer off-screen.</p>
+     */
+    private void layout()
+    {
+        int width = this.area.w;
+        int height = this.area.h;
+
+        if (width == this.laidOutWidth && height == this.laidOutHeight)
+        {
+            return;
+        }
+
+        this.laidOutWidth = width;
+        this.laidOutHeight = height;
+
+        this.box.set(0, 0, Math.max(1, width), Math.max(1, height));
+        this.box.resize();
+
+        int innerW = this.box.area.w;
+        int innerH = this.box.area.h;
+        boolean narrow = innerW < 560;
+
+        int closeW = narrow ? 40 : 48;
+        int refreshW = narrow ? 40 : 48;
+        int searchRight = PAD + closeW + 6 + refreshW + 6;
+        int searchX = narrow ? 96 : 132;
+        int searchW = Math.max(60, innerW - searchRight - searchX);
+
+        this.title.relative(this.box).x(PAD).y(9).w(Math.max(60, searchX - PAD - 6)).h(16);
+        this.search.relative(this.box).x(searchX).y(8).w(searchW).h(18);
+        this.hint.relative(this.box).x(PAD).y(26).w(1F, -PAD * 2).h(12);
+
+        this.refreshButton.relative(this.box).x(1F, -(closeW + 6 + refreshW + PAD)).y(7).w(refreshW).h(18);
+        this.closeButton.relative(this.box).x(1F, -(closeW + PAD)).y(7).w(closeW).h(18);
+
+        int stripY = HEADER + 4;
+        this.strip.relative(this.box).x(PAD).y(stripY).w(1F, -PAD * 2).h(STRIP_H);
+
+        int footerY = innerH - PAD - 20;
+        int countY = footerY - 16;
+
+        this.grid.relative(this.box).x(PAD).y(stripY + STRIP_H + 6)
+            .w(1F, -PAD * 2 - 4).h(Math.max(40, countY - stripY - STRIP_H - 12));
+        this.countLabel.relative(this.box).x(PAD).y(countY).w(Math.max(100, innerW - PAD * 2)).h(12);
+
+        int x = PAD;
+        int h = 20;
+
+        if (narrow)
+        {
+            this.importButton.label = IKey.constant("导入");
+            this.pathButton.label = IKey.constant("路径");
+            this.insertButton.label = IKey.constant("插入");
+            this.replaceButton.label = IKey.constant("替换");
+            this.importButton.relative(this.box).x(x).y(footerY).w(44).h(h); x += 48;
+            this.pathButton.relative(this.box).x(x).y(footerY).w(44).h(h); x += 48;
+            this.insertButton.relative(this.box).x(x).y(footerY).w(44).h(h); x += 48;
+            this.replaceButton.relative(this.box).x(x).y(footerY).w(44).h(h);
+        }
+        else
+        {
+            this.importButton.label = IKey.constant("导入图片…");
+            this.pathButton.label = IKey.constant("按路径…");
+            this.insertButton.label = IKey.constant("插入为新图层");
+            this.replaceButton.label = IKey.constant("替换当前图层");
+            this.importButton.relative(this.box).x(x).y(footerY).w(92).h(h); x += 96;
+            this.pathButton.relative(this.box).x(x).y(footerY).w(72).h(h); x += 76;
+            this.insertButton.relative(this.box).x(x).y(footerY).w(106).h(h); x += 110;
+            this.replaceButton.relative(this.box).x(x).y(footerY).w(106).h(h);
+        }
+
+        this.box.resize();
+        this.grid.clampScroll();
+    }
+
+    private UIButton button(String label, Runnable action)
     {
         UIButton button = new UICompButton(IKey.constant(label), (b) -> action.run());
 
-        button.relative(this.box).x(x).y(y).w(w).h(20);
+        button.relative(this.box).x(0).y(0).w(60).h(20);
 
         return button;
     }
@@ -222,20 +319,91 @@ public class UIAssetBrowser extends UIElement
         this.rebuild();
     }
 
+    /**
+     * Selects the asset whose path ends with {@code path} and scrolls it into view.
+     *
+     * <p>Used right after an import: the user picked a file in the import browser, so the library
+     * must show <em>that</em> file selected (and its thumbnail loaded) instead of leaving them to
+     * hunt for it in a grid of hundreds of icons. A mismatch is a no-op, not an error.</p>
+     */
+    public void selectPath(String path)
+    {
+        if (path == null || path.isBlank())
+        {
+            return;
+        }
+
+        if (this.selectPathInCurrent(path))
+        {
+            return;
+        }
+
+        /* Freshly copied files live in the project folder, so an import lands there even when the
+         * library happened to be showing "方块". Switch, rebuild once, try again. */
+        if (this.category != PROJECT_CATEGORY)
+        {
+            this.category = PROJECT_CATEGORY;
+            this.strip.reveal(PROJECT_CATEGORY);
+            this.rebuild();
+            this.selectPathInCurrent(path);
+        }
+    }
+
+    private boolean selectPathInCurrent(String path)
+    {
+        String needle = path.replace('\\', '/');
+
+        for (int i = 0; i < this.filtered.size(); i++)
+        {
+            String candidate = this.filtered.get(i).path.replace('\\', '/');
+
+            if (candidate.equals(needle) || candidate.endsWith("/" + needle) || needle.endsWith("/" + candidate))
+            {
+                this.grid.selected = i;
+                this.grid.reveal(i);
+
+                Asset asset = this.filtered.get(i);
+
+                this.hint.label = IKey.constant(asset.path);
+                this.hint.color(0xFF8A94A6, false);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void selectCategory(int index)
     {
         this.category = index;
-        this.page = 0;
+        this.grid.scrollToTop();
+        this.strip.reveal(index);
         this.rebuild();
     }
 
-    private void turn(int direction)
+    /** Imports from a typed/pasted path; the fallback when the OS dialog is unavailable. */
+    private void importByPath()
     {
-        int pages = Math.max(1, (this.filtered.size() + COLUMNS * ROWS - 1) / (COLUMNS * ROWS));
+        if (this.category == SOUND_CATEGORY)
+        {
+            this.openBbsSoundLibrary();
 
-        this.page = Math.max(0, Math.min(pages - 1, this.page + direction));
-        this.grid.repaint();
-        this.updatePageLabel();
+            return;
+        }
+
+        UIPromptOverlayPanel panel = new UIPromptOverlayPanel(
+            IKey.constant("按路径导入"),
+            IKey.constant("粘贴图片的完整路径（例如 C:/Pictures/a.png）"),
+            (path) ->
+            {
+                if (path != null && !path.isBlank())
+                {
+                    this.onImportPath.accept(path.trim());
+                }
+            });
+
+        UIOverlay.addOverlay(this.getContext(), panel, 0.4F, 0.5F);
     }
 
     private void rebuild()
@@ -286,31 +454,24 @@ public class UIAssetBrowser extends UIElement
             }
         }
 
-        this.page = Math.max(0, Math.min(this.maxPage(), this.page));
         this.grid.repaint();
-        this.updatePageLabel();
+        this.updateCountLabel();
         this.updateButtons();
     }
 
-    private int maxPage()
+    private void updateCountLabel()
     {
-        return Math.max(0, (this.filtered.size() + COLUMNS * ROWS - 1) / (COLUMNS * ROWS) - 1);
-    }
-
-    private void updatePageLabel()
-    {
-        int pages = this.maxPage() + 1;
-
-        this.pageLabel.label = IKey.constant((this.page + 1) + " / " + pages + "   " + this.filtered.size() + " 项");
+        this.countLabel.label = IKey.constant(this.filtered.size() + " 项 · " + CATEGORY_LABELS[this.category]
+            + (this.filtered.size() > 0 ? " · 滚轮滑动" : " · 该分类没有素材"));
     }
 
     private void updateButtons()
     {
         boolean sounds = this.category == SOUND_CATEGORY;
 
-        this.importButton.label = IKey.constant(sounds ? "BBS 音效库…" : "导入图片…");
-        this.insertButton.label = IKey.constant(sounds ? "试听" : "插入为新图层");
-        this.replaceButton.label = IKey.constant(sounds ? "复制 ID" : "替换当前图层");
+        this.importButton.label = IKey.constant(sounds ? "BBS 音效库…" : (this.laidOutWidth < 560 ? "导入" : "导入图片…"));
+        this.insertButton.label = IKey.constant(sounds ? "试听" : (this.laidOutWidth < 560 ? "插入" : "插入为新图层"));
+        this.replaceButton.label = IKey.constant(sounds ? "复制 ID" : (this.laidOutWidth < 560 ? "替换" : "替换当前图层"));
     }
 
     private void importAction()
@@ -558,107 +719,145 @@ public class UIAssetBrowser extends UIElement
         this.onUse.accept(asset.path, replace);
     }
 
-    private class Grid extends UIElement
+    /* ------------------------------------------------------------- category strip */
+
+    /**
+     * The horizontally sliding category strip.
+     *
+     * <p>Chips are drawn and hit-tested by hand for one reason: a child {@link UIButton} scrolled
+     * outside the strip would still accept clicks in the area it occupies on screen, so the
+     * invisible part of the strip would swallow clicks meant for the grid. Drawing the chips means
+     * clipping and hit testing share one coordinate space.</p>
+     */
+    private class Strip extends UIElement
     {
-        private int selectedIndex = -1;
-        private long lastClick;
-        private int lastIndex = -1;
+        private float scroll;
+        private int dragStartX = Integer.MIN_VALUE;
+        private int dragStartScroll;
+        private boolean dragged;
 
-        void repaint()
+        int chipWidth(int index)
         {
-            this.selectedIndex = Math.min(this.selectedIndex, Math.max(-1, this.visibleCount() - 1));
+            String label = CATEGORY_LABELS[index];
+
+            return 20 + label.length() * 12;
         }
 
-        int visibleCount()
+        int contentWidth()
         {
-            int start = UIAssetBrowser.this.page * COLUMNS * ROWS;
+            int total = 0;
 
-            return Math.max(0, Math.min(COLUMNS * ROWS, UIAssetBrowser.this.filtered.size() - start));
+            for (int i = 0; i < CATEGORY_LABELS.length; i++)
+            {
+                total += this.chipWidth(i) + 4;
+            }
+
+            return Math.max(0, total - 4);
         }
 
-        Asset selected()
+        int maxScroll()
         {
-            int start = UIAssetBrowser.this.page * COLUMNS * ROWS;
-            int index = start + this.selectedIndex;
+            return Math.max(0, this.contentWidth() - this.area.w);
+        }
 
-            return this.selectedIndex >= 0 && index < UIAssetBrowser.this.filtered.size()
-                ? UIAssetBrowser.this.filtered.get(index)
-                : null;
+        void clamp()
+        {
+            this.scroll = Math.max(0F, Math.min(this.maxScroll(), this.scroll));
+        }
+
+        /** Scrolls the strip so the selected chip is fully visible. */
+        void reveal(int index)
+        {
+            int x = 0;
+
+            for (int i = 0; i < index; i++)
+            {
+                x += this.chipWidth(i) + 4;
+            }
+
+            int right = x + this.chipWidth(index);
+
+            if (x < this.scroll)
+            {
+                this.scroll = x;
+            }
+            else if (right > this.scroll + this.area.w)
+            {
+                this.scroll = right - this.area.w;
+            }
+
+            this.clamp();
         }
 
         @Override
         public void render(UIContext context)
         {
-            Asset[] pageAssets = this.pageAssets();
-
-            for (int i = 0; i < COLUMNS * ROWS; i++)
+            /* Live drag-to-slide: the strip is 13 chips wide, and on a trackpad the arrows are a
+             * poor substitute for pushing the row. Click/release are the only events BBS sends, so
+             * the offset is followed here while the pointer is down. */
+            if (this.dragStartX != Integer.MIN_VALUE)
             {
-                int x = this.area.x + (i % COLUMNS) * (TILE_W + 6);
-                int y = this.area.y + (i / COLUMNS) * (TILE_H + 4);
+                int delta = this.dragStartX - context.mouseX;
 
-                context.batcher.box(x, y, x + TILE_W, y + TILE_H, i == this.selectedIndex ? 0xFF2F5C9E : 0xFF20262F);
-
-                if (i >= pageAssets.length)
-                {
-                    continue;
-                }
-
-                Asset asset = pageAssets[i];
-
-                if (asset.sound)
-                {
-                    context.batcher.box(x + 34, y + 10, x + 66, y + 42, 0xFF2A3442);
-                    context.batcher.icon(Icons.SOUND, 0xFFFFFFFF, x + TILE_W / 2 - 8, y + 16);
-                }
-                else
-                {
-                    ImageTextureCache.Entry texture = ImageTextureCache.get(UIAssetBrowser.this.projectId.get(), asset.path);
-
-                    if (texture != null)
-                    {
-                        int size = 40;
-                        int tw = texture.width;
-                        int th = texture.height;
-                        float fit = Math.min(size / (float) tw, size / (float) th);
-                        int dw = Math.max(1, Math.round(tw * fit));
-                        int dh = Math.max(1, Math.round(th * fit));
-
-                        context.batcher.texturedBox(texture.texture.id, 0xFFFFFFFF,
-                            x + (TILE_W - dw) / 2, y + 4 + (size - dh) / 2, dw, dh,
-                            0F, 0F, tw, th, tw, th);
-                    }
-                    else
-                    {
-                        context.batcher.icon(Icons.IMAGE, 0xFF66707E, x + TILE_W / 2 - 8, y + 16);
-                    }
-                }
-
-                String label = asset.label;
-
-                if (label.length() > 15)
-                {
-                    label = label.substring(0, 14) + "…";
-                }
-
-                context.batcher.text(label, x + 4, y + TILE_H - 22, 0xFFB8C4D6);
-                context.batcher.text(asset.category, x + 4, y + TILE_H - 11, 0xFF6F7A8A);
+                this.scroll = this.dragStartScroll + delta;
+                this.clamp();
             }
+
+            context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF11161D);
+            context.batcher.clip(this.area, context);
+
+            try
+            {
+                int x = this.area.x - Math.round(this.scroll);
+                int y = this.area.y + 1;
+                int h = this.area.h - 2;
+
+                for (int i = 0; i < CATEGORY_LABELS.length; i++)
+                {
+                    int w = this.chipWidth(i);
+                    boolean active = i == UIAssetBrowser.this.category;
+
+                    if (x + w >= this.area.x && x <= this.area.ex())
+                    {
+                        context.batcher.box(x, y, x + w, y + h, active ? 0xFF2F5C9E : 0xFF1E242D);
+                        context.batcher.box(x, y + h - 1, x + w, y + h, active ? 0xFF4C8BE0 : 0xFF2A313B);
+                        context.batcher.text(CATEGORY_LABELS[i], x + 6, y + (h - 8) / 2, active ? 0xFFFFFFFF : 0xFFB8C4D6);
+                    }
+
+                    x += w + 4;
+                }
+            }
+            finally
+            {
+                context.batcher.unclip(context);
+            }
+
+            this.renderArrows(context);
 
             super.render(context);
         }
 
-        private Asset[] pageAssets()
+        /** ‹ › zones that slide one page, so the strip is usable without a wheel. */
+        private void renderArrows(UIContext context)
         {
-            int start = UIAssetBrowser.this.page * COLUMNS * ROWS;
-            int end = Math.min(UIAssetBrowser.this.filtered.size(), start + COLUMNS * ROWS);
-            Asset[] pageAssets = new Asset[Math.max(0, end - start)];
-
-            for (int i = start; i < end; i++)
+            if (this.maxScroll() <= 0)
             {
-                pageAssets[i - start] = UIAssetBrowser.this.filtered.get(i);
+                return;
             }
 
-            return pageAssets;
+            int mid = this.area.y + this.area.h / 2;
+
+            if (this.scroll > 0)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.x + 14, this.area.ey(), 0xCC141A22);
+                context.batcher.text("‹", this.area.x + 5, mid - 4, 0xFFD6DEEB);
+            }
+
+            if (this.scroll < this.maxScroll())
+            {
+                context.batcher.box(this.area.ex() - 14, this.area.y, this.area.ex(), this.area.ey(), 0xCC141A22);
+                context.batcher.text("›", this.area.ex() - 10, mid - 4, 0xFFD6DEEB);
+            }
         }
 
         @Override
@@ -669,29 +868,331 @@ public class UIAssetBrowser extends UIElement
                 return super.subMouseClicked(context);
             }
 
-            int localX = context.mouseX - this.area.x;
-            int localY = context.mouseY - this.area.y;
-            int column = localX / (TILE_W + 6);
-            int row = localY / (TILE_H + 4);
+            if (this.scroll > 0 && context.mouseX < this.area.x + 14)
+            {
+                this.scroll -= Math.max(40, this.area.w - 40);
+                this.clamp();
 
-            if (column < 0 || column >= COLUMNS || row < 0 || row >= ROWS)
+                return true;
+            }
+
+            if (this.scroll < this.maxScroll() && context.mouseX > this.area.ex() - 14)
+            {
+                this.scroll += Math.max(40, this.area.w - 40);
+                this.clamp();
+
+                return true;
+            }
+
+            int x = this.area.x - Math.round(this.scroll);
+
+            for (int i = 0; i < CATEGORY_LABELS.length; i++)
+            {
+                int w = this.chipWidth(i);
+
+                if (context.mouseX >= x && context.mouseX <= x + w)
+                {
+                    UIAssetBrowser.this.selectCategory(i);
+
+                    return true;
+                }
+
+                x += w + 4;
+            }
+
+            this.dragStartX = context.mouseX;
+            this.dragStartScroll = Math.round(this.scroll);
+            this.dragged = false;
+
+            return true;
+        }
+
+        @Override
+        protected boolean subMouseScrolled(UIContext context)
+        {
+            if (!this.area.isInside(context))
+            {
+                return super.subMouseScrolled(context);
+            }
+
+            this.scroll -= (int) Math.round(context.mouseWheel * 42D);
+            this.clamp();
+
+            return true;
+        }
+
+        @Override
+        protected boolean subMouseReleased(UIContext context)
+        {
+            this.dragStartX = Integer.MIN_VALUE;
+
+            return super.subMouseReleased(context);
+        }
+    }
+
+    /* ---------------------------------------------------------------------- grid */
+
+    /**
+     * Thumbnail grid with a scroll offset.
+     *
+     * <p>Paging was the original design (three rows, ‹ › buttons). It wasted the panel on a
+     * 1080p screen and broke entirely on a smaller one: the page buttons and the action row sat
+     * below the visible area. A scroll view uses whatever height the panel has and never needs a
+     * second control to reach the content.</p>
+     */
+    private class Grid extends UIElement
+    {
+        private int selected = -1;
+        private int scrollY;
+        private long lastClick;
+        private int lastIndex = -1;
+        private int pressX = Integer.MIN_VALUE;
+        private int pressY;
+        private int pressScroll;
+        private boolean dragMoved;
+
+        void scrollToTop()
+        {
+            this.scrollY = 0;
+        }
+
+        /** Scrolls the tile at {@code index} into view, one row of margin. */
+        void reveal(int index)
+        {
+            int columns = this.columns();
+
+            if (columns <= 0 || index < 0)
+            {
+                return;
+            }
+
+            int row = index / columns;
+            int top = row * (TILE_H + TILE_GAP);
+            int bottom = top + TILE_H;
+
+            if (top < this.scrollY)
+            {
+                this.scrollY = top;
+            }
+            else if (bottom > this.scrollY + this.area.h)
+            {
+                this.scrollY = bottom - this.area.h;
+            }
+
+            this.clampScroll();
+        }
+
+        void repaint()
+        {
+            this.clampScroll();
+            this.selected = Math.min(this.selected, UIAssetBrowser.this.filtered.size() - 1);
+        }
+
+        int columns()
+        {
+            return Math.max(1, (this.area.w + TILE_GAP) / (TILE_W + TILE_GAP));
+        }
+
+        int contentHeight()
+        {
+            int rows = (UIAssetBrowser.this.filtered.size() + this.columns() - 1) / this.columns();
+
+            return Math.max(0, rows * (TILE_H + TILE_GAP) - TILE_GAP);
+        }
+
+        void clampScroll()
+        {
+            int max = Math.max(0, this.contentHeight() - this.area.h);
+
+            this.scrollY = Math.max(0, Math.min(max, this.scrollY));
+        }
+
+        Asset selected()
+        {
+            return this.selected >= 0 && this.selected < UIAssetBrowser.this.filtered.size()
+                ? UIAssetBrowser.this.filtered.get(this.selected)
+                : null;
+        }
+
+        @Override
+        public void render(UIContext context)
+        {
+            /* Drag-to-scroll has to be polled: BBS dispatches click/release only, so a drag is
+             * "press position in, cursor far away now" and the offset follows the cursor. */
+            if (this.pressX != Integer.MIN_VALUE)
+            {
+                int delta = this.pressY - context.mouseY;
+
+                if (Math.abs(delta) > 4)
+                {
+                    this.dragMoved = true;
+                    this.scrollY = this.pressScroll + delta;
+                    this.clampScroll();
+                }
+            }
+
+            context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF141920);
+            context.batcher.clip(this.area, context);
+
+            try
+            {
+                int columns = this.columns();
+                int colW = TILE_W + TILE_GAP;
+                int rowH = TILE_H + TILE_GAP;
+                int firstRow = Math.max(0, this.scrollY / rowH);
+                int lastRow = (this.scrollY + this.area.h) / rowH;
+
+                for (int row = firstRow; row <= lastRow; row++)
+                {
+                    for (int column = 0; column < columns; column++)
+                    {
+                        int index = row * columns + column;
+
+                        if (index >= UIAssetBrowser.this.filtered.size())
+                        {
+                            break;
+                        }
+
+                        int x = this.area.x + column * colW;
+                        int y = this.area.y + row * rowH - this.scrollY;
+
+                        this.renderTile(context, UIAssetBrowser.this.filtered.get(index), index, x, y);
+                    }
+                }
+            }
+            finally
+            {
+                context.batcher.unclip(context);
+            }
+
+            this.renderScrollbar(context);
+            super.render(context);
+        }
+
+        private void renderTile(UIContext context, Asset asset, int index, int x, int y)
+        {
+            boolean isSelected = index == this.selected;
+
+            context.batcher.box(x, y, x + TILE_W, y + TILE_H, isSelected ? 0xFF2F5C9E : 0xFF20262F);
+
+            if (asset.sound)
+            {
+                context.batcher.box(x + (TILE_W - 32) / 2, y + 6, x + (TILE_W + 32) / 2, y + 38, 0xFF2A3442);
+                context.batcher.icon(Icons.SOUND, 0xFFFFFFFF, x + TILE_W / 2 - 8, y + 12);
+            }
+            else
+            {
+                ImageTextureCache.Entry texture = ImageTextureCache.get(UIAssetBrowser.this.projectId.get(), asset.path);
+
+                if (texture != null)
+                {
+                    int size = 38;
+                    int tw = texture.width;
+                    int th = texture.height;
+                    float fit = Math.min(size / (float) tw, size / (float) th);
+                    int dw = Math.max(1, Math.round(tw * fit));
+                    int dh = Math.max(1, Math.round(th * fit));
+
+                    context.batcher.texturedBox(texture.texture.id, 0xFFFFFFFF,
+                        x + (TILE_W - dw) / 2, y + 3 + (size - dh) / 2, dw, dh,
+                        0F, 0F, tw, th, tw, th);
+                }
+                else
+                {
+                    context.batcher.icon(Icons.IMAGE, 0xFF66707E, x + TILE_W / 2 - 8, y + 12);
+                }
+            }
+
+            String label = asset.label;
+
+            if (label.length() > 13)
+            {
+                label = label.substring(0, 12) + "…";
+            }
+
+            context.batcher.text(label, x + 4, y + TILE_H - 21, 0xFFB8C4D6);
+            context.batcher.text(asset.category, x + 4, y + TILE_H - 10, 0xFF6F7A8A);
+        }
+
+        private void renderScrollbar(UIContext context)
+        {
+            int content = this.contentHeight();
+
+            if (content <= this.area.h || this.area.h <= 0)
+            {
+                return;
+            }
+
+            int barH = Math.max(24, Math.round(this.area.h * (this.area.h / (float) content)));
+            int barY = this.area.y + Math.round((this.area.h - barH) * (this.scrollY / (float) Math.max(1, content - this.area.h)));
+
+            context.batcher.box(this.area.ex() - 4, this.area.y, this.area.ex() - 1, this.area.ey(), 0x22FFFFFF);
+            context.batcher.box(this.area.ex() - 4, barY, this.area.ex() - 1, barY + barH, 0x99FFFFFF);
+        }
+
+        @Override
+        protected boolean subMouseClicked(UIContext context)
+        {
+            if (context.mouseButton != 0 || !this.area.isInside(context))
+            {
+                return super.subMouseClicked(context);
+            }
+
+            this.pressX = context.mouseX;
+            this.pressY = context.mouseY;
+            this.pressScroll = this.scrollY;
+            this.dragMoved = false;
+
+            return true;
+        }
+
+        @Override
+        protected boolean subMouseReleased(UIContext context)
+        {
+            if (this.pressX == Integer.MIN_VALUE)
+            {
+                return super.subMouseReleased(context);
+            }
+
+            boolean dragged = this.dragMoved;
+            int pressX = this.pressX;
+
+            this.pressX = Integer.MIN_VALUE;
+            this.dragMoved = false;
+
+            if (dragged || !this.area.isInside(context))
             {
                 return true;
             }
 
-            int index = row * COLUMNS + column;
+            int columns = this.columns();
+            int column = (pressX - this.area.x) / (TILE_W + TILE_GAP);
+            int row = (this.pressY - this.area.y + this.scrollY) / (TILE_H + TILE_GAP);
+
+            if (column < 0 || column >= columns || row < 0)
+            {
+                return true;
+            }
+
+            int index = row * columns + column;
+
+            if (index >= UIAssetBrowser.this.filtered.size())
+            {
+                return true;
+            }
+
             long now = System.currentTimeMillis();
 
             if (index == this.lastIndex && now - this.lastClick < 350)
             {
-                this.selectedIndex = index;
+                this.selected = index;
 
                 UIAssetBrowser.this.useSelected(UIAssetBrowser.this.replaceMode);
 
                 return true;
             }
 
-            this.selectedIndex = index < this.visibleCount() ? index : -1;
+            this.selected = index;
             this.lastIndex = index;
             this.lastClick = now;
 
@@ -702,6 +1203,20 @@ public class UIAssetBrowser extends UIElement
                 UIAssetBrowser.this.hint.label = IKey.constant(asset.path);
                 UIAssetBrowser.this.hint.color(0xFF8A94A6, false);
             }
+
+            return true;
+        }
+
+        @Override
+        protected boolean subMouseScrolled(UIContext context)
+        {
+            if (!this.area.isInside(context))
+            {
+                return super.subMouseScrolled(context);
+            }
+
+            this.scrollY -= (int) Math.round(context.mouseWheel * 46D);
+            this.clampScroll();
 
             return true;
         }

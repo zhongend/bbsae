@@ -6,6 +6,8 @@ package dev.bbsae.comp;
  */
 public class CompOutputPreset
 {
+    /** "video" (frames, optionally with audio) or "audio" (mixdown only). */
+    public String kind = "video";
     public String id = "review_h264";
     public String name = "Review H.264";
     public String container = "mp4";
@@ -20,7 +22,13 @@ public class CompOutputPreset
     public int height = 0;
     public float scale = 1F;
     public int fps = 0;
+    /**
+     * Legacy field from the first draft; never read. Kept so old files round-trip unchanged.
+     */
     public String audio = "";
+    /** Audio codec muxed into the container ("aac", "pcm_s16le", ...). */
+    public String audioCodec = "aac";
+    public String audioBitrate = "192k";
     public String postAction = "open_folder";
     public boolean keepFrames = false;
 
@@ -37,6 +45,8 @@ public class CompOutputPreset
         preset.extension = "mp4";
         preset.crf = 20;
         preset.pixelFormat = "yuv420p";
+        preset.audioCodec = "aac";
+        preset.audioBitrate = "192k";
         return preset;
     }
 
@@ -51,6 +61,8 @@ public class CompOutputPreset
         preset.bitrate = "220M";
         preset.pixelFormat = "yuv422p10le";
         preset.crf = 0;
+        preset.audioCodec = "pcm_s16le";
+        preset.audioBitrate = "";
         return preset;
     }
 
@@ -65,6 +77,47 @@ public class CompOutputPreset
         preset.alpha = true;
         preset.pixelFormat = "yuva444p10le";
         preset.crf = 0;
+        preset.audioCodec = "pcm_s16le";
+        preset.audioBitrate = "";
+        return preset;
+    }
+
+    /**
+     * Audio-only module: mixes the composition's audio track and writes a 48 kHz stereo WAV.
+     * No GPU pass, no frames — an audio export must not cost a video render.
+     */
+    public static CompOutputPreset audioWav()
+    {
+        CompOutputPreset preset = new CompOutputPreset();
+
+        preset.id = "audio_wav";
+        preset.name = "Audio WAV 48k";
+        preset.kind = "audio";
+        preset.container = "wav";
+        preset.codec = "pcm_s16le";
+        preset.extension = "wav";
+        preset.pixelFormat = "";
+        preset.audioCodec = "pcm_s16le";
+        preset.audioBitrate = "";
+        preset.crf = 0;
+        preset.keepFrames = true;
+        preset.postAction = "open_folder";
+
+        return preset;
+    }
+
+    /** Audio-only module that encodes the mixdown to a compressed file with FFmpeg. */
+    public static CompOutputPreset audioM4a()
+    {
+        CompOutputPreset preset = audioWav();
+
+        preset.id = "audio_m4a";
+        preset.name = "Audio M4A (AAC 192k)";
+        preset.container = "m4a";
+        preset.extension = "m4a";
+        preset.audioCodec = "aac";
+        preset.audioBitrate = "192k";
+
         return preset;
     }
 

@@ -355,4 +355,113 @@ public class Camera3DTest
         assertEquals(expectedX, projected.x, 0.05F);
         assertEquals(expectedY, projected.y, 0.05F);
     }
+
+    /**
+     * A camera is a view, not content: neither the eye icon nor the trim sliders may switch the
+     * view off. Both used to, and both looked like "the compositor randomly reset itself".
+     */
+    @Test
+    public void cameraStaysActiveWhenHiddenOrTrimmed()
+    {
+        CompDocument doc = document();
+        CompLayer camera = camera(doc);
+
+        camera.in = 4F;
+        camera.out = 6F;
+        camera.visible = false;
+        doc.layers.add(camera);
+
+        assertTrue(doc.activeCamera(0F) == camera, "hidden and trimmed out: still the view at 0s");
+        assertTrue(doc.activeCamera(5F) == camera, "inside the trim");
+        assertTrue(doc.activeCamera(9F) == camera, "trimmed out at 9s");
+    }
+
+    /**
+     * An animated camera must move its editor gizmo with the picture. The eye position therefore
+     * comes from the transform channel ({@link CompLayer#cameraEye}); reading the base {@code x}
+     * field left the icon parked at the start position while the frame panned away.
+     */
+    @Test
+    public void cameraEyeFollowsTheTransformChannel()
+    {
+        CompDocument doc = document();
+        CompLayer camera = camera(doc);
+        mchorse.bbs_mod.utils.pose.Transform keyed = camera.defaultTransform().copy();
+
+        keyed.translate.x = 400F;
+        keyed.translate.y = 300F;
+
+        camera.transformChannel().insert(0F, keyed.copy());
+        keyed.translate.x = 1400F;
+        keyed.translate.y = 800F;
+        camera.transformChannel().insert(60F, keyed.copy());
+
+        assertEquals(400F, camera.cameraEye(0F).x, 0.01F);
+        assertEquals(1400F, camera.cameraEye(60F).x, 0.01F);
+        assertEquals(800F, camera.cameraEye(60F).y, 0.01F);
+
+        /* And the view follows the same numbers. */
+        doc.layers.add(camera);
+        doc.activeCameraId = camera.id;
+
+        CompCamera view = CompCamera.of(doc, 0F, 60F);
+
+        assertEquals(1400F, view.cx, 0.01F);
+        assertEquals(800F, view.cy, 0.01F);
+    }
+
+    /**
+     * Stacking must be decided by the layer's <b>plane</b>, not by its origin or its corners.
+     *
+     * <p>Coplanar layers have to tie so the stack order decides; otherwise a big background plane
+     * whose bottom edge is nearer to a tilted camera sorts in front of the small layer above it.
+     * A layer pushed towards the viewer on z must sort in front regardless of where it sits in the
+     * frame.</p>
+     */
+    @Test
+    public void planeDepthTiesCoplanarLayersAndOrdersByZ()
+    {
+        CompDocument doc = document();
+        CompLayer camera = camera(doc);
+
+        doc.layers.add(camera);
+        doc.activeCameraId = camera.id;
+
+        CompProject project = project(doc);
+        CompRenderContext context = new CompRenderContext(project, doc, 0F, null, null, null);
+
+        CompLayer top = card(doc, true);
+        CompLayer bottom = card(doc, true);
+
+        top.x = doc.width * 0.5F;
+        top.y = doc.height * 0.15F;
+        bottom.x = doc.width * 0.5F;
+        bottom.y = doc.height * 0.85F;
+
+        float a = CompScene.planeDepth(context, top);
+        float b = CompScene.planeDepth(context, bottom);
+
+        assertEquals(a, b, 0.01F, "coplanar layers must tie regardless of where they sit");
+
+        CompLayer front = card(doc, true);
+        CompLayer back = card(doc, true);
+
+        front.z = 300F;
+        back.z = -300F;
+
+        assertTrue(CompScene.planeDepth(context, front) > CompScene.planeDepth(context, top),
+            "a layer at +z is in front of the composition plane");
+        assertTrue(CompScene.planeDepth(context, back) < CompScene.planeDepth(context, top),
+            "a layer at -z is behind the composition plane");
+
+        /* Same ordering seen from another orbit angle: the plane test cannot depend on yaw. */
+        camera.transformChannel().insert(0F, camera.defaultTransform().copy());
+        camera.rotationY = 40F;
+        camera.rotationX = 15F;
+
+        CompRenderContext turned = new CompRenderContext(project, doc, 0F, null, null, null);
+
+        assertTrue(CompScene.planeDepth(turned, front) > CompScene.planeDepth(turned, top));
+        assertTrue(CompScene.planeDepth(turned, back) < CompScene.planeDepth(turned, top));
+    }
 }

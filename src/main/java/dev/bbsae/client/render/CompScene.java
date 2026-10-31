@@ -211,6 +211,53 @@ public final class CompScene
             && camera(ctx).perspective;
     }
 
+    /**
+     * Camera-space Z of the <b>plane</b> the layer lies on, not of its origin.
+     *
+     * <p>Why: two coplanar layers (the common case — everything at z = 0) must tie, so their stack
+     * order decides. Depth of the origin does not tie: with a tilted camera the bottom layer's
+     * origin is a few hundred pixels nearer than the top one's, which made a large background
+     * plane sort in front of the small layer drawn above it. The plane distance is the same for
+     * every point of the plane, so coplanar layers tie by construction, and a layer at z = 180
+     * still compares correctly from any orbit angle.</p>
+     *
+     * <p>Derivation: the plane through {@code origin} with normal {@code n}; the view ray through
+     * the eye travels {@code t = dot(origin - eye, f) / dot(n, f)} before it hits it. For a camera
+     * looking down -Z this is exactly the camera-space z (negative in front). Degenerate edge-on
+     * planes fall back to the origin depth.</p>
+     */
+    public static float planeDepth(CompRenderContext ctx, CompLayer layer)
+    {
+        Matrix4f world = world(ctx, layer);
+        Vector3f origin = new Vector3f();
+        Vector3f normal = new Vector3f(0F, 0F, 1F);
+
+        world.transformPosition(origin);
+        world.transformDirection(normal);
+
+        if (normal.lengthSquared() < 0.000001F)
+        {
+            return ctx.cameraView == null ? 0F : camera(ctx).depthOf(origin);
+        }
+
+        normal.normalize();
+
+        CompCamera camera = camera(ctx);
+        float denominator = normal.dot(camera.forward);
+
+        if (Math.abs(denominator) < 0.02F)
+        {
+            return camera.depthOf(origin);
+        }
+
+        float alongNormal = (origin.x - camera.position.x) * normal.x
+            + (origin.y - camera.position.y) * normal.y
+            + (origin.z - camera.position.z) * normal.z;
+
+        /* t along the view ray to the plane, negated: camera-space z is -t (negative in front). */
+        return -alongNormal / denominator;
+    }
+
     /** Camera-space depth of the layer origin; larger = closer. Cached per frame. */
     public static float depth(CompRenderContext ctx, CompLayer layer)
     {

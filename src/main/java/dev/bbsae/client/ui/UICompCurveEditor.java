@@ -170,6 +170,8 @@ public class UICompCurveEditor extends UIElement
 
         private static final int LIST_W = 150;
         private static final int RULER_H = 18;
+        /** Dev switch: dumps the per-column geometry, so a screenshot can be checked against data. */
+        private static final boolean DEBUG_SPANS = Boolean.getBoolean("bbsae.debugCurve");
         private static final int ROW_H = 17;
         private static final int GROUP_H = 15;
 
@@ -224,17 +226,13 @@ public class UICompCurveEditor extends UIElement
         private int lastClickY;
         private long lastClickTime;
 
-        /* --- curve geometry cache ------------------------------------------------
-         * One span array per channel, rebuilt only when the view or the data changes.
-         * See CurveSpans for why the curve is stored per column instead of as a polyline. */
+        /* --- curve geometry ------------------------------------------------------
+         * One reusable span array per channel, refilled every frame (see spansFor for why it is
+         * not cached). See CurveSpans for why the curve is stored per column instead of as a
+         * polyline: the vertex count must not depend on the curve's slope. */
         private final java.util.Map<String, CurveSpans> spanCache = new java.util.HashMap<>();
         /** keyframe -> owning channel, so hit testing is O(1) instead of O(channels x keys). */
         private final IdentityHashMap<Keyframe<?>, CompCurveChannel> owners = new IdentityHashMap<>();
-        /** Bumped on every mutation of a transform channel; the five axes share one key list. */
-        private int transformEpoch;
-        private int dirtyFromColumn = -1;
-        private int dirtyToColumn = -1;
-        private final Set<String> partialChannels = new java.util.HashSet<>();
         private boolean rowsDirty = true;
         private String readoutText = "";
         private int readoutFrame = Integer.MIN_VALUE;
@@ -264,6 +262,7 @@ public class UICompCurveEditor extends UIElement
         private void rebuild()
         {
             CompLayer selected = UICompCurveEditor.this.panel.getSelectedLayer();
+            boolean layerChanged = false;
 
             if (selected != this.layer)
             {
@@ -272,7 +271,7 @@ public class UICompCurveEditor extends UIElement
                 this.active = null;
                 this.visible.clear();
                 this.viewStart = 0D;
-                this.viewDuration = Math.max(1D, UICompCurveEditor.this.panel.getDurationTicks() / 24D);
+                layerChanged = true;
             }
 
             /* The channel adapters are rebuilt on every refresh, so the active channel has to be
@@ -312,6 +311,8 @@ public class UICompCurveEditor extends UIElement
                 this.active = this.channels.isEmpty() ? null : this.channels.get(0);
             }
 
+            boolean channelChanged = this.active != null && !this.active.id.equals(activeId);
+
             if (this.visible.isEmpty())
             {
                 for (CompCurveChannel channel : this.channels)
@@ -330,15 +331,68 @@ public class UICompCurveEditor extends UIElement
 
             this.rowsDirty = true;
             this.invalidateGeometry();
+
+            /* Frame the data.
+             *
+             * A graph editor that opens on a fixed -100…100 axis shows nothing for a position
+             * channel (values in the hundreds) or a 0…1 opacity channel: every sampled Y lands
+             * outside the rectangle and the clip removes the line, leaving only the key dots. That
+             * is exactly the reported symptom, and it is a *default* bug, not a drawing bug.
+             *
+             * Time is framed to the composition (AE's graph is time-locked to the work area) —
+             * the old code divided the composition's *frames* by 24, so a 60 fps, 12-second comp
+             * opened with a 30-second view. */
+            if (layerChanged)
+            {
+                this.fitTime();
+                this.fitValue();
+            }
+            else if (channelChanged)
+            {
+                this.fitValue();
+            }
+            else
+            {
+                this.fitValueIfInvisible();
+            }
         }
 
-        /** Drops every cached curve; used when the channel set, view or data changes wholesale. */
+        /**
+         * Refits the value axis only when the current one cannot show any key of the active
+         * channel. This keeps a manually zoomed graph while making it impossible to end up with a
+         * curve that is entirely off-screen.
+         */
+        private void fitValueIfInvisible()
+        {
+            if (this.active == null || !this.active.hasKeys())
+            {
+                return;
+            }
+
+            float min = Float.MAX_VALUE;
+            float max = -Float.MAX_VALUE;
+
+            for (CompCurveChannel.Key key : this.active.keys())
+            {
+                float value = this.displayValue(this.active, key.raw, key.value, key.tick);
+
+                min = Math.min(min, value);
+                max = Math.max(max, value);
+            }
+
+            float lo = this.speedMode ? this.speedMin : this.valueMin;
+            float hi = this.speedMode ? this.speedMax : this.valueMax;
+
+            if (min == Float.MAX_VALUE || max < lo || min > hi)
+            {
+                this.fitValue();
+            }
+        }
+
+        /** Drops the per-channel span arrays; used when the channel set changes wholesale. */
         private void invalidateGeometry()
         {
             this.spanCache.clear();
-            this.partialChannels.clear();
-            this.dirtyFromColumn = -1;
-            this.dirtyToColumn = -1;
             this.readoutFrame = Integer.MIN_VALUE;
         }
 
@@ -476,8 +530,14 @@ public class UICompCurveEditor extends UIElement
 
             if (min == Float.MAX_VALUE)
             {
-                min = this.speedMode ? -100F : -100F;
-                max = this.speedMode ? 100F : 100F;
+                /* No keys anywhere: frame the active channel's current value instead of a
+                 * meaningless -100…100. An opacity curve belongs around 0…1, a position curve
+                 * around its own X/Y — either way the flat line must be visible. */
+                float value = this.active == null ? 0F : this.active.valueAt(this.frame());
+                float half = Math.max(this.speedMode ? 10F : 1F, Math.abs(value) * 0.5F);
+
+                min = value - half;
+                max = value + half;
             }
 
             float span = Math.max(this.speedMode ? 10F : 1F, max - min);
@@ -577,7 +637,6 @@ public class UICompCurveEditor extends UIElement
             }
 
             this.active.touch();
-            this.markDataChanged(-1, -1, null);
             this.endEdit();
         }
 
@@ -627,7 +686,6 @@ public class UICompCurveEditor extends UIElement
                 this.selection.add(key);
             }
 
-            this.markDataChanged(-1, -1, null);
             this.endEdit();
         }
 
@@ -648,7 +706,6 @@ public class UICompCurveEditor extends UIElement
                 this.selection.add(key);
             }
 
-            this.markDataChanged(-1, -1, null);
             this.endEdit();
         }
 
@@ -948,12 +1005,6 @@ public class UICompCurveEditor extends UIElement
             finally
             {
                 context.batcher.unclip(context);
-
-                /* The partial range is valid for one frame only: a channel that was not drawn
-                 * must not inherit it on the next one. */
-                this.dirtyFromColumn = -1;
-                this.dirtyToColumn = -1;
-                this.partialChannels.clear();
             }
         }
 
@@ -966,6 +1017,35 @@ public class UICompCurveEditor extends UIElement
             int runStart = -1;
             int runLo = 0;
             int runHi = 0;
+
+            if (isActive && DEBUG_SPANS)
+            {
+                StringBuilder line = new StringBuilder();
+
+                line.append("curve spans ").append(channel.id)
+                    .append(" area=").append(this.curveArea.x).append(',').append(this.curveArea.y)
+                    .append(' ').append(this.curveArea.w).append('x').append(this.curveArea.h)
+                    .append(" view=").append(this.viewStart).append("+").append(this.viewDuration)
+                    .append(" axis=").append(this.axisMin).append("..").append(this.axisMax)
+                    .append(" fps=").append(this.fps())
+                    .append(" keys=").append(channel.raw().getKeyframes().size());
+
+                Transform fallback = channel.transform ? this.layer.defaultTransform() : null;
+                int step = Math.max(1, spans.columns() / 10);
+
+                for (int column = 0; column < spans.columns(); column += step)
+                {
+                    float frame = (float) this.fromX(this.curveArea.x + column) * this.fps();
+                    float value = this.channelValueAt(channel, frame, fallback);
+
+                    line.append(" | c").append(column)
+                        .append('@').append(Math.round(frame))
+                        .append('=').append(Math.round(value))
+                        .append('/').append(spans.has(column) ? spans.lo(column) : -9999);
+                }
+
+                dev.bbsae.BbsAeAddon.LOGGER.info(line.toString());
+            }
 
             for (int column = 0; column < spans.columns(); column++)
             {
@@ -1017,7 +1097,21 @@ public class UICompCurveEditor extends UIElement
             context.batcher.box(x1, this.curveArea.y + lo, x2, this.curveArea.y + hi + thickness - 1, color);
         }
 
-        /** Cached per-column geometry of a channel; rebuilds only what actually changed. */
+        /**
+         * Per-column geometry of a channel, rebuilt every frame.
+         *
+         * <h2>Why the cache is gone</h2>
+         * <p>This used to keep the column array across frames and rebuild only the columns touched
+         * by a drag, keyed by a "view stamp" and a per-channel revision. It was fast, and it also
+         * produced a curve that could be stale in ways no invariant could catch: a screenshot of a
+         * freshly created channel showed the line jumping between completely unrelated values at
+         * neighbouring columns, while the same data sampled headlessly was perfectly smooth. A
+         * cache whose invalidation cannot be proven is a bug factory in a renderer.</p>
+         *
+         * <p>The cost of not caching is bounded by the graph's <b>width</b>, not by the data:
+         * 800 columns × one binary search over the channel's keys is a fraction of a millisecond,
+         * against one full-screen GL pass. Correctness that costs 0.2 ms is the right trade.</p>
+         */
         private CurveSpans spansFor(CompCurveChannel channel)
         {
             CurveSpans spans = this.spanCache.get(channel.id);
@@ -1031,57 +1125,10 @@ public class UICompCurveEditor extends UIElement
             int columns = Math.max(1, this.curveArea.w);
 
             spans.ensure(columns);
-
-            long view = this.viewKey();
-            long stamp = this.stampOf(channel);
-
-            if (spans.viewKey == view && spans.stamp == stamp)
-            {
-                return spans;
-            }
-
-            CurveSpans.Sampler sampler = this.sampler(channel);
-
-            if (spans.viewKey != view)
-            {
-                spans.clear();
-                spans.viewKey = view;
-                spans.build(0, columns - 1, sampler);
-            }
-            else if (this.partialChannels.contains(channel.id)
-                && this.dirtyFromColumn >= 0 && this.dirtyToColumn >= this.dirtyFromColumn)
-            {
-                spans.build(this.dirtyFromColumn, this.dirtyToColumn, sampler);
-            }
-            else
-            {
-                spans.build(0, columns - 1, sampler);
-            }
-
-            spans.stamp = stamp;
+            spans.clear();
+            spans.build(0, columns - 1, this.curveArea.y, this.sampler(channel));
 
             return spans;
-        }
-
-        /** Transform axes share one key list, so they share one epoch; scalars use their own. */
-        private long stampOf(CompCurveChannel channel)
-        {
-            return channel.transform ? this.transformEpoch : channel.revision();
-        }
-
-        private long viewKey()
-        {
-            long hash = 0x9E3779B97F4A7C15L;
-
-            hash = hash * 31 + Double.doubleToLongBits(this.viewStart);
-            hash = hash * 31 + Double.doubleToLongBits(this.viewDuration);
-            hash = hash * 31 + Float.floatToIntBits(this.axisMin);
-            hash = hash * 31 + Float.floatToIntBits(this.axisMax);
-            hash = hash * 31 + this.curveArea.w;
-            hash = hash * 31 + this.curveArea.h;
-            hash = hash * 31 + (this.speedMode ? 1 : 0);
-
-            return hash;
         }
 
         private CurveSpans.Sampler sampler(CompCurveChannel channel)
@@ -1089,51 +1136,31 @@ public class UICompCurveEditor extends UIElement
             final float fps = this.fps();
             final float originX = this.curveArea.x;
             final Transform fallback = channel.transform ? this.layer.defaultTransform() : null;
+            final int top = this.curveArea.y;
+            final int bottom = Math.max(top + 1, this.curveArea.ey() - 1);
 
             return (column) ->
             {
                 double seconds = this.fromX(originX + column);
                 float value = this.channelValueAt(channel, (float) seconds * fps, fallback);
+                float y = this.toY(value);
 
-                return Math.round(this.toY(value));
-            };
-        }
-
-        /**
-         * Marks the geometry dirty.
-         *
-         * <p>A column range narrows the rebuild to the segment that changed. Without it, dragging
-         * one handle of a 500-key channel would resample the whole graph every mouse-move frame,
-         * which is exactly the cost this cache exists to remove.</p>
-         */
-        private void markDataChanged(int fromColumn, int toColumn, CompCurveChannel channel)
-        {
-            this.transformEpoch++;
-
-            this.partialChannels.clear();
-
-            if (channel != null && fromColumn >= 0 && toColumn >= fromColumn)
-            {
-                this.dirtyFromColumn = fromColumn;
-                this.dirtyToColumn = toColumn;
-                this.partialChannels.add(channel.id);
-
-                if (channel.transform)
+                /* Absolute graph Y — the same space renderKeys() draws the dots in. CurveSpans
+                 * subtracts the graph origin once (see its class doc); returning a relative Y here
+                 * while the painter added the origin back is exactly the bug that hid every curve
+                 * line behind the clip and left only the dots.
+                 *
+                 * Clamped to the graph rectangle: a value outside the current axis range (a stale
+                 * axis after a channel switch, or a speed spike) used to be stored as an
+                 * out-of-rectangle span and silently clipped away. AE pins such a curve to the edge
+                 * of the graph, which is also the more useful information: "off the top". */
+                if (Float.isNaN(y) || Float.isInfinite(y))
                 {
-                    for (CompCurveChannel other : this.channels)
-                    {
-                        if (other.transform)
-                        {
-                            this.partialChannels.add(other.id);
-                        }
-                    }
+                    return bottom;
                 }
-            }
-            else
-            {
-                this.dirtyFromColumn = -1;
-                this.dirtyToColumn = -1;
-            }
+
+                return Math.max(top, Math.min(bottom, Math.round(y)));
+            };
         }
 
         /** Value shown on the y axis: the property value, or its derivative in speed mode. */
@@ -2039,8 +2066,6 @@ public class UICompCurveEditor extends UIElement
 
             if (first < 0)
             {
-                this.markDataChanged(-1, -1, channel);
-
                 return;
             }
 
@@ -2050,7 +2075,6 @@ public class UICompCurveEditor extends UIElement
             double start = ((Keyframe<?>) keys.get(from)).getTick() / fps;
             double end = ((Keyframe<?>) keys.get(to)).getTick() / fps;
 
-            this.markDataChanged(this.columnOf(start) - 2, this.columnOf(end) + 2, channel);
             UICompCurveEditor.this.panel.setCurveDirtyRange((float) start, (float) end);
         }
 
@@ -2062,8 +2086,6 @@ public class UICompCurveEditor extends UIElement
 
             if (index < 0)
             {
-                this.markDataChanged(-1, -1, channel);
-
                 return;
             }
 
@@ -2073,7 +2095,6 @@ public class UICompCurveEditor extends UIElement
             double start = ((Keyframe<?>) keys.get(from)).getTick() / fps;
             double end = ((Keyframe<?>) keys.get(to)).getTick() / fps;
 
-            this.markDataChanged(this.columnOf(start) - 2, this.columnOf(end) + 2, channel);
             UICompCurveEditor.this.panel.setCurveDirtyRange((float) start, (float) end);
         }
 

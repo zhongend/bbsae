@@ -40,10 +40,10 @@
 
 产物：
 
-- 根目录 `bbsae-0.4.0.jar`
-- `build/libs/bbsae-0.4.0.jar`
-- SHA-256：`c13b6d5ae54fce16c2aae6dc1f57c19b29f2aa2ebdccd3786500cff6d48ff5ae`
-- 大小：`520636` 字节
+- 根目录 `bbsae-0.10.0.jar`
+- `build/libs/bbsae-0.10.0.jar`
+- SHA-256：`213a21e0849a733d69c915a56df37302f2aac00c0310e1c22f745aea3f756218`
+- 大小：`623996` 字节
 
 ---
 
@@ -613,15 +613,15 @@ java -cp "$tool;<tiny-remapper>;<asm jars>;<mapping-io>" RemapToDir $in $out $ma
 
 ## 9. 当前最终产物
 
-- `/bbsae-0.4.0.jar`
-- SHA-256 `c13b6d5ae54fce16c2aae6dc1f57c19b29f2aa2ebdccd3786500cff6d48ff5ae`
-- 大小 `520636`
-- 构建时间 2026-10-24 20:31
+- `/bbsae-0.10.0.jar`
+- SHA-256 `213a21e0849a733d69c915a56df37302f2aac00c0310e1c22f745aea3f756218`
+- 大小 `623996`
+- 构建时间 2026-10-31 15:05
 - 构建方式：`gradle remapJar --offline`（`remapJar` 正常写 zip；本机已不再需要手工重映射）
 
 当前源码最后一次验证：
 
-- `test` **104/104** 通过；`jar` 由 `remapJar` 重新打包；
+- `test` **164/164** 通过；`jar` 由 `remapJar` 重新打包；
 - 第八轮新增 `EffectRenderer.PixelPlan`、7 个 PIXEL 效果、`PixelPlanTest`、
   `ShaderPixelTest` 12 个真实 GL 像素断言；
 - 第九轮新增 20 秒导出、`BBS 预览` 图层导出、`IconResourceTest`；
@@ -1448,3 +1448,505 @@ new Identifier("mc", "textures/block/acacia_leaves.png")
 - 起手仍会做一次整工程 JSON 撤销快照（10–40ms），未做图层级快照（P3）。
 - 顶部工具条仍是 15 个控件平铺，通道树/上下文面板/右键键类型未做（P2）。
 - 曲线 VBO 未做；若 4K 下曲线区仍超 2ms 再上（P3）。
+
+---
+
+## 27. 2026-10-31 第十八轮：曲线可见性 / 导入 / 音视频导出 / 素材库 / 背景 / 摄像机（0.7.0）
+
+详见 `docs/ROUND18-CURVE-IMPORT-EXPORT-CAMERA.zh.md`。这里只留结论和新的硬约束。
+
+### 27.1 曲线"只有点点"的根因（两个，不是一个）
+
+1. `rebuild()` 从不调用 `fitValue()`，值轴停在默认 **-100…100**。位置通道是 380…1500，
+   于是每一列的 Y 都落在图矩形之外，`Batcher2D.clip()` 把整条线裁掉。
+2. `rebuild()` 用 `getDurationTicks() / 24` 当视口时长，而 `getDurationTicks()` 返回的是**帧数**
+   （`duration × fps`），60 fps 的 12 秒合成被当成 30 秒。
+
+**新约束**：曲线的视口必须由数据决定 —— 换图层 `fitTime() + fitValue()`，换通道 `fitValue()`，
+其余情况只在"值轴完全看不到该通道任何关键帧"时重取景（`fitValueIfInvisible()`）。
+任何"采样点在图外"的情况都必须钳到边缘，不能靠裁剪隐藏。
+
+**列几何不要再缓存**。0.6.0 的 `stamp/viewKey/脏列` 缓存在实机出现过"相邻列在无关值之间跳"，
+而同样数据无游戏环境复采样完全平滑。现在每帧按图宽重采（810 列 ≈ 0.2ms），
+`CurveSpans` 只当容器。**不要为了省 0.2ms 把不可证明的失效逻辑加回来。**
+
+### 27.2 导入：不要再用 `UIFileDialogs`
+
+原生 tinyfd 窗口在全屏游戏里可能开在窗口后面或永不回调，回调不触发时按钮就是"死的"，
+而且没有异常可抓。所有导入（图片/字体/音频）统一走 `UIImportBrowser`，
+复制路径统一 `copyIntoProjectImages()` / `assets/audio`，导入后 `UIAssetBrowser.selectPath()` 选中。
+
+### 27.3 音频：混音是纯函数，区间要带 seek
+
+`CompAudioMixer.mix(document, start, end)` 不能读全局状态。**区间导出必须带
+`seek = max(0, exportStart - clipStart)`**，否则"导出 2s…3s"拿到的是文件开头。
+视频混流加 `-af apad -shortest`，否则帧/采样取整会吃掉最后一帧。
+
+输出模块的 `kind`（video/audio）是行为开关：`audio` 不渲染任何一帧。找不到预设时按 id 前缀决定，
+**不要**回退到 `outputPresets.get(0)`（会把"导出音频"变成渲染视频）。
+
+### 27.4 舞台色只有一个出口
+
+`CompRenderer.stageColor(project, comp, preview, transparentStage)`：
+BBS 底图预览 → 透明；alpha 导出 → 透明；其余 → `comp.background`。
+`background` 默认不透明黑，v5 迁移把老工程从"世界底图"改回纯色一次。
+**不要**在 `enter3DSpace()` 之类的地方顺手改 `previewBackground`。
+
+### 27.5 摄像机是视图，不是内容
+
+- `CompDocument.activeCamera()` **不看** `visible`，也**不看**入出点；只按 `activeCameraId` 和图层顺序选。
+- 位置一律用 `CompLayer.cameraEye(frame)`（transform 通道），**不要**用 `scalarAt("x", layer.x)`。
+- 摄像机的绘制/命中/拖动只有一份几何：`renderCameraGizmo` 与 `handleAt`；
+  `layerAt()` 里摄像机分支直接调用 `handleAt()`。
+- `CompCamera.of()` 判断"cameraZ 通道是否存在"，而不是"值是否为 0"。
+
+### 27.6 验证入口
+
+```bash
+./gradlew runClientView -PbbsaeView=curve,assets     # 每 8 秒切一个视图
+./gradlew runClientView -PbbsaeView=camera           # 进 3D 空间
+```
+
+`-Dbbsae.debugCurve=true`（`clientView` 默认开）会打印每帧的
+`area / view / axis / fps / keys` 和前 10 列 `列@帧=值/跨度`。曲线问题先用它看数据，再怀疑绘制。
+
+### 27.7 产物
+
+- `bbsae-0.7.0.jar` 583134 字节
+- SHA-256 `4d198356871ef5b0905725bed9d320a9346c63c47464b36bab22c8b2a72d254f`
+- `test` **137/137**
+
+---
+
+## 28. 2026-10-31 第十九轮：AE 编码器模式（0.8.0）
+
+详见 `docs/ROUND19-AE-ENCODER.zh.md`。
+
+### 28.1 两条管线，一个工程
+
+`project.settings.encoder`：
+
+* `"bbs"`（默认）—— 合成是影片叠加层，帧由游戏产生，BBS 的 FFmpeg 录像器导出。
+* `"ae"` —— 帧由合成器产生：`CompRenderer.renderFrame(project, doc, frame, alpha)`，
+  时间只由帧号推出，合成分辨率，预览与导出同一个函数。
+
+**不要**再让第三条路径（例如某个调试按钮）自己调 `renderCompToFbo` 去"导出一帧"：
+`renderOffscreen` / `renderForExport` 已经是 `renderFrame` 的薄包装。
+
+### 28.2 帧服务器
+
+`CompFrameServer` 只是缓存，不是渲染器：
+
+* 键 `(CompRenderCache.signature, frame, alpha)`；signature 含帧号/图层/关键帧/效果，
+  所以"改文档 → 旧帧不可达"，不需要额外失效逻辑。
+* 192 MB 预算，LRU，释放回 `FboPool`；`invalidate()` 在换工程、切管线时调用。
+* `renderFrameCached` 先查绿条预渲染（磁盘代理），再查帧服务器。
+
+### 28.3 风险必须写在 UI 里，不是文档里
+
+首次切 AE 弹六条风险确认（`showEncoderRisk`），确认后写 `encoderRiskAcknowledged`；
+预览右上角常驻红色徽标 `AE 编码器 / 帧 N / 总数`；导出按钮文案变 `AE 导出`。
+这六条是真实语义差异（尤其"BBS 预览层在离线导出里是静态帧"），改动这些行为时要同步改文案。
+
+### 28.4 BBS 侧不变
+
+* 影片里播放、BBS 的 F6 导出**永远按 BBS 模式**渲染；AE 模式只影响合成器自己的预览与渲染队列。
+* `BBS 预览` 图层两种模式都工作；AE 导出时是最后一帧静态画面。
+* 工程文件共用；老工程没有 `encoder` 字段 → 默认 bbs（`CompEncoderModeTest` 钉住）。
+
+### 28.5 验证入口
+
+```bash
+./gradlew runClientView -PbbsaeView=curve -PbbsaeEncoder=true   # 强制 AE 管线
+```
+
+日志会打印 `frame server: f<N> <ms> ms (cache ..., hit ..., miss ...)`：
+同一帧只渲染一次，说明预览确实在走帧服务器。
+
+### 28.6 产物
+
+- `bbsae-0.8.0.jar` 593308 字节
+- SHA-256 `dbafe7b2164c3ab64e0c3cbbd50e7a6aa2bfbaf83f68e22cc9638bc67ad5ab5b`
+- `test` **143/143**
+
+---
+
+## 29. 2026-10-31 第二十轮：AE 管线四块短板（0.9.0）
+
+详见 `docs/ROUND20-AE-PIPELINE.zh.md`。
+
+### 29.1 磁盘帧缓存是"内容寻址"，不是"脏标记"
+
+`CompFrameDisk`：文件名 = `<签名>_<帧>_<w>x<h>.rgba`，签名来自 `CompRenderCache.signature`。
+**不要**给它加"失效/清理标记"——内容变了就是另一个文件，旧文件永远不可能被错误命中。
+里面是**原始 ARGB int**（top-down），载入时按行翻成 bottom-up 再上传；中间不要插 PNG 编解码
+（1080p ImageIO 比简单合成还慢）。只写 ≥45ms 的帧，512MB 上限，mtime 淘汰到 80%。
+
+### 29.2 GL 只能在渲染线程，"渲染农场"= 每 tick 预算 + 原始帧管道
+
+不要试图开共享 GL 上下文的后台线程。真正的提速来自：
+
+* `FRAME_BUDGET_MS = 22`、`MAX_FRAMES_PER_TICK = 6`（旧实现每 tick 一帧 = 20fps 上限）；
+* 全尺寸视频走 `ffmpeg -f rawvideo ... -i pipe:0`，帧经 `GlFramebuffer.readTopDownRgba()`
+  （`readRawBytes` + 按行翻转，不换通道）直接写 stdin，**不再每帧 PNG**。
+* `CompExportManager.usesPipe()` 的四个条件缺一不可：视频、非 PNG、非保留帧、输出尺寸 == 合成尺寸。
+  缩放预设必须走 PNG（需要重采样），否则就是"导出和预览不是一张图"。
+
+### 29.3 预览音频以播放头为准
+
+`CompAudioPlayer`：worker 线程混音 → 客户端线程建 `SoundBuffer` → BBS OpenAL 播放。
+**只有** `UICompositorPanel.syncPreviewAudio()` 一个入口，由 `(playing, AE, 有音频, 开关)` 推导；
+`sync(time)` 漂移 >250ms 或循环回卷才 seek。不要在 `togglePlay/pause/shuttle` 里各写一份。
+
+### 29.4 代理分辨率必须显式
+
+`settings.encoderProxy` 只影响 AE 预览；帧缓存键包含它；**导出永远 1/1**；
+徽标必须显示 `代理 1/2`。任何"偷偷降分辨率"的优化都会变成"预览糊、导出锐"的 bug 报告。
+
+### 29.5 产物
+
+- `bbsae-0.9.0.jar` 609542 字节
+- SHA-256 `f9a4907e03b90295cab4728920ca13206cba3a911f03e932536c0fae8a13cefd`
+- `test` **156/156**
+
+---
+
+## 30. 2026-10-31 第二十一轮：轨道缩放 / 音频与视频轨道（0.10.0）
+
+### 30.1 `Scale.zoom` 是加法，单位 px/s
+
+`xAxis.zoom(delta, min, max)` = `setZoom(getZoom() + delta)`，不是倍数。**任何**缩放都必须
+`target = current * 1.35^steps` 再传 `target - current`（见 `UICompTrackTimeline.zoomTarget`）。
+键盘 `=` / `-`、`Ctrl/Alt + 滚轮` 全部走 `zoomAt`，不要再直接调 `animateZoom(anchor, ±1)`。
+上下限用 0.05…200000（默认 0.01…1000 对 1 秒合成不够）。
+`CompTimelineZoomScaleTest` 用 BBS 真 `Scale` 钉住这个单位。
+
+### 30.2 时间轴的行数只有一个来源
+
+`rowCount() = rows().size() + (hasAudioRow() ? 1 : 0)`。音频轨道是**虚拟行**（`audioRowIndex()`），
+与图层共用行高/滚动/时间轴。新增行类型时必须同时改：`rowAt`、`clampScroll`、`renderRows`、
+`clickLane` 的分派、`reorderTarget`（音频行不接受图层拖放）。
+音频片段的绘制长度 = `clip.length(comp.duration)`；导入时用 `probeDuration` 写入真实时长，
+否则"时间轴画的"和"混音放的"会各算一套。
+
+### 30.3 视频=拆帧，不是解码器
+
+`CompVideoImport`：FFmpeg `fps=<合成帧率>,scale=w:h` → `assets/frames/<name>/frame_%04d.png`
+→ `footage` 图层。**不要**引入流式解码：合成器必须能任意顺序取第 N 帧。
+信框缩放（不裁剪）、最长 60 秒、名字冲突加 `_2`、worker 线程拆帧 + 客户端线程建图层、
+工程切走则丢弃。
+
+### 30.4 布局下限
+
+`applyLayout()` 第二次钳制：左右栏按比例缩，保证预览 ≥160px。第一段钳制是各栏独立的，
+在 ~360 逻辑像素宽时预览会变成负数（元素宽度 ≤0 → 整块不画）。
+
+### 30.5 产物
+
+- `bbsae-0.10.0.jar` 623996 字节
+- SHA-256 `213a21e0849a733d69c915a56df37302f2aac00c0310e1c22f745aea3f756218`
+- `test` **164/164**
+
+---
+
+## 31. 2026-10-31 第二十二轮：3D 视口（Blender 式自由摄像机，0.11.0）
+
+详见 `docs/ROUND22-CAMERA-VIEWPORT.zh.md`。
+
+### 31.1 摄像机分成两个，不是一个
+
+| 类 | 回答的问题 | 进成片 |
+| --- | --- | --- |
+| `CompCamera` | 这一帧镜头看到什么 | 是 |
+| `CompViewportCamera` | 编辑器现在站在哪里看 | 否 |
+
+`viewportMode`（`settings.viewport3D`）= 自由视口；`cameraPreviewMode` = **看穿摄像机**（最终画面）。
+两者不是同一个东西，**不要**再把它们合并：旧实现把"导航"实现成"移动成片镜头"，于是每次鼠标移动
+都会改文档 → 指纹变 → 整条渲染图重跑，这就是"卡得根本用不了"的根。
+
+`CompViewportCamera` 的状态是 **target + yaw/pitch/distance + fov + ortho**。
+`update()` 用字段比较判断是否需要重算矩阵（不要只依赖 `matricesDirty`：`ortho` 这类公开字段
+可以被 UI 直接改，第一版就因此"切正交没反应"）。
+
+### 31.2 视口渲染必须进自己的 FBO
+
+`CompViewportRenderer.draw(...)`：
+
+1. `renderScene(...)` 把舞台 + 网格 + 图层四边形画进自己的 `GlFramebuffer`
+   （`GlStateGuard.ortho(width, height)` + 单位 modelview，坐标就是 0..w / 0..h）；
+2. 用 `Batcher2D.texturedBox` 把那张图贴回面板（和合成预览同一条"一帧如何到达面板"的路）。
+
+**不要**把三角形直接提交到 UI 帧里。实测（探针打印 `fbo=`）会画进 FBO 1 而不是屏幕：
+batcher 画的准星/图标全对，自己画的四边形全不见，且没有任何 GL 错误。
+
+### 31.3 源纹理按"内容指纹"缓存
+
+`CompLayerSourceCache`：图层本地坐标栅格化，最长边 1024 px，48 MB 预算，LRU。
+指纹**只含**会改变像素的字段（文字/字号/颜色/图片/形状/文字动画器/当前帧），
+**不含** x/y/rotation/scale/opacity/blendMode —— 那些由四边形施加。
+
+* 转视口 / 拖图层 = 0 次栅格化；
+* 改文字/形状 = 1 层栅格化；
+* 预合成在草稿里画"板子"，不递归整图。
+
+栅格化时要把 **batcher 的矩阵栈**也重置成单位阵（只重置 `RenderSystem` 的 modelview 不够，
+面板的平移会再叠一次）。
+
+### 31.4 透视四边形：分格 + 预乘
+
+每层按屏幕对角线切 1..8 格（/110px），每格两个三角形用投影后的角，UV 取本地矩形。
+平面在透视下是单应变换，分格后的仿射近似误差 <1px；整层仍是一次 draw call。
+图层内容是**预乘**的（`SRC_ALPHA` 画到透明底），所以四边形按预乘合成（顶点 alpha 同时缩放 RGB/A），
+**不要**再对每条图层跑 unpremultiply。
+
+### 31.5 交互（Blender 键位）
+
+中键环绕、Shift+中键平移、滚轮朝光标缩放；数字键盘 0 看穿/自由、1/3/7 前/右/顶（Ctrl 反向）、
+5 正交、. 框住所选、Ctrl+Home 框住全部；拖摄像机本体在"过眼睛且平行于屏幕"的平面上移动
+（Shift = 沿视线推拉），拖准星在目标 Z 平面重新瞄准；Ctrl+滚轮推拉镜头，Alt+滚轮改 FOV。
+
+所有拖动都从**按下时的快照**算绝对量（`vpStartEye` / `vpStartTarget` / `dragStarts`）。
+用"每帧增量"会让环绕加速、让 3D 图层的 z 每帧再加一次。
+
+### 31.6 顺手修掉的两个真 bug
+
+* `line()` / `coarseLine()` 原来每 2px 铺一个方块（一条 700px 视锥边 = 350 个四边形，
+  网格每帧上万）。现在一次矩阵旋转 + 一个四边形。
+* `CompFileDrop.install()` 在 `BBSClientReadyEvent` 里 `client.getWindow().getHandle()` 会 NPE
+  （BBS 从 `onInitializeClient` 发这个事件，窗口还不存在），异常会中断 `onClientReady` 后面
+  的全部注册（预览桥、导出 tick）。已改为窗口为空时直接返回。
+
+### 31.7 验证入口
+
+```bash
+gradle.bat runClientView -PbbsaeView=camera       -Dbbsae.debugShot=viewport  -Dbbsae.debugShotTicks=210
+gradle.bat runClientView -PbbsaeView=cameralook   -Dbbsae.debugShot=cameralook -Dbbsae.debugShotTicks=200
+```
+
+* `-Dbbsae.debugViewport=true`：每秒打印 `viewport: N layers … [x0,y0 x1,y1]`（第一个可见图层
+  投影后的屏幕矩形 —— 用来区分"几何跑出屏幕"和"没画出来"）。
+* `-Dbbsae.debugViewLock=true`：禁用视口鼠标/键盘输入，并强制每次进入都重新取景，
+  用于可复现的截图（窗口在前台时会收到真实鼠标输入，否则截图姿态随机）。
+* `-Dbbsae.debugShot=<name>` + `-Dbbsae.debugShotTicks=N`：第 N tick 存一张截图到 `run/screenshots/`。
+* `debugView` 现在**只应用一次**（多视图列表仍按 8 秒轮换），避免反复进入/退出 3D 空间。
+
+### 31.8 产物
+
+- `bbsae-0.11.0.jar` 671320 字节
+- SHA-256 `84103a0d6f8f5da5416596a531214001a9869a90de92ffa37ada801c44b787fa`
+- `test` **174/174**
+- 截图：`docs/verify/round22-viewport.png`、`docs/verify/round22-cameralook.png`
+
+---
+
+## 32. 2026-10-31 第二十三轮：视口可用性、3D 叠放与稳定性（0.12.0）
+
+详见 `docs/ROUND23-VIEWPORT-FIXES.zh.md`。
+
+### 32.1 右键才是主操作
+
+`subMouseClicked` 在 3D 空间里优先消费**右键**：右键拖动环绕、Shift+右键平移、中键同效。
+看穿摄像机状态下右键拖动会**先退出看穿**再环绕（Blender 行为）。中键在很多笔记本上不存在，
+只接中键等于"视角动不了"。
+
+### 32.2 摄像机 gizmo
+
+* **每一台可见摄像机**都画 gizmo，激活的那台颜色正常、其余压暗；只画激活的会让第二台摄像机
+  在视口里彻底消失。
+* 进入 3D 空间时**先框住合成（画面居中），再只放宽距离到摄像机也进入画面**（最多 10 次迭代）。
+  不要用"合成 ∪ 摄像机"的包围盒：它会把合成推到画面一侧。
+
+### 32.3 效果必须在图层本地空间烘焙
+
+`CompLayerSourceCache.applyEffects` 用 `EffectSpace.ofBounds(layer, world, ctx, rect…)` 显式给出
+"本地像素 → 栅格像素"的映射（`world = scale(s)·translate(-x0,-y0)`），代理合成尺寸 = 栅格尺寸。
+`EffectSpace.of` 对 3D 图层返回合成空间，那是给"在合成空间栅格化"的成片管线用的；
+视口在图层空间栅格化，必须用本地映射，否则渐变色会随着转视角在四边形上滑动。
+
+`EffectRenderer` 新增了接受 `EffectSpace` 的重载（原 5 参重载委托给它）。
+
+**跳过**：`depth_*`、`shake`。蒙版/轨道遮罩/混合模式仍不参与草稿。
+
+### 32.4 BBS 预览图层的天空
+
+世界帧的 alpha 通道没有语义（天空处常为 0），`drawBbsPreview` 之前把它当透明度用 → 天空变黑。
+现在 tint 强制 `| 0xFF000000`。**一帧影片没有透明通道。**
+
+### 32.5 3D 叠放：平面深度，不是原点/角点
+
+`CompScene.planeDepth(ctx, layer)`：
+
+```
+t = dot(origin - eye, n) / dot(f, n)   // n = 图层世界 Z 轴
+planeDepth = -t                        // 相机空间 z，越远越负
+```
+
+* 共面图层（z=0 的绝大多数）**严格相等** → 堆栈顺序决定，和合成器一致；
+* z>0 的图层从任何角度都排在前；
+* 边缘视角回退到原点深度。
+
+视口对**所有**图层按它排序（同深度用堆栈序）；`CompRenderer.sortSegment` 的 3D 槽位也用同一个键，
+**预览与导出的前后关系必须一致**。
+
+### 32.6 首次打开的空白条
+
+`applyLayout()` 只在 `bind()` 跑一次，那时 `area` 还没有真实尺寸，`body` 用 160px 下限、
+时间轴贴底 → 中间一条空白，拖一下分栏才恢复。现在 `render()` 比较 `area` 尺寸，变了就重排。
+
+### 32.7 播放闪烁：三处状态/生命周期错误
+
+1. **UI 顶点被画进场景 FBO**：绑定场景 FBO 之后才 flush 面板批次，会把本帧已排队的 UI 顶点
+   画进 3D 纹理。现在 `CompViewportRenderer.draw` **先 flush** 再绑定。
+2. **每帧申请/归还场景 FBO**：改成持久目标（尺寸变化才换），**不能 release**（否则下一层会拿到
+   正在被采样的纹理）。
+3. **FBO 双重释放**：`applyEffects` 自己释放输入，调用方又释放一次 → 同一个 framebuffer 进池两次。
+   `FboPool.release` 现在**永久带重复释放守卫**（拒绝 + warning，`-Dbbsae.debugFbo` 附堆栈）。
+
+### 32.8 源纹理指纹：帧号只在内容随时间变化时才计入
+
+`isTimeDependent(layer)`：`footage`、非空 `textAnimators`、或 `animatedPaths()` 里有 `text/`、
+`shape/`、`fx/` 前缀的通道。否则**不混帧号** —— 静态图层播放时重建次数为 0。
+动画图层用 `staging + straight` 双目标**原地重绘**，播放期间分配次数为 0（带效果的图层除外）。
+
+### 32.9 运动轨迹
+
+激活摄像机沿 `CompCamera.eyeOf()` 采样 40 段折线 + 每个 transform 关键帧一个点。
+轨迹是**读**动画，不存第二份路径。选中高亮、未选中压暗。
+
+### 32.10 产物
+
+- `bbsae-0.12.0.jar` 676590 字节
+- SHA-256 `a86eabec779ed73480757bca5ec766db408f78b5b7e430fa4bb6f6e9f1a3adb7`
+- `test` **175/175**
+- 截图：`docs/verify/round23-viewport.png`
+
+---
+
+## 33. 2026-10-31 第二十四轮：视口输入、图层空间效果、蒙版、缩略图、快捷面板（0.13.0）
+
+详见 `docs/ROUND24-VIEWPORT-MASK-QUICKPANEL.zh.md`。
+
+### 33.1 视口输入必须轮询，不能只靠 UI 事件
+
+`subMouseClicked` 在 BBS 里会被上下文菜单等路径吃掉，右键拖动因此完全不可用。现在
+`pollViewportInput()` 每帧直接读 `Window.isMouseButtonPressed(1/2)`（GLFW：1=右键、2=中键），
+在预览区内按下即开始 `ORBIT/PAN`，`Shift` = 平移，看穿状态下按下先退出看穿。
+
+* 事件路径仍然消费 1/2（阻止右键菜单），但不作为唯一入口；
+* `beginViewportDrag` 里"已在拖拽则忽略"，防止轮询与事件重复触发重置起点。
+
+**不要**把导航只挂在任何 UI 事件上。
+
+### 33.2 效果属于图层，不属于合成（成片管线也改了）
+
+`EffectSpace.of()` 对 3D 图层返回合成空间，是"在合成空间栅格化"的实现细节。它让渐变跟着画面
+而不是跟着图层 —— 转视角就滑。
+
+现在 `CompRenderer.renderBaked3D()`：3D 图层若带效果，取 `CompLayerSourceCache` 的**图层空间栅格**
+（已含效果），按 `model · projection` 用 8×8 网格贴到合成上，并跳过该层的效果 pass。
+草稿、看穿、导出三处一致。
+
+### 33.3 蒙版 / 排除 = 两个图层的集合运算
+
+* 语义：`蒙版 = A ∩ B`（ALPHA 遮罩）、`排除 = A − B`（ALPHA_INVERTED）；
+* 交互：形状层放在目标层**上方**，选中形状层 → 检查器"用作蒙版（交集）/ 用作排除（差集）"；
+  目标 = `layers.indexOf(source) - 1`（列表 0 是最底层）；形状层自动 `guide + visible=false`；
+* 草稿：在**源纹理构建时**把形状层栅格按 `inv(W_target)·W_matte` 画进目标栅格，
+  用 `glBlendFunc(GL_ZERO, GL_SRC_ALPHA)`（交集）/ `GL_ZERO, GL_ONE_MINUS_SRC_ALPHA`（差集）；
+* **投影必须是内容那一套**：`ortho(rect.x·s … rect.y·s)`，不是 `ortho(0..w)`，
+  否则形状会落到栅格角落（第一版就是这样，蒙版看起来"没生效"）；
+* 指纹里要混入两层的位移/旋转/缩放与形状层的内容签名，否则改形状不刷新。
+
+### 33.4 效果库缩略图（AM 式）
+
+每行左缩进 26px，在缩进里画 16×16 缩略图，图来自 `CompEffectPreview.frame(type)`（96×54 测试卡，
+按类型+参数缓存）。行几何用列表自己的 `visible()` / `areaOf(i, cell)`，**并且 y 要减去
+`scroll.getScroll()`**：`areaOf` 返回内容坐标（x 从 0 开始），直接用会画到面板外。
+
+### 33.5 图层快捷面板
+
+`UILayerQuickPanel` 停靠时间轴右侧：X/Y/Z/旋转/缩放/不透明度 + 每行 ◆ 打关键帧。
+宽度 160–340 可拖，存 `settings.quickPanelWidth`；可见时 `applyLayout` 把时间轴宽度减去它。
+数值回填只在"选中层或播放头变化"时做，输入中不会被覆盖。
+
+### 33.6 草稿蒙版暂缓
+
+`CompLayerSourceCache.DRAFT_MATTE = false`。草稿在源纹理里做交集/差集时，两层栅格尺寸不同会让
+采样映射不精确、边缘出现噪点。**成片/看穿/导出**的蒙版是正确的（走原来的轨道遮罩），
+草稿宁可先不显示。下一轮要么把两层栅格统一尺寸，要么在视口里改用模板缓冲。
+
+### 33.7 产物
+
+- `bbsae-0.13.2.jar` 689438 字节
+- SHA-256 `a7121ce7b3ef900de45fb94307149a5d587680584746805e4c9ab0c232e5e306`
+- `test` **175/175**
+- 截图：`docs/verify/round24-viewport.png`
+
+### 33.8 0.13.1 补充：手势必须在任何视图里都成立
+
+实测（`-Dbbsae.debugViewport`）证明轮询有效：一次运行 26 次 `drag start button=1`，yaw 31 → -1058。
+"不能环绕"的真实原因是**当时不在 3D 视口**（2D 与 3D 的预览长得一样）。
+
+所以右键拖动改为**任何视图都生效**：2D 里先 `enter3DSpace()` 再环绕；
+3D 里左键拖空白 / Alt+左键也环绕；键盘 A/D·W/S·Q/E 兜底；
+2D 右下角常驻提示。诊断开关：`bbsae.debugOrbit=<度/帧>`（无鼠标也能转，用来区分输入/渲染）。
+
+### 33.9 0.13.2：烘焙 3D 图层时 `texturedBox` 的 UV 上下角
+
+`Batcher2D.texturedBox` 的 UV 参数是**两个角**（左上、右下，顺序与四角一致）。
+`renderBaked3D` 里写成了 `(u0, vBottom, u1, vTop)`，于是 3D 图层的烘焙纹理**垂直翻转**：
+横向渐变看不出，纵向/斜向渐变颜色颠倒、文字倒置。
+
+正确写法 `(u0, vTop, u1, vBottom)`。`layerUv` 的局部 v 是 **y 向下**（由 `vz` 的符号可反推），
+所以角度 90 时顶部是 ColorA —— `gradtest`/`gradlook` 两个调试视图就是钉这条的，
+截图 `docs/verify/gradV-draft.png` 与 `gradV-look.png` 必须都是"上红下蓝"。
+
+---
+
+## 34. 2026-10-31 第二十五轮：回放实体图层（深度抠像）与系统文件对话框（0.14.0）
+
+> 完整论述见 `docs/ROUND25-ENTITY-KEY-IMPORT.zh.md`。
+
+### 34.1 回放实体图层：为什么必须二次渲染
+
+世界帧里没有"这个像素属于谁"。按颜色抠在白盔甲/白墙、任意光影、半透明贴图下都会失败。
+唯一稳定的身份信号是几何：在 `AFTER_ENTITIES`（BBS 画完影片实体之后）把选中的回放**再渲染一遍**
+到只有深度的目标，然后
+
+```
+像素属于实体 ⟺ |linearDepth(entityDepth) − linearDepth(worldDepth)| < 容差
+```
+
+* 方块挡在前面 → 世界深度更近 → 不相等 → 抠掉；未勾选的实体挡在前面同理。遮挡是深度比较的副产品。
+* 全程不比较颜色，所以换光影/材质不影响。
+* 比较在**视空间（方块）**做，不在 NDC：远平面 1 个 NDC 单位是几百格。
+
+关键实现点（改动别踩）：
+
+| 位置 | 约束 |
+| --- | --- |
+| `ReplayEntityMask.render` | 必须挂在 `AFTER_ENTITIES` 且**在 `renderFilmActors` 之后**：同相机、同 pose stack、同 transition，深度才会逐像素重合 |
+| `transitionOf` | `controller.paused` 时取 0，与 BBS `getTransition` 一致；否则轮廓多一圈 |
+| `FormRenderLast.suspend()` | 必须包住整个 pass，否则 `render_last` 表单落不进遮罩 |
+| `ensureTarget` | 尺寸必须等于 `mc.getFramebuffer().textureWidth/Height`，与 `SceneColor`/`SceneDepth` 对齐 |
+| `ReplayEntityKey` | 逆 MVP 反投影 + `suv.y = 1 - uv.y`；输出**预乘** alpha（管线后面统一 un-premultiply） |
+| `CompRenderer.renderCached` | 含实体/BBS 预览层的合成必须 `liveWorld` 跳过内容缓存，否则画面被冻住 |
+| `CompositionOverlay` | `ensureCurrent` 用保存的相机懒渲染，保证导出第 0 帧有 matte |
+
+3D（透视）实体图层不抠，退化为世界底板 —— matte 是屏幕空间属性，不能贴到任意平面。
+
+### 34.2 文件导入：tinyfd 的静默失败
+
+BBS `UIFileDialogs` 在工作线程调 tinyfd，**没有 owner 窗口**：全屏/无边框下可能开在游戏后面，
+平台拒绝时直接返回 null，回调不触发 —— 按钮看起来是死的。
+
+`NativeFileDialog` 用 `java.awt.FileDialog`（原生对话框）+ 1×1 always-on-top owner frame，
+工作线程弹出；`onPick` / `onUnavailable` 两路回调把"取消"和"不可用"分开；
+AWT 不可用才回落到游戏内浏览器。图片/视频/音频/字体/素材库五个入口 + 浏览器里的
+"系统对话框…"全部改走它。
+
+### 34.3 验证
+
+* `ReplayEntityKeyPixelTest`（4 个像素级用例）：抠出、遮挡、收缩/羽化、世界帧方向。
+* 实机：`replays=2 rendered=1`，遮罩覆盖 ~15 万像素；洋红舞台验证图只剩角色（洋红仅存在于截图，未进代码）。
+* 测试合计 **182/182**；产物 `bbsae-0.14.0.jar`。

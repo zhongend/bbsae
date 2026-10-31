@@ -61,6 +61,9 @@ final class LayerContentRenderer
             case "bbs":
                 drawBbsPreview(layer, batcher);
                 break;
+            case "replay":
+                drawReplayEntity(layer, context, batcher, world, projection);
+                break;
             case "precomp":
                 drawPrecomp(layer, context, batcher);
                 break;
@@ -233,6 +236,74 @@ final class LayerContentRenderer
             return;
         }
 
+        drawWorldPlate(layer, batcher, texture);
+    }
+
+    /**
+     * The depth-keyed replay entity layer.
+     *
+     * <p>Two things happen here and nowhere else: the world frame is sampled through a matte that
+     * was produced by a depth-only pass of the selected replay entities, and everything the matte
+     * rejects becomes transparent. The layer then behaves like any other source — it can be moved,
+     * masked, feathered, graded, blended and keyframed, and it exports with alpha.</p>
+     *
+     * <p>A 3D (perspective-projected) entity layer cannot be keyed: the matte is a screen-space
+     * property of the world camera, not of an arbitrary plane in the composition. Rather than
+     * silently drawing a wrong matte, a 3D entity layer degrades to the un-keyed world plate.</p>
+     */
+    private static void drawReplayEntity(CompLayer layer, CompRenderContext context, Batcher2D batcher, Matrix4f world, Matrix4f projection)
+    {
+        dev.bbsae.client.render.GlTexture texture = dev.bbsae.client.overlay.BbsPreviewBridge.texture();
+        boolean active = dev.bbsae.client.overlay.BbsPreviewBridge.isActive();
+
+        if (texture == null)
+        {
+            if (active && context.preview)
+            {
+                float x = -layer.width * layer.anchorX;
+                float y = -layer.height * layer.anchorY;
+
+                batcher.box(x, y, x + layer.width, y + layer.height, 0x3300AAFF);
+                batcher.outline(x, y, x + layer.width, y + layer.height, 0x8855AAFF);
+                batcher.textShadow("回放实体：等待世界帧…", x + 10F, y + 10F, 0xFFFFD27A);
+            }
+
+            return;
+        }
+
+        if (!layer.threeD)
+        {
+            /* Flush first: the matte is drawn with its own program into the target, and any quad
+             * still queued in the batcher would be flushed after it and paint over the result. */
+            batcher.flush();
+
+            if (dev.bbsae.client.render.ReplayEntityKey.draw(layer, context, world, projection))
+            {
+                return;
+            }
+
+            /* No mask yet: stay transparent. Falling back to the un-keyed world plate here would
+             * silently turn "nothing is keyed" into "the whole background is keyed", which is the
+             * one result a keying layer must never produce. */
+            if (context.preview)
+            {
+                float x = -layer.width * layer.anchorX;
+                float y = -layer.height * layer.anchorY;
+
+                batcher.outline(x, y, x + layer.width, y + layer.height, 0x4455AAFF);
+            }
+
+            return;
+        }
+
+        /* A 3D entity layer cannot be keyed (the matte is screen space), so it degrades to the
+         * plain world plate instead of showing a wrong matte. */
+        drawWorldPlate(layer, batcher, texture);
+    }
+
+    /** Draws the world frame as an opaque picture, honouring the layer's fit and anchor. */
+    private static void drawWorldPlate(CompLayer layer, Batcher2D batcher, dev.bbsae.client.render.GlTexture texture)
+    {
         float w;
         float h;
 
@@ -251,7 +322,7 @@ final class LayerContentRenderer
             h = texture.height * scale;
         }
 
-        batcher.texturedBox(texture.id, layer.color,
+        batcher.texturedBox(texture.id, layer.color | 0xFF000000,
             -w * layer.anchorX, -h * layer.anchorY, w, h,
             0F, texture.height, texture.width, 0F, texture.width, texture.height);
         dev.bbsae.client.overlay.BbsPreviewBridge.noteFrameDrawn(texture.width, texture.height);
