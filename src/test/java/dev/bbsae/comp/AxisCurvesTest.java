@@ -158,6 +158,24 @@ public class AxisCurvesTest
     }
 
     @Test
+    public void writingOneAxisNeverDropsAnOldSharedCurve()
+    {
+        CompLayer layer = new CompLayer("layer", "Layer", "solid");
+        layer.threeD = true;
+        Transform a = layer.defaultTransform();
+
+        a.translate.set(100F, 200F, 0F);
+        layer.transformChannel().insertInheriting(0F, a);
+
+        layer.insertAxisKey(CompCurves.AXIS_Z, 0F, 40F);
+
+        assertTrue(layer.transformChannel().getKeyframes().isEmpty());
+        assertEquals(100F, layer.transformAt(0F).translate.x, 0.0001F);
+        assertEquals(200F, layer.transformAt(0F).translate.y, 0.0001F);
+        assertEquals(40F, layer.transformAt(0F).translate.z, 0.0001F);
+    }
+
+    @Test
     public void effectCurveCanBeFoundByItsStablePath()
     {
         CompLayer layer = new CompLayer("layer", "Layer", "solid");

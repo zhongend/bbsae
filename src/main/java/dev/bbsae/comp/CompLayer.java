@@ -261,6 +261,10 @@ public class CompLayer
 
     public Keyframe<Float> insertAxisKey(int axis, float frame, float value)
     {
+        /* Any write to one axis must first retire a legacy shared Transform channel, otherwise
+         * adding only Z to an old project would hide the old X/Y animation as soon as transformAt()
+         * switched to the axis representation. */
+        this.ensureIndependentAxes();
         this.putScalar(CompCurves.axisPath(axis), value);
 
         KeyframeChannel<Float> channel = this.axisChannel(axis);

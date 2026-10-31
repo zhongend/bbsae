@@ -12537,6 +12537,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void setScalar(CompLayer layer, String path, float value)
     {
+        if (dev.bbsae.comp.CompCurves.isTransformAxisPath(path))
+        {
+            layer.ensureIndependentAxes();
+        }
+
         if (path.startsWith("fx/"))
         {
             String[] parts = path.split("/", 3);
@@ -12580,6 +12585,11 @@ public class UICompositorPanel extends UIDashboardPanel
     private void addScalarKey(CompLayer layer, String path, float value)
     {
         this.beginAction("添加关键帧");
+
+        if (dev.bbsae.comp.CompCurves.isTransformAxisPath(path))
+        {
+            layer.ensureIndependentAxes();
+        }
 
         layer.scalarChannel(path).insert(this.getFrame(), value);
 
