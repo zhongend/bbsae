@@ -66,7 +66,7 @@ public final class CompCurves
 
     public static int[] axes(boolean threeD)
     {
-        return threeD ? AXES_3D.clone() : AXES_2D.clone();
+        return threeD ? AXES_3D : AXES_2D;
     }
 
     public static String axisPath(int axis)

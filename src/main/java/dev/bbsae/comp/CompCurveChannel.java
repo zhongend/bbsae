@@ -338,9 +338,14 @@ public final class CompCurveChannel
              * its first key. */
             return switch (this.axis)
             {
+                case CompCurves.AXIS_X -> this.layer.x;
+                case CompCurves.AXIS_Y -> this.layer.y;
                 case CompCurves.AXIS_Z -> this.layer.z;
+                case CompCurves.AXIS_ROTATION -> this.layer.rotation;
                 case CompCurves.AXIS_ROTATION_X -> this.layer.rotationX;
                 case CompCurves.AXIS_ROTATION_Y -> this.layer.rotationY;
+                case CompCurves.AXIS_SCALE_X -> this.layer.scaleX;
+                case CompCurves.AXIS_SCALE_Y -> this.layer.scaleY;
                 case CompCurves.AXIS_SCALE_Z -> this.layer.scaleZ;
                 default -> CompCurves.component(this.layer.defaultTransform(), this.axis);
             };
