@@ -168,9 +168,8 @@ public class UILayerQuickPanel extends UIElement
      * Rebuilds the absolute row geometry for the selected layer's dimensionality.
      *
      * <p>The 3D layout only needs four group headers and ten value rows, which fits in the default
-     * 268 px timeline. The 2D layout keeps the original five rows. Group keys are one button per
-     * group: a transform keyframe in BBS stores the whole transform vector, so a per-component key
-     * button would silently key all the other components anyway.</p>
+     * 268 px timeline. The 2D layout also uses separate scale X/Y rows; there is no UI shortcut
+     * that hides the fact that they are independent curves now.</p>
      */
     private void layoutRows(boolean threeD)
     {
@@ -220,7 +219,10 @@ public class UILayerQuickPanel extends UIElement
         }
         else
         {
-            y = this.row("统一", this.scale, y);
+            /* Separate dimensions, like AE: there is no implicit "uniform" channel. Editing X
+             * must not silently add a Y key, and vice versa. */
+            y = this.row("X", this.scaleX, y);
+            y = this.row("Y", this.scaleY, y);
         }
 
         y += 2;
