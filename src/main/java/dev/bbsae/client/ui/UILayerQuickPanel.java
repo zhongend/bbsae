@@ -127,8 +127,8 @@ public class UILayerQuickPanel extends UIElement
         this.rotationX = field((value) -> panel.quickSetRotationX(value), "旋转 X / 俯仰（度；仅 3D 图层）");
         this.rotationY = field((value) -> panel.quickSetRotationY(value), "旋转 Y / 偏航（度；仅 3D 图层）");
         this.scale = field((value) -> panel.quickSetScale(value), "缩放（百分比；同时作用于 X/Y）");
-        this.scaleX = field((value) -> panel.quickSetScaleX(value), "缩放 X（百分比；仅 3D 图层）");
-        this.scaleY = field((value) -> panel.quickSetScaleY(value), "缩放 Y（百分比；仅 3D 图层）");
+        this.scaleX = field((value) -> panel.quickSetScaleX(value), "缩放 X（百分比）");
+        this.scaleY = field((value) -> panel.quickSetScaleY(value), "缩放 Y（百分比）");
         this.scaleZ = field((value) -> panel.quickSetScaleZ(value), "缩放 Z（百分比；仅 3D 图层）");
         this.opacity = field((value) -> panel.quickSetOpacity(value), "不透明度（0–100）");
 

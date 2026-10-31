@@ -1194,6 +1194,14 @@ public class UICompositorPanel extends UIDashboardPanel
                     keyTicks.add(((mchorse.bbs_mod.utils.keyframes.Keyframe<?>) entry).getTick());
                 }
 
+                if (layer.threeD)
+                {
+                    for (Object entry : layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_Z).getKeyframes())
+                    {
+                        keyTicks.add(((mchorse.bbs_mod.utils.keyframes.Keyframe<?>) entry).getTick());
+                    }
+                }
+
                 for (float keyTick : keyTicks)
                 {
                     org.joml.Vector3f eye = CompCamera.eyeOf(layer, keyTick, doc.height);

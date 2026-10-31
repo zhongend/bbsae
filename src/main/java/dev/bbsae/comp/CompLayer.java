@@ -336,7 +336,10 @@ public class CompLayer
 
         if (!anyAxis)
         {
-            int[] axes = CompCurves.axes(this.threeD);
+            /* Legacy Transform keys only ever carried the 2D components. Z / tilt / Z-scale were
+             * always separate scalar channels, so migrating their default 0/0/1 values from the
+             * old Transform vector would teleport a 3D layer to the comp plane. */
+            int[] axes = CompCurves.axes(false);
 
             for (Object entry : this.transformChannel.getKeyframes())
             {
@@ -358,7 +361,7 @@ public class CompLayer
         {
             /* Mixed legacy/axis data: only fill axes that have no keys yet. An axis the artist has
              * already edited must never be overwritten by the old shared keys. */
-            for (int axis : CompCurves.axes(this.threeD))
+            for (int axis : CompCurves.axes(false))
             {
                 if (this.hasAxisKey(axis))
                 {

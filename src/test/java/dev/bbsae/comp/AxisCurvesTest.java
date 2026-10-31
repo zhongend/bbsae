@@ -176,6 +176,29 @@ public class AxisCurvesTest
     }
 
     @Test
+    public void legacyMigrationDoesNotInventZKeysFromAnOldTransform()
+    {
+        CompLayer layer = new CompLayer("layer", "Layer", "solid");
+        layer.threeD = true;
+        layer.z = 300F;
+        layer.rotationX = 15F;
+        layer.scaleZ = 1.4F;
+
+        Transform pose = layer.defaultTransform();
+        pose.translate.set(100F, 200F, 0F);
+        layer.transformChannel().insertInheriting(0F, pose);
+
+        layer.ensureIndependentAxes();
+
+        assertTrue(layer.axisChannel(CompCurves.AXIS_Z).getKeyframes().isEmpty());
+        assertTrue(layer.axisChannel(CompCurves.AXIS_ROTATION_X).getKeyframes().isEmpty());
+        assertTrue(layer.axisChannel(CompCurves.AXIS_SCALE_Z).getKeyframes().isEmpty());
+        assertEquals(300F, layer.transformAt(0F).translate.z, 0.0001F);
+        assertEquals(15F, layer.transformAt(0F).rotate.x, 0.0001F);
+        assertEquals(1.4F, layer.transformAt(0F).scale.z, 0.0001F);
+    }
+
+    @Test
     public void effectCurveCanBeFoundByItsStablePath()
     {
         CompLayer layer = new CompLayer("layer", "Layer", "solid");
