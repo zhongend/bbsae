@@ -203,6 +203,28 @@ public class AxisCurvesTest
     }
 
     @Test
+    public void evaluatingA3DLayerMigratesLegacyXYWhenZIsAlreadyKeyed()
+    {
+        CompLayer layer = new CompLayer("layer", "Layer", "solid");
+
+        layer.threeD = true;
+        layer.z = 250F;
+        layer.scalarChannel("z").insert(0F, 250F);
+
+        Transform pose = layer.defaultTransform();
+        pose.translate.set(100F, 200F, 250F);
+        layer.transformChannel().insertInheriting(0F, pose);
+
+        Transform at = layer.transformAt(0F);
+
+        assertEquals(100F, at.translate.x, 0.0001F);
+        assertEquals(200F, at.translate.y, 0.0001F);
+        assertEquals(250F, at.translate.z, 0.0001F);
+        assertTrue(layer.transformChannel().getKeyframes().isEmpty());
+        assertEquals(1, layer.axisChannel(CompCurves.AXIS_X).getKeyframes().size());
+    }
+
+    @Test
     public void effectCurveCanBeFoundByItsStablePath()
     {
         CompLayer layer = new CompLayer("layer", "Layer", "solid");

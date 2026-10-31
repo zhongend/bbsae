@@ -856,6 +856,14 @@ public class CompLayer
 
     public Transform transformAt(float frame)
     {
+        /* An old 3D layer can have legacy X/Y animation plus a scalar Z/rotationX channel. The
+         * scalar key alone would make hasAnyTransformKey() true and hide the legacy X/Y curve
+         * until the artist opened the graph. Migrate as soon as such a layer is evaluated. */
+        if (this.transformChannel != null && !this.transformChannel.getKeyframes().isEmpty())
+        {
+            this.ensureIndependentAxes();
+        }
+
         /* Independent axes are the source of truth. The old shared Transform channel is only a
          * fallback for projects that have not been opened by the curve editor yet; migration
          * copies its handles and interpolation into the per-axis channels. */
