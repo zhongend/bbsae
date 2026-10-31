@@ -1,5 +1,6 @@
 package dev.bbsae.client.render;
 
+import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompExpression;
 import dev.bbsae.comp.CompLayer;
 import mchorse.bbs_mod.utils.pose.Transform;
@@ -186,13 +187,77 @@ public final class CompScene
 
         Matrix4f world = world(ctx, layer);
         CompCamera camera = camera(ctx);
-        Matrix4f model = usePerspective(ctx, layer)
-            ? new Matrix4f(camera.view).mul(world)
-            : new Matrix4f(camera.view2D).mul(world);
+        Matrix4f model;
+
+        if (usePerspective(ctx, layer))
+        {
+            model = new Matrix4f(camera.view).mul(world);
+        }
+        else if (spatial(ctx))
+        {
+            /* A flat layer under a tilted camera is still drawn flat — into comp space, with no
+             * camera at all. The camera is applied afterwards, once, by projecting the finished
+             * comp-space image onto the layer's z plane. Keeping the camera out of the model is
+             * what lets masks and effects stay in comp space and still come out right. */
+            model = new Matrix4f(world);
+        }
+        else
+        {
+            model = new Matrix4f(camera.view2D).mul(world);
+        }
 
         ctx.modelCache.put(layer, model);
 
         return model;
+    }
+
+    /**
+     * True when flat layers have to be projected in 3D instead of through the affine 2D view.
+     *
+     * <p>Two situations need it: the camera looks at the comp at an angle (its affine
+     * approximation is then simply wrong), or some layer sits off the comp plane (a z offset has
+     * no meaning in an affine view). Both are properties of the frame, so the answer is cached on
+     * the context.</p>
+     */
+    public static boolean spatial(CompRenderContext ctx)
+    {
+        if (ctx.spatial != null)
+        {
+            return ctx.spatial;
+        }
+
+        CompCamera camera = camera(ctx);
+        boolean spatial = camera.perspective && (camera.tilted || hasDepth(ctx.comp));
+
+        ctx.spatial = spatial;
+
+        return spatial;
+    }
+
+    private static boolean hasDepth(CompDocument comp)
+    {
+        if (comp == null || comp.layers == null)
+        {
+            return false;
+        }
+
+        for (CompLayer layer : comp.layers)
+        {
+            if (layer == null || !layer.visible || "camera".equals(layer.type))
+            {
+                /* A camera's z is where its eye sits, not a depth the composition should be
+                 * projected through; counting it would put every comp with a camera on the 3D
+                 * path even when the camera looks straight down the comp normal. */
+                continue;
+            }
+
+            if (Math.abs(layer.z) > 0.01F)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Orthographic (comp pixels) for 2D/flat layers, the camera projection for 3D layers. */

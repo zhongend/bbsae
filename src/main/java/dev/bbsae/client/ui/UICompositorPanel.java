@@ -131,6 +131,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIElement renderPanel;
     private UIAssetBrowser assetBrowser;
     private UIImportBrowser importBrowser;
+    private UILayerLibrary layerLibrary;
     private final UIElement modalLayer;
     private final UIElement modalBox;
     private final UILabel modalTitle;
@@ -304,8 +305,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.setStatus("工程已保存");
         });
 
-        this.addLayer = CompUi.iconButton(Icons.ADD, "新建图层；右键打开类型菜单（纯色/文字/形状/空对象/摄像机/预合成…）", () -> this.addLayer("solid"));
-        this.addLayerContextMenu(this.addLayer);
+        this.addLayer = CompUi.iconButton(Icons.ADD, "打开图层库（纯色/文字/形状/媒体/界面/摄像机…）", this::showAddLayerMenu);
 
         this.play = CompUi.primary("播放", "播放 / 暂停合成预览（空格）", this::togglePlay);
 
@@ -458,6 +458,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private static final int VP_MOVE = 12;
             private static final int VP_CAM_BODY = 13;
             private static final int VP_CAM_TARGET = 14;
+            private static final int VP_CAM_ORBIT = 15;
             private int vpMode = VP_NONE;
             private int vpButton;
             private int vpStartX;
@@ -466,6 +467,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private float vpStartPitch;
             private final org.joml.Vector3f vpStartTarget = new org.joml.Vector3f();
             private final org.joml.Vector3f vpStartEye = new org.joml.Vector3f();
+            private final org.joml.Vector3f vpShotTarget = new org.joml.Vector3f();
             private String vpCameraId;
             /** Start x/y of every selected layer, for a multi-layer drag. */
             private final java.util.LinkedHashMap<String, float[]> dragStarts = new java.util.LinkedHashMap<>();
@@ -491,8 +493,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     /* Say which view this is: "dragging does nothing" was really "this is the 2D
                      * editor, not the 3D workspace". */
-                    context.batcher.textShadow("2D 编辑视图 · 右键拖动进入 3D 视口",
-                        this.area.ex() - 190, this.area.ey() - 16, 0x77B9C6DA);
+                    context.batcher.textShadow("2D 编辑视图 · 右键拖动进入 3D 视口 · 选中摄像机后 Alt+拖动 = 环绕",
+                        this.area.ex() - 340, this.area.ey() - 16, 0x77B9C6DA);
                 }
 
                 this.updateCursor(context);
@@ -508,7 +510,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 int cursor = -1;
 
-                if (this.vpMode == VP_MOVE || this.vpMode == VP_CAM_BODY || this.vpMode == VP_CAM_TARGET)
+                if (this.vpMode == VP_MOVE || this.vpMode == VP_CAM_BODY || this.vpMode == VP_CAM_TARGET || this.vpMode == VP_CAM_ORBIT)
                 {
                     cursor = org.lwjgl.glfw.GLFW.GLFW_HAND_CURSOR;
                 }
@@ -2051,6 +2053,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 if (active != null)
                 {
                     this.vpStartEye.set(CompCamera.eyeOf(active, UICompositorPanel.this.getFrame(), doc.height));
+                    this.vpShotTarget.set(active.cameraTarget(UICompositorPanel.this.getFrame()));
                 }
 
                 if (mode == VP_MOVE)
@@ -2151,6 +2154,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     case VP_MOVE -> this.dragLayersInViewport(doc, camera, startLocalX, startLocalY, localX, localY, false);
                     case VP_CAM_BODY -> this.dragCameraInViewport(doc, camera, startLocalX, startLocalY, localX, localY);
                     case VP_CAM_TARGET -> this.aimCameraInViewport(doc, camera, localX, localY);
+                    case VP_CAM_ORBIT -> this.orbitCameraInViewport(doc, localX, localY);
                     default -> { }
                 }
             }
@@ -2281,6 +2285,73 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
                     "摄像机  X %.0f  Y %.0f  Z %.0f", x, y, z));
+            }
+
+            /**
+             * Orbits the composition camera around its point of interest.
+             *
+             * <p>The eye moves on a sphere around the target and the camera keeps looking at it,
+             * so the frame tilts exactly like a real camera on a tripod head. Pitch is clamped
+             * short of the poles: at 90° the view direction is parallel to the world up axis and
+             * the camera's right vector becomes undefined, which makes the image spin.</p>
+             */
+            private void orbitCameraInViewport(CompDocument doc, float mouseX, float mouseY)
+            {
+                CompLayer layer = this.vpCameraId == null ? null : doc.getLayer(this.vpCameraId);
+
+                if (layer == null)
+                {
+                    return;
+                }
+
+                float dx = mouseX - this.vpStartX;
+                float dy = mouseY - this.vpStartY;
+
+                org.joml.Vector3f target = new org.joml.Vector3f(this.vpShotTarget);
+                org.joml.Vector3f offset = new org.joml.Vector3f(this.vpStartEye).sub(target);
+                float length = offset.length();
+
+                if (length < 1F)
+                {
+                    return;
+                }
+
+                /* Yaw around the world up axis (comp Y is down, so up is -Y). */
+                offset.rotate(new org.joml.Quaternionf().fromAxisAngleRad(
+                    new org.joml.Vector3f(0F, -1F, 0F), (float) Math.toRadians(dx * 0.35F)));
+
+                /* Pitch around the horizontal axis that is perpendicular to the orbit radius. */
+                org.joml.Vector3f right = new org.joml.Vector3f(offset).cross(new org.joml.Vector3f(0F, -1F, 0F));
+
+                if (right.lengthSquared() > 0.0001F)
+                {
+                    right.normalize();
+
+                    float elevation = (float) Math.toDegrees(Math.asin(
+                        Math.max(-1F, Math.min(1F, offset.y / Math.max(0.0001F, offset.length())))));
+                    float wanted = Math.max(-85F, Math.min(85F, elevation + dy * 0.35F));
+
+                    offset.rotate(new org.joml.Quaternionf().fromAxisAngleRad(
+                        right, (float) Math.toRadians(wanted - elevation)));
+                }
+
+                org.joml.Vector3f eye = new org.joml.Vector3f(target).add(offset);
+
+                /* Looking at the target is what "orbit" means; a free camera has no pivot. */
+                layer.cameraLookAt = true;
+                this.writeTransform(layer, null, null, null, eye.x, eye.y);
+                layer.cameraZ = eye.z;
+                layer.z = eye.z;
+                UICompositorPanel.this.setScalar(layer, "cameraZ", eye.z);
+                UICompositorPanel.this.setScalar(layer, "cameraTargetX", target.x);
+                UICompositorPanel.this.setScalar(layer, "cameraTargetY", target.y);
+                UICompositorPanel.this.setScalar(layer, "cameraTargetZ", target.z);
+                layer.cameraTargetX = target.x;
+                layer.cameraTargetY = target.y;
+                layer.cameraTargetZ = target.z;
+
+                UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                    "环绕摄像机  X %.0f  Y %.0f  Z %.0f", eye.x, eye.y, eye.z));
             }
 
             /** Drags the crosshair on the target's own Z plane. */
@@ -2715,7 +2786,14 @@ public class UICompositorPanel extends UIDashboardPanel
                         UICompositorPanel.this.selectLayer(active);
                     }
 
-                    this.beginViewportDrag(context, handle == 40 ? VP_CAM_BODY : VP_CAM_TARGET, 0);
+                    /* Alt + drag on the camera body orbits around its point of interest: the
+                     * only gesture that turns "move the camera in the plane" into a real 3D
+                     * move, because the eye has to leave the comp plane for the view to tilt. */
+                    int mode = handle == 40
+                        ? (CompInput.altDown() ? VP_CAM_ORBIT : VP_CAM_BODY)
+                        : VP_CAM_TARGET;
+
+                    this.beginViewportDrag(context, mode, 0);
 
                     return true;
                 }
@@ -4713,6 +4791,7 @@ public class UICompositorPanel extends UIDashboardPanel
             },
             this::importLibraryImage,
             this::importLibraryImagePath,
+            this::importSoundId,
             () ->
             {
                 if (this.assetBrowser != null)
@@ -6137,6 +6216,14 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.debugEntityScene();
                 break;
 
+            case "library":
+                this.showAddLayerMenu();
+                break;
+
+            case "tilt":
+                this.debugTiltedCamera();
+                break;
+
             case "queue":
                 this.toggleRenderView();
                 break;
@@ -6281,6 +6368,33 @@ public class UICompositorPanel extends UIDashboardPanel
         this.time = 2F;
         this.refreshLayers();
         this.refreshInspector();
+        this.save();
+    }
+
+    /** Verification state: a camera looking off-axis, i.e. the spatial projection path. */
+    private void debugTiltedCamera()
+    {
+        CompLayer camera = this.doc.activeCamera(this.time);
+
+        if (camera == null)
+        {
+            this.addLayer("camera");
+            camera = this.doc.activeCamera(this.time);
+        }
+
+        if (camera == null)
+        {
+            return;
+        }
+
+        camera.camera3D = true;
+        camera.cameraLookAt = true;
+        camera.cameraTargetX = this.doc.width * 0.5F + 260F;
+        camera.cameraTargetY = this.doc.height * 0.5F - 90F;
+        camera.cameraTargetZ = 0F;
+        this.exit3DSpace();
+        this.selectLayer(camera);
+        this.setStatus("调试：倾斜摄像机 · 空间投影");
         this.save();
     }
 
@@ -7950,98 +8064,59 @@ public class UICompositorPanel extends UIDashboardPanel
         manager.action(Icons.STOPWATCH, IKey.constant("不透明度关键帧"), () -> this.addOpacityKey());
     }
 
-    /** Every type offered by the "add layer" chooser, in the order it is shown. */
-    private static final String[][] LAYER_TYPES = {
-        {"solid", "纯色"}, {"gradient", "渐变"}, {"checker", "棋盘格"},
-        {"grid", "网格"}, {"noise", "分形杂色"}, {"shape", "矩形"},
-        {"ellipse", "椭圆"}, {"star", "星形"}, {"polygon", "多边形"},
-        {"path", "贝塞尔"}, {"text", "文字"}, {"image", "图片"},
-        {"footage", "序列"}, {"precomp", "预合成"}, {"null", "空对象"},
-        {"camera", "摄像机"}, {"adjustment", "调整层"}, {"bbs", "BBS 预览"},
-        {"replay", "回放实体"}, {"panel", "HUD 面板"}, {"bar", "进度条"}
-    };
-
-    /** Grouped chooser: 20 flat buttons in one grid were impossible to scan. */
-    private static final String[][] LAYER_GROUPS = {
-        {"常用", "solid", "text", "image", "shape", "null", "adjustment"},
-        {"生成", "gradient", "checker", "grid", "noise"},
-        {"形状", "ellipse", "star", "polygon", "path"},
-        {"媒体", "footage", "precomp", "bbs", "replay"},
-        {"界面", "panel", "bar"},
-        {"摄像机", "camera"}
-    };
-
-    private int addLayerGroup;
-
-    /** Layer-type chooser, opened from the track and track-head context menus. */
+    /** Layer library, opened from the "+" button and from the track context menus. */
+    /**
+     * Opens the layer library.
+     *
+     * <p>The "+" button and every "add layer" menu entry land here. It used to open a fixed-size
+     * modal with three columns of identical buttons, which needed scrolling it did not have and
+     * told the user nothing about what each type does; the library is the same action with room
+     * for an icon, a sentence and a search box.</p>
+     */
     public void showAddLayerMenu()
     {
         if (this.doc == null)
         {
             this.setStatus("请先在影片编辑器里选择回放");
+
             return;
         }
 
-        this.openModal("添加图层", "先选分类，再点类型；所有类型都会在时间轴上创建一条真实轨道");
-        this.addLayerGroup = 0;
-        this.buildAddLayerMenu();
+        this.openLayerLibrary();
     }
 
-    private void buildAddLayerMenu()
+    private void openLayerLibrary()
     {
-        this.modalBox.removeAll();
-        this.modalBox.add(this.modalTitle, this.modalHint);
-
-        UICompTabBar tabs = new UICompTabBar();
-
-        for (String[] group : LAYER_GROUPS)
+        if (this.layerLibrary != null)
         {
-            tabs.addTab(group[0]);
+            this.closeLayerLibrary();
         }
 
-        tabs.active(() -> this.addLayerGroup);
-        tabs.onSelect((index) ->
+        this.layerLibrary = new UILayerLibrary((id) ->
         {
-            this.addLayerGroup = index;
-            this.buildAddLayerMenu();
-        });
-        tabs.relative(this.modalBox).x(16).y(30).w(1F, -32).h(22);
-        this.modalBox.add(tabs);
+            this.closeLayerLibrary();
+            this.addLayer(id);
+        }, this::closeLayerLibrary);
 
-        String[] group = LAYER_GROUPS[Math.max(0, Math.min(LAYER_GROUPS.length - 1, this.addLayerGroup))];
+        this.layerLibrary.relative(this).x(0).y(0).w(1F).h(1F);
+        this.add(this.layerLibrary);
+        this.resize();
+    }
 
-        for (int i = 1; i < group.length; i++)
+    private void closeLayerLibrary()
+    {
+        if (this.layerLibrary != null)
         {
-            String preset = group[i];
-            String label = this.layerPresetLabel(preset);
-            int index = i - 1;
-            int x = 16 + (index % 3) * 138;
-            int y = 62 + (index / 3) * 28;
-
-            UIButton button = this.modalButton(label, x, y, 128, () ->
-            {
-                this.closeModal();
-                this.addLayer(preset);
-            });
-
-            button.tooltip(IKey.constant("创建「" + label + "」图层"));
-            this.modalBox.add(button);
+            this.layerLibrary.removeFromParent();
+            this.layerLibrary = null;
         }
-
-        this.modalBox.add(this.modalButton("取消", 16, 262, 408, this::closeModal));
     }
 
     private String layerPresetLabel(String preset)
     {
-        for (String[] type : LAYER_TYPES)
-        {
-            if (type[0].equals(preset))
-            {
-                return type[1];
-            }
-        }
+        dev.bbsae.comp.LayerCatalog.Entry entry = dev.bbsae.comp.LayerCatalog.get(preset);
 
-        return preset;
+        return entry == null ? preset : entry.name;
     }
 
     /**
@@ -9486,6 +9561,8 @@ public class UICompositorPanel extends UIDashboardPanel
         /* One model: the camera always defines the view. The old "3D 摄像机" switch gated the whole
          * perspective path, which is why a fresh camera layer did nothing until it was turned on. */
         section.fields.add(UI.label(IKey.constant("摄像机同时控制 2D 图层（平移/缩放/旋转）和 3D 图层的透视。"), 14));
+        section.fields.add(UI.label(IKey.constant("视口里选中摄像机：拖动 = 平移，Alt+拖动 = 环绕，拖动准星 = 重新取景，滚轮 = 推拉，Alt+滚轮 = 视场。"), 13));
+        section.fields.add(UI.label(IKey.constant("倾斜视角后，所有图层都会按各自的 Z 做透视投影（产生视差），不再只是平面移动。"), 13));
         section.fields.add(UI.label(IKey.constant(String.format(java.util.Locale.ROOT,
             "当前：距离 %.0f · 焦距 %.0f · 画面缩放 %.0f%%", distance, focal, focal / Math.max(1F, distance) * 100F)), 14));
 
@@ -10420,6 +10497,35 @@ public class UICompositorPanel extends UIDashboardPanel
         this.importBrowser.relative(this).x(0).y(0).w(1F).h(1F);
         this.add(this.importBrowser);
         this.resize();
+    }
+
+    /**
+     * Adds a sound from the library (a sound event id or a {@code bbs:}/{@code mc:} ogg link) to
+     * the composition's audio track.
+     *
+     * <p>The composition stores project-relative files, so the sound is materialised into
+     * {@code assets/audio} first. That keeps preview, export and the standalone WAV on one path:
+     * they all read the same file.</p>
+     */
+    private void importSoundId(String id)
+    {
+        if (this.project == null || this.doc == null || id == null || id.isBlank())
+        {
+            return;
+        }
+
+        try
+        {
+            java.io.File file = SoundImport.materialize(id);
+
+            this.addAudioClip(file);
+            this.setStatus("已导入音效：" + id + " → 音频轨道（入点 " + String.format(java.util.Locale.ROOT, "%.2fs", this.time) + "）");
+        }
+        catch (Exception e)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.warn("Could not import sound {}", id, e);
+            this.notifyError("音效导入失败：" + id + " · " + e.getMessage());
+        }
     }
 
     private void addAudioClip(java.io.File file)

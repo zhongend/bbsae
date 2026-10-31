@@ -59,14 +59,23 @@ public final class NativeFileDialog
             File picked = null;
             boolean unavailable = false;
 
+            /* Three backends, in order of how much they own the dialog:
+             *
+             *   1. Win32 GetOpenFileNameW with the game's HWND as owner — an owned dialog cannot
+             *      be placed behind the game window, which is the failure AWT and tinyfd share.
+             *   2. AWT FileDialog — the native dialog on every other platform.
+             *   3. Nothing: report it so the caller can open the in-game browser.
+             *
+             * A backend that returns null did show a dialog and the user cancelled; only an
+             * exception means "unavailable", and only then is the next backend tried. */
             try
             {
                 picked = show(title, extensions);
             }
             catch (Throwable t)
             {
-                unavailable = true;
                 BbsAeAddon.LOGGER.warn("The OS file dialog is unavailable; falling back to the in-game browser", t);
+                unavailable = true;
             }
             finally
             {
@@ -102,6 +111,46 @@ public final class NativeFileDialog
     }
 
     private static File show(String title, String[] extensions) throws Exception
+    {
+        if (Win32FileDialog.isWindows())
+        {
+            /* Owned by the game window: the one thing neither AWT nor tinyfd can promise. */
+            File picked = Win32FileDialog.open(windowHandle(), title, extensions, lastDirectory);
+
+            if (picked != null)
+            {
+                lastDirectory = picked.getParentFile();
+            }
+
+            return picked;
+        }
+
+        return showAwt(title, extensions);
+    }
+
+    /** The GLFW window as a Win32 HWND, or 0 when it cannot be resolved. */
+    private static long windowHandle()
+    {
+        try
+        {
+            MinecraftClient client = MinecraftClient.getInstance();
+
+            if (client == null || client.getWindow() == null)
+            {
+                return 0L;
+            }
+
+            return org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window(client.getWindow().getHandle());
+        }
+        catch (Throwable t)
+        {
+            BbsAeAddon.LOGGER.warn("Could not resolve the game window handle for the file dialog", t);
+
+            return 0L;
+        }
+    }
+
+    private static File showAwt(String title, String[] extensions) throws Exception
     {
         if (GraphicsEnvironment.isHeadless())
         {

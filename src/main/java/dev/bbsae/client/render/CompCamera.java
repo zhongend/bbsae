@@ -69,6 +69,12 @@ public final class CompCamera
     public final boolean lookAt;
     /** False = orthographic ("flat") camera: 3D layers are placed with the 2D view. */
     public final boolean perspective;
+    /**
+     * True when the camera looks away from the comp plane (yaw/pitch), which is the only pose in
+     * which a 2D layer's affine {@link #view2D} is no longer a valid approximation of the
+     * perspective view. The renderer uses this to switch flat layers onto the real 3D path.
+     */
+    public final boolean tilted;
 
     public final Matrix4f view = new Matrix4f();
     public final Matrix4f projection = new Matrix4f();
@@ -143,6 +149,7 @@ public final class CompCamera
         this.forward.set(f);
         this.right.set(r);
         this.up.set(u);
+        this.tilted = Math.abs(f.x) > 0.0005F || Math.abs(f.y) > 0.0005F;
 
         /* Row-major math rows [r; u; -f]; JOML's constructor is column-major. */
         Vector3f nf = new Vector3f(f).negate();

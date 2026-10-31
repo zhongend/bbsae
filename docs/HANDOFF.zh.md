@@ -1950,3 +1950,55 @@ AWT 不可用才回落到游戏内浏览器。图片/视频/音频/字体/素材
 * `ReplayEntityKeyPixelTest`（4 个像素级用例）：抠出、遮挡、收缩/羽化、世界帧方向。
 * 实机：`replays=2 rendered=1`，遮罩覆盖 ~15 万像素；洋红舞台验证图只剩角色（洋红仅存在于截图，未进代码）。
 * 测试合计 **182/182**；产物 `bbsae-0.14.1.jar`（封面与作者署名随后补入）。
+
+---
+
+## 35. 2026-10-31 第二十六轮：文件导入、图层库、真正的 3D 摄像机（0.15.0）
+
+> 完整论述见 `docs/ROUND26-IMPORT-LIBRARY-CAMERA.zh.md`。改动前的完整备份在
+> `_backup/v0.14.1-20261031/`（git bundle + 源码包）。
+
+### 35.1 文件对话框：owner 才是关键
+
+tinyfd 与 AWT 都是**无 owner** 的原生窗口，在无边框全屏下可能开在游戏后面：对话框创建了、
+回调没触发、日志里没有错误 —— 按钮看起来是死的。
+
+`Win32FileDialog` 用 JNA 调 `GetOpenFileNameW`，`hwndOwner` = `glfwGetWin32Window(handle)`。
+owned window 永远在 owner 之上，这不是"尽量置顶"而是窗口管理器的不变量。JNA 由 Minecraft 自带。
+
+三级回退：Win32 → AWT → 游戏内浏览器；**只有抛异常才算"不可用"**，返回 null 是"用户取消"。
+
+验证方式：单独编一个 `main` 跑起来，`ffmpeg -f gdigrab` 截桌面，截图里是真正的系统对话框。
+结构体错一个字段这里就会崩 —— 所以这一步同时验证了 ABI。
+
+### 35.2 音效：事件不是路径
+
+`SoundImport.materialize(id)`：事件 → `SoundManager.get` → `WeightedSoundSet.getSound(Random)`
+→ `getLocation()` → 原版 `ResourceManager`；显式 `.ogg` 先试 `BBSMod.getProvider().getAsset`，
+再试原版。落到临时文件后交给既有的 `addAudioClip`，于是预览/导出/WAV 读同一个文件。
+
+### 35.3 图层库
+
+`LayerCatalog`（id/名称/说明/分类/图标）+ `UILayerLibrary`（搜索 + 分类 + 卡片网格）。
+`LAYER_TYPES`/`LAYER_GROUPS` 已删除，UI 与渲染器共用一份目录数据；`LayerCatalogTest` 守住。
+"+" 按钮直接打开库；卡片文字按真实字宽换行**并**额外 clip（中文回退字体的 advance width
+不可靠，只靠测量仍会溢出）。
+
+### 35.4 3D 摄像机：仿射表达不了透视
+
+摄像机本来就是 3D 的，问题在图层：非 3D 图层走 `view2D`（仿射），倾斜对它是 no-op。
+
+关键洞察：一个 2D 图层的**成品**（内容+蒙版+效果+样式）就是 comp 空间里的一张图，也就是
+z=0 平面上的一块平面；平面可以被透视投影。于是空间模式下：
+
+```
+model = world(layer)            // 不含相机
+蒙版/效果/样式 照常在 comp 空间完成
+最后把成品图按 z 平面投影一次
+```
+
+`CompScene.spatial(ctx)` = `camera.perspective && (camera.tilted || 任一图层 |z|>0)`，
+按帧缓存。直相机仍走 `view2D`，零回归零额外开销。摄像机层的 z 不算"图层深度"（那是眼点位置）。
+空间模式下平坦图层与 3D 图层一起按平面深度排序（同 z 稳定，保持堆叠顺序）。
+
+手势：Alt+拖动 = 环绕（球面，俯仰 ±85° 防极点），其余不变。

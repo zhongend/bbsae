@@ -686,6 +686,18 @@ public final class CompRenderer
                     content = applyStyles(layer, content, context, effectSpace);
                 }
 
+                /* A flat layer under a tilted camera: the finished comp-space image is projected
+                 * onto the layer's z plane. Doing it here — after masks, effects and styles — is
+                 * what keeps those passes exact: they never see the perspective, they just draw
+                 * the layer where it lives. */
+                if (CompScene.spatial(context) && !CompScene.usePerspective(context, layer))
+                {
+                    GlFramebuffer projected = projectPlane(content, layer, context, batcher);
+
+                    FboPool.release(content);
+                    content = projected;
+                }
+
                 float opacity = opacityAt(layer, context);
 
                 if (opacity <= 0.0001F)
@@ -748,6 +760,49 @@ public final class CompRenderer
     }
 
     /**
+     * Draws a finished comp-space layer image onto its z plane, seen through the camera.
+     *
+     * <p>The image already contains everything the layer is (content, mask, effects, styles) at its
+     * comp position, so all this pass has to do is put that plane into the camera's view. A single
+     * textured quad is exact: the GPU interpolates UVs perspective-correctly, and the plane really
+     * is flat.</p>
+     */
+    private static GlFramebuffer projectPlane(GlFramebuffer source, CompLayer layer, CompRenderContext context, Batcher2D batcher)
+    {
+        CompCamera camera = CompScene.camera(context);
+        GlFramebuffer target = FboPool.acquire(context.renderWidth(), context.renderHeight());
+        MatrixStack stack = batcher.getContext().getMatrices();
+        float z = layer.scalarAt("z", layer.z, context.frame);
+
+        target.begin();
+        BufferRenderer.resetCurrentVertexBuffer();
+
+        stack.push();
+        stack.peek().getPositionMatrix().set(new Matrix4f(camera.view).translate(0F, 0F, z));
+        RenderSystem.setProjectionMatrix(camera.projection, VertexSorter.BY_Z);
+
+        try
+        {
+            /* Framebuffer textures are bottom-up, so V is swapped exactly like the composition
+             * blit does; without the swap every flat layer would render upside down. */
+            batcher.texturedBox(source.color.id, 0xFFFFFFFF,
+                0F, 0F, context.width, context.height,
+                0F, source.height, source.width, 0F,
+                source.width, source.height);
+
+            batcher.flush();
+        }
+        finally
+        {
+            stack.pop();
+            RenderSystem.setProjectionMatrix(GlStateGuard.ortho(context.width, context.height), VertexSorter.BY_Z);
+            BufferRenderer.resetCurrentVertexBuffer();
+        }
+
+        return target;
+    }
+
+    /**
      * Effects and styles work in layer-local UV space. For 2D layers that space is the camera-view
      * model matrix; a 3D layer keeps its world matrix (a perspective homography cannot be expressed
      * as the affine map those effects expect).
@@ -796,7 +851,12 @@ public final class CompRenderer
         {
             CompLayer layer = order.get(i);
 
-            if (layer.threeD && !"camera".equals(layer.type) && !"adjustment".equals(layer.type))
+            /* Under a spatial camera a flat layer is a plane in the same 3D space as the 3D ones,
+             * so it must be sorted with them; otherwise a layer the tilt pushes behind keeps
+             * painting over one in front. Ties (all z = 0) keep the stack order. */
+            boolean projected = layer.threeD || CompScene.spatial(context);
+
+            if (projected && !"camera".equals(layer.type) && !"adjustment".equals(layer.type))
             {
                 slots.add(i);
                 three.add(layer);

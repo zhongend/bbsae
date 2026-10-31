@@ -134,12 +134,16 @@ public class UIAssetBrowser extends UIElement
         }
     }
 
-    public UIAssetBrowser(Supplier<String> projectId, BiConsumer<String, Boolean> onUse, Runnable onImport, java.util.function.Consumer<String> onImportPath, Runnable onClose, boolean replaceMode)
+    /** Sound ids are imported into the composition's audio track; null = clipboard only. */
+    private final java.util.function.Consumer<String> onSound;
+
+    public UIAssetBrowser(Supplier<String> projectId, BiConsumer<String, Boolean> onUse, Runnable onImport, java.util.function.Consumer<String> onImportPath, java.util.function.Consumer<String> onSound, Runnable onClose, boolean replaceMode)
     {
         this.projectId = projectId;
         this.onUse = onUse;
         this.onImport = onImport;
         this.onImportPath = onImportPath;
+        this.onSound = onSound;
         this.onClose = onClose;
         this.replaceMode = replaceMode;
 
@@ -501,8 +505,13 @@ public class UIAssetBrowser extends UIElement
                 return;
             }
 
-            this.hint.label = IKey.constant("已选择音效：" + link);
             MinecraftClient.getInstance().keyboard.setClipboard(link.toString());
+            this.hint.label = IKey.constant("已选择音效：" + link);
+
+            if (this.onSound != null)
+            {
+                this.onSound.accept(link.toString());
+            }
         });
 
         UIOverlay.addOverlay(this.getContext(), panel, 0.45F, 0.72F);
@@ -707,6 +716,12 @@ public class UIAssetBrowser extends UIElement
             {
                 MinecraftClient.getInstance().keyboard.setClipboard(asset.path);
                 this.hint.label = IKey.constant("已复制音效 ID：" + asset.path);
+            }
+            else if (this.onSound != null)
+            {
+                /* Double-click / "insert" on a sound adds it to the audio track. Previewing is
+                 * the explicit "试听" button, so the two actions stay separate. */
+                this.onSound.accept(asset.path);
             }
             else
             {

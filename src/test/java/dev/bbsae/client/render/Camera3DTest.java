@@ -3,6 +3,7 @@ package dev.bbsae.client.render;
 import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompProject;
+import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.junit.jupiter.api.Test;
 
@@ -40,6 +41,65 @@ public class Camera3DTest
         project.comps.add(doc);
 
         return project;
+    }
+
+    @Test
+    public void straightCameraIsNotTiltedAndKeepsFlatLayersFlat()
+    {
+        CompDocument doc = document();
+
+        doc.layers.add(camera(doc));
+
+        CompRenderContext context = new CompRenderContext(project(doc), doc, 0F, null, null, null);
+
+        assertTrue(!CompScene.camera(context).tilted, "a camera looking at the comp centre is not tilted");
+        assertTrue(!CompScene.spatial(context), "a straight camera must keep the cheap affine path");
+    }
+
+    @Test
+    public void tiltingTheCameraSwitchesFlatLayersToRealProjection()
+    {
+        CompDocument doc = document();
+        CompLayer camera = camera(doc);
+
+        /* Look at a point far to the right: the view direction now leaves the comp normal. */
+        camera.cameraTargetX = doc.width * 2F;
+        doc.layers.add(camera);
+
+        CompLayer flat = new CompLayer("text", "Text", "text");
+
+        flat.width = 400F;
+        flat.height = 100F;
+        doc.layers.add(flat);
+
+        CompRenderContext context = new CompRenderContext(project(doc), doc, 0F, null, null, null);
+
+        assertTrue(CompScene.camera(context).tilted, "an off-axis target must mark the camera as tilted");
+        assertTrue(CompScene.spatial(context), "a tilted camera must project flat layers in 3D");
+
+        /* The flat layer's model must not contain the camera: the projection pass applies it. */
+        Matrix4f model = CompScene.model(context, flat);
+        Matrix4f view2D = CompScene.camera(context).view2D;
+
+        assertTrue(!model.equals(view2D, 0.001F), "the flat model must be camera-free when spatial");
+    }
+
+    @Test
+    public void aLayerWithDepthAlsoForcesTheSpatialPath()
+    {
+        CompDocument doc = document();
+        CompLayer camera = camera(doc);
+
+        doc.layers.add(camera);
+
+        CompLayer flat = new CompLayer("text", "Text", "text");
+
+        flat.z = 300F;
+        doc.layers.add(flat);
+
+        CompRenderContext context = new CompRenderContext(project(doc), doc, 0F, null, null, null);
+
+        assertTrue(CompScene.spatial(context), "a layer off the comp plane needs the 3D projection");
     }
 
     private static CompLayer camera(CompDocument doc)

@@ -41,6 +41,8 @@ public final class CompRenderContext
 
     /** The camera of this frame; resolved lazily by {@link CompScene#camera}. */
     public CompCamera cameraView;
+    /** Cached {@link CompScene#spatial} answer for this frame. */
+    public Boolean spatial;
     /** Per-frame scene graph caches: one matrix per layer, not one per call site. */
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> localCache = new java.util.IdentityHashMap<>();
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> worldCache = new java.util.IdentityHashMap<>();

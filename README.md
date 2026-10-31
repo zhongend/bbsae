@@ -52,6 +52,8 @@
   [`docs/ROUND24-VIEWPORT-MASK-QUICKPANEL.zh.md`](docs/ROUND24-VIEWPORT-MASK-QUICKPANEL.zh.md)
 - **Round 25 (replay entity layer — depth-keyed matte, native file dialog, v0.14.1):**
   [`docs/ROUND25-ENTITY-KEY-IMPORT.zh.md`](docs/ROUND25-ENTITY-KEY-IMPORT.zh.md)
+- **Round 26 (owned Win32 file dialog, sound import, layer library, true 3D camera, v0.15.0):**
+  [`docs/ROUND26-IMPORT-LIBRARY-CAMERA.zh.md`](docs/ROUND26-IMPORT-LIBRARY-CAMERA.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -71,11 +73,11 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.14.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.14.1/bbsae-0.14.1.jar)
-   from the **v0.14.1** release (the asset is updated with each source push).
+1. Download [`bbsae-0.15.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.15.0/bbsae-0.15.0.jar)
+   from the **v0.15.0** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.14.1.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.15.0.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
