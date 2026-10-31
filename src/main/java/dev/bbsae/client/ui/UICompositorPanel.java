@@ -13324,6 +13324,12 @@ public class UICompositorPanel extends UIDashboardPanel
     @Override
     protected boolean subMouseScrolled(UIContext context)
     {
+        if ((this.settingsOverlay != null && this.settingsOverlay.isOpen())
+            || (this.onboarding != null && this.onboarding.isOpen()))
+        {
+            return super.subMouseScrolled(context);
+        }
+
         /* Alt+wheel must work over the preview as well as over the timeline. The timeline
          * consumes it when the cursor is there; this is the fallback for the rest of the panel. */
         if (!this.startScreenOpen && !this.modalLayer.isVisible() && this.doc != null

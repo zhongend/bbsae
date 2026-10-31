@@ -313,6 +313,20 @@ public class UICompSettings extends UIElement
         return super.subKeyPressed(context);
     }
 
+    @Override
+    public boolean subMouseClicked(UIContext context)
+    {
+        /* The dimmed area belongs to the overlay too; without this a click outside the card
+         * edits whatever was underneath the settings. */
+        return this.visible || super.subMouseClicked(context);
+    }
+
+    @Override
+    protected boolean subMouseScrolled(UIContext context)
+    {
+        return this.visible || super.subMouseScrolled(context);
+    }
+
     private void rebuild()
     {
         if (!this.laidOut || this.scroll == null)

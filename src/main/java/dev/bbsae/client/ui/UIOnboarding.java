@@ -599,6 +599,11 @@ public class UIOnboarding extends UIElement
     @Override
     public boolean subMouseClicked(mchorse.bbs_mod.ui.framework.UIContext context)
     {
+        if (!this.visible)
+        {
+            return super.subMouseClicked(context);
+        }
+
         if (Boolean.getBoolean("bbsae.debugOnboardingLock"))
         {
             return true;
@@ -622,6 +627,12 @@ public class UIOnboarding extends UIElement
         }
 
         return true;
+    }
+
+    @Override
+    protected boolean subMouseScrolled(UIContext context)
+    {
+        return this.visible || super.subMouseScrolled(context);
     }
 
     @Override
