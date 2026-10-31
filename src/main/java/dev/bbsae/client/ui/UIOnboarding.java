@@ -57,6 +57,7 @@ public class UIOnboarding extends UIElement
     private int selectedScheme;
     private long pageAt;
     private long lastActionAt;
+    private boolean clickArmed = true;
     private Runnable onClose;
 
     private static final class Hit
@@ -146,6 +147,12 @@ public class UIOnboarding extends UIElement
     {
         this.motion.tickFrame();
         this.motion.markShown();
+
+        if (!mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0))
+        {
+            this.clickArmed = true;
+        }
+
         this.hoverX = context.mouseX;
         this.hoverY = context.mouseY;
         this.backdrop.render(context, this.area);
@@ -608,6 +615,14 @@ public class UIOnboarding extends UIElement
         {
             return true;
         }
+
+        /* One physical press = one wizard action; a held button must not run through the pages. */
+        if (!this.clickArmed)
+        {
+            return true;
+        }
+
+        this.clickArmed = false;
 
         if (!this.area.isInside(context))
         {
