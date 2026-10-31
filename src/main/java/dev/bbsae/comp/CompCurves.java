@@ -38,6 +38,79 @@ public final class CompCurves
     public static final int AXIS_ROTATION = 2;
     public static final int AXIS_SCALE_X = 3;
     public static final int AXIS_SCALE_Y = 4;
+    /** 3D axes. They use the same independent scalar-channel paths as the 2D axes. */
+    public static final int AXIS_Z = 5;
+    public static final int AXIS_ROTATION_X = 6;
+    public static final int AXIS_ROTATION_Y = 7;
+    public static final int AXIS_SCALE_Z = 8;
+    public static final int AXIS_COUNT = 9;
+
+    private static final int[] AXES_2D = {AXIS_X, AXIS_Y, AXIS_ROTATION, AXIS_SCALE_X, AXIS_SCALE_Y};
+    private static final int[] AXES_3D = {
+        AXIS_X, AXIS_Y, AXIS_Z,
+        AXIS_ROTATION, AXIS_ROTATION_X, AXIS_ROTATION_Y,
+        AXIS_SCALE_X, AXIS_SCALE_Y, AXIS_SCALE_Z
+    };
+
+    private static final String[] AXIS_PATHS = {
+        "x", "y", "rotation", "scaleX", "scaleY", "z", "rotationX", "rotationY", "scaleZ"
+    };
+    private static final String[] AXIS_LABELS = {
+        "位置 X", "位置 Y", "旋转 Z", "缩放 X", "缩放 Y",
+        "位置 Z", "旋转 X", "旋转 Y", "缩放 Z"
+    };
+    private static final int[] AXIS_COLORS = {
+        0xFFE05C5C, 0xFF67C46B, 0xFF5B9BD5, 0xFFE0A93B, 0xFFC77DD0,
+        0xFF5FD0C8, 0xFFFF8D6B, 0xFF8DA8FF, 0xFFFFC45C
+    };
+
+    public static int[] axes(boolean threeD)
+    {
+        return threeD ? AXES_3D.clone() : AXES_2D.clone();
+    }
+
+    public static String axisPath(int axis)
+    {
+        return axis >= 0 && axis < AXIS_PATHS.length ? AXIS_PATHS[axis] : "x";
+    }
+
+    public static String axisLabel(int axis)
+    {
+        return axis >= 0 && axis < AXIS_LABELS.length ? AXIS_LABELS[axis] : "值";
+    }
+
+    public static int axisColor(int axis)
+    {
+        return axis >= 0 && axis < AXIS_COLORS.length ? AXIS_COLORS[axis] : 0xFF9AA6B8;
+    }
+
+    public static boolean isTransformAxisPath(String path)
+    {
+        return axisForPath(path) >= 0;
+    }
+
+    public static int axisForPath(String path)
+    {
+        if (path == null)
+        {
+            return -1;
+        }
+
+        for (int i = 0; i < AXIS_PATHS.length; i++)
+        {
+            if (AXIS_PATHS[i].equals(path))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    public static boolean isScaleAxis(int axis)
+    {
+        return axis == AXIS_SCALE_X || axis == AXIS_SCALE_Y || axis == AXIS_SCALE_Z;
+    }
 
     /** AE's Easy Ease default: the handle covers a third of the segment, horizontally. */
     public static final float DEFAULT_INFLUENCE = 1F / 3F;
@@ -55,15 +128,19 @@ public final class CompCurves
     {
         if (transform == null)
         {
-            return axis == AXIS_SCALE_X || axis == AXIS_SCALE_Y ? 1F : 0F;
+            return axis == AXIS_SCALE_X || axis == AXIS_SCALE_Y || axis == AXIS_SCALE_Z ? 1F : 0F;
         }
 
         switch (axis)
         {
             case AXIS_Y: return transform.translate.y;
+            case AXIS_Z: return transform.translate.z;
             case AXIS_ROTATION: return transform.rotate.z;
+            case AXIS_ROTATION_X: return transform.rotate.x;
+            case AXIS_ROTATION_Y: return transform.rotate.y;
             case AXIS_SCALE_X: return transform.scale.x;
             case AXIS_SCALE_Y: return transform.scale.y;
+            case AXIS_SCALE_Z: return transform.scale.z;
             case AXIS_X:
             default: return transform.translate.x;
         }
@@ -79,9 +156,13 @@ public final class CompCurves
         switch (axis)
         {
             case AXIS_Y: transform.translate.y = value; break;
+            case AXIS_Z: transform.translate.z = value; break;
             case AXIS_ROTATION: transform.rotate.z = value; break;
+            case AXIS_ROTATION_X: transform.rotate.x = value; break;
+            case AXIS_ROTATION_Y: transform.rotate.y = value; break;
             case AXIS_SCALE_X: transform.scale.x = value; break;
             case AXIS_SCALE_Y: transform.scale.y = value; break;
+            case AXIS_SCALE_Z: transform.scale.z = value; break;
             case AXIS_X:
             default: transform.translate.x = value; break;
         }

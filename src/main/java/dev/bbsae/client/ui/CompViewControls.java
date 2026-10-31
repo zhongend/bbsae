@@ -163,13 +163,10 @@ public final class CompViewControls
 
     private static void writePosition(CompLayer camera, float frame, float x, float y)
     {
-        if (!camera.transformChannel().getKeyframes().isEmpty())
+        if (camera.hasAnyTransformKey())
         {
-            mchorse.bbs_mod.utils.pose.Transform transform = camera.transformAt(frame).copy();
-
-            transform.translate.x = x;
-            transform.translate.y = y;
-            camera.transformChannel().insert(frame, transform);
+            camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_X, frame, x);
+            camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_Y, frame, y);
         }
         else
         {

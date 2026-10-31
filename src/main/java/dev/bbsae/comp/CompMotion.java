@@ -94,7 +94,6 @@ public final class CompMotion
             return false;
         }
 
-        KeyframeChannel<Transform> transform = layer.transformChannel();
         KeyframeChannel<Float> opacity = layer.opacityChannel();
         Transform base = layer.transformAt(start * fps).copy();
 
@@ -129,10 +128,10 @@ public final class CompMotion
                     default -> from.translate.y -= dy;
                 }
 
-                transform.removeAll();
+                layer.clearTransformAxes();
                 opacity.removeAll();
-                transform.insert(start * fps, from);
-                transform.insert(Math.min(end, start + 0.7F) * fps, base.copy());
+                layer.insertTransformPose(start * fps, from);
+                layer.insertTransformPose(Math.min(end, start + 0.7F) * fps, base.copy());
                 opacity.insert(start * fps, 0F);
                 opacity.insert(Math.min(end, start + 0.5F) * fps, 1F);
                 return true;
@@ -152,11 +151,11 @@ public final class CompMotion
                 small.scale.x *= 0.6F;
                 small.scale.y *= 0.6F;
 
-                transform.removeAll();
+                layer.clearTransformAxes();
                 opacity.removeAll();
-                transform.insert(start * fps, small);
-                transform.insert(peak * fps, big);
-                transform.insert(settle * fps, base.copy());
+                layer.insertTransformPose(start * fps, small);
+                layer.insertTransformPose(peak * fps, big);
+                layer.insertTransformPose(settle * fps, base.copy());
                 opacity.insert(start * fps, 0F);
                 opacity.insert(Math.min(end, start + 0.2F) * fps, 1F);
                 return true;
@@ -170,10 +169,10 @@ public final class CompMotion
                 from.scale.y *= 0.4F;
                 from.rotate.z -= 180F;
 
-                transform.removeAll();
+                layer.clearTransformAxes();
                 opacity.removeAll();
-                transform.insert(start * fps, from);
-                transform.insert(Math.min(end, start + 0.75F) * fps, base.copy());
+                layer.insertTransformPose(start * fps, from);
+                layer.insertTransformPose(Math.min(end, start + 0.75F) * fps, base.copy());
                 opacity.insert(start * fps, 0F);
                 opacity.insert(Math.min(end, start + 0.35F) * fps, 1F);
                 return true;
@@ -186,10 +185,10 @@ public final class CompMotion
                 big.scale.x *= 1.06F;
                 big.scale.y *= 1.06F;
 
-                transform.removeAll();
-                transform.insert(start * fps, base.copy());
-                transform.insert((start + length * 0.5F) * fps, big);
-                transform.insert(end * fps, base.copy());
+                layer.clearTransformAxes();
+                layer.insertTransformPose(start * fps, base.copy());
+                layer.insertTransformPose((start + length * 0.5F) * fps, big);
+                layer.insertTransformPose(end * fps, base.copy());
                 return true;
             }
 
@@ -199,10 +198,10 @@ public final class CompMotion
 
                 up.translate.y -= Math.max(4F, doc.height * 0.012F);
 
-                transform.removeAll();
-                transform.insert(start * fps, base.copy());
-                transform.insert((start + length * 0.5F) * fps, up);
-                transform.insert(end * fps, base.copy());
+                layer.clearTransformAxes();
+                layer.insertTransformPose(start * fps, base.copy());
+                layer.insertTransformPose((start + length * 0.5F) * fps, up);
+                layer.insertTransformPose(end * fps, base.copy());
                 return true;
             }
 

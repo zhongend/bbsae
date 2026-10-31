@@ -185,9 +185,11 @@ public class CompParentingTest
         assertSameWorld(doc, child, 0F, before);
         assertSameWorld(doc, child, 30F, beforeLater);
 
-        /* The whole curve moved by the same local delta, so the animation is intact. */
-        assertEquals(600F, channel.getKeyframes().get(0).getValue().translate.x, 0.05F);
-        assertEquals(900F, channel.getKeyframes().get(1).getValue().translate.x, 0.05F);
+        /* The whole curve moved by the same local delta, so the animation is intact. X and Y are
+         * now independent channels; the legacy Transform channel is deliberately empty. */
+        assertEquals(0, channel.getKeyframes().size());
+        assertEquals(600F, child.axisChannel(CompCurves.AXIS_X).getKeyframes().get(0).getValue(), 0.05F);
+        assertEquals(900F, child.axisChannel(CompCurves.AXIS_X).getKeyframes().get(1).getValue(), 0.05F);
     }
 
     @Test

@@ -94,11 +94,22 @@ public final class CompCurveChannel
 
         String group = "变换";
 
-        channels.add(new CompCurveChannel(layer, "transform.x", "位置 X", group, 0xFFE05C5C, true, CompCurves.AXIS_X, null));
-        channels.add(new CompCurveChannel(layer, "transform.y", "位置 Y", group, 0xFF67C46B, true, CompCurves.AXIS_Y, null));
-        channels.add(new CompCurveChannel(layer, "transform.rotation", "旋转", group, 0xFF5B9BD5, true, CompCurves.AXIS_ROTATION, null));
-        channels.add(new CompCurveChannel(layer, "transform.scaleX", "缩放 X", group, 0xFFE0A93B, true, CompCurves.AXIS_SCALE_X, null));
-        channels.add(new CompCurveChannel(layer, "transform.scaleY", "缩放 Y", group, 0xFFC77DD0, true, CompCurves.AXIS_SCALE_Y, null));
+        layer.ensureIndependentAxes();
+
+        for (int axis : CompCurves.axes(layer.threeD))
+        {
+            channels.add(new CompCurveChannel(
+                layer,
+                "transform." + CompCurves.axisPath(axis),
+                CompCurves.axisLabel(axis),
+                group,
+                CompCurves.axisColor(axis),
+                true,
+                axis,
+                CompCurves.axisPath(axis)
+            ));
+        }
+
         channels.add(new CompCurveChannel(layer, "opacity", "不透明度", "属性", 0xFF9AA6B8, false, -1, "opacity"));
 
         int index = 0;
@@ -106,6 +117,12 @@ public final class CompCurveChannel
         for (String scalarPath : layer.animatedPaths())
         {
             if (scalarPath == null || scalarPath.isBlank())
+            {
+                continue;
+            }
+
+            /* Transform axes were already inserted above with their stable AE names/colors. */
+            if (CompCurves.isTransformAxisPath(scalarPath))
             {
                 continue;
             }
@@ -233,7 +250,7 @@ public final class CompCurveChannel
     {
         if (this.transform)
         {
-            return this.layer.transformChannel();
+            return this.layer.axisChannel(this.axis);
         }
 
         if ("opacity".equals(this.path))
@@ -260,14 +277,7 @@ public final class CompCurveChannel
     {
         if (this.transform)
         {
-            Transform fallback = defaultTransform == null ? this.layer.defaultTransform() : defaultTransform;
-
-            return CompCurves.transformValue(
-                this.layer.transformChannel(),
-                this.axis,
-                frame,
-                CompCurves.component(fallback, this.axis)
-            );
+            return this.layer.scalarAt(this.path, this.defaultValue(), frame);
         }
 
         if ("opacity".equals(this.path))
@@ -304,7 +314,9 @@ public final class CompCurveChannel
     {
         if (this.transform)
         {
-            return CompCurves.component((Transform) key.getValue(), this.axis);
+            Object value = key.getValue();
+
+            return value instanceof Number number ? number.floatValue() : 0F;
         }
 
         Object value = key.getValue();
@@ -321,7 +333,17 @@ public final class CompCurveChannel
     {
         if (this.transform)
         {
-            return CompCurves.component(this.layer.defaultTransform(), this.axis);
+            /* DefaultTransform() only knows the 2D values. Z, tilt and Z-scale are base fields on
+             * the layer; reading a zero fallback here made a 3D property's graph sit at zero until
+             * its first key. */
+            return switch (this.axis)
+            {
+                case CompCurves.AXIS_Z -> this.layer.z;
+                case CompCurves.AXIS_ROTATION_X -> this.layer.rotationX;
+                case CompCurves.AXIS_ROTATION_Y -> this.layer.rotationY;
+                case CompCurves.AXIS_SCALE_Z -> this.layer.scaleZ;
+                default -> CompCurves.component(this.layer.defaultTransform(), this.axis);
+            };
         }
 
         if ("opacity".equals(this.path))
@@ -338,14 +360,7 @@ public final class CompCurveChannel
     {
         if (this.transform)
         {
-            KeyframeChannel<Transform> channel = this.layer.transformChannel();
-            Transform transform = channel.interpolate(tick, this.layer.defaultTransform()).copy();
-
-            CompCurves.setComponent(transform, this.axis, value);
-
-            /* insertInheriting copies the left key's interpolation, style and handles, which is
-             * what AE does: a key dropped onto an eased curve keeps the curve's shape. */
-            Keyframe<?> key = channel.insertInheriting(tick, transform);
+            Keyframe<?> key = this.layer.insertAxisKey(this.axis, tick, value);
 
             this.touch();
 
@@ -353,45 +368,20 @@ public final class CompCurveChannel
         }
 
         KeyframeChannel<Float> channel = (KeyframeChannel<Float>) this.raw();
+        Keyframe<Float> key = channel.insertInheriting(tick, value);
 
-        channel.insert(tick, value);
         this.layer.putScalar(this.path, value);
         this.touch();
 
-        return findKey(channel, tick);
+        return key;
     }
 
     @SuppressWarnings("unchecked")
     public void setKeyValue(Keyframe<?> key, float value)
     {
-        if (this.transform)
-        {
-            CompCurves.setComponent((Transform) key.getValue(), this.axis, value);
-
-            /* No sort() here: moving a value never changes tick order, and the curve editor
-             * sorts once per gesture frame for the channels it actually edited. Sorting per key
-             * per frame was O(keys) work for nothing. */
-            this.layer.putScalar(this.pathForField(), value);
-            this.touch();
-            return;
-        }
-
         ((Keyframe<Float>) key).setValue(value);
         this.layer.putScalar(this.path, value);
         this.touch();
-    }
-
-    /** Field name used to keep the layer's base value in sync with a transform key. */
-    private String pathForField()
-    {
-        switch (this.axis)
-        {
-            case CompCurves.AXIS_Y: return "y";
-            case CompCurves.AXIS_ROTATION: return "rotation";
-            case CompCurves.AXIS_SCALE_X: return "scaleX";
-            case CompCurves.AXIS_SCALE_Y: return "scaleY";
-            default: return "x";
-        }
     }
 
     public void remove(Keyframe<?> key)
@@ -465,7 +455,10 @@ public final class CompCurveChannel
     {
         if (this.transform)
         {
-            return this.axis == CompCurves.AXIS_ROTATION ? "°" : (this.axis == CompCurves.AXIS_SCALE_X || this.axis == CompCurves.AXIS_SCALE_Y ? "×" : "px");
+            return this.axis == CompCurves.AXIS_ROTATION
+                || this.axis == CompCurves.AXIS_ROTATION_X
+                || this.axis == CompCurves.AXIS_ROTATION_Y ? "°"
+                : (CompCurves.isScaleAxis(this.axis) ? "×" : "px");
         }
 
         if ("opacity".equals(this.path)) return "%";
@@ -475,7 +468,7 @@ public final class CompCurveChannel
 
     public String format(float value)
     {
-        if (this.transform && (this.axis == CompCurves.AXIS_SCALE_X || this.axis == CompCurves.AXIS_SCALE_Y))
+        if (this.transform && CompCurves.isScaleAxis(this.axis))
         {
             return String.format(Locale.ROOT, "%.1f%%", value * 100F);
         }

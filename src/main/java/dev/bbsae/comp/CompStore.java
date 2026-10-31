@@ -903,8 +903,8 @@ public final class CompStore
         comp.layers.add(nullLayer);
         comp.layers.add(adjustment);
 
-        title.transformChannel().insert(0F, transform(960F, 520F));
-        title.transformChannel().insert(72F, transform(960F, 460F));
+        title.insertTransformPose(0F, transform(960F, 520F));
+        title.insertTransformPose(72F, transform(960F, 460F));
         title.opacityChannel().insert(0F, 0F);
         title.opacityChannel().insert(18F, 1F);
         title.opacityChannel().insert(48F, 1F);

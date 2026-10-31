@@ -107,11 +107,11 @@ public class UICompCurveEditor extends UIElement
             this.graph.snapping = !this.graph.snapping;
             this.panel.setStatus(this.graph.snapping ? "曲线吸附：开（按帧）" : "曲线吸附：关");
         });
-        UIButton solo = CompUi.flat("聚焦", "只显示当前通道的曲线和关键帧；关掉后叠加显示所有可见通道（叠加时数值轴按当前通道缩放）", () ->
+        UIButton solo = CompUi.flat("聚焦", "当前轴实线，同族轴（例如 X 选中时的 Y/Z）半透明预览；关闭后叠加所有可见通道", () ->
         {
             this.graph.soloActive = !this.graph.soloActive;
             this.graph.fitValue();
-            this.panel.setStatus(this.graph.soloActive ? "曲线：只看当前通道" : "曲线：叠加所有可见通道");
+            this.panel.setStatus(this.graph.soloActive ? "曲线：当前轴实线，同族轴淡显预览" : "曲线：叠加所有可见通道");
         });
 
         fit.w(40).h(control);
@@ -171,6 +171,16 @@ public class UICompCurveEditor extends UIElement
     public void debugMakeFirstBezier()
     {
         this.graph.debugMakeFirstBezier();
+    }
+
+    /**
+     * Selects one property in the graph after the inspector created a key for it. This is the
+     * "the AE curve appears automatically" half of effect keyframing: the group is expanded, the
+     * channel becomes active and the value axis is fitted, so the artist sees a key immediately.
+     */
+    public void focusChannel(String path)
+    {
+        this.graph.focusChannel(path);
     }
 
     private final class Graph extends UIElement
@@ -600,11 +610,33 @@ public class UICompCurveEditor extends UIElement
             float min = Float.MAX_VALUE;
             float max = -Float.MAX_VALUE;
 
-            /* The active channel defines the value axis. Fitting to every visible channel made the
-             * curve of interest a flat line whenever two properties had different magnitudes. */
-            List<CompCurveChannel> source = this.soloActive && this.active != null && this.active.hasKeys()
-                ? Collections.singletonList(this.active)
-                : this.visibleChannels();
+            /* The active channel defines the value axis, but when an axis is selected its sibling
+             * dimensions are visible as ghost curves (AE's separate-dimensions view). Fitting only
+             * the active axis can clip Y/Z entirely, so the family participates in the fit. */
+            List<CompCurveChannel> source;
+
+            if (this.soloActive && this.active != null && this.active.hasKeys())
+            {
+                source = new ArrayList<>();
+                source.add(this.active);
+
+                if (this.active.transform)
+                {
+                    for (CompCurveChannel channel : this.channels)
+                    {
+                        if (channel != this.active && channel.transform && channel.hasKeys()
+                            && this.isVisible(channel)
+                            && this.sameAxisFamily(this.active.axis, channel.axis))
+                        {
+                            source.add(channel);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                source = this.visibleChannels();
+            }
 
             for (CompCurveChannel channel : source)
             {
@@ -675,6 +707,34 @@ public class UICompCurveEditor extends UIElement
         {
             this.fitTime();
             this.fitValue();
+        }
+
+        void focusChannel(String path)
+        {
+            if (path == null || path.isEmpty())
+            {
+                return;
+            }
+
+            this.rebuild();
+
+            String id = "scalar:" + path;
+
+            for (CompCurveChannel channel : this.channels)
+            {
+                if (channel.id.equals(id) || channel.id.equals(path))
+                {
+                    this.active = channel;
+                    this.visible.add(channel.id);
+                    this.collapsed.remove(channel.group);
+                    this.rowsDirty = true;
+                    this.invalidateGeometry();
+                    this.fitValue();
+                    this.revealActiveRow();
+
+                    return;
+                }
+            }
         }
 
         void debugSelectFirstKey()
@@ -1183,6 +1243,32 @@ public class UICompCurveEditor extends UIElement
 
             try
             {
+                /* AE's separate-dimension view: the selected axis is solid, its sibling axes are
+                 * faint previews. Before independent channels the siblings were literally the same
+                 * Transform keys, so this "preview" was impossible. */
+                if (this.soloActive && this.active != null && this.active.transform)
+                {
+                    for (CompCurveChannel channel : this.channels)
+                    {
+                        if (channel == this.active || !channel.transform || !channel.hasKeys())
+                        {
+                            continue;
+                        }
+
+                        if (!this.isVisible(channel) || channel.axis == this.active.axis)
+                        {
+                            continue;
+                        }
+
+                        if (!this.sameAxisFamily(this.active.axis, channel.axis))
+                        {
+                            continue;
+                        }
+
+                        this.drawChannel(context, channel, false, 0.24F);
+                    }
+                }
+
                 for (CompCurveChannel channel : this.channels)
                 {
                     if (!this.isVisible(channel))
@@ -1200,7 +1286,7 @@ public class UICompCurveEditor extends UIElement
                         continue;
                     }
 
-                    this.drawChannel(context, channel);
+                    this.drawChannel(context, channel, channel == this.active, channel == this.active ? 1F : 0.35F);
                 }
             }
             finally
@@ -1209,93 +1295,172 @@ public class UICompCurveEditor extends UIElement
             }
         }
 
+        private void revealActiveRow()
+        {
+            this.rowsDirty = true;
+            this.buildRows();
+
+            for (ListRow row : this.rows)
+            {
+                if (row.channel != this.active)
+                {
+                    continue;
+                }
+
+                if (row.y < 0)
+                {
+                    this.listScroll += row.y;
+                }
+                else if (row.y + row.height > this.listArea.h)
+                {
+                    this.listScroll += row.y + row.height - this.listArea.h;
+                }
+
+                this.listScroll = Math.max(0, this.listScroll);
+                this.rowsDirty = true;
+
+                return;
+            }
+        }
+
+        private boolean sameAxisFamily(int a, int b)
+        {
+            if ((a == CompCurves.AXIS_X || a == CompCurves.AXIS_Y || a == CompCurves.AXIS_Z)
+                && (b == CompCurves.AXIS_X || b == CompCurves.AXIS_Y || b == CompCurves.AXIS_Z))
+            {
+                return true;
+            }
+
+            if ((a == CompCurves.AXIS_ROTATION || a == CompCurves.AXIS_ROTATION_X || a == CompCurves.AXIS_ROTATION_Y)
+                && (b == CompCurves.AXIS_ROTATION || b == CompCurves.AXIS_ROTATION_X || b == CompCurves.AXIS_ROTATION_Y))
+            {
+                return true;
+            }
+
+            return CompCurves.isScaleAxis(a) && CompCurves.isScaleAxis(b);
+        }
+
         private void drawChannel(UIContext context, CompCurveChannel channel)
         {
-            CurveSpans spans = this.spansFor(channel);
-            boolean isActive = channel == this.active;
-            int color = isActive ? channel.color : Colors.setA(channel.color, 0.35F);
-            int thickness = isActive ? 2 : 1;
-            int runStart = -1;
-            int runLo = 0;
-            int runHi = 0;
+            this.drawChannel(context, channel, channel == this.active, channel == this.active ? 1F : 0.35F);
+        }
 
-            if (isActive && DEBUG_SPANS)
+        private void drawChannel(UIContext context, CompCurveChannel channel, boolean active, float opacity)
+        {
+            int color = channel.color;
+            int thickness = active ? 2 : 1;
+
+            if (active && DEBUG_SPANS)
             {
                 StringBuilder line = new StringBuilder();
 
                 line.append("curve spans ").append(channel.id)
                     .append(" area=").append(this.curveArea.x).append(',').append(this.curveArea.y)
                     .append(' ').append(this.curveArea.w).append('x').append(this.curveArea.h)
-                    .append(" view=").append(this.viewStart).append("+").append(this.viewDuration)
+                    .append(" view=").append(this.viewStart).append('+').append(this.viewDuration)
                     .append(" axis=").append(this.axisMin).append("..").append(this.axisMax)
                     .append(" fps=").append(this.fps())
                     .append(" keys=").append(channel.raw().getKeyframes().size());
 
-                Transform fallback = channel.transform ? this.layer.defaultTransform() : null;
-                int step = Math.max(1, spans.columns() / 10);
-
-                for (int column = 0; column < spans.columns(); column += step)
-                {
-                    float frame = (float) this.fromX(this.curveArea.x + column) * this.fps();
-                    float value = this.channelValueAt(channel, frame, fallback);
-
-                    line.append(" | c").append(column)
-                        .append('@').append(Math.round(frame))
-                        .append('=').append(Math.round(value))
-                        .append('/').append(spans.has(column) ? spans.lo(column) : -9999);
-                }
-
                 dev.bbsae.BbsAeAddon.LOGGER.info(line.toString());
             }
 
-            for (int column = 0; column < spans.columns(); column++)
+            /* A 3–4 px translucent halo under the active curve. The old painter filled one integer
+             * rectangle per column; the coverage rasterizer below gives the core a soft edge and
+             * this halo makes it read as an AE graph instead of a Minecraft 1 px strip. */
+            if (active && CompPrefs.get().glow)
             {
-                if (!spans.has(column))
-                {
-                    if (runStart >= 0)
-                    {
-                        this.drawSpan(context, runStart, column, runLo, runHi, color, thickness);
-                        runStart = -1;
-                    }
+                this.drawSmoothCurve(context, channel, color, 0.10F, 4.4F);
+            }
 
+            this.drawSmoothCurve(context, channel, color, opacity, thickness);
+        }
+
+        /**
+         * Anti-aliased curve rasterizer.
+         *
+         * <p>At every screen column this samples the real function and writes row coverage for the
+         * vertical segment between the previous and current value. Top/bottom edges fade over one
+         * pixel, which removes the staircase without introducing a shader, framebuffer or any GL
+         * state change — the same BBS batcher and the same clip rectangle.</p>
+         */
+        private void drawSmoothCurve(UIContext context, CompCurveChannel channel, int color, float opacity, float thickness)
+        {
+            int columns = Math.max(1, this.curveArea.w);
+            float top = this.curveArea.y - 2F;
+            float bottom = this.curveArea.ey() + 2F;
+            float half = Math.max(0.55F, thickness * 0.5F);
+            float previous = Float.NaN;
+
+            for (int column = 0; column < columns; column++)
+            {
+                float x = this.curveArea.x + column;
+                float value = this.channelValueAt(channel, (float) this.fromX(x) * this.fps());
+                float y = this.toY(value);
+
+                if (Float.isNaN(y) || Float.isInfinite(y))
+                {
+                    previous = y;
                     continue;
                 }
 
-                int lo = spans.lo(column);
-                int hi = spans.hi(column);
+                y = Math.max(top, Math.min(bottom, y));
 
-                if (runStart < 0)
-                {
-                    runStart = column;
-                    runLo = lo;
-                    runHi = hi;
-                }
-                else if (lo == runLo && hi == runHi)
-                {
-                    /* Only identical spans merge. A looser tolerance would swallow a diagonal
-                     * run into one tall rectangle and turn the curve into a filled band. */
-                }
-                else
-                {
-                    this.drawSpan(context, runStart, column, runLo, runHi, color, thickness);
-                    runStart = column;
-                    runLo = lo;
-                    runHi = hi;
-                }
-            }
+                float from = Float.isNaN(previous) ? y : previous;
+                float lo = Math.min(y, from) - half;
+                float hi = Math.max(y, from) + half;
 
-            if (runStart >= 0)
-            {
-                this.drawSpan(context, runStart, spans.columns(), runLo, runHi, color, thickness);
+                /* A hold/step can jump the whole graph for one column. Filling that as a single
+                 * quad avoids a pathological 200-row AA loop while keeping the visible step. */
+                if (hi - lo > 24F)
+                {
+                    context.batcher.box(x, lo, x + 1F, hi, Colors.setA(color, opacity));
+                    previous = y;
+                    continue;
+                }
+
+                int firstRow = (int) Math.floor(lo) - 1;
+                int lastRow = (int) Math.ceil(hi) + 1;
+
+                for (int row = firstRow; row <= lastRow; row++)
+                {
+                    /* Exact coverage of this pixel by the segment (x, y0) → (x+1, y1). The old
+                     * vertical-span fill still produced one-pixel stair edges; distance to the
+                     * segment antialiases both axes, which is what a real AE graph looks like. */
+                    float distance = distanceToSegment(
+                        x + 0.5F, row + 0.5F,
+                        x, from, x + 1F, y
+                    );
+                    float coverage = Math.min(1F, Math.max(0F, half + 0.5F - distance));
+
+                    if (coverage <= 0.01F)
+                    {
+                        continue;
+                    }
+
+                    context.batcher.box(x, row, x + 1F, row + 1F,
+                        Colors.setA(color, opacity * coverage));
+                }
+
+                previous = y;
             }
         }
 
-        private void drawSpan(UIContext context, int from, int to, int lo, int hi, int color, int thickness)
+        private static float distanceToSegment(float px, float py, float x0, float y0, float x1, float y1)
         {
-            float x1 = this.curveArea.x + from;
-            float x2 = this.curveArea.x + Math.max(from + 1, to);
+            float dx = x1 - x0;
+            float dy = y1 - y0;
+            float length = dx * dx + dy * dy;
+            float t = length < 0.000001F ? 0F : ((px - x0) * dx + (py - y0) * dy) / length;
 
-            context.batcher.box(x1, this.curveArea.y + lo, x2, this.curveArea.y + hi + thickness - 1, color);
+            t = Math.max(0F, Math.min(1F, t));
+
+            float qx = x0 + t * dx;
+            float qy = y0 + t * dy;
+            float ex = px - qx;
+            float ey = py - qy;
+
+            return (float) Math.sqrt(ex * ex + ey * ey);
         }
 
         /**
@@ -1415,9 +1580,17 @@ public class UICompCurveEditor extends UIElement
                         continue;
                     }
 
+                    boolean ghost = false;
+
                     if (this.soloActive && channel != this.active)
                     {
-                        continue;
+                        ghost = this.active != null && this.active.transform && channel.transform
+                            && this.sameAxisFamily(this.active.axis, channel.axis);
+
+                        if (!ghost)
+                        {
+                            continue;
+                        }
                     }
 
                     boolean isActive = channel == this.active;
@@ -1437,8 +1610,10 @@ public class UICompCurveEditor extends UIElement
                         float value = this.speedMode ? this.keySpeed(channel, raw, true) : channel.numericValue(raw);
                         float y = this.toY(value);
                         boolean selected = this.selection.contains(raw);
-                        int color = selected ? 0xFFFFFFFF : (isActive ? channel.color : Colors.setA(channel.color, 0.6F));
-                        int outline = selected ? 0xFF000000 : 0xAA000000;
+                        int color = selected ? 0xFFFFFFFF
+                            : ghost ? Colors.setA(channel.color, 0.30F)
+                            : (isActive ? channel.color : Colors.setA(channel.color, 0.6F));
+                        int outline = selected ? 0xFF000000 : (ghost ? 0x33000000 : 0xAA000000);
 
                         this.drawKeyShape(context, x, y, raw, color, outline);
                     }
@@ -1472,14 +1647,45 @@ public class UICompCurveEditor extends UIElement
 
             if (bezier)
             {
-                context.batcher.box(x - 3, y - 3, x + 3, y + 3, outline);
-                context.batcher.box(x - 2, y - 2, x + 2, y + 2, color);
+                this.drawDisc(context, x, y, 3.4F, color, outline);
 
                 return;
             }
 
             context.batcher.box(x - 3, y - 3, x + 3, y + 3, outline);
             context.batcher.box(x - 2, y - 2, x + 2, y + 2, color);
+        }
+
+        /** A rounded AE key dot. Rows are fractional-width rectangles, so it reads as a disc even
+         * on the blocky Minecraft UI rather than as a 6×6 square. */
+        private void drawDisc(UIContext context, float cx, float cy, float radius, int color, int outline)
+        {
+            if (outline != 0)
+            {
+                this.drawDiscRows(context, cx, cy, radius + 1.1F, outline);
+            }
+
+            this.drawDiscRows(context, cx, cy, radius, color);
+        }
+
+        private void drawDiscRows(UIContext context, float cx, float cy, float radius, int color)
+        {
+            int ir = (int) Math.ceil(radius);
+
+            for (int dy = -ir; dy <= ir; dy++)
+            {
+                float half = (float) Math.sqrt(Math.max(0F, radius * radius - dy * dy));
+
+                if (half <= 0.01F)
+                {
+                    continue;
+                }
+
+                float edge = Math.abs(dy) >= radius - 0.5F ? 0.65F : 1F;
+
+                context.batcher.box(cx - half, cy + dy, cx + half, cy + dy + 1,
+                    Colors.setA(color, (color >>> 24) / 255F * edge));
+            }
         }
 
         private void renderHandles(UIContext context)
@@ -1513,15 +1719,13 @@ public class UICompCurveEditor extends UIElement
                     float hy = y - key.ry * pxPerValue;
 
                     this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
-                    context.batcher.box(hx - 4, hy - 4, hx + 4, hy + 4, 0xFF0D1015);
-                    context.batcher.box(hx - 3, hy - 3, hx + 3, hy + 3, 0xFFE8C86A);
+                    this.drawDisc(context, hx, hy, 3.4F, 0xFFE8C86A, 0xFF0D1015);
 
                     hx = x - key.lx * pxPerFrame;
                     hy = y - key.ly * pxPerValue;
 
                     this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
-                    context.batcher.box(hx - 4, hy - 4, hx + 4, hy + 4, 0xFF0D1015);
-                    context.batcher.box(hx - 3, hy - 3, hx + 3, hy + 3, 0xFFE8C86A);
+                    this.drawDisc(context, hx, hy, 3.4F, 0xFFE8C86A, 0xFF0D1015);
                 }
             }
             finally
@@ -2035,30 +2239,9 @@ public class UICompCurveEditor extends UIElement
                 return null;
             }
 
-            /* BBS stores one Transform key for all five transform curves. An IdentityHashMap of
-             * key -> channel therefore cannot work: every position/rotation/scale adapter owns
-             * the same key object and the last one simply overwrote the others. The old lookup
-             * returned scaleY for a position key, so dragging a position value edited scale Y and
-             * the Bezier/ease presets filtered the selection to nothing. The component comes from
-             * the active channel; only scalar/opacity channels have a unique owner. */
-            if (this.layer != null && key.getParent() == this.layer.transformChannel())
-            {
-                if (this.active != null && this.active.transform)
-                {
-                    return this.active;
-                }
-
-                for (CompCurveChannel channel : this.channels)
-                {
-                    if (channel.transform)
-                    {
-                        return channel;
-                    }
-                }
-
-                return null;
-            }
-
+            /* Each axis now owns a separate float channel and a separate key object, so the
+             * identity map is unambiguous. Keeping the old Transform special case here would
+             * route every axis key back to the active channel and defeat independent editing. */
             return this.owners.get(key);
         }
 

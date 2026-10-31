@@ -220,6 +220,167 @@ public class CompLayer
         return this.opacityChannel;
     }
 
+    /* Independent transform axes --------------------------------------------
+     *
+     * BBS stores one Transform per transform keyframe. That is a convenient render representation
+     * but a terrible animation representation: Position X and Y share a keyframe object, so
+     * deleting X deletes Y, and each axis cannot have its own timing. AE keeps one curve per
+     * component, and so does the compositor now: x/y/rotation/scaleX/scaleY (plus z/rotationX/
+     * rotationY/scaleZ for 3D) live in independent scalar channels. The legacy Transform channel
+     * is still read as a migration fallback, but it is no longer the source of truth once any axis
+     * channel exists.
+     */
+
+    public KeyframeChannel<Float> axisChannel(int axis)
+    {
+        return this.scalarChannel(CompCurves.axisPath(axis));
+    }
+
+    public boolean hasAxisKey(int axis)
+    {
+        return this.axisChannel(axis).getKeyframes().size() > 0;
+    }
+
+    public boolean hasAnyTransformKey()
+    {
+        for (int axis : CompCurves.axes(this.threeD))
+        {
+            if (this.hasAxisKey(axis))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public float axisAt(int axis, float frame, float fallback)
+    {
+        return this.scalarAt(CompCurves.axisPath(axis), fallback, frame);
+    }
+
+    public Keyframe<Float> insertAxisKey(int axis, float frame, float value)
+    {
+        this.putScalar(CompCurves.axisPath(axis), value);
+
+        KeyframeChannel<Float> channel = this.axisChannel(axis);
+
+        return channel.insertInheriting(frame, value);
+    }
+
+    public void insertAxisKeyAt(int axis, float frame)
+    {
+        this.insertAxisKey(axis, frame, this.axisAt(axis, frame, this.scalar(CompCurves.axisPath(axis), 0F)));
+    }
+
+    /** Adds independent keys for every transform component at one frame. */
+    public void insertTransformKeys(float frame)
+    {
+        for (int axis : CompCurves.axes(this.threeD))
+        {
+            this.insertAxisKeyAt(axis, frame);
+        }
+    }
+
+    /** Adds one independent key per axis from a fully evaluated pose. */
+    public void insertTransformPose(float frame, Transform pose)
+    {
+        if (pose == null)
+        {
+            return;
+        }
+
+        for (int axis : CompCurves.axes(this.threeD))
+        {
+            this.insertAxisKey(axis, frame, CompCurves.component(pose, axis));
+        }
+    }
+
+    public void clearTransformAxes()
+    {
+        for (int axis : CompCurves.axes(this.threeD))
+        {
+            this.axisChannel(axis).removeAll();
+        }
+    }
+
+    /**
+     * Converts a project written before independent axes into the new representation.
+     *
+     * <p>Only migrates when no axis channel has keys, so editing one axis can never re-run the
+     * migration and duplicate the other axes. Handles/style/interpolation are copied with
+     * {@code copyOverExtra}; the curve shape is therefore preserved even for eased old projects.</p>
+     */
+    public void ensureIndependentAxes()
+    {
+        if (this.scalarChannels == null)
+        {
+            this.scalarChannels = new LinkedHashMap<>();
+        }
+
+        boolean anyAxis = this.hasAnyTransformKey();
+
+        if (this.transformChannel == null || this.transformChannel.getKeyframes().isEmpty())
+        {
+            if (anyAxis)
+            {
+                this.transformData = "";
+            }
+
+            return;
+        }
+
+        if (!anyAxis)
+        {
+            int[] axes = CompCurves.axes(this.threeD);
+
+            for (Object entry : this.transformChannel.getKeyframes())
+            {
+                @SuppressWarnings("unchecked")
+                Keyframe<Transform> source = (Keyframe<Transform>) entry;
+
+                for (int axis : axes)
+                {
+                    Keyframe<Float> target = this.axisChannel(axis).insertInheriting(
+                        source.getTick(),
+                        CompCurves.component(source.getValue(), axis)
+                    );
+
+                    target.copyOverExtra(source);
+                }
+            }
+        }
+        else
+        {
+            /* Mixed legacy/axis data: only fill axes that have no keys yet. An axis the artist has
+             * already edited must never be overwritten by the old shared keys. */
+            for (int axis : CompCurves.axes(this.threeD))
+            {
+                if (this.hasAxisKey(axis))
+                {
+                    continue;
+                }
+
+                for (Object entry : this.transformChannel.getKeyframes())
+                {
+                    @SuppressWarnings("unchecked")
+                    Keyframe<Transform> source = (Keyframe<Transform>) entry;
+                    Keyframe<Float> target = this.axisChannel(axis).insertInheriting(
+                        source.getTick(),
+                        CompCurves.component(source.getValue(), axis)
+                    );
+
+                    target.copyOverExtra(source);
+                }
+            }
+        }
+
+        /* The legacy channel is never rendered again. Keeping it would make the native keyframe
+         * drawer show a second, shared "transform" row whose deletion still removes every axis. */
+        this.transformChannel.removeAll();
+        this.transformData = "";
+    }
+
     public KeyframeChannel<Float> scalarChannel(String path)
     {
         if (path == null || path.isEmpty())
@@ -678,6 +839,32 @@ public class CompLayer
 
     public Transform transformAt(float frame)
     {
+        /* Independent axes are the source of truth. The old shared Transform channel is only a
+         * fallback for projects that have not been opened by the curve editor yet; migration
+         * copies its handles and interpolation into the per-axis channels. */
+        if (this.hasAnyTransformKey())
+        {
+            Transform transform = new Transform();
+
+            transform.translate.set(
+                this.axisAt(CompCurves.AXIS_X, frame, this.x),
+                this.axisAt(CompCurves.AXIS_Y, frame, this.y),
+                this.threeD ? this.axisAt(CompCurves.AXIS_Z, frame, this.z) : 0F
+            );
+            transform.rotate.set(
+                this.threeD ? this.axisAt(CompCurves.AXIS_ROTATION_X, frame, this.rotationX) : 0F,
+                this.threeD ? this.axisAt(CompCurves.AXIS_ROTATION_Y, frame, this.rotationY) : 0F,
+                this.axisAt(CompCurves.AXIS_ROTATION, frame, this.rotation)
+            );
+            transform.scale.set(
+                this.axisAt(CompCurves.AXIS_SCALE_X, frame, this.scaleX),
+                this.axisAt(CompCurves.AXIS_SCALE_Y, frame, this.scaleY),
+                this.threeD ? this.axisAt(CompCurves.AXIS_SCALE_Z, frame, this.scaleZ) : 1F
+            );
+
+            return transform;
+        }
+
         KeyframeChannel<Transform> channel = this.transformChannel();
 
         if (channel.getKeyframes().isEmpty())
@@ -1212,6 +1399,12 @@ public class CompLayer
     public void saveTracks()
     {
         ensureFactories();
+        this.ensureIndependentAxes();
+
+        if (this.hasAnyTransformKey())
+        {
+            this.transformData = "";
+        }
 
         this.transformData = this.transformChannel == null || this.transformChannel.getKeyframes().isEmpty()
             ? ""
@@ -1282,6 +1475,8 @@ public class CompLayer
         if (this.textAnimators == null) this.textAnimators = new ArrayList<>();
         if (this.markers == null) this.markers = new ArrayList<>();
         if (this.binding == null) this.binding = new CompBinding();
+
+        this.ensureIndependentAxes();
     }
 
     public void ensureInitialized()
@@ -1368,6 +1563,8 @@ public class CompLayer
                 this.scalarChannels.put(entry.getKey(), channel);
             }
         }
+
+        this.ensureIndependentAxes();
     }
 
     public static float clamp01(float value)

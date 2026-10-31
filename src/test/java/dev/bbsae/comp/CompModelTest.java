@@ -140,7 +140,9 @@ public class CompModelTest
         assertTrue(comp.layers.size() >= 4);
         assertEquals("panel", comp.layers.get(0).type);
         assertEquals("BBS COMPOSITOR", comp.getLayer("title").text);
-        assertEquals(2, comp.getLayer("title").transformChannel().getKeyframes().size());
+        assertEquals(2, comp.getLayer("title").axisChannel(CompCurves.AXIS_X).getKeyframes().size());
+        assertEquals(2, comp.getLayer("title").axisChannel(CompCurves.AXIS_Y).getKeyframes().size());
+        assertTrue(comp.getLayer("title").transformChannel().getKeyframes().isEmpty());
         assertEquals(3, comp.getLayer("title").opacityChannel().getKeyframes().size());
         assertTrue(comp.getLayer("panel").masks.size() > 0);
         assertTrue(comp.getLayer("badge").shapes.size() > 0);
@@ -535,7 +537,7 @@ public class CompModelTest
 
         assertEquals(0F, copy.in, 0.0001F);
         assertEquals(3F, copy.out, 0.0001F);
-        assertEquals(20F, copy.transformChannel().getKeyframes().get(0).getTick(), 0.0001F);
+        assertEquals(20F, copy.axisChannel(CompCurves.AXIS_X).getKeyframes().get(0).getTick(), 0.0001F);
 
         /* Parent 6s maps to inner 1s; the inner source frame must match the pre-precompose
          * source frame at 6s (1s after the 5s in point). */

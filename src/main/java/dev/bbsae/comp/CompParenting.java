@@ -177,31 +177,21 @@ public final class CompParenting
     public static void applyDelta(CompLayer layer, float dx, float dy, float dz, float drz, float drx, float dry,
                                   float ratioX, float ratioY, float ratioZ)
     {
-        KeyframeChannel<Transform> channel = layer.transformChannel();
-        List<Keyframe<Transform>> keys = channel.getKeyframes();
+        layer.ensureIndependentAxes();
 
-        for (Keyframe<Transform> key : keys)
+        /* Each component is shifted/scaled on its own curve. This keeps X, Y and Z key times
+         * independent while still applying the parent-basis correction to every existing key. */
+        applyAxis(layer, CompCurves.AXIS_X, dx, 1F);
+        applyAxis(layer, CompCurves.AXIS_Y, dy, 1F);
+        applyAxis(layer, CompCurves.AXIS_ROTATION, drz, 1F);
+        applyAxis(layer, CompCurves.AXIS_SCALE_X, 0F, ratioX);
+
+        if (layer.threeD)
         {
-            Transform transform = key.getValue();
-
-            transform.translate.x += dx;
-            transform.translate.y += dy;
-            transform.rotate.z += drz;
-            transform.scale.x *= ratioX;
-            transform.scale.y *= ratioY;
-
-            /* Handles are offsets from the key, so a translation leaves them alone while a scale
-             * change scales the value component of each tangent. */
-            if (Math.abs(ratioY - 1F) > 0.00001F)
-            {
-                key.ry *= ratioY;
-                key.ly *= ratioY;
-            }
-        }
-
-        if (!keys.isEmpty())
-        {
-            channel.sort();
+            applyAxis(layer, CompCurves.AXIS_Z, dz, 1F);
+            applyAxis(layer, CompCurves.AXIS_ROTATION_X, drx, 1F);
+            applyAxis(layer, CompCurves.AXIS_ROTATION_Y, dry, 1F);
+            applyAxis(layer, CompCurves.AXIS_SCALE_Z, 0F, ratioZ);
         }
 
         /* Base values follow the delta too: deleting every key must not snap the layer back to a
@@ -218,32 +208,32 @@ public final class CompParenting
             layer.rotationX += drx;
             layer.rotationY += dry;
             layer.scaleZ = Math.max(0.0001F, layer.scaleZ * ratioZ);
-
-            /* z / tilt / scaleZ live in scalar channels, not in the transform vector. */
-            shiftChannel(layer, "z", dz, 1F);
-            shiftChannel(layer, "rotationX", drx, 1F);
-            shiftChannel(layer, "rotationY", dry, 1F);
-            shiftChannel(layer, "scaleZ", 0F, ratioZ);
         }
     }
 
-    /** Shifts (or scales) every value of a scalar channel, so keyframed 3D properties follow. */
-    private static void shiftChannel(CompLayer layer, String path, float delta, float ratio)
+    private static void applyAxis(CompLayer layer, int axis, float delta, float ratio)
     {
-        KeyframeChannel<Float> channel = layer.scalarChannel(path);
+        KeyframeChannel<Float> channel = layer.axisChannel(axis);
 
         if (channel.getKeyframes().isEmpty())
         {
             return;
         }
 
+        boolean scale = CompCurves.isScaleAxis(axis);
+
         for (Keyframe<Float> key : channel.getKeyframes())
         {
             float value = key.getValue() == null ? 0F : key.getValue();
 
-            key.setValue(Math.max(0F, value * ratio + delta));
-            key.ry *= ratio;
-            key.ly *= ratio;
+            value = scale ? Math.max(0.0001F, value * ratio + delta) : value * ratio + delta;
+            key.setValue(value);
+
+            if (Math.abs(ratio - 1F) > 0.00001F)
+            {
+                key.ry *= ratio;
+                key.ly *= ratio;
+            }
         }
 
         channel.sort();

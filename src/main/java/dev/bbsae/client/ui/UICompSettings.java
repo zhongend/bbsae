@@ -526,6 +526,11 @@ public class UICompSettings extends UIElement
             prefs.shadows = value;
             CompPrefs.save();
         }), 170, "浮层、卡片和 hover 的柔和阴影"));
+        this.add(this.row("自动定位 AE 曲线", this.toggle("", prefs.autoEffectCurve, (value) ->
+        {
+            prefs.autoEffectCurve = value;
+            CompPrefs.save();
+        }), 170, "给效果参数打关键帧时自动展开对应曲线；关闭后仍可从效果区的「AE 关键帧」按钮手动定位"));
 
         this.add(this.section("引导背景"));
         this.add(this.row("背景亮度", this.slider(prefs.backdropIntensity, 0F, 1.5F, (value) ->

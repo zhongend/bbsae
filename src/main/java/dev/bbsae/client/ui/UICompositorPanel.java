@@ -1181,15 +1181,22 @@ public class UICompositorPanel extends UIDashboardPanel
                     hasLast = true;
                 }
 
-                /* Keyframe dots: one per transform key, at the frame the key lives on. */
-                for (Object entry : layer.transformChannel().getKeyframes())
-                {
-                    if (!(entry instanceof mchorse.bbs_mod.utils.keyframes.Keyframe<?> key))
-                    {
-                        continue;
-                    }
+                /* Keyframe dots: one per independent position-axis key. X and Y now have their own
+                 * times, so the motion path must not read the removed shared transform channel. */
+                java.util.LinkedHashSet<Float> keyTicks = new java.util.LinkedHashSet<>();
 
-                    org.joml.Vector3f eye = CompCamera.eyeOf(layer, key.getTick(), doc.height);
+                for (Object entry : layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_X).getKeyframes())
+                {
+                    keyTicks.add(((mchorse.bbs_mod.utils.keyframes.Keyframe<?>) entry).getTick());
+                }
+                for (Object entry : layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_Y).getKeyframes())
+                {
+                    keyTicks.add(((mchorse.bbs_mod.utils.keyframes.Keyframe<?>) entry).getTick());
+                }
+
+                for (float keyTick : keyTicks)
+                {
+                    org.joml.Vector3f eye = CompCamera.eyeOf(layer, keyTick, doc.height);
                     org.joml.Vector2f point = camera.project(eye);
 
                     if (point == null)
@@ -2486,17 +2493,15 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void writeTransform(CompLayer layer, Float scaleX, Float scaleY, Float rotation, Float translateX, Float translateY)
             {
-                if (!layer.transformChannel().getKeyframes().isEmpty())
+                if (layer.hasAnyTransformKey())
                 {
-                    Transform transform = layer.transformAt(UICompositorPanel.this.getFrame()).copy();
+                    float frame = UICompositorPanel.this.getFrame();
 
-                    if (scaleX != null) transform.scale.x = scaleX;
-                    if (scaleY != null) transform.scale.y = scaleY;
-                    if (rotation != null) transform.rotate.z = rotation;
-                    if (translateX != null) transform.translate.x = translateX;
-                    if (translateY != null) transform.translate.y = translateY;
-
-                    layer.transformChannel().insert(UICompositorPanel.this.getFrame(), transform);
+                    if (scaleX != null) layer.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_SCALE_X, frame, scaleX);
+                    if (scaleY != null) layer.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_SCALE_Y, frame, scaleY);
+                    if (rotation != null) layer.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_ROTATION, frame, rotation);
+                    if (translateX != null) layer.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_X, frame, translateX);
+                    if (translateY != null) layer.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_Y, frame, translateY);
                 }
                 else
                 {
@@ -6547,7 +6552,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 {
                     CompLayer camera = this.doc.activeCamera(this.time);
 
-                    if (camera != null && camera.transformChannel().getKeyframes().isEmpty())
+                    if (camera != null && !camera.hasAnyTransformKey())
                     {
                         float end = Math.max(1F, this.doc.duration);
                         float[] xs = {this.doc.width * 0.5F, this.doc.width * 0.28F, this.doc.width * 0.72F, this.doc.width * 0.5F};
@@ -6559,7 +6564,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                             pose.translate.x = xs[i];
                             pose.translate.y = ys[i];
-                            camera.transformChannel().insert(Math.round(end * i / (xs.length - 1) * Math.max(1F, this.doc.fps)), pose);
+                            camera.insertTransformPose(Math.round(end * i / (xs.length - 1) * Math.max(1F, this.doc.fps)), pose);
                         }
 
                         this.refreshSheets();
@@ -6620,7 +6625,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 /* Three eased position keys across the whole composition, so the graph has a real
                  * curve at a readable scale (and handles to drag). */
-                if (layer.transformChannel().getKeyframes().isEmpty())
+                if (!layer.hasAnyTransformKey())
                 {
                     float fps = Math.max(1F, this.doc.fps);
                     float end = Math.max(0.5F, this.doc.duration);
@@ -6632,16 +6637,18 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     for (float[] key : keys)
                     {
-                        Transform transform = layer.defaultTransform().copy();
-
-                        transform.translate.x = key[1];
-                        transform.translate.y = key[2];
-                        layer.transformChannel().insert(key[0], transform);
+                        layer.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_X, key[0], key[1]);
+                        layer.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_Y, key[0], key[2]);
                     }
 
-                    dev.bbsae.comp.CompCurves.applyEase(layer.transformChannel(),
-                        (List) layer.transformChannel().getKeyframes(), dev.bbsae.comp.CompCurves.EASE_BOTH,
-                        dev.bbsae.comp.CompCurves.DEFAULT_INFLUENCE);
+                    dev.bbsae.comp.CompCurves.applyEase(
+                        layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_X),
+                        (List) layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_X).getKeyframes(),
+                        dev.bbsae.comp.CompCurves.EASE_BOTH, dev.bbsae.comp.CompCurves.DEFAULT_INFLUENCE);
+                    dev.bbsae.comp.CompCurves.applyEase(
+                        layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_Y),
+                        (List) layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_Y).getKeyframes(),
+                        dev.bbsae.comp.CompCurves.EASE_BOTH, dev.bbsae.comp.CompCurves.DEFAULT_INFLUENCE);
                 }
 
                 this.selectLayer(layer);
@@ -6668,7 +6675,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 {
                     StringBuilder keys = new StringBuilder();
 
-                    for (Object key : layer.transformChannel().getKeyframes())
+                    for (Object key : layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_X).getKeyframes())
                     {
                         keys.append(((mchorse.bbs_mod.utils.keyframes.Keyframe<?>) key).getTick()).append(' ');
                     }
@@ -10459,6 +10466,16 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(UI.label(IKey.constant("这个效果没有可调参数。"), 16));
         }
 
+        if (!definition.params.isEmpty())
+        {
+            UICompButton keyAll = new UICompButton(IKey.constant("AE 关键帧"), (button) ->
+                this.keyEffectAtPlayhead(layer, effect, definition));
+
+            keyAll.hint("在当前播放头为这个效果的所有可动画参数自动添加独立关键帧，并在下方 AE 曲线中展开该属性");
+            keyAll.w(1F).h(20);
+            section.fields.add(keyAll);
+        }
+
         if (effect.type != null && effect.type.startsWith("depth_"))
         {
             section.fields.add(UI.label(IKey.constant("提示：深度类效果需要影片深度通道；纯合成预览没有真实世界深度，可能看不到变化。"), 13));
@@ -10490,6 +10507,52 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         return section;
+    }
+
+    /**
+     * Keys every animatable parameter of an effect at the playhead.
+     *
+     * <p>This is the explicit "AE keyframe" affordance for an effect: one undo checkpoint, one
+     * status line, independent X/Y/Z-like scalar channels per parameter, and the graph is focused
+     * on the first parameter so the newly appeared keys are visible immediately.</p>
+     */
+    private void keyEffectAtPlayhead(CompLayer layer, CompEffect effect, CompEffectRegistry.Definition definition)
+    {
+        if (layer == null || effect == null || definition == null || definition.params.isEmpty())
+        {
+            return;
+        }
+
+        this.beginAction("添加效果 AE 关键帧");
+
+        float frame = this.getFrame();
+        String firstPath = null;
+
+        for (CompEffectRegistry.Param param : definition.params)
+        {
+            String path = CompLayer.effectPath(effect.id, param.key);
+
+            if (firstPath == null)
+            {
+                firstPath = path;
+            }
+
+            float value = layer.scalarAt(path, (float) effect.value(param.key, param.defaultValue), frame);
+
+            layer.scalarChannel(path).insertInheriting(frame, value);
+        }
+
+        this.refreshSheets();
+        this.refreshInspector();
+
+        if (firstPath != null)
+        {
+            this.showCurveFor(firstPath);
+        }
+
+        this.setStatus("已为「" + CompEffectRegistry.displayName(effect.type) + "」添加 "
+            + definition.params.size() + " 个 AE 关键帧");
+        this.save();
     }
 
     private void moveEffect(CompLayer layer, CompEffect effect, int direction)
@@ -12154,7 +12217,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             if (transformPath)
             {
-                this.addTransformKey(true);
+                this.addTransformAxisKey(layer, path);
                 return;
             }
 
@@ -12345,13 +12408,23 @@ public class UICompositorPanel extends UIDashboardPanel
 
         CompLayer layer = this.selectedLayer;
 
-        this.keyframeEditor.view.addSheet(new UIKeyframeSheet(
-            "transform",
-            IKey.constant("变换"),
-            Colors.BLUE,
-            layer.transformChannel(),
-            null
-        ).seed(layer::defaultTransform));
+        layer.ensureIndependentAxes();
+
+        /* The native drawer gets one float channel per axis, not one shared Transform channel:
+         * deleting Position X must not delete Position Y. The curve editor uses the same channels,
+         * so the two views can never disagree about which axes are animated. */
+        for (int axis : dev.bbsae.comp.CompCurves.axes(layer.threeD))
+        {
+            String path = dev.bbsae.comp.CompCurves.axisPath(axis);
+
+            this.keyframeEditor.view.addSheet(new UIKeyframeSheet(
+                path,
+                IKey.constant(dev.bbsae.comp.CompCurves.axisLabel(axis)),
+                dev.bbsae.comp.CompCurves.axisColor(axis),
+                layer.axisChannel(axis),
+                null
+            ).seed(() -> layer.scalar(path, 0F)));
+        }
 
         this.keyframeEditor.view.addSheet(new UIKeyframeSheet(
             "opacity",
@@ -12365,6 +12438,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
         for (String path : layer.animatedPaths())
         {
+            if (dev.bbsae.comp.CompCurves.isTransformAxisPath(path))
+            {
+                continue;
+            }
+
             KeyframeChannel<Float> channel = layer.scalarChannel(path);
             int c = UIKeyframeEditor.COLORS[color % UIKeyframeEditor.COLORS.length];
 
@@ -12499,6 +12577,29 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshInspector();
         this.setStatus("已在播放头添加关键帧");
         this.save();
+
+        if (path.startsWith("fx/") && CompPrefs.get().autoEffectCurve)
+        {
+            this.showCurveFor(path);
+        }
+    }
+
+    /**
+     * Opens the AE graph on one property. Called when an effect key is created, so the artist does
+     * not have to hunt for a row that appeared somewhere in the list.
+     */
+    private void showCurveFor(String path)
+    {
+        if (this.curveEditor == null || this.selectedLayer == null)
+        {
+            return;
+        }
+
+        this.timelinePage = 1;
+        this.applyTimelinePage(true);
+        this.curveEditor.refresh();
+        this.curveEditor.focusChannel(path);
+        this.setStatus("AE 曲线已定位：" + dev.bbsae.comp.CompCurveChannel.displayName(this.selectedLayer, path));
     }
 
     private float scalarValue(CompLayer layer, String path)
@@ -12572,9 +12673,26 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.beginAction("添加变换关键帧");
-        this.selectedLayer.transformChannel().insert(this.getFrame(), this.selectedLayer.transformAt(this.getFrame()).copy());
+        this.selectedLayer.insertTransformKeys(this.getFrame());
         this.refreshSheets();
-        this.setStatus("已在播放头添加变换关键帧");
+        this.setStatus("已在播放头添加变换关键帧（各轴独立）");
+        this.save();
+    }
+
+    private void addTransformAxisKey(CompLayer layer, String path)
+    {
+        int axis = dev.bbsae.comp.CompCurves.axisForPath(path);
+
+        if (axis < 0)
+        {
+            return;
+        }
+
+        this.beginAction("添加 " + dev.bbsae.comp.CompCurves.axisLabel(axis) + " 关键帧");
+        layer.insertAxisKeyAt(axis, this.getFrame());
+        this.refreshSheets();
+        this.refreshInspector();
+        this.setStatus("已在播放头添加 " + dev.bbsae.comp.CompCurves.axisLabel(axis) + " 关键帧");
         this.save();
     }
 
@@ -12726,12 +12844,9 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.beginAction("添加位置关键帧");
-        this.insertTransformKey(layer);
-
-        if (layer.threeD)
-        {
-            this.insertScalarKey(layer, "z");
-        }
+        this.insertAxisKeys(layer, layer.threeD
+            ? new int[] {dev.bbsae.comp.CompCurves.AXIS_X, dev.bbsae.comp.CompCurves.AXIS_Y, dev.bbsae.comp.CompCurves.AXIS_Z}
+            : new int[] {dev.bbsae.comp.CompCurves.AXIS_X, dev.bbsae.comp.CompCurves.AXIS_Y});
 
         this.afterQuickKey("位置");
     }
@@ -12746,13 +12861,12 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.beginAction("添加旋转关键帧");
-        this.insertTransformKey(layer);
-
-        if (layer.threeD)
-        {
-            this.insertScalarKey(layer, "rotationX");
-            this.insertScalarKey(layer, "rotationY");
-        }
+        this.insertAxisKeys(layer, layer.threeD
+            ? new int[] {
+                dev.bbsae.comp.CompCurves.AXIS_ROTATION,
+                dev.bbsae.comp.CompCurves.AXIS_ROTATION_X,
+                dev.bbsae.comp.CompCurves.AXIS_ROTATION_Y}
+            : new int[] {dev.bbsae.comp.CompCurves.AXIS_ROTATION});
 
         this.afterQuickKey("旋转");
     }
@@ -12767,19 +12881,24 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.beginAction("添加缩放关键帧");
-        this.insertTransformKey(layer);
-
-        if (layer.threeD)
-        {
-            this.insertScalarKey(layer, "scaleZ");
-        }
+        this.insertAxisKeys(layer, layer.threeD
+            ? new int[] {dev.bbsae.comp.CompCurves.AXIS_SCALE_X, dev.bbsae.comp.CompCurves.AXIS_SCALE_Y, dev.bbsae.comp.CompCurves.AXIS_SCALE_Z}
+            : new int[] {dev.bbsae.comp.CompCurves.AXIS_SCALE_X, dev.bbsae.comp.CompCurves.AXIS_SCALE_Y});
 
         this.afterQuickKey("缩放");
     }
 
+    private void insertAxisKeys(CompLayer layer, int[] axes)
+    {
+        for (int axis : axes)
+        {
+            layer.insertAxisKeyAt(axis, this.getFrame());
+        }
+    }
+
     private void insertTransformKey(CompLayer layer)
     {
-        layer.transformChannel().insert(this.getFrame(), layer.transformAt(this.getFrame()).copy());
+        layer.insertTransformKeys(this.getFrame());
     }
 
     private void insertScalarKey(CompLayer layer, String path)
@@ -12890,33 +13009,22 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         CompLayer layer = this.selectedLayer;
-        Transform transform = layer.transformAt(this.getFrame()).copy();
+        int axis = component;
 
-        switch (component)
+        if (axis < 0 || axis >= dev.bbsae.comp.CompCurves.AXIS_COUNT)
         {
-            case 0 -> transform.translate.x = value;
-            case 1 -> transform.translate.y = value;
-            case 2 -> transform.rotate.z = value;
-            case 3 -> transform.scale.x = value;
-            case 4 -> transform.scale.y = value;
-            default -> { }
+            return;
         }
 
-        if (!layer.transformChannel().getKeyframes().isEmpty())
+        if (layer.hasAnyTransformKey())
         {
-            layer.transformChannel().insert(this.getFrame(), transform);
+            /* Only this axis receives a key. X, Y and Z are independent channels now, so changing
+             * Y can never overwrite X's key at the same frame. */
+            layer.insertAxisKey(axis, this.getFrame(), value);
         }
         else
         {
-            switch (component)
-            {
-                case 0 -> layer.x = value;
-                case 1 -> layer.y = value;
-                case 2 -> layer.rotation = value;
-                case 3 -> layer.scaleX = value;
-                case 4 -> layer.scaleY = value;
-                default -> { }
-            }
+            layer.putScalar(dev.bbsae.comp.CompCurves.axisPath(axis), value);
         }
 
         /* Same invariant as setScalar(): mark the document dirty so the edit is undoable and

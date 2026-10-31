@@ -63,13 +63,13 @@ public class CompMotionTest
 
         assertTrue(CompMotion.apply(layer, document(), "slide_left"));
 
-        var keys = layer.transformChannel().getKeyframes();
+        var keys = layer.axisChannel(CompCurves.AXIS_X).getKeyframes();
 
         assertEquals(2, keys.size());
         assertEquals(40F, keys.get(0).getTick(), 0.001F);
 
-        Transform start = (Transform) keys.get(0).getValue();
-        Transform end = (Transform) keys.get(1).getValue();
+        Transform start = layer.transformAt(keys.get(0).getTick());
+        Transform end = layer.transformAt(keys.get(1).getTick());
 
         assertTrue(start.translate.x < end.translate.x, "left slide must start left of the final x");
         assertEquals(960F, end.translate.x, 0.001F, "final key keeps the layer's original x");
@@ -83,13 +83,13 @@ public class CompMotionTest
 
         assertTrue(CompMotion.apply(layer, document(), "pop"));
 
-        var keys = layer.transformChannel().getKeyframes();
+        var keys = layer.axisChannel(CompCurves.AXIS_SCALE_X).getKeyframes();
 
         assertEquals(3, keys.size());
 
-        Transform start = (Transform) keys.get(0).getValue();
-        Transform peak = (Transform) keys.get(1).getValue();
-        Transform end = (Transform) keys.get(2).getValue();
+        Transform start = layer.transformAt(keys.get(0).getTick());
+        Transform peak = layer.transformAt(keys.get(1).getTick());
+        Transform end = layer.transformAt(keys.get(2).getTick());
 
         assertTrue(start.scale.x < 1F, "pop starts small");
         assertTrue(peak.scale.x > 1F, "pop overshoots");
@@ -102,7 +102,7 @@ public class CompMotionTest
         CompLayer layer = layer();
 
         assertFalse(CompMotion.apply(layer, document(), "does_not_exist"));
-        assertTrue(layer.transformChannel().getKeyframes().isEmpty());
+        assertFalse(layer.hasAnyTransformKey());
         assertTrue(layer.opacityChannel().getKeyframes().isEmpty());
     }
 }
