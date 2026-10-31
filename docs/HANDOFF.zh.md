@@ -2051,3 +2051,38 @@ BBS `UIKeys.C_CLIP` 的键是 `bbs.ui.camera.clips.<link>`，缺失时回退为�
 3. `quickKeyZ` 同样走 `scalarValue`，一起修。
 
 验证：`test` **191/191**；实机 1920×1080 截图与日志（两个词条均解析为“合成器”）通过。
+
+---
+
+## 37. 2026-11-01 第二十八轮：素材库滑块 / AE 曲线专业级 / 插件图标（0.17.0）
+
+> 完整论述见 `docs/ROUND28-ASSETS-CURVES-ICON.zh.md`。
+
+### 37.1 素材库滚动条
+
+`UIAssetBrowser.Grid` 的滚动条以前只画不处理点击，滑块当然拖不动。现在是 8px 命中区、24px
+最小滑块、轨道点击跳转、拖动时轮询物理鼠标按键（拖出控件也能结束）、悬停高亮、grip 线，
+网格为它预留 12px。提示改为“滚轮或右侧滑块滑动”。
+
+### 37.2 AE 曲线编辑器：两个根因
+
+1. **变换通道的 key 归属错了**：五个 transform 曲线共享同一个 BBS Keyframe，`owners`
+   这个 `IdentityHashMap<Keyframe, Channel>` 被最后写入的“缩放 Y”覆盖。结果拖位置 key 改的是
+   缩放 Y，贝塞尔/缓动预设的 selection 过滤为空。现在 transform key 的通道由**当前活动通道**
+   决定，标量/不透明度通道仍用一对一 map。
+2. **拖手柄把位移当绝对偏移**：旧代码 `rx = max(0.25, dx/pxPerFrame)`，按下 1px 就把手柄塌缩
+   到 0.25/0。现在按下时快照 `rx/ry/lx/ly`，拖动加增量，并按相邻段长度 clamp；默认镜像、Alt
+   断开、状态栏显示影响/速度。
+3. 默认 ±5 帧手柄在正常缩放下不可见：Bezier 预设展开为 33.3% 相邻段影响；值域适配把手柄
+   也算进去，拉高的切线不再被裁掉。
+4. 专业操作补齐：中键/Space 双轴平移、右键插值菜单、方向键 1 帧/1 像素（Shift ×10）、选中
+   键读数卡、手柄 10px 命中。
+
+### 37.3 插件图标
+
+`fabric.mod.json` 原来没有 `icon`，Mod Menu 显示占位图。现在用项目原有 32×32 图标（超级大布叮）
+生成 128×128 `assets/bbsae/icon.png`（深色圆角底 + 白色播放框），metadata 指向它；BBS 内的
+16×16 仍用原图。`IconResourceTest` 同时校验两个文件。
+
+验证：`test` **193/193**；截图 `docs/verify/round28-curve2.png`、`round28-assets.png`；新
+README 主图 `docs/gallery/hero.png`、`editor-overview.png`、`timeline.png`。

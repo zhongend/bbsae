@@ -32,4 +32,21 @@ public class IconResourceTest
             assertTrue(image.getColorModel().hasAlpha(), "icon must keep its transparency");
         }
     }
+
+    /** Fabric/Mod Menu reads this file from the mod metadata, not from the BBS addon namespace. */
+    @Test
+    public void modMenuIconIsPackaged() throws Exception
+    {
+        try (InputStream input = getClass().getResourceAsStream("/assets/bbsae/icon.png"))
+        {
+            assertNotNull(input, "assets/bbsae/icon.png is missing; fabric.mod.json points at it");
+
+            BufferedImage image = ImageIO.read(input);
+
+            assertNotNull(image, "mod icon is not a readable PNG");
+            assertTrue(image.getWidth() >= 64, "mod icon should be at least 64 px for the mod list");
+            assertEquals(image.getWidth(), image.getHeight(), "mod icon must be square");
+            assertTrue(image.getColorModel().hasAlpha(), "mod icon should keep its rounded corners");
+        }
+    }
 }

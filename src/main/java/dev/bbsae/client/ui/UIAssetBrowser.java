@@ -2,6 +2,7 @@ package dev.bbsae.client.ui;
 
 import dev.bbsae.client.render.ImageTextureCache;
 import dev.bbsae.comp.CompStore;
+import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
@@ -103,6 +104,8 @@ public class UIAssetBrowser extends UIElement
     /** Last laid-out size; the modal re-lays itself when the panel resizes. */
     private int laidOutWidth = -1;
     private int laidOutHeight = -1;
+    /** Verification only: scroll to the bottom after the first real layout. */
+    private boolean debugScrollBottomPending;
 
     private final List<Asset> assets = new ArrayList<>();
     private final List<Asset> filtered = new ArrayList<>();
@@ -169,7 +172,7 @@ public class UIAssetBrowser extends UIElement
         this.title = new UILabel(IKey.constant("素材库"));
         this.title.relative(this.box).x(PAD).y(9).w(120).h(16);
 
-        this.hint = new UILabel(IKey.constant(replaceMode ? "单击选择，双击替换；滚轮滑动" : "单击选择，双击插入；滚轮滑动"));
+        this.hint = new UILabel(IKey.constant(replaceMode ? "单击选择，双击替换；滚轮或右侧滑块滑动" : "单击选择，双击插入；滚轮或右侧滑块滑动"));
         this.hint.color(0xFF8A94A6, false);
         this.hint.relative(this.box).x(PAD).y(26).w(200).h(12);
 
@@ -218,6 +221,12 @@ public class UIAssetBrowser extends UIElement
     public void render(UIContext context)
     {
         this.layout();
+
+        if (this.debugScrollBottomPending && this.grid.maxScroll() > 0)
+        {
+            this.debugScrollBottomPending = false;
+            this.grid.scrollY = this.grid.maxScroll();
+        }
 
         /* Dim/blur the editor behind the library so the panel reads as a modal. The blur follows
          * BBS's interface-blur setting; the dark scrim is always present. */
@@ -273,7 +282,7 @@ public class UIAssetBrowser extends UIElement
         int countY = footerY - 16;
 
         this.grid.relative(this.box).x(PAD).y(stripY + STRIP_H + 6)
-            .w(1F, -PAD * 2 - 4).h(Math.max(40, countY - stripY - STRIP_H - 12));
+            .w(1F, -PAD * 2 - 12).h(Math.max(40, countY - stripY - STRIP_H - 12));
         this.countLabel.relative(this.box).x(PAD).y(countY).w(Math.max(100, innerW - PAD * 2)).h(12);
 
         int x = PAD;
@@ -321,6 +330,18 @@ public class UIAssetBrowser extends UIElement
         this.projectCache = "";
         RESOURCE_CACHE.remove(100);
         this.rebuild();
+    }
+
+    /** Verification hook: put the grid at the bottom so the scrollbar thumb is visible. */
+    public void debugScrollToBottom()
+    {
+        this.debugScrollBottomPending = true;
+    }
+
+    /** Verification hook: open a populated texture category. */
+    public void debugShowCategory(int index)
+    {
+        this.selectCategory(Math.max(0, Math.min(CATEGORY_LABELS.length - 1, index)));
     }
 
     /**
@@ -466,7 +487,7 @@ public class UIAssetBrowser extends UIElement
     private void updateCountLabel()
     {
         this.countLabel.label = IKey.constant(this.filtered.size() + " 项 · " + CATEGORY_LABELS[this.category]
-            + (this.filtered.size() > 0 ? " · 滚轮滑动" : " · 该分类没有素材"));
+            + (this.filtered.size() > 0 ? " · 滚轮/滑块滑动" : " · 该分类没有素材"));
     }
 
     private void updateButtons()
@@ -957,6 +978,8 @@ public class UIAssetBrowser extends UIElement
      */
     private class Grid extends UIElement
     {
+        private static final int SCROLLBAR_W = 8;
+
         private int selected = -1;
         private int scrollY;
         private long lastClick;
@@ -965,6 +988,10 @@ public class UIAssetBrowser extends UIElement
         private int pressY;
         private int pressScroll;
         private boolean dragMoved;
+        /** True while the scrollbar thumb itself is being dragged/jumped. */
+        private boolean scrollbarDrag;
+        /** Pointer offset inside the thumb at grab time, so it does not jump under the cursor. */
+        private int scrollbarGrabY;
 
         void scrollToTop()
         {
@@ -1017,9 +1044,73 @@ public class UIAssetBrowser extends UIElement
 
         void clampScroll()
         {
-            int max = Math.max(0, this.contentHeight() - this.area.h);
+            int max = this.maxScroll();
 
             this.scrollY = Math.max(0, Math.min(max, this.scrollY));
+        }
+
+        private int maxScroll()
+        {
+            return Math.max(0, this.contentHeight() - this.area.h);
+        }
+
+        private int scrollbarX()
+        {
+            return this.area.ex() - SCROLLBAR_W;
+        }
+
+        private boolean inScrollbar(UIContext context)
+        {
+            return context.mouseX >= this.scrollbarX()
+                && context.mouseX <= this.area.ex()
+                && this.area.isInside(context);
+        }
+
+        private int thumbHeight()
+        {
+            int content = this.contentHeight();
+
+            if (content <= this.area.h || this.area.h <= 0)
+            {
+                return this.area.h;
+            }
+
+            return Math.max(24, Math.round(this.area.h * (this.area.h / (float) content)));
+        }
+
+        private int thumbY()
+        {
+            int max = this.maxScroll();
+
+            if (max <= 0)
+            {
+                return this.area.y;
+            }
+
+            return this.area.y + Math.round((this.area.h - this.thumbHeight())
+                * (this.scrollY / (float) max));
+        }
+
+        /**
+         * Maps a pointer Y into a scroll offset. The thumb itself is the handle: grabbing its
+         * middle keeps it under the cursor, while a track click centres it (the behaviour of
+         * every native scrollbar).
+         */
+        private void scrollToPointer(int mouseY, int grabY)
+        {
+            int max = this.maxScroll();
+            int travel = this.area.h - this.thumbHeight();
+
+            if (max <= 0 || travel <= 0)
+            {
+                this.scrollY = 0;
+
+                return;
+            }
+
+            float ratio = (mouseY - grabY - this.area.y) / (float) travel;
+
+            this.scrollY = Math.round(Math.max(0F, Math.min(1F, ratio)) * max);
         }
 
         Asset selected()
@@ -1032,6 +1123,21 @@ public class UIAssetBrowser extends UIElement
         @Override
         public void render(UIContext context)
         {
+            /* Scrollbar drags are polled like the tile drag: BBS only dispatches click/release,
+             * and a fast drag can release over a sibling that consumes the release. Without the
+             * physical-button check the thumb would stay glued to the cursor. */
+            if (this.scrollbarDrag)
+            {
+                if (!Window.isMouseButtonPressed(0))
+                {
+                    this.scrollbarDrag = false;
+                }
+                else
+                {
+                    this.scrollToPointer(context.mouseY, this.scrollbarGrabY);
+                }
+            }
+
             /* Drag-to-scroll has to be polled: BBS dispatches click/release only, so a drag is
              * "press position in, cursor far away now" and the offset follows the cursor. */
             if (this.pressX != Integer.MIN_VALUE)
@@ -1131,18 +1237,25 @@ public class UIAssetBrowser extends UIElement
 
         private void renderScrollbar(UIContext context)
         {
-            int content = this.contentHeight();
+            int max = this.maxScroll();
 
-            if (content <= this.area.h || this.area.h <= 0)
+            if (max <= 0 || this.area.h <= 0)
             {
                 return;
             }
 
-            int barH = Math.max(24, Math.round(this.area.h * (this.area.h / (float) content)));
-            int barY = this.area.y + Math.round((this.area.h - barH) * (this.scrollY / (float) Math.max(1, content - this.area.h)));
+            int x = this.scrollbarX();
+            int barH = this.thumbHeight();
+            int barY = this.thumbY();
+            boolean hot = this.scrollbarDrag
+                || (this.inScrollbar(context) && context.mouseY >= barY && context.mouseY <= barY + barH);
 
-            context.batcher.box(this.area.ex() - 4, this.area.y, this.area.ex() - 1, this.area.ey(), 0x22FFFFFF);
-            context.batcher.box(this.area.ex() - 4, barY, this.area.ex() - 1, barY + barH, 0x99FFFFFF);
+            context.batcher.box(x, this.area.y, this.area.ex(), this.area.ey(), 0x30101822);
+            context.batcher.box(x + 1, barY, this.area.ex() - 1, barY + barH,
+                hot ? 0xFFB9C6D8 : 0x99C3CCDA);
+            /* Grip lines make the thumb read as a control, not as a progress bar. */
+            context.batcher.box(x + 3, barY + barH / 2 - 3, this.area.ex() - 3, barY + barH / 2 - 2, 0x66000000);
+            context.batcher.box(x + 3, barY + barH / 2 + 1, this.area.ex() - 3, barY + barH / 2 + 2, 0x66000000);
         }
 
         @Override
@@ -1151,6 +1264,23 @@ public class UIAssetBrowser extends UIElement
             if (context.mouseButton != 0 || !this.area.isInside(context))
             {
                 return super.subMouseClicked(context);
+            }
+
+            /* The scrollbar is a real control: grabbing the thumb, or clicking the track to page
+             * to that position. It used to be a painted-only 3 px line, which is exactly the
+             * "滑块不能滑动" report. */
+            if (this.maxScroll() > 0 && this.inScrollbar(context))
+            {
+                int barY = this.thumbY();
+                int barH = this.thumbHeight();
+
+                this.scrollbarDrag = true;
+                this.scrollbarGrabY = context.mouseY >= barY && context.mouseY <= barY + barH
+                    ? context.mouseY - barY
+                    : barH / 2;
+                this.scrollToPointer(context.mouseY, this.scrollbarGrabY);
+
+                return true;
             }
 
             this.pressX = context.mouseX;
@@ -1164,6 +1294,13 @@ public class UIAssetBrowser extends UIElement
         @Override
         protected boolean subMouseReleased(UIContext context)
         {
+            if (this.scrollbarDrag)
+            {
+                this.scrollbarDrag = false;
+
+                return true;
+            }
+
             if (this.pressX == Integer.MIN_VALUE)
             {
                 return super.subMouseReleased(context);

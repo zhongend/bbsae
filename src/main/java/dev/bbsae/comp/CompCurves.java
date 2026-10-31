@@ -317,15 +317,78 @@ public final class CompCurves
     }
 
     /**
-     * "Bezier" without touching the handles: it only switches the type, keeping whatever tangents
-     * the key already has. This is what AE does when you pick Bezier from the keyframe menu.
+     * "Bezier" without discarding custom handles: it only switches the type, keeping whatever
+     * tangents the key already has. A freshly created BBS key has the generic ±5-frame/zero-value
+     * handles, which are invisible at normal graph zoom — the editor would claim Bezier was on
+     * while the user had nothing to grab. Default handles are therefore expanded to AE's 33 %
+     * influence at each adjacent segment, exactly like AE's Convert to Bezier.
      */
     public static void applyBezier(KeyframeChannel<?> channel, List<Keyframe> selection)
     {
+        List<Keyframe> keys = castKeys(channel);
+
         for (Keyframe key : selection)
         {
+            int index = indexOfIdentity(keys, key);
+
+            if (index >= 0 && isDefaultHandles(key))
+            {
+                Keyframe prev = index > 0 ? keys.get(index - 1) : null;
+                Keyframe next = index + 1 < keys.size() ? keys.get(index + 1) : null;
+
+                key.rx = next == null ? 5F : segmentLength(key, next) * DEFAULT_INFLUENCE;
+                key.lx = prev == null ? 5F : segmentLength(prev, key) * DEFAULT_INFLUENCE;
+                key.ry = 0F;
+                key.ly = 0F;
+            }
+
             key.getInterpolation().setInterp(Interpolations.BEZIER);
         }
+    }
+
+    /** True for BBS's untouched default handle pair (±5 frames, zero slope). */
+    public static boolean isDefaultHandles(Keyframe<?> key)
+    {
+        return Math.abs(key.rx - 5F) < 0.001F
+            && Math.abs(key.lx - 5F) < 0.001F
+            && Math.abs(key.ry) < 0.001F
+            && Math.abs(key.ly) < 0.001F;
+    }
+
+    /**
+     * Expands a bezier key's untouched default handles to AE's one-third influence.
+     *
+     * <p>Called when a bezier key is created or re-selected: a handle five frames from its key is
+     * a couple of pixels at normal graph zoom, which is indistinguishable from "no handles" and
+     * impossible to grab. This never touches a handle the user has moved.</p>
+     */
+    public static void ensureBezierHandles(KeyframeChannel<?> channel, Keyframe<?> key)
+    {
+        if (channel == null || key == null || isDefaultHandles(key) == false)
+        {
+            return;
+        }
+
+        if (!key.getInterpolation().has(Interpolations.BEZIER))
+        {
+            return;
+        }
+
+        List<Keyframe> keys = castKeys(channel);
+        int index = indexOfIdentity(keys, key);
+
+        if (index < 0)
+        {
+            return;
+        }
+
+        Keyframe prev = index > 0 ? keys.get(index - 1) : null;
+        Keyframe next = index + 1 < keys.size() ? keys.get(index + 1) : null;
+
+        key.rx = next == null ? 5F : segmentLength(key, next) * DEFAULT_INFLUENCE;
+        key.lx = prev == null ? 5F : segmentLength(prev, key) * DEFAULT_INFLUENCE;
+        key.ry = 0F;
+        key.ly = 0F;
     }
 
     public static void applyAuto(KeyframeChannel<?> channel, List<Keyframe> selection, boolean clamped)

@@ -6185,6 +6185,22 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             case "assets":
                 this.openAssetBrowser(false);
+
+                if (this.assetBrowser != null)
+                {
+                    int debugCategory = Integer.getInteger("bbsae.debugAssetCategory", -1);
+
+                    if (debugCategory >= 0)
+                    {
+                        this.assetBrowser.debugShowCategory(debugCategory);
+                    }
+
+                    if (Boolean.getBoolean("bbsae.debugAssetBottom"))
+                    {
+                        this.assetBrowser.debugScrollToBottom();
+                    }
+                }
+
                 break;
 
             case "camera":
@@ -6297,6 +6313,13 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.timelinePage = 1;
                 this.applyTimelinePage(true);
                 this.curveEditor.refresh();
+                this.curveEditor.debugSelectFirstKey();
+
+                if (Boolean.getBoolean("bbsae.debugBezier"))
+                {
+                    this.curveEditor.debugMakeFirstBezier();
+                }
+
                 this.refreshSheets();
                 this.time = 1.5F;
                 this.updatePlayLabel();

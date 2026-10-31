@@ -56,6 +56,8 @@
   [`docs/ROUND26-IMPORT-LIBRARY-CAMERA.zh.md`](docs/ROUND26-IMPORT-LIBRARY-CAMERA.zh.md)
 - **Round 27 (playback clock / BBS-native curve picker / 3D XYZ quick panel, v0.16.0):**
   [`docs/ROUND27-PLAYBACK-CURVES-3D.zh.md`](docs/ROUND27-PLAYBACK-CURVES-3D.zh.md)
+- **Round 28 (asset-library scrollbar / professional AE curve editor / plugin icon, v0.17.0):**
+  [`docs/ROUND28-ASSETS-CURVES-ICON.zh.md`](docs/ROUND28-ASSETS-CURVES-ICON.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -75,11 +77,11 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.16.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.16.0/bbsae-0.16.0.jar)
-   from the **v0.16.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.17.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.17.0/bbsae-0.17.0.jar)
+   from the **v0.17.0** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.16.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.17.0.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
@@ -129,9 +131,9 @@ phase, ink/paper colours); Mirror overlays a mirrored copy with an opacity contr
 
 ### Grading, assets, 3D and export
 
-| <img src="docs/verify/round6-grade6.png" alt="AE-style colour wheels" width="100%"> | <img src="docs/verify/ui-7-asset-library.png" alt="Asset library with Minecraft icons" width="100%"> |
+| <img src="docs/verify/round6-grade6.png" alt="AE-style colour wheels" width="100%"> | <img src="docs/verify/round28-assets.png" alt="Asset library with Minecraft icons and a draggable scrollbar" width="100%"> |
 | :---: | :---: |
-| **AE-style grading** — lift/gamma/gain wheels, five-point master curve, presets and keyframeable exposure/contrast/saturation/vibrance. | **Asset library** — project media plus the client's item/block/entity/gui textures, searchable and pageable. |
+| **AE-style grading** — lift/gamma/gain wheels, five-point master curve, presets and keyframeable exposure/contrast/saturation/vibrance. | **Asset library** — project media plus the client's item/block/entity/gui textures; search, thumbnails and a draggable scrollbar. |
 
 | <img src="docs/verify/round7-3d2.png" alt="3D camera and 3D card in the compositor" width="100%"> | <img src="docs/verify/ui-4-export-dialog.png" alt="Export dialog with resolution, aspect and frame rate" width="100%"> |
 | :---: | :---: |
@@ -148,6 +150,42 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.17.0
+
+**The asset scrollbar drags, Bezier handles drag from where they are, and the project icon is finally
+the plugin's icon.**
+
+*Asset library scrollbar.* The 3 px line was painted, never hit-tested. It is now a real 8 px thumb:
+drag it, click the track to jump, release anywhere (the physical button is polled so it cannot stick),
+hover highlights, and the grid reserves room so the thumb never covers a tile. The hint says
+“滚轮或右侧滑块滑动”.
+
+*The curve editor was editing the wrong property.* All five transform curves share one BBS
+`Transform` keyframe. The editor stored `IdentityHashMap<Keyframe, channel>` ownership, so the last
+adapter (Scale Y) overwrote Position X: dragging a position key changed Scale Y, and the
+Bezier/Ease presets filtered the selection to nothing. Ownership now comes from the **active
+channel** for transform keys; scalar channels keep their one-to-one map.
+
+*Bezier handles no longer collapse on mouse-down.* The drag handler treated the pointer delta as the
+handle's absolute offset, so the first 1 px collapsed `rx` to 0.25 and `ry` to 0. It now snapshots
+`rx/ry/lx/ly` at press and adds the delta, clamps influence to the adjacent segment, mirrors by
+default, breaks with Alt, and reports influence/speed. Default ±5-frame handles are expanded to
+33.3 % influence when Bezier is chosen; value fitting includes the handles so they cannot be clipped.
+
+*Professional graph ergonomics.* Middle/Space drag pans **both** axes; right-clicking a key exposes the
+interpolation menu (linear / bezier / ease / ease-in / ease-out / hold / auto / continuous / delete);
+arrow keys nudge 1 frame / 1 pixel (Shift = 10×); the graph shows a selected-key card (channel, time,
+value, interpolation) next to the playhead readout.
+
+*The plugin icon.* `fabric.mod.json` had no `icon`, so Mod Menu showed a placeholder. The repository's
+32×32 compositor icon (by 超级大布叮) is now packaged as a 128×128 padded, rounded
+`assets/bbsae/icon.png` and registered in the metadata; the BBS 16×16 tab/clip icon stays the
+original. `IconResourceTest` checks both.
+
+<p align="center">
+  <img src="docs/verify/round28-curve2.png" alt="AE curve editor with visible Bezier handles and the selected-key readout" width="100%">
+</p>
 
 ## What's new in 0.16.0
 
@@ -819,7 +857,9 @@ sheet. An older exported MP4 frame is still available at
 
 - **Project / maintainer:** 终end ([@zhongend](https://github.com/zhongend))
 - **Compositor icon:** 超级大布叮 — original 32×32 at
-  [`docs/gallery/compositor-icon.png`](docs/gallery/compositor-icon.png), UI copy at 16×16
+  [`docs/gallery/compositor-icon.png`](docs/gallery/compositor-icon.png); BBS UI copy at 16×16;
+  the 128×128 Mod Menu icon ([`src/main/resources/assets/bbsae/icon.png`](src/main/resources/assets/bbsae/icon.png))
+  is the same mark on a padded, rounded dark tile.
 - **Runtime:** Minecraft 1.20.1 + Fabric + BBS FS 2.7-1.20.1
 - **Photon (research only):** [Photon](https://github.com/Low-Drag-MC/Photon) by **KilaBash**,
   licensed **CC BY-NC-SA 4.0**. Only editor/rendering ideas were studied; no Photon source,

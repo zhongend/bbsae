@@ -4,6 +4,7 @@
   "version": "${version}",
   "name": "BBS Compositor",
   "description": "A screen-space compositor for BBS FS films.",
+  "icon": "assets/bbsae/icon.png",
   "authors": ["终end"],
   "license": "MIT",
   "contact": {

@@ -131,7 +131,7 @@ framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器�
 
 ## 9. 验证与测试
 
-- **61 / 61 测试通过**：模型、相机、效果空间、GLSL 编译、PIXEL 像素、参数死链、覆盖测试；
+- **193 / 193 测试通过**：模型、曲线、相机、效果空间、GLSL 编译、PIXEL 像素、参数死链、覆盖、图标；
 - `ShaderPixelTest` 使用真实隐藏窗口 OpenGL 3.2 上下文，断言扫描线亮暗行、镜像层空间、
   半色调 ink/paper、浮雕中灰、Glitch/VHS 恒等性与 Phase、万花筒 4 重对称；
 - `PixelPlanTest` 逐个修改七个效果的每个参数，断言参数真的进入 shader；
@@ -141,9 +141,9 @@ framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器�
 
 ## 10. 安装
 
-1. 下载 [`bbsae-0.1.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.1.0/bbsae-0.1.0.jar)；
+1. 下载 [`bbsae-0.17.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.17.0/bbsae-0.17.0.jar)；
 2. 安装 Minecraft 1.20.1、Fabric Loader 0.16.14+、Fabric API 0.92.1+1.20.1、BBS FS 2.7-1.20.1；
-3. 把 `bbsae-0.1.0.jar` 和 BBS FS jar 放进 `mods/`；
+3. 把 `bbsae-0.17.0.jar` 和 BBS FS jar 放进 `mods/`；
 4. 打开 BBS 影片，选择 replay，进入 **Replay properties → Compositor → Open Film Compositor**。
 
 ## 11. 文档
@@ -154,7 +154,8 @@ framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器�
 - [ROUND8-02-PIXEL.zh.md](ROUND8-02-PIXEL.zh.md)：PIXEL 公式与层空间；
 - [ROUND8-03-VERIFY.zh.md](ROUND8-03-VERIFY.zh.md)：测试、构建、实机复验清单；
 - [ROUND8-04-PUBLISH.zh.md](ROUND8-04-PUBLISH.zh.md)：GitHub 发布记录；
-- [ROUND9-EXPORT-SYNC.zh.md](ROUND9-EXPORT-SYNC.zh.md)：导出画面同步、12/20 秒时长根因、BBS 预览层、图标。
+- [ROUND9-EXPORT-SYNC.zh.md](ROUND9-EXPORT-SYNC.zh.md)：导出画面同步、12/20 秒时长根因、BBS 预览层、图标；
+- [ROUND28-ASSETS-CURVES-ICON.zh.md](ROUND28-ASSETS-CURVES-ICON.zh.md)：素材库可拖拽滚动条、AE 曲线专业级修复、插件图标。
 
 ## 12. 图标与署名
 
@@ -162,6 +163,8 @@ framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器�
 - 项目维护者：**终end**（[@zhongend](https://github.com/zhongend)）；
 - 32×32 原图：`docs/gallery/compositor-icon.png`；
 - BBS 界面使用的 16×16 版本：`src/main/resources/assets/bbsae/assets/textures/gui/compositor_icon.png`；
+- **Mod Menu / 启动器插件图标**：`src/main/resources/assets/bbsae/icon.png`（128×128，同一图标的
+  深色圆角底版本，`fabric.mod.json` 的 `icon` 字段指向它）；
 - 图标同时用于 BBS dashboard 页签和 `bbsae:composition` 影片 clip。
 
 ## 13. 已知限制

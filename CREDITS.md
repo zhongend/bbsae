@@ -8,7 +8,9 @@
 The compositor icon (`src/main/resources/assets/bbsae/assets/textures/gui/compositor_icon.png`)
 was designed by **超级大布叮** and is used with permission for the BBS Compositor UI. The original
 32×32 source is stored at `docs/gallery/compositor-icon.png`; the UI copy is downscaled to 16×16
-to match BBS's icon grid.
+to match BBS's icon grid. The 128×128 Mod Menu icon
+(`src/main/resources/assets/bbsae/icon.png`) is the same mark on a padded, rounded dark tile,
+so it remains visible on both light and dark launcher backgrounds.
 
 ## Photon
 

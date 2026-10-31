@@ -12,6 +12,8 @@ import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
 import mchorse.bbs_mod.ui.utils.Area;
+import mchorse.bbs_mod.ui.utils.context.ContextMenuManager;
+import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.keys.KeyAction;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.interps.Interpolations;
@@ -159,6 +161,18 @@ public class UICompCurveEditor extends UIElement
         return this.graph.dragMode != Graph.DRAG_NONE;
     }
 
+    /** Verification hook: select the first key of the active channel so handles are visible. */
+    public void debugSelectFirstKey()
+    {
+        this.graph.debugSelectFirstKey();
+    }
+
+    /** Verification hook: expand the first key's handles as if the user picked Bezier. */
+    public void debugMakeFirstBezier()
+    {
+        this.graph.debugMakeFirstBezier();
+    }
+
     private final class Graph extends UIElement
     {
         private static final int DRAG_NONE = 0;
@@ -220,6 +234,17 @@ public class UICompCurveEditor extends UIElement
         private boolean dragMoved;
         private boolean actionStarted;
         private double panStartView;
+        private float panStartValueMin;
+        private float panStartValueMax;
+
+        /* Snapshot of the handle at press time. Dragging must add the pointer delta to these
+         * values; the old code treated the delta as the absolute handle offset, so the first
+         * mouse move collapsed every handle to (0.25 frame, 0 value) and bezier editing felt
+         * broken. */
+        private float dragHandleStartRx;
+        private float dragHandleStartRy;
+        private float dragHandleStartLx;
+        private float dragHandleStartLy;
 
         private int hoverRow = -1;
         private int lastClickX;
@@ -233,6 +258,8 @@ public class UICompCurveEditor extends UIElement
         private final java.util.Map<String, CurveSpans> spanCache = new java.util.HashMap<>();
         /** keyframe -> owning channel, so hit testing is O(1) instead of O(channels x keys). */
         private final IdentityHashMap<Keyframe<?>, CompCurveChannel> owners = new IdentityHashMap<>();
+        /** The curve under the last key hit; overlay mode uses it to pick the right component. */
+        private CompCurveChannel hitChannel;
         private boolean rowsDirty = true;
         private String readoutText = "";
         private int readoutFrame = Integer.MIN_VALUE;
@@ -255,6 +282,62 @@ public class UICompCurveEditor extends UIElement
                 this.y = y;
                 this.height = height;
             }
+        }
+
+        private Graph()
+        {
+            /* AE's graph editor has the interpolation menu on the curve itself, not only in a
+             * toolbar. Right-clicking a key selects it and offers the same presets, so the hand
+             * stays on the graph while tuning a curve. */
+            this.context((ContextMenuManager menu) ->
+            {
+                UIContext context = this.getContext();
+
+                if (context == null || !this.curveArea.isInside(context))
+                {
+                    return;
+                }
+
+                Keyframe<?> key = this.keyAt(context.mouseX, context.mouseY);
+
+                if (key == null)
+                {
+                    menu.action(Icons.ADD, IKey.constant("在播放头加关键帧"), this::addKeyAtPlayhead);
+                    menu.action(Icons.MAXIMIZE, IKey.constant("适配曲线视图"), this::fitAll);
+
+                    return;
+                }
+
+                if (this.hitChannel != null)
+                {
+                    this.active = this.hitChannel;
+                    this.visible.add(this.hitChannel.id);
+                }
+
+                CompCurveChannel channel = this.channelOf(key);
+
+                if (channel != null)
+                {
+                    this.active = channel;
+                    this.visible.add(channel.id);
+                }
+
+                if (!this.selection.contains(key))
+                {
+                    this.selection.clear();
+                    this.selection.add(key);
+                }
+
+                menu.action(Icons.GRAPH, IKey.constant("线性"), () -> this.applyEase(0));
+                menu.action(Icons.GRAPH, IKey.constant("贝塞尔"), () -> this.applyEase(1));
+                menu.action(Icons.GRAPH, IKey.constant("缓动（Easy Ease）"), () -> this.applyEase(2));
+                menu.action(Icons.GRAPH, IKey.constant("缓入"), () -> this.applyEase(3));
+                menu.action(Icons.GRAPH, IKey.constant("缓出"), () -> this.applyEase(4));
+                menu.action(Icons.GRAPH, IKey.constant("定格"), () -> this.applyEase(5));
+                menu.action(Icons.GRAPH, IKey.constant("自动贝塞尔"), () -> this.applyEase(6));
+                menu.action(Icons.GRAPH, IKey.constant("连续贝塞尔"), () -> this.applyEase(7));
+                menu.action(Icons.TRASH, IKey.constant("删除关键帧"), this::deleteSelected);
+            });
         }
 
         /* Data */
@@ -536,6 +619,28 @@ public class UICompCurveEditor extends UIElement
 
                     min = Math.min(min, value);
                     max = Math.max(max, value);
+
+                    /* A bezier can leave the key's value range: the handles are control points,
+                     * and a pulled tangent is often outside the raw key values. Fitting only the
+                     * keys clipped the very handles the user was trying to drag (the curve looked
+                     * flat or vanished at the top/bottom edge). */
+                    if (!this.speedMode && key.raw != null)
+                    {
+                        float handleOut = value + key.raw.ry;
+                        float handleIn = value + key.raw.ly;
+
+                        if (Float.isFinite(handleOut))
+                        {
+                            min = Math.min(min, handleOut);
+                            max = Math.max(max, handleOut);
+                        }
+
+                        if (Float.isFinite(handleIn))
+                        {
+                            min = Math.min(min, handleIn);
+                            max = Math.max(max, handleIn);
+                        }
+                    }
                 }
             }
 
@@ -569,6 +674,36 @@ public class UICompCurveEditor extends UIElement
         private void fitAll()
         {
             this.fitTime();
+            this.fitValue();
+        }
+
+        void debugSelectFirstKey()
+        {
+            if (this.active == null || !this.active.hasKeys())
+            {
+                return;
+            }
+
+            Keyframe<?> key = this.active.keys().get(0).raw;
+
+            this.selection.clear();
+            this.selection.add(key);
+            this.fitValue();
+        }
+
+        void debugMakeFirstBezier()
+        {
+            if (this.active == null || !this.active.hasKeys())
+            {
+                return;
+            }
+
+            Keyframe<?> key = this.active.keys().get(0).raw;
+
+            this.selection.clear();
+            this.selection.add(key);
+            CompCurves.ensureBezierHandles(this.active.raw(), key);
+            key.getInterpolation().setInterp(Interpolations.BEZIER);
             this.fitValue();
         }
 
@@ -693,6 +828,7 @@ public class UICompCurveEditor extends UIElement
 
             if (key != null)
             {
+                CompCurves.ensureBezierHandles(this.active.raw(), key);
                 this.selection.clear();
                 this.selection.add(key);
             }
@@ -713,6 +849,7 @@ public class UICompCurveEditor extends UIElement
 
             if (key != null)
             {
+                CompCurves.ensureBezierHandles(this.active.raw(), key);
                 this.selection.clear();
                 this.selection.add(key);
             }
@@ -742,6 +879,59 @@ public class UICompCurveEditor extends UIElement
             }
 
             this.selection.clear();
+            this.endEdit();
+        }
+
+        /**
+         * Arrow-key nudge, AE's fine adjustment: one frame horizontally, one graph pixel
+         * vertically. Shift multiplies both by ten. Time and value changes are one undo step per
+         * keypress, so a mistake is one Ctrl+Z away.
+         */
+        private void nudgeSelected(int frames, int pixels)
+        {
+            if (this.selection.isEmpty())
+            {
+                return;
+            }
+
+            float valueStep = (this.axisMax - this.axisMin) / Math.max(1, this.curveArea.h) * pixels;
+
+            this.beginEdit();
+
+            java.util.Set<CompCurveChannel> edited = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+
+            for (Keyframe<?> key : this.selection)
+            {
+                CompCurveChannel channel = this.channelOf(key);
+
+                if (channel == null)
+                {
+                    continue;
+                }
+
+                edited.add(channel);
+                key.setTick(Math.max(0F, key.getTick() + frames), false);
+
+                if (this.speedMode)
+                {
+                    this.applySpeed(channel, key, this.keySpeed(channel, key, true) + valueStep);
+                }
+                else
+                {
+                    channel.setKeyValue(key, channel.numericValue(key) + valueStep);
+                }
+            }
+
+            for (CompCurveChannel channel : edited)
+            {
+                this.sortIfNeeded(channel);
+            }
+
+            if (this.active != null)
+            {
+                this.markSelectionDirty(this.active);
+            }
+
             this.endEdit();
         }
 
@@ -1323,15 +1513,15 @@ public class UICompCurveEditor extends UIElement
                     float hy = y - key.ry * pxPerValue;
 
                     this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
-                    context.batcher.box(hx - 3, hy - 3, hx + 3, hy + 3, 0xFF0D1015);
-                    context.batcher.box(hx - 2, hy - 2, hx + 2, hy + 2, 0xFFE8C86A);
+                    context.batcher.box(hx - 4, hy - 4, hx + 4, hy + 4, 0xFF0D1015);
+                    context.batcher.box(hx - 3, hy - 3, hx + 3, hy + 3, 0xFFE8C86A);
 
                     hx = x - key.lx * pxPerFrame;
                     hy = y - key.ly * pxPerValue;
 
                     this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
-                    context.batcher.box(hx - 3, hy - 3, hx + 3, hy + 3, 0xFF0D1015);
-                    context.batcher.box(hx - 2, hy - 2, hx + 2, hy + 2, 0xFFE8C86A);
+                    context.batcher.box(hx - 4, hy - 4, hx + 4, hy + 4, 0xFF0D1015);
+                    context.batcher.box(hx - 3, hy - 3, hx + 3, hy + 3, 0xFFE8C86A);
                 }
             }
             finally
@@ -1399,6 +1589,28 @@ public class UICompCurveEditor extends UIElement
 
             context.batcher.textCard(this.readoutText, this.curveArea.x + 6, this.curveArea.y + 4, 0xFFE6ECF5, 0x99000000, 3F);
 
+            /* AE always tells you which key you are editing, not only what the playhead is at.
+             * Without this, selecting a key and reading the playhead card looked like the key had
+             * that value — the editor and the preview appeared to disagree. */
+            if (!this.selection.isEmpty())
+            {
+                Keyframe<?> first = this.selection.iterator().next();
+                CompCurveChannel selectedChannel = this.channelOf(first);
+
+                if (selectedChannel != null && first != null)
+                {
+                    String selectedText = String.format(Locale.ROOT, "已选 %d · %s  %.2fs  %s  %s",
+                        this.selection.size(),
+                        this.trim(selectedChannel.label, 18),
+                        first.getTick() / Math.max(1F, this.fps()),
+                        selectedChannel.format(selectedChannel.numericValue(first)),
+                        this.interpolationName(first));
+
+                    context.batcher.textCard(selectedText, this.curveArea.x + 6, this.curveArea.y + 25,
+                        0xFFE8C86A, 0x99000000, 3F);
+                }
+            }
+
             /* Cursor crosshair: AE's graph editor always tells you what the point under the
              * mouse is worth. Without it, placing a key by eye is guesswork. */
             int mouseX = context.mouseX;
@@ -1416,9 +1628,22 @@ public class UICompCurveEditor extends UIElement
                 context.batcher.textCard(readout, Math.min(mouseX + 8, this.curveArea.ex() - 96), this.curveArea.y + 4, 0xFFB9C6D8, 0x99000000, 3F);
             }
 
-            String hint = this.selection.isEmpty() ? "双击空白加键 · 拖手柄改切线 · Alt 断开手柄" : ("已选 " + this.selection.size() + " 个关键帧");
+            String hint = this.selection.isEmpty()
+                ? "双击空白加键 · 拖手柄改切线 · Alt 断开手柄 · 中键/Space 拖动平移"
+                : ("已选 " + this.selection.size() + " 个关键帧 · 拖手柄改切线 · Alt 断开 · 中键/Space 平移");
 
             context.batcher.textShadow(hint, this.curveArea.x + 6, this.curveArea.ey() - 14, 0x887C8798);
+        }
+
+        private String interpolationName(Keyframe<?> key)
+        {
+            if (key.getInterpolation().has(Interpolations.CONST)) return "定格";
+            if (key.getInterpolation().has(Interpolations.LINEAR)) return "线性";
+            if (key.getInterpolation().has(Interpolations.AUTO_CLAMPED)) return "自动钳制";
+            if (key.getInterpolation().has(Interpolations.AUTO)) return "自动贝塞尔";
+            if (key.getInterpolation().has(Interpolations.BEZIER)) return "贝塞尔";
+
+            return key.getInterpolation().getKey();
         }
 
         private void renderEmptyState(UIContext context)
@@ -1499,6 +1724,8 @@ public class UICompCurveEditor extends UIElement
                 this.dragStartX = context.mouseX;
                 this.dragStartY = context.mouseY;
                 this.panStartView = this.viewStart;
+                this.panStartValueMin = this.axisMin;
+                this.panStartValueMax = this.axisMax;
 
                 return true;
             }
@@ -1538,6 +1765,10 @@ public class UICompCurveEditor extends UIElement
                 this.dragHandleOutgoing = handle.outgoing;
                 this.dragStartX = context.mouseX;
                 this.dragStartY = context.mouseY;
+                this.dragHandleStartRx = handle.key.rx;
+                this.dragHandleStartRy = handle.key.ry;
+                this.dragHandleStartLx = handle.key.lx;
+                this.dragHandleStartLy = handle.key.ly;
                 this.actionStarted = false;
 
                 return true;
@@ -1547,6 +1778,12 @@ public class UICompCurveEditor extends UIElement
 
             if (key != null)
             {
+                if (this.hitChannel != null)
+                {
+                    this.active = this.hitChannel;
+                    this.visible.add(this.hitChannel.id);
+                }
+
                 if (Window.isShiftPressed())
                 {
                     if (!this.selection.remove(key))
@@ -1558,6 +1795,13 @@ public class UICompCurveEditor extends UIElement
                 {
                     this.selection.clear();
                     this.selection.add(key);
+                }
+
+                CompCurveChannel selectedChannel = this.channelOf(key);
+
+                if (selectedChannel != null)
+                {
+                    CompCurves.ensureBezierHandles(selectedChannel.raw(), key);
                 }
 
                 this.dragMode = DRAG_KEY;
@@ -1689,6 +1933,8 @@ public class UICompCurveEditor extends UIElement
             Keyframe<?> best = null;
             double bestDistance = 10D;
 
+            this.hitChannel = null;
+
             for (CompCurveChannel channel : this.channels)
             {
                 if (!this.isVisible(channel) || !channel.hasKeys())
@@ -1720,6 +1966,7 @@ public class UICompCurveEditor extends UIElement
                     {
                         bestDistance = distance;
                         best = raw;
+                        this.hitChannel = channel;
                     }
                 }
             }
@@ -1763,7 +2010,7 @@ public class UICompCurveEditor extends UIElement
                 float rx = x + key.raw.rx * pxPerFrame;
                 float ry = y - key.raw.ry * pxPerValue;
 
-                if (Math.hypot(mouseX - rx, mouseY - ry) <= 8D)
+                if (Math.hypot(mouseX - rx, mouseY - ry) <= 10D)
                 {
                     return new HandleRef(key.raw, true);
                 }
@@ -1771,7 +2018,7 @@ public class UICompCurveEditor extends UIElement
                 float lx = x - key.raw.lx * pxPerFrame;
                 float ly = y - key.raw.ly * pxPerValue;
 
-                if (Math.hypot(mouseX - lx, mouseY - ly) <= 8D)
+                if (Math.hypot(mouseX - lx, mouseY - ly) <= 10D)
                 {
                     return new HandleRef(key.raw, false);
                 }
@@ -1783,6 +2030,35 @@ public class UICompCurveEditor extends UIElement
         @SuppressWarnings({"rawtypes", "unchecked"})
         private CompCurveChannel channelOf(Keyframe<?> key)
         {
+            if (key == null)
+            {
+                return null;
+            }
+
+            /* BBS stores one Transform key for all five transform curves. An IdentityHashMap of
+             * key -> channel therefore cannot work: every position/rotation/scale adapter owns
+             * the same key object and the last one simply overwrote the others. The old lookup
+             * returned scaleY for a position key, so dragging a position value edited scale Y and
+             * the Bezier/ease presets filtered the selection to nothing. The component comes from
+             * the active channel; only scalar/opacity channels have a unique owner. */
+            if (this.layer != null && key.getParent() == this.layer.transformChannel())
+            {
+                if (this.active != null && this.active.transform)
+                {
+                    return this.active;
+                }
+
+                for (CompCurveChannel channel : this.channels)
+                {
+                    if (channel.transform)
+                    {
+                        return channel;
+                    }
+                }
+
+                return null;
+            }
+
             return this.owners.get(key);
         }
 
@@ -1814,8 +2090,24 @@ public class UICompCurveEditor extends UIElement
             if (this.dragMode == DRAG_PAN)
             {
                 double delta = -(context.mouseX - this.dragStartX) / Math.max(0.0001F, this.pxPerSecond());
+                float span = Math.max(0.0001F, this.panStartValueMax - this.panStartValueMin);
+                float shift = (context.mouseY - this.dragStartY) / (float) Math.max(1, this.curveArea.h) * span;
 
                 this.viewStart = Math.max(0D, this.panStartView + delta);
+
+                /* Two-axis pan: vertical dragging moves the value range. The old handler only
+                 * panned in time, so a curve that left the axis could only be recovered by
+                 * Ctrl+wheel zoom, one notch at a time. */
+                if (this.speedMode)
+                {
+                    this.speedMin = this.panStartValueMin + shift;
+                    this.speedMax = this.panStartValueMax + shift;
+                }
+                else
+                {
+                    this.valueMin = this.panStartValueMin + shift;
+                    this.valueMax = this.panStartValueMax + shift;
+                }
 
                 return;
             }
@@ -1879,17 +2171,31 @@ public class UICompCurveEditor extends UIElement
             CompCurveChannel channel = this.active;
             float pxPerFrame = Math.max(0.0001F, this.pxPerSecond() / this.fps());
             float pxPerValue = Math.max(0.00001F, Math.abs(this.toY(0F) - this.toY(1F)));
-            float offset = dx / pxPerFrame;
+            float frameDelta = dx / pxPerFrame;
+            float valueDelta = -dy / pxPerValue;
+            List<Keyframe> keys = (List<Keyframe>) (List<?>) channel.raw().getKeyframes();
+            int index = CompCurves.indexOfIdentity(keys, key);
 
+            /* The drag is relative to the handle's state at press time. Clamping the time offset
+             * to the adjacent segment is the AE rule: handles may not push the next/previous key
+             * past each other, and BezierUtils clamps x1/x2 to [0,1] anyway. */
             if (this.dragHandleOutgoing)
             {
-                key.rx = Math.max(0.25F, offset);
-                key.ry = -dy / pxPerValue;
+                float max = index >= 0 && index + 1 < keys.size()
+                    ? Math.max(0.01F, keys.get(index + 1).getTick() - key.getTick())
+                    : 1_000_000F;
+
+                key.rx = Math.max(0.01F, Math.min(max, this.dragHandleStartRx + frameDelta));
+                key.ry = this.dragHandleStartRy + valueDelta;
             }
             else
             {
-                key.lx = Math.max(0.25F, -offset);
-                key.ly = -dy / pxPerValue;
+                float max = index > 0
+                    ? Math.max(0.01F, key.getTick() - keys.get(index - 1).getTick())
+                    : 1_000_000F;
+
+                key.lx = Math.max(0.01F, Math.min(max, this.dragHandleStartLx - frameDelta));
+                key.ly = this.dragHandleStartLy + valueDelta;
             }
 
             if (!CompInput.altDown())
@@ -1900,26 +2206,12 @@ public class UICompCurveEditor extends UIElement
             key.getInterpolation().setInterp(Interpolations.BEZIER);
 
             /* Keep the previous key's type in sync: the segment into this key is owned by it. */
-            int index = -1;
-
-            if (!this.dragHandleOutgoing)
+            if (!this.dragHandleOutgoing && index > 0)
             {
-                List<Keyframe> keys = (List<Keyframe>) (List<?>) channel.raw().getKeyframes();
-                index = keys.indexOf(key);
-
-                if (index > 0)
-                {
-                    keys.get(index - 1).getInterpolation().setInterp(Interpolations.BEZIER);
-                }
-            }
-            else
-            {
-                List<Keyframe> keys = (List<Keyframe>) (List<?>) channel.raw().getKeyframes();
-                index = keys.indexOf(key);
+                keys.get(index - 1).getInterpolation().setInterp(Interpolations.BEZIER);
             }
 
             /* Report influence and speed the way AE's keyframe dialog does. */
-            List<Keyframe> keys = (List<Keyframe>) (List<?>) channel.raw().getKeyframes();
             Keyframe neighbor = this.dragHandleOutgoing
                 ? (index >= 0 && index + 1 < keys.size() ? keys.get(index + 1) : null)
                 : (index > 0 ? keys.get(index - 1) : null);
@@ -2304,6 +2596,25 @@ public class UICompCurveEditor extends UIElement
                     this.fitAll();
 
                     return true;
+
+                case GLFW.GLFW_KEY_LEFT:
+                case GLFW.GLFW_KEY_RIGHT:
+                case GLFW.GLFW_KEY_UP:
+                case GLFW.GLFW_KEY_DOWN:
+                    if (!this.selection.isEmpty())
+                    {
+                        int step = Window.isShiftPressed() ? 10 : 1;
+                        int frames = context.getKeyCode() == GLFW.GLFW_KEY_LEFT ? -step
+                            : context.getKeyCode() == GLFW.GLFW_KEY_RIGHT ? step : 0;
+                        int pixels = context.getKeyCode() == GLFW.GLFW_KEY_UP ? step
+                            : context.getKeyCode() == GLFW.GLFW_KEY_DOWN ? -step : 0;
+
+                        this.nudgeSelected(frames, pixels);
+
+                        return true;
+                    }
+
+                    break;
 
                 default:
                     break;

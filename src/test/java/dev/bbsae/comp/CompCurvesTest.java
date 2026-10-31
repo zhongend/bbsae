@@ -84,6 +84,34 @@ public class CompCurvesTest
     }
 
     @Test
+    public void bezierPresetExpandsUntouchedDefaultHandles()
+    {
+        CompLayer layer = animatedLayer();
+        List<Keyframe> keys = keys(layer);
+
+        for (Keyframe key : keys)
+        {
+            assertEquals(5F, key.rx, 0.0001F);
+            assertEquals(5F, key.lx, 0.0001F);
+            assertEquals(0F, key.ry, 0.0001F);
+            assertEquals(0F, key.ly, 0.0001F);
+        }
+
+        CompCurves.applyBezier(layer.transformChannel(), keys);
+
+        /* First key: only the outgoing segment exists, so its right handle gets a third of the
+         * 10-frame segment; the incoming side stays at the BBS fallback. The second key mirrors
+         * that. This is what gives the user something visible (and grabbable) to drag. */
+        assertEquals(10F / 3F, keys.get(0).rx, 0.0001F);
+        assertEquals(5F, keys.get(0).lx, 0.0001F);
+        assertEquals(5F, keys.get(1).rx, 0.0001F);
+        assertEquals(10F / 3F, keys.get(1).lx, 0.0001F);
+        assertTrue(keys.get(0).getInterpolation().has(Interpolations.BEZIER));
+
+        layer.transformAt(2.5F);
+    }
+
+    @Test
     public void holdFreezesUntilTheNextKey()
     {
         CompLayer layer = animatedLayer();
