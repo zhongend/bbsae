@@ -124,6 +124,9 @@ public final class CompPrecache
         final String projectId;
         final String compId;
         long signature;
+        /** Bumped whenever the on-disk frames are wiped (signature change); queued disk writes
+         * from the previous generation must not resurrect deleted files. */
+        int generation;
         int width;
         int height;
         boolean valid;
@@ -238,6 +241,8 @@ public final class CompPrecache
 
         /* A signature change means every pixel is stale. Delete the files instead of leaving
          * them to accumulate: a cache directory is not a project archive. */
+        cache.generation += 1;
+
         try
         {
             Path directory = dir(key);
@@ -531,9 +536,17 @@ public final class CompPrecache
     {
         final Frame entry = cache.frames.get(frame);
         final Path file = frameFile(cache, frame);
+        final int generation = cache.generation;
 
         WRITER.execute(() ->
         {
+            /* A signature change wiped this directory while our task sat in the queue; writing
+             * now would put pre-edit pixels under the NEW signature (served after a restart). */
+            if (cache.generation != generation)
+            {
+                return;
+            }
+
             byte[] compressed = compress(pixels);
 
             try

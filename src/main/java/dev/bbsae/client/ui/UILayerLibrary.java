@@ -86,12 +86,8 @@ public class UILayerLibrary extends UIElement
         this.hint.color(0xFF8A94A6, false);
         this.hint.relative(this.box).x(PAD).y(32).w(1F, -PAD * 2).h(14);
 
-        UILabel searchLabel = new UILabel(IKey.constant("搜索"));
-        searchLabel.color(0xFF8A94A6, false);
-        searchLabel.relative(this.box).x(PAD).y(57).w(36).h(14);
-
         this.search = new UITextbox(64, (text) -> this.refresh());
-        this.search.relative(this.box).x(PAD + 38).y(54).w(260).h(20);
+        this.search.relative(this.box).x(PAD).y(54).w(260).h(20);
         this.search.setText("");
 
         this.categories = new UIElement();
@@ -107,7 +103,7 @@ public class UILayerLibrary extends UIElement
         this.cancelButton = new UICompButton(IKey.constant("取消"), (button) -> this.onClose.run());
         this.cancelButton.relative(this.box).x(1F, -(PAD + 110 + 8 + 72)).y(1F, -(PAD + 26)).w(72).h(24);
 
-        this.box.add(this.title, this.hint, searchLabel, this.search, this.categories, this.grid, this.addButton, this.cancelButton);
+        this.box.add(this.title, this.hint, this.search, this.categories, this.grid, this.addButton, this.cancelButton);
         this.add(this.box);
 
         this.buildCategories();
@@ -221,7 +217,7 @@ public class UILayerLibrary extends UIElement
 
         int inner = this.box.area.w;
 
-        this.search.relative(this.box).x(PAD + 38).y(54).w(Math.min(300, inner - PAD * 2 - 38)).h(20);
+        this.search.relative(this.box).x(PAD).y(54).w(Math.min(300, inner - PAD * 2)).h(20);
         this.categories.relative(this.box).x(PAD).y(HEADER).w(SIDEBAR).h(Math.max(60, this.box.area.h - HEADER - FOOTER));
         this.grid.relative(this.box).x(PAD + SIDEBAR + 12).y(HEADER)
             .w(Math.max(160, inner - (PAD * 2 + SIDEBAR + 12)))
@@ -364,75 +360,28 @@ public class UILayerLibrary extends UIElement
             context.batcher.icon(UILayerLibrary.icon(entry.icon), active ? 0xFFFFFFFF : 0xFF9FB2C8, x + 10, y + 10);
             context.batcher.text(entry.name, x + 32, y + 8, active ? 0xFFFFFFFF : 0xFFD6DEEB);
             context.batcher.text(entry.category, x + CARD_W - 8 - context.batcher.getFont().getWidth(entry.category), y + 9, 0xFF6F7A8A);
-            /* Clipped to the card: the fallback font used for CJK does not report reliable
-             * advance widths, so measuring alone can still overrun. Clipping makes the card the
-             * authority on where its own text ends. */
-            mchorse.bbs_mod.ui.utils.Area text = new mchorse.bbs_mod.ui.utils.Area(x + 30, y + 22, CARD_W - 36, 34);
-
-            context.batcher.clip(text, context);
-
-            try
-            {
-                context.batcher.text(this.wrap(context, entry.description, CARD_W - 40), x + 32, y + 26, 0xFF8A94A6);
-            }
-            finally
-            {
-                context.batcher.unclip(context);
-            }
+            context.batcher.text(this.wrap(entry.description, CARD_W - 40), x + 32, y + 26, 0xFF8A94A6);
         }
 
-        /**
-         * Two-line clamp measured with the real font.
-         *
-         * <p>The first version divided the width by six pixels per character, which is right for
-         * Latin text and badly wrong for CJK: every description ran past the card edge. Measuring
-         * the string is the only way a card can hold two lines of mixed text without clipping.</p>
-         */
-        private String wrap(UIContext context, String text, int width)
+        /** Two-line clamp: the card has room for two rows at 13 px. */
+        private String wrap(String text, int width)
         {
-            if (text == null || text.isEmpty())
+            if (text == null)
             {
                 return "";
             }
 
-            mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer font = context.batcher.getFont();
-            int split = text.length();
+            int perLine = Math.max(8, width / 6);
+            String first = text.length() <= perLine ? text : text.substring(0, perLine);
 
-            for (int i = 1; i <= text.length(); i++)
+            if (text.length() <= perLine)
             {
-                if (font.getWidth(text.substring(0, i)) > width)
-                {
-                    split = Math.max(1, i - 1);
-
-                    break;
-                }
+                return first;
             }
 
-            if (split >= text.length())
-            {
-                return text;
-            }
+            String rest = text.substring(perLine);
 
-            String first = text.substring(0, split);
-            String rest = text.substring(split);
-            int restSplit = rest.length();
-
-            for (int i = 1; i <= rest.length(); i++)
-            {
-                if (font.getWidth(rest.substring(0, i)) > width)
-                {
-                    restSplit = Math.max(1, i - 1);
-
-                    break;
-                }
-            }
-
-            if (restSplit < rest.length())
-            {
-                rest = rest.substring(0, Math.max(1, restSplit - 1)) + "…";
-            }
-
-            return first + "\n" + rest;
+            return first + "\n" + (rest.length() <= perLine ? rest : rest.substring(0, Math.max(0, perLine - 1)) + "…");
         }
 
         private void renderScrollbar(UIContext context)

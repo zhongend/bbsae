@@ -425,6 +425,17 @@ public class UICompCurveEditor extends UIElement
                 this.rows.add(new ListRow(null, channel, y, ROW_H));
                 y += ROW_H;
             }
+
+            /* Clamp the scroll to the laid-out content: without an upper bound the wheel kept
+             * pushing rows past the top until the panel was blank. */
+            int content = y + this.listScroll;
+            int max = Math.max(0, content - this.listArea.h);
+
+            if (this.listScroll > max)
+            {
+                this.listScroll = max;
+                this.buildRows();
+            }
         }
 
         private CompDocument doc()
@@ -1563,7 +1574,11 @@ public class UICompCurveEditor extends UIElement
 
                     if (channel != null)
                     {
-                        this.dragStartValues.put(selected, channel.numericValue(selected));
+                        /* Speed graph drags move the displayed speed, so the snapshot must be the
+                         * tangent speed — not the property value, which is a different axis here
+                         * (grabbing a 90° key used to teleport its speed to ~90 per second). */
+                        this.dragStartValues.put(selected,
+                            this.speedMode ? this.keySpeed(channel, selected, true) : channel.numericValue(selected));
                         this.dragStartTicks.put(selected, selected.getTick());
                     }
                 }
@@ -2129,6 +2144,14 @@ public class UICompCurveEditor extends UIElement
                     continue;
                 }
 
+                /* Same rule as keyAt(): while soloing the active channel, invisible keys on the
+                 * other channels must not end up in the marquee — Delete would silently remove
+                 * keyframes the user cannot even see. */
+                if (this.soloActive && channel != this.active)
+                {
+                    continue;
+                }
+
                 for (Object entry : channel.raw().getKeyframes())
                 {
                     Keyframe<?> raw = (Keyframe<?>) entry;
@@ -2256,6 +2279,13 @@ public class UICompCurveEditor extends UIElement
                         for (CompCurveChannel channel : this.channels)
                         {
                             if (!this.isVisible(channel))
+                            {
+                                continue;
+                            }
+
+                            /* Select only what is drawn: solo mode hides the other channels,
+                             * and Delete acts on the whole selection. */
+                            if (this.soloActive && channel != this.active)
                             {
                                 continue;
                             }

@@ -1227,7 +1227,9 @@ public class UICompTrackTimeline extends UIElement
 
     private void renderScrollbar(UIContext context)
     {
-        int total = this.rows().size() * this.rowHeight;
+        /* Same total the scrolling uses (layers + the virtual audio row): a layers-only count
+         * hid the scrollbar exactly when the audio lane was the thing below the fold. */
+        int total = this.rowCount() * this.rowHeight;
 
         if (total <= this.laneArea.h || this.laneArea.h <= 0)
         {

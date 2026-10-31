@@ -50,6 +50,8 @@ public final class CompExportManager
     private static final long FRAME_BUDGET_MS = 22L;
     /** Upper bound per tick, so a 3 ms frame cannot turn into a 30-frame stall. */
     private static final int MAX_FRAMES_PER_TICK = 6;
+    /** End-of-stream marker for the pipe writer thread; never a real frame. */
+    private static final byte[] PIPE_EOF = new byte[0];
 
     private CompExportManager()
     {}
@@ -199,6 +201,13 @@ public final class CompExportManager
                 current.prepareAudio();
                 current.prepared = true;
 
+                /* Now audio.wav exists (or the comp has no audio at all) — the encoder can be
+                 * spawned. */
+                if (current.pipeMode && current.encoder == null)
+                {
+                    current.startPipe();
+                }
+
                 if (current.audioOnly)
                 {
                     current.framesDone = true;
@@ -243,6 +252,11 @@ public final class CompExportManager
             current.job.message = String.valueOf(e.getMessage());
             current.status = "Failed: " + e.getMessage();
             current.finished = true;
+
+            /* Failure paths must tear the encoder down like cancel() does: a live FFmpeg left
+             * waiting on stdin holds the output file open, so every later export of the same
+             * name fails until the game is restarted. */
+            current.stopEncoder();
             session = null;
         }
     }
@@ -281,7 +295,18 @@ public final class CompExportManager
          * module, for resized presets, and when the user asked to keep the frames.</p>
          */
         private final boolean pipeMode;
-        private java.io.OutputStream pipe;
+        /**
+         * Frames cross to FFmpeg on a dedicated writer thread through a small bounded queue.
+         *
+         * <p>A 1080p RGBA frame is 8.3 MB while the OS pipe between the processes accepts ~64 KB,
+         * so a direct write on the render thread blocks for as long as FFmpeg needs to catch up
+         * (30-60 ms per encoded frame) — the 22 ms frame budget turned into a full hitch every
+         * frame. The queue gives the renderer a few frames of runway; it only blocks when it is
+         * genuinely that many frames ahead of the encoder, which is the backpressure you want.</p>
+         */
+        private java.util.concurrent.ArrayBlockingQueue<byte[]> pipeQueue;
+        private Thread pipeWriter;
+        private volatile RuntimeException pipeWriterError;
         private String status = "Preparing";
         private final Batcher2D batcher;
 
@@ -322,10 +347,11 @@ public final class CompExportManager
                     ? "Mixing audio"
                     : "Rendering " + this.totalFrames + " frames" + (this.pipeMode ? " (pipe)" : "");
 
-                if (this.pipeMode)
-                {
-                    this.startPipe();
-                }
+                /* The pipe encoder is NOT started here. FFmpeg opens every -i at startup, and input
+                 * 1 is the audio.wav the mix writes on the first tick — spawning first made the
+                 * first export of a fresh output folder die with "No such file or directory" (and
+                 * a retry silently pick up the previous export's stale mix). tick() starts the
+                 * encoder right after prepareAudio(). */
             }
             catch (IOException e)
             {
@@ -467,16 +493,31 @@ public final class CompExportManager
 
             if (this.pipeMode && this.encoder != null)
             {
-                /* Closing stdin is what tells FFmpeg the stream ended; the process then writes the
+                /* Hand the writer the end-of-stream marker and wait for it to drain: closing
+                 * stdin is what tells FFmpeg the stream ended; the process then writes the
                  * container and exits. pollEncoder() reports the result. */
+                Thread writer = this.pipeWriter;
+
+                this.pipeWriter = null;
+
                 try
                 {
-                    this.pipe.close();
+                    this.pipeQueue.put(PIPE_EOF);
                 }
-                catch (IOException ignored)
+                catch (InterruptedException ignored)
                 {}
 
-                this.pipe = null;
+                if (writer != null)
+                {
+                    try
+                    {
+                        writer.join(10_000L);
+                    }
+                    catch (InterruptedException ignored)
+                    {}
+                }
+
+                this.pipeQueue = null;
                 this.job.status = CompRenderJob.ENCODING;
                 this.job.message = this.audioFile != null ? "Encoding video + audio" : "Encoding";
                 this.status = "Encoding with FFmpeg (piped " + this.totalFrames + " frames)";
@@ -496,9 +537,7 @@ public final class CompExportManager
                 return;
             }
 
-            String extension = this.preset.extension == null || this.preset.extension.isBlank()
-                ? (this.preset.container == null ? "mp4" : this.preset.container)
-                : this.preset.extension;
+            String extension = outputExtension(this.preset);
             Path output = this.folder.resolve(safeName(this.job.outputName) + "." + extension);
 
             /* Audio-only modules with no audio track have nothing to do; succeeding silently with
@@ -696,11 +735,7 @@ public final class CompExportManager
                 args.add("-shortest");
             }
 
-            String extension = this.preset.extension == null || this.preset.extension.isBlank()
-                ? (this.preset.container == null ? "mp4" : this.preset.container)
-                : this.preset.extension;
-
-            args.add(this.folder.resolve(safeName(this.job.outputName) + "." + extension).toAbsolutePath().toString());
+            args.add(this.folder.resolve(safeName(this.job.outputName) + "." + outputExtension(this.preset)).toAbsolutePath().toString());
 
             try
             {
@@ -714,7 +749,42 @@ public final class CompExportManager
                 builder.redirectOutput(log);
 
                 this.encoder = builder.start();
-                this.pipe = new java.io.BufferedOutputStream(this.encoder.getOutputStream(), 1 << 20);
+                this.pipeWriterError = null;
+                this.pipeQueue = new java.util.concurrent.ArrayBlockingQueue<>(3);
+                java.io.OutputStream raw = this.encoder.getOutputStream();
+                Thread writer = new Thread(() ->
+                {
+                    try
+                    {
+                        while (true)
+                        {
+                            byte[] frame = pipeQueue.take();
+
+                            if (frame == PIPE_EOF)
+                            {
+                                break;
+                            }
+
+                            raw.write(frame);
+                        }
+
+                        /* Closing stdin is what tells FFmpeg the stream ended. */
+                        raw.flush();
+                        raw.close();
+                    }
+                    catch (InterruptedException ignored)
+                    {}
+                    catch (Throwable e)
+                    {
+                        this.pipeWriterError = e instanceof RuntimeException
+                            ? (RuntimeException) e
+                            : new RuntimeException(String.valueOf(e.getMessage()), e);
+                    }
+                }, "bbsae-pipe-writer");
+
+                writer.setDaemon(true);
+                writer.start();
+                this.pipeWriter = writer;
             }
             catch (IOException e)
             {
@@ -727,18 +797,36 @@ public final class CompExportManager
 
         private void writePipe(byte[] rgba)
         {
-            if (this.pipe == null)
+            if (this.pipeWriter == null || this.pipeQueue == null)
             {
                 throw new IllegalStateException("FFmpeg pipe is closed");
             }
 
+            RuntimeException error = this.pipeWriterError;
+
+            if (error != null)
+            {
+                throw new RuntimeException("FFmpeg stopped accepting frames: " + error.getMessage(), error);
+            }
+
             try
             {
-                this.pipe.write(rgba);
+                /* Blocks only when the renderer is a full queue (3 frames) ahead of the encoder —
+                 * real backpressure, not a per-frame stall. */
+                this.pipeQueue.put(rgba);
             }
-            catch (IOException e)
+            catch (InterruptedException e)
             {
-                throw new RuntimeException("FFmpeg stopped accepting frames: " + e.getMessage(), e);
+                Thread.currentThread().interrupt();
+
+                throw new RuntimeException("Export interrupted", e);
+            }
+
+            RuntimeException latest = this.pipeWriterError;
+
+            if (latest != null)
+            {
+                throw new RuntimeException("FFmpeg stopped accepting frames: " + latest.getMessage(), latest);
             }
         }
 
@@ -756,8 +844,7 @@ public final class CompExportManager
 
             if (code == 0)
             {
-                String extension = this.preset.extension == null || this.preset.extension.isBlank() ? "mp4" : this.preset.extension;
-                Path output = this.folder.resolve(safeName(this.job.outputName) + "." + extension);
+                Path output = this.folder.resolve(safeName(this.job.outputName) + "." + outputExtension(this.preset));
 
                 this.job.status = CompRenderJob.DONE;
                 this.job.message = "Done";
@@ -784,16 +871,16 @@ public final class CompExportManager
 
         private void stopEncoder()
         {
-            if (this.pipe != null)
-            {
-                try
-                {
-                    this.pipe.close();
-                }
-                catch (IOException ignored)
-                {}
+            Thread writer = this.pipeWriter;
 
-                this.pipe = null;
+            this.pipeWriter = null;
+            this.pipeQueue = null;
+
+            if (writer != null)
+            {
+                /* Unblocks a put() in writePipe; a take()/write() inside the writer exits when the
+                 * destroyed process below closes the stream under it. */
+                writer.interrupt();
             }
 
             if (this.encoder != null)
@@ -871,6 +958,17 @@ public final class CompExportManager
         }
 
         return width == Math.max(1, compWidth) && height == Math.max(1, compHeight);
+    }
+
+    /** The one extension rule, shared by the writer and by the job's reported output path. */
+    static String outputExtension(CompOutputPreset preset)
+    {
+        if (preset.extension != null && !preset.extension.isBlank())
+        {
+            return preset.extension;
+        }
+
+        return preset.container == null || preset.container.isBlank() ? "mp4" : preset.container;
     }
 
     private static String safeName(String name)

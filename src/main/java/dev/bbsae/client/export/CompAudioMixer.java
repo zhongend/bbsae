@@ -39,6 +39,8 @@ public final class CompAudioMixer
 {
     public static final int SAMPLE_RATE = 48000;
     public static final int CHANNELS = 2;
+    /** Upper bound for one in-memory mix (~660 MB of floats); longer ranges are truncated with a log line. */
+    public static final float MAX_MIX_SECONDS = 1800F;
 
     private CompAudioMixer()
     {}
@@ -70,9 +72,30 @@ public final class CompAudioMixer
      */
     public static float[] mix(CompDocument comp, Resolver resolver, float start, float end, Log log)
     {
+        if (comp == null || comp.audio == null || comp.audio.isEmpty())
+        {
+            return new float[0];
+        }
+
+        /* The mix is one float[] in memory (stereo 48 kHz = 384 KB per second). A bogus or absurd
+         * end time used to allocate gigabytes (and past ~12.4 h the frame count overflows to
+         * negative) — clamp instead, and say so. */
+        float requested = Math.max(0F, end - start);
+
+        if (requested > MAX_MIX_SECONDS)
+        {
+            if (log != null)
+            {
+                log.warn("音频区间 " + String.format(java.util.Locale.ROOT, "%.0f", requested)
+                    + "s 过长，已截断到 " + MAX_MIX_SECONDS + "s");
+            }
+
+            end = start + MAX_MIX_SECONDS;
+        }
+
         int total = frames(start, Math.max(0F, end - start));
 
-        if (total <= 0 || comp == null || comp.audio == null || comp.audio.isEmpty())
+        if (total <= 0)
         {
             return new float[0];
         }
@@ -140,7 +163,16 @@ public final class CompAudioMixer
         float fadeIn = Math.max(0F, clip.fadeIn);
         float fadeOut = Math.max(0F, clip.fadeOut);
         int sourceFrames = source.frames;
-        int loopLength = Math.max(1, sourceFrames - sourceOffset);
+
+        /* An in-point at or past the end of the decoded file has nothing to play — not even to
+         * loop. (It used to compute loopLength = 1 and then index past the array, and the thrown
+         * exception dropped the WHOLE mix in the caller, silently removing all audio.) */
+        if (sourceFrames <= 0 || sourceOffset >= sourceFrames)
+        {
+            return false;
+        }
+
+        int loopLength = sourceFrames - sourceOffset;
         boolean any = false;
 
         for (int frame = firstFrame; frame < lastFrame; frame++)
@@ -155,6 +187,7 @@ public final class CompAudioMixer
                     break;
                 }
 
+                /* sourceOffset < sourceFrames, so this always lands inside the file. */
                 index = sourceOffset + (local % loopLength);
             }
 

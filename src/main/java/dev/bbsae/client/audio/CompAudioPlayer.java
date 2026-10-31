@@ -249,7 +249,8 @@ public final class CompAudioPlayer
             player.setPlaybackPosition(0F);
         }
 
-        if (pendingKey != null && pendingKey.equals(key))
+        /* A mix for exactly this key is already on its way. */
+        if (pendingKey != null && pendingKey.equals(key) && worker != null && worker.isAlive())
         {
             return;
         }
@@ -259,11 +260,9 @@ public final class CompAudioPlayer
         pendingKey = key;
         pending = null;
 
-        if (worker != null && worker.isAlive())
-        {
-            return;
-        }
-
+        /* (Re)start even when the previous worker is still alive: its result is dropped by the
+         * ticket check, and waiting for it here used to leave the new key without any worker at
+         * all — one edit during a mix made preview audio stay silent until the next edit. */
         worker = new Thread(() ->
         {
             try

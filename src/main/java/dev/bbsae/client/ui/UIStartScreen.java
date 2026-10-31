@@ -11,6 +11,7 @@ import mchorse.bbs_mod.ui.framework.elements.input.list.UIList;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
+import mchorse.bbs_mod.ui.utils.keys.KeyAction;
 import mchorse.bbs_mod.utils.colors.Colors;
 
 import java.util.ArrayList;
@@ -390,13 +391,30 @@ public class UIStartScreen extends UIElement
         int h = Math.max(300, Math.min(CARD_H, this.area.h - 16));
 
         this.card.relative(this).x(0.5F, -w / 2).y(0.5F, -h / 2).w(w).h(h);
+
+        /* The right column used to stay anchored at x=306 even when the card was squeezed to
+         * its 340px floor: the column became 10px wide and every child computed a negative
+         * width (the "新建工程" form rendered as overlapping slivers). Shrink the list column
+         * proportionally instead, keeping ~150px for the form. */
+        int colX = w >= 520 ? 306 : Math.max(150, Math.round(w * 0.42F));
+
+        this.listTitle.relative(this.card).x(colX).y(78).w(1F, -colX - 24).h(14);
+        this.list.relative(this.card).x(colX).y(96).w(1F, -colX - 24).h(1F, -178);
+        this.empty.relative(this.card).x(colX).y(1F, -76).w(1F, -colX - 24).h(14);
+        this.summary.relative(this.card).x(colX).y(1F, -60).w(1F, -colX - 24).h(16);
+        this.form.relative(this.card).x(colX).y(78).w(1F, -colX - 24).h(1F, -100);
+
         this.card.resize();
     }
 
     @Override
     protected boolean subKeyPressed(UIContext context)
     {
-        if (!this.creating && context.getKeyCode() == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER)
+        /* BBS delivers every key as PRESS and RELEASE; without the action check Enter ran
+         * openSelected() twice on the failed-load path (the screen is re-shown there, so the
+         * release reached it and re-attempted the load + repeated the error toast). */
+        if (!this.creating && context.getKeyAction() == KeyAction.PRESSED
+            && context.getKeyCode() == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER)
         {
             this.openSelected();
 

@@ -128,7 +128,7 @@ public class UILayerQuickPanel extends UIElement
         this.hint.relative(this).x(PAD).y(y + 2).w(1F, -PAD * 2).h(12);
     }
 
-    /** Fills the fields from the model when the selection or the playhead changed. */
+    /** Fills the fields from the model when the selection, the playhead or the values changed. */
     private void syncFields()
     {
         CompLayer layer = this.panel.getSelectedLayer();
@@ -136,31 +136,58 @@ public class UILayerQuickPanel extends UIElement
 
         String id = layer == null ? null : layer.id;
 
-        if (id == null ? this.shownLayer == null && Float.compare(this.shownFrame, frame) == 0
-            : id.equals(this.shownLayer) && Float.compare(this.shownFrame, frame) == 0)
-        {
-            return;
-        }
-
-        this.shownLayer = id;
-        this.shownFrame = frame;
-
         if (layer == null)
         {
+            if (this.shownLayer == null)
+            {
+                return;
+            }
+
+            this.shownLayer = null;
+            this.shownFrame = frame;
             this.title.label = IKey.constant("图层：未选择");
 
             return;
         }
 
         Transform transform = layer.transformAt(frame);
+        double nx = round(transform.translate.x);
+        double ny = round(transform.translate.y);
+        double nz = round(layer.scalarAt("z", layer.z, frame));
+        double nrot = round(transform.rotate.z);
+        double nscale = round(transform.scale.x * 100F);
+        double nopacity = round(layer.opacityFrame(frame) * 100F);
+
+        boolean sameTarget = id.equals(this.shownLayer) && Float.compare(this.shownFrame, frame) == 0;
+
+        if (sameTarget)
+        {
+            boolean sameValues = Math.abs(this.x.getValue() - nx) < 0.05D
+                && Math.abs(this.y.getValue() - ny) < 0.05D
+                && Math.abs(this.z.getValue() - nz) < 0.05D
+                && Math.abs(this.rotation.getValue() - nrot) < 0.05D
+                && Math.abs(this.scale.getValue() - nscale) < 0.05D
+                && Math.abs(this.opacity.getValue() - nopacity) < 0.05D;
+
+            /* Same layer at the same frame, but the model moved (gizmo drag, undo, curve edit):
+             * a parked playhead used to freeze the readout on stale numbers. While the left
+             * button is held the fields may be mid-edit — never fight the user's typing. */
+            if (sameValues || Window.isMouseButtonPressed(0))
+            {
+                return;
+            }
+        }
+
+        this.shownLayer = id;
+        this.shownFrame = frame;
 
         this.title.label = IKey.constant(this.panel.layerLabel(layer));
-        this.x.setValue(round(transform.translate.x));
-        this.y.setValue(round(transform.translate.y));
-        this.z.setValue(round(layer.scalarAt("z", layer.z, frame)));
-        this.rotation.setValue(round(transform.rotate.z));
-        this.scale.setValue(round(transform.scale.x * 100F));
-        this.opacity.setValue(round(layer.opacityFrame(frame) * 100F));
+        this.x.setValue(nx);
+        this.y.setValue(ny);
+        this.z.setValue(nz);
+        this.rotation.setValue(nrot);
+        this.scale.setValue(nscale);
+        this.opacity.setValue(nopacity);
     }
 
     private static double round(float value)

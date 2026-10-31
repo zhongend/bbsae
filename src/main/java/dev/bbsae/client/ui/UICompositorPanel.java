@@ -3694,7 +3694,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.playing = false;
         this.resetTimelineView = true;
-        this.selectedLayer = this.doc == null || this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
+        this.setSingleSelection(this.doc == null || this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1));
 
         if (this.doc != null)
         {
@@ -4024,7 +4024,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.time = 0F;
         this.playing = false;
         this.playRate = 0F;
-        this.selectedLayer = comp == null || comp.layers.isEmpty() ? null : comp.layers.get(comp.layers.size() - 1);
+        this.setSingleSelection(comp == null || comp.layers.isEmpty() ? null : comp.layers.get(comp.layers.size() - 1));
         this.replaySelector.label = IKey.constant("工程：" + (project.name == null ? project.id : project.name));
 
         if (this.trackTimeline != null)
@@ -4112,7 +4112,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.time = 0F;
         this.playing = false;
         this.playRate = 0F;
-        this.selectedLayer = this.doc == null || this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
+        this.setSingleSelection(this.doc == null || this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1));
         this.replaySelector.label = IKey.constant("回放：片段");
 
         if (this.trackTimeline != null)
@@ -5185,7 +5185,7 @@ public class UICompositorPanel extends UIDashboardPanel
         layer.imageFit = 0;
 
         this.doc.addLayer(layer);
-        this.selectedLayer = layer;
+        this.setSingleSelection(layer);
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -5732,7 +5732,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.doc.workAreaOut = Math.max(this.doc.workAreaOut, duration);
             normalizeWorkArea(this.doc);
             this.time = 0F;
-            this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
+            this.setSingleSelection(this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1));
             this.resetTimelineView = true;
 
             if (this.trackTimeline != null)
@@ -5775,7 +5775,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.playing = false;
         this.playRate = 0F;
         this.resetTimelineView = true;
-        this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
+        this.setSingleSelection(this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1));
 
         if (this.trackTimeline != null)
         {
@@ -5794,10 +5794,24 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.doc == null)
         {
             this.selectedLayer = null;
+            this.selectedIds.clear();
         }
-        else if (this.selectedLayer != null && !this.doc.layers.contains(this.selectedLayer))
+        else
         {
-            this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
+            if (this.selectedLayer != null && !this.doc.layers.contains(this.selectedLayer))
+            {
+                this.selectedLayer = this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1);
+            }
+
+            /* The set is the multi-select truth; ids pointing at layers that no longer exist in
+             * the CURRENT document made the batch gates ("多选 · N 个图层") fire inside a single
+             * selection after entering a precomp or switching replay. */
+            this.selectedIds.removeIf((id) -> this.doc.getLayer(id) == null);
+
+            if (this.selectedIds.isEmpty() && this.selectedLayer != null)
+            {
+                this.selectedIds.add(this.selectedLayer.id);
+            }
         }
 
         if (this.trackTimeline != null)
@@ -6216,14 +6230,6 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.debugEntityScene();
                 break;
 
-            case "library":
-                this.showAddLayerMenu();
-                break;
-
-            case "tilt":
-                this.debugTiltedCamera();
-                break;
-
             case "queue":
                 this.toggleRenderView();
                 break;
@@ -6365,36 +6371,11 @@ public class UICompositorPanel extends UIDashboardPanel
         doc.activeCameraId = camera.id;
 
         this.selectedLayer = card;
+        this.selectedIds.clear();
+        this.selectedIds.add(card.id);
         this.time = 2F;
         this.refreshLayers();
         this.refreshInspector();
-        this.save();
-    }
-
-    /** Verification state: a camera looking off-axis, i.e. the spatial projection path. */
-    private void debugTiltedCamera()
-    {
-        CompLayer camera = this.doc.activeCamera(this.time);
-
-        if (camera == null)
-        {
-            this.addLayer("camera");
-            camera = this.doc.activeCamera(this.time);
-        }
-
-        if (camera == null)
-        {
-            return;
-        }
-
-        camera.camera3D = true;
-        camera.cameraLookAt = true;
-        camera.cameraTargetX = this.doc.width * 0.5F + 260F;
-        camera.cameraTargetY = this.doc.height * 0.5F - 90F;
-        camera.cameraTargetZ = 0F;
-        this.exit3DSpace();
-        this.selectLayer(camera);
-        this.setStatus("调试：倾斜摄像机 · 空间投影");
         this.save();
     }
 
@@ -6538,6 +6519,8 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.selectedLayer = card3D;
+        this.selectedIds.clear();
+        this.selectedIds.add(card3D.id);
         this.time = 2F;
         this.startScreenOpen = false;
 
@@ -6714,6 +6697,28 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.applySelection(layer);
+    }
+
+    /**
+     * The one writer for "exactly this layer is selected" outside of user clicks.
+     *
+     * <p>{@code getSelectedLayers()} resolves through {@code selectedIds}, so a bare
+     * {@code selectedLayer = x} leaves the set holding stale ids — Ctrl+K selected the right
+     * fragment while "删除所选"/"复制所选" still acted on the old one, multi-select pages stayed
+     * stuck after entering a precomp, and Ctrl+D made the original steal the primary back. Every
+     * programmatic re-selection goes through here so the two fields cannot diverge.</p>
+     */
+    private void setSingleSelection(CompLayer layer)
+    {
+        this.selectedIds.clear();
+
+        if (layer != null)
+        {
+            this.selectedIds.add(layer.id);
+            this.selectedAudio = null;
+        }
+
+        this.selectedLayer = layer;
     }
 
     /** Ctrl+click: add or remove one layer without disturbing the rest. */
@@ -6999,7 +7004,7 @@ public class UICompositorPanel extends UIDashboardPanel
         copy.x += 24F;
         copy.y += 24F;
         this.doc.layers.add(this.doc.layers.indexOf(layer) + 1, copy);
-        this.selectedLayer = copy;
+        this.setSingleSelection(copy);
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -7050,6 +7055,15 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         if (this.doc == null)
         {
+            return;
+        }
+
+        /* Nothing selected: do not touch the undo stack at all (beginAction would push an
+         * identical checkpoint and clear redo for a no-op). */
+        if (this.getSelectedLayers().isEmpty())
+        {
+            this.setStatus("先在时间轴选择要复制的轨道");
+
             return;
         }
 
@@ -7276,9 +7290,9 @@ public class UICompositorPanel extends UIDashboardPanel
         int index = this.doc.layers.indexOf(layer);
 
         this.doc.removeLayer(layer.id);
-        this.selectedLayer = this.doc.layers.isEmpty()
+        this.setSingleSelection(this.doc.layers.isEmpty()
             ? null
-            : this.doc.layers.get(Math.max(0, Math.min(index, this.doc.layers.size() - 1)));
+            : this.doc.layers.get(Math.max(0, Math.min(index, this.doc.layers.size() - 1))));
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -7342,21 +7356,26 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.beginAction("拆分图层");
         CompLayer layer = this.selectedLayer;
         float fps = Math.max(1F, this.doc.fps);
-        String id = CompStore.uniqueId(layer.id + "_b", this.doc.layers, (candidate) -> candidate.id);
-        CompLayer right = layer.splitAt(this.time, fps, id, this.layerLabel(layer) + " · B");
+        float frame = 1F / fps;
 
-        if (right == null)
+        /* Bail out BEFORE beginAction(): a failed split used to push an undo checkpoint and wipe
+         * the redo stack, so Ctrl+Z then "undid" into an identical state. This is the same
+         * condition CompLayer.splitAt() rejects — checked without mutating the layer. */
+        if (this.time <= layer.in + frame || this.time >= layer.out - frame)
         {
             this.setStatus("播放头不在所选轨道的范围内");
 
             return;
         }
 
+        this.beginAction("拆分图层");
+        String id = CompStore.uniqueId(layer.id + "_b", this.doc.layers, (candidate) -> candidate.id);
+        CompLayer right = layer.splitAt(this.time, fps, id, this.layerLabel(layer) + " · B");
+
         this.doc.layers.add(this.doc.layers.indexOf(layer) + 1, right);
-        this.selectedLayer = right;
+        this.setSingleSelection(right);
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -8414,7 +8433,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.doc.addLayer(layer);
         }
 
-        this.selectedLayer = layer;
+        this.setSingleSelection(layer);
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -8485,7 +8504,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.playing = false;
         this.playRate = 0F;
         this.time = local;
-        this.selectedLayer = sub.layers.isEmpty() ? null : sub.layers.get(sub.layers.size() - 1);
+        this.setSingleSelection(sub.layers.isEmpty() ? null : sub.layers.get(sub.layers.size() - 1));
         this.precompBack.setVisible(true);
         this.primedWidth = -1;
         this.keyframeEditor.view.pickKeyframe(null);
@@ -8511,11 +8530,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.doc = state.doc;
         this.time = state.time;
-        this.selectedLayer = state.layerId == null || state.layerId.isEmpty() ? null : this.doc.getLayer(state.layerId);
+        this.setSingleSelection(state.layerId == null || state.layerId.isEmpty() ? null : this.doc.getLayer(state.layerId));
 
         if (this.selectedLayer == null && !this.doc.layers.isEmpty())
         {
-            this.selectedLayer = this.doc.layers.get(this.doc.layers.size() - 1);
+            this.setSingleSelection(this.doc.layers.get(this.doc.layers.size() - 1));
         }
 
         this.precompBack.setVisible(!this.precompStack.isEmpty());
@@ -8943,6 +8962,8 @@ public class UICompositorPanel extends UIDashboardPanel
         adjustment.effects.add(CompEffectRegistry.create("color_grade", 1));
         this.doc.addLayer(adjustment);
         this.selectedLayer = adjustment;
+        this.selectedIds.clear();
+        this.selectedIds.add(adjustment.id);
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -8966,7 +8987,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.selectedLayer = precomp;
+        this.setSingleSelection(precomp);
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -10419,9 +10440,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         UICompButton name = new UICompButton(IKey.constant((clip.muted ? "（静音）" : "") + clip.name), (button) ->
         {
-            this.selectedAudio = clip;
-            this.inspectorPage = PAGE_COMP;
-            this.refreshInspector();
+            /* Through the canonical selector: it clears the layer selection so Delete cannot
+             * remove a layer that is still highlighted on the timeline. */
+            this.selectAudioClip(clip);
         });
 
         name.relative(row).x(0).y(0).w(1F, -24).h(CompUi.control());
@@ -10563,8 +10584,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.doc.audio.add(clip);
-            this.selectedAudio = clip;
-            this.inspectorPage = PAGE_COMP;
+            this.selectAudioClip(clip);
             dev.bbsae.client.audio.CompAudioPlayer.invalidate();
             this.refreshInspector();
             this.save();
@@ -11655,7 +11675,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private UIElement numberRow(String label, double value, double min, double max, boolean integer, Consumer<Double> callback)
     {
-        UITrackpad trackpad = new UITrackpad(callback);
+        /* Every row callback mutates the document one way or another; save() here is what makes
+         * the edit undoable (the sampler keys off documentDirty) and durable (debounced write). */
+        UITrackpad trackpad = new UITrackpad((next) ->
+        {
+            callback.accept(next);
+            this.save();
+        });
 
         trackpad.limit(min, max, integer);
         trackpad.setValue(value);
@@ -11672,6 +11698,10 @@ public class UICompositorPanel extends UIDashboardPanel
             setter.accept(next);
 
             if (!transformPath) this.setScalar(layer, path, next.floatValue());
+
+            /* Direct setters (shape, style and text-metric fields) bypass setScalar — mark the
+             * document here so every gesture is undoable. save() is just dirty flags. */
+            this.save();
         });
 
         trackpad.limit(min, max, false);
@@ -11812,7 +11842,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private UIElement textRow(String label, String value, Consumer<String> callback)
     {
-        UITextbox box = new UITextbox(2048, callback);
+        UITextbox box = new UITextbox(2048, (text) ->
+        {
+            callback.accept(text);
+            this.save();
+        });
 
         box.setText(value);
         return this.fieldRow(label, box);
@@ -11827,6 +11861,7 @@ public class UICompositorPanel extends UIDashboardPanel
             if (!this.buildingInspector)
             {
                 callback.accept(next);
+                this.save();
             }
         }).withAlpha();
 
@@ -11989,6 +12024,11 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             layer.scalarChannel(path).insert(this.getFrame(), value);
         }
+
+        /* The undo sampler and the debounced disk write both key off save(): without this,
+         * typing a value left documentDirty false, so Ctrl+Z skipped the edit entirely and
+         * (with autosave off) the value never reached the project file. */
+        this.save();
     }
 
     private void addScalarKey(CompLayer layer, String path)
@@ -12194,6 +12234,10 @@ public class UICompositorPanel extends UIDashboardPanel
                 default -> { }
             }
         }
+
+        /* Same invariant as setScalar(): mark the document dirty so the edit is undoable and
+         * reaches the project file. */
+        this.save();
     }
 
     private void setOpacity(CompLayer layer, float value)
@@ -12206,6 +12250,8 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             layer.opacityChannel().insert(this.getFrame(), value);
         }
+
+        this.save();
     }
 
     /* Render queue */
@@ -12538,16 +12584,16 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.doc = restored.getCompOrFirst(CompStore.DEFAULT_COMP);
             }
 
-            this.selectedLayer = null;
+            this.setSingleSelection(null);
 
             if (layerId != null && this.doc != null)
             {
-                this.selectedLayer = this.doc.getLayer(layerId);
+                this.setSingleSelection(this.doc.getLayer(layerId));
             }
 
             if (this.selectedLayer == null && this.doc != null && !this.doc.layers.isEmpty())
             {
-                this.selectedLayer = this.doc.layers.get(this.doc.layers.size() - 1);
+                this.setSingleSelection(this.doc.layers.get(this.doc.layers.size() - 1));
             }
 
             this.lastSnapshot = json;

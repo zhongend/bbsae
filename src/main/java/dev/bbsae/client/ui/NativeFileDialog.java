@@ -51,6 +51,15 @@ public final class NativeFileDialog
     {
         if (!OPEN.compareAndSet(false, true))
         {
+            /* The contract is "onPick or onUnavailable, exactly one". Dropping the request used to
+             * make a second import click do nothing at all, with no feedback and no browser. */
+            MinecraftClient client = MinecraftClient.getInstance();
+
+            if (client != null)
+            {
+                client.execute(onUnavailable);
+            }
+
             return;
         }
 
@@ -157,57 +166,68 @@ public final class NativeFileDialog
             throw new IllegalStateException("AWT is headless");
         }
 
-        Frame owner = new Frame();
+        /* AWT owns its component tree on the Event Dispatch Thread; creating and showing the
+         * dialog from the picker worker used to work by luck and is unsupported by the toolkit.
+         * The modal setVisible() blocks the EDT while this worker waits in invokeAndWait. */
+        final String[] result = new String[2];
 
-        owner.setUndecorated(true);
-        owner.setSize(1, 1);
-        owner.setLocationRelativeTo(null);
-        owner.setAlwaysOnTop(true);
-
-        FileDialog dialog = new FileDialog(owner, title, FileDialog.LOAD);
-
-        dialog.setMultipleMode(false);
-        dialog.setAlwaysOnTop(true);
-        dialog.setDirectory(directory());
-        dialog.setFilenameFilter((dir, name) -> accepts(name, extensions));
-
-        String pattern = pattern(extensions);
-
-        if (pattern != null)
+        java.awt.EventQueue.invokeAndWait(() ->
         {
-            /* The native dialog treats the initial file name as a filter pattern on Windows and
-             * as a suggestion elsewhere; either way it saves the user from typing "*.mp4". */
-            dialog.setFile(pattern);
-        }
+            Frame owner = new Frame();
 
-        try
-        {
-            dialog.setVisible(true);
-        }
-        finally
-        {
-            String name = dialog.getFile();
-            String folder = dialog.getDirectory();
+            owner.setUndecorated(true);
+            owner.setSize(1, 1);
+            owner.setLocationRelativeTo(null);
+            owner.setAlwaysOnTop(true);
 
-            dialog.dispose();
-            owner.dispose();
+            FileDialog dialog = new FileDialog(owner, title, FileDialog.LOAD);
 
-            if (name == null || name.isBlank())
+            dialog.setMultipleMode(false);
+            dialog.setAlwaysOnTop(true);
+            dialog.setDirectory(directory());
+            dialog.setFilenameFilter((dir, name) -> accepts(name, extensions));
+
+            String pattern = pattern(extensions);
+
+            if (pattern != null)
             {
-                return null;
+                /* The native dialog treats the initial file name as a filter pattern on Windows and
+                 * as a suggestion elsewhere; either way it saves the user from typing "*.mp4". */
+                dialog.setFile(pattern);
             }
 
-            File file = new File(folder == null ? "." : folder, name);
-
-            if (file.isDirectory())
+            try
             {
-                return null;
+                dialog.setVisible(true);
             }
+            finally
+            {
+                result[0] = dialog.getFile();
+                result[1] = dialog.getDirectory();
 
-            lastDirectory = file.getParentFile();
+                dialog.dispose();
+                owner.dispose();
+            }
+        });
 
-            return file;
+        String name = result[0];
+        String folder = result[1];
+
+        if (name == null || name.isBlank())
+        {
+            return null;
         }
+
+        File file = new File(folder == null ? "." : folder, name);
+
+        if (file.isDirectory())
+        {
+            return null;
+        }
+
+        lastDirectory = file.getParentFile();
+
+        return file;
     }
 
     private static String directory()

@@ -480,6 +480,15 @@ public class UIImportBrowser extends UIElement
         @Override
         public void render(UIContext context)
         {
+            /* The press can be released outside this list, where BBS's release walk stops at the
+             * first consuming sibling and this element never hears about it — the scroll then
+             * stayed glued to the cursor. Poll the physical button, like the viewport does. */
+            if (this.pressY != Integer.MIN_VALUE && !mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0))
+            {
+                this.pressY = Integer.MIN_VALUE;
+                this.dragged = false;
+            }
+
             if (this.pressY != Integer.MIN_VALUE)
             {
                 int delta = this.pressY - context.mouseY;

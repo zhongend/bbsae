@@ -2,6 +2,7 @@ package dev.bbsae.client.render;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL30;
 
 /**
@@ -30,8 +31,10 @@ public final class SceneDepth
         GlStateManager._bindTexture(this.texture);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL11.GL_CLAMP);
-        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL11.GL_CLAMP);
+        /* CLAMP_TO_EDGE, not GL_CLAMP: the core-profile 3.2 context removed GL_CLAMP and
+         * glTexParameteri answers it with GL_INVALID_ENUM. */
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
     }
     /**
      * Copies the depth attachment of the currently bound draw framebuffer.

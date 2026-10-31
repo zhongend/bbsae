@@ -46,32 +46,32 @@ public final class LayerCatalog
 
     static
     {
-        add("solid", "纯色", "纯色底图，最常用的背景。", COMMON, "square");
-        add("text", "文字", "逐字动画文字，可描边。", COMMON, "font");
-        add("image", "图片", "PNG/JPG，可替换可蒙版。", COMMON, "image");
-        add("shape", "矩形", "矩形，圆角与描边。", COMMON, "shapes");
-        add("null", "空对象", "无像素的父级控制器。", COMMON, "sphere");
-        add("adjustment", "调整层", "把效果作用到下方合成。", COMMON, "sun");
+        add("solid", "纯色", "一个填满画面的矩形色块，最常用的底图与转场底。", COMMON, "square");
+        add("text", "文字", "可逐字动画的文字层，支持字距、行距、描边与字体。", COMMON, "font");
+        add("image", "图片", "一张 PNG/JPG，可替换、可裁剪、可做蒙版。", COMMON, "image");
+        add("shape", "矩形", "带圆角、描边和填充的形状层。", COMMON, "shapes");
+        add("null", "空对象", "没有像素的父级控制器，用来带动一组图层。", COMMON, "sphere");
+        add("adjustment", "调整层", "把效果作用到它下面已经合成的所有图层。", COMMON, "sun");
 
-        add("gradient", "渐变", "两色渐变，角度可动画。", GENERATE, "square");
-        add("checker", "棋盘格", "程序化棋盘格图案。", GENERATE, "square");
-        add("grid", "网格", "可调间距的网格叠加。", GENERATE, "square");
-        add("noise", "分形杂色", "分形噪声，做颗粒云雾。", GENERATE, "square");
+        add("gradient", "渐变", "两色线性渐变，可关键帧角度。", GENERATE, "square");
+        add("checker", "棋盘格", "程序化棋盘，适合做透明度参考或图案。", GENERATE, "square");
+        add("grid", "网格", "可调间距与线宽的网格叠加。", GENERATE, "square");
+        add("noise", "分形杂色", "可动画的噪声渐变，做颗粒与云雾。", GENERATE, "square");
 
-        add("ellipse", "椭圆", "圆形 / 椭圆形状。", SHAPE, "shapes");
-        add("star", "星形", "多角星，内外半径可调。", SHAPE, "shapes");
+        add("ellipse", "椭圆", "圆形/椭圆形状层。", SHAPE, "shapes");
+        add("star", "星形", "多角星，可调内外半径。", SHAPE, "shapes");
         add("polygon", "多边形", "正多边形，边数可调。", SHAPE, "shapes");
-        add("path", "贝塞尔", "自由路径，逐点可动画。", SHAPE, "shapes");
+        add("path", "贝塞尔", "自由路径形状，逐点可动画。", SHAPE, "shapes");
 
-        add("footage", "图片序列", "编号序列帧，视频拆帧用。", MEDIA, "film");
-        add("precomp", "预合成", "嵌套另一条合成。", MEDIA, "structure");
-        add("bbs", "BBS 预览", "BBS 影片当前画面。", MEDIA, "film");
-        add("replay", "回放实体", "深度抠出回放实体。", MEDIA, "replay");
+        add("footage", "图片序列", "按 %04d 编号的序列帧，用于视频拆帧。", MEDIA, "film");
+        add("precomp", "预合成", "把另一条合成当作素材嵌套进来。", MEDIA, "structure");
+        add("bbs", "BBS 预览", "BBS 影片当前的画面，作为底图或混合源。", MEDIA, "film");
+        add("replay", "回放实体", "按深度把选中的回放实体从画面里抠出来，背景透明。", MEDIA, "replay");
 
-        add("panel", "HUD 面板", "半透明面板底。", UI, "square");
+        add("panel", "HUD 面板", "带阴影的半透明面板底。", UI, "square");
         add("bar", "进度条", "带填充比例的进度条。", UI, "square");
 
-        add("camera", "摄像机", "位置/朝向/FOV 与透视。", CAMERA, "camera");
+        add("camera", "摄像机", "定义画面视角：位置、朝向、FOV；3D 图层随它透视。", CAMERA, "camera");
     }
 
     private LayerCatalog()

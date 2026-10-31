@@ -243,15 +243,7 @@ public final class CompScene
 
         for (CompLayer layer : comp.layers)
         {
-            if (layer == null || !layer.visible || "camera".equals(layer.type))
-            {
-                /* A camera's z is where its eye sits, not a depth the composition should be
-                 * projected through; counting it would put every comp with a camera on the 3D
-                 * path even when the camera looks straight down the comp normal. */
-                continue;
-            }
-
-            if (Math.abs(layer.z) > 0.01F)
+            if (layer != null && layer.visible && Math.abs(layer.z) > 0.01F)
             {
                 return true;
             }
