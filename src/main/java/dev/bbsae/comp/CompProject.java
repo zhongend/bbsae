@@ -148,6 +148,15 @@ public class CompProject
         /** Preview overlay (FX/Mask/BBS) folded into a single arrow button. */
         public boolean previewControlsCollapsed = false;
 
+        /**
+         * The preview bar's texture-filter group is open (three rows below the chip).
+         *
+         * <p>Persisted so the control does not forget its state when a project is reopened. The
+         * narrow-preview layout hides the menu without clearing this flag; widening the panel
+         * brings the menu back exactly where the user left it.</p>
+         */
+        public boolean previewFilterExpanded = false;
+
         /** Persisted editor layout (pixels; dragged by the split handles). */
         public int leftPanelWidth = 190;
         public int rightPanelWidth = 300;

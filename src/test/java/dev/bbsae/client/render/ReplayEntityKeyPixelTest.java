@@ -21,29 +21,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pixel proof of the replay entity matte.
+ * Pixel proof of the coverage-keyed replay entity matte.
  *
- * <p>The feature is a claim about three buffers: the world colour, the world depth and a
- * depth-only pass of the selected entities. The claim is "keep the colour where the entity depth
- * equals the world depth". These tests build exactly those three buffers with known values and
- * read the result back, so the claim is verified on a real GL context instead of being inferred
- * from the code.</p>
+ * <p>The layer is a claim about two buffers: the world colour and an actor-only RGBA coverage
+ * texture. These tests build exactly those two buffers with known values and read the result back,
+ * so the claim is verified on a real GL context instead of being inferred from the code.</p>
  *
- * <p>Scene (32×32): an entity square at x/y ∈ [8,24) ten blocks away. A "block" covers its left
- * half at seven blocks, i.e. in front. The expected matte is therefore the right half of the
- * square only — that single assertion covers keying, occlusion and the "nothing outside the
- * entity" rule at once.</p>
+ * <p>Scene (32×32): an entity square at x/y ∈ [8,24). The world colour is red inside the square and
+ * grey outside; the coverage texture is opaque inside and transparent outside. The expected matte is
+ * therefore the square only, in the world colour. A second test proves that an additive renderer
+ * (RGB with alpha 0) is still treated as coverage, because some form renderers emit exactly that.</p>
  */
 public class ReplayEntityKeyPixelTest
 {
     private static final int SIZE = 32;
-
-    /** NDC depth for a point ~10 blocks away with Minecraft's near/far. */
-    private static final float FAR_DEPTH = 0.995F;
-    /** NDC depth for a point ~7 blocks away (the occluding block). */
-    private static final float NEAR_DEPTH = 0.993F;
-    /** Cleared depth = nothing rendered. */
-    private static final float EMPTY = 1F;
 
     private static long window;
 
@@ -82,33 +73,27 @@ public class ReplayEntityKeyPixelTest
 
     /* ------------------------------------------------------------------ scene */
 
-    /** Colour of the world frame: red where the entity is, grey everywhere else. */
+    private static boolean entity(int x, int y)
+    {
+        return x >= 8 && x < 24 && y >= 8 && y < 24;
+    }
+
+    /** World colour: red where the entity is, grey everywhere else. */
     private static int worldColor(int x, int y)
     {
-        boolean entity = x >= 8 && x < 24 && y >= 8 && y < 24;
-
-        return entity ? 0xFFFF0000 : 0xFF808080;
+        return entity(x, y) ? 0xFFFF0000 : 0xFF808080;
     }
 
-    private static float worldDepth(int x, int y)
+    /** Normal coverage: alpha 1 inside the entity, 0 outside. */
+    private static int coverage(int x, int y)
     {
-        boolean occluder = x >= 8 && x < 16 && y >= 8 && y < 24;
-
-        if (occluder)
-        {
-            return NEAR_DEPTH;
-        }
-
-        boolean entity = x >= 8 && x < 24 && y >= 8 && y < 24;
-
-        return entity ? FAR_DEPTH : EMPTY;
+        return entity(x, y) ? 0xFFFFFFFF : 0x00000000;
     }
 
-    private static float entityDepth(int x, int y)
+    /** Additive renderer: strong RGB with no alpha. */
+    private static int additiveCoverage(int x, int y)
     {
-        boolean entity = x >= 8 && x < 24 && y >= 8 && y < 24;
-
-        return entity ? FAR_DEPTH : EMPTY;
+        return entity(x, y) ? 0x00FFFFFF : 0x00000000;
     }
 
     private static int alpha(int color)
@@ -124,46 +109,38 @@ public class ReplayEntityKeyPixelTest
     /* ------------------------------------------------------------------ tests */
 
     @Test
-    public void keysTheEntityAndKeepsWhatIsInFront() throws Exception
+    public void keysTheEntityAndNothingElse() throws Exception
     {
-        int[] pixels = render(true, 0F, 0F);
+        int[] pixels = render(false, 0F, 0F, ReplayEntityKeyPixelTest::coverage);
 
-        /* Right half of the square: entity depth == world depth -> kept. */
-        assertEquals(255, alpha(pixels[16 * SIZE + 20]), "the visible half of the entity must be opaque");
+        assertEquals(255, alpha(pixels[16 * SIZE + 20]), "the entity must be opaque");
         assertTrue(red(pixels[16 * SIZE + 20]) > 200, "the kept pixel must be the world colour");
 
-        /* Left half: a block is in front, so the world depth is nearer -> rejected. */
-        assertEquals(0, alpha(pixels[16 * SIZE + 10]), "a block in front must hide the entity");
-
-        /* Outside the entity: nothing was rendered into the mask. */
         assertEquals(0, alpha(pixels[2 * SIZE + 2]), "background must stay transparent");
         assertEquals(0, alpha(pixels[30 * SIZE + 30]), "background must stay transparent");
     }
 
     @Test
-    public void withoutOcclusionTheWholeEntityIsKept() throws Exception
+    public void additiveColourCountsAsCoverage() throws Exception
     {
-        int[] pixels = render(false, 0F, 0F);
+        int[] pixels = render(false, 0F, 0F, ReplayEntityKeyPixelTest::additiveCoverage);
 
-        assertEquals(255, alpha(pixels[16 * SIZE + 10]), "occlusion off must keep the covered half");
-        assertEquals(255, alpha(pixels[16 * SIZE + 20]), "occlusion off must keep the visible half");
-        assertEquals(0, alpha(pixels[2 * SIZE + 2]), "the mask still bounds the entity");
+        assertEquals(255, alpha(pixels[16 * SIZE + 20]),
+            "a form that writes RGB with alpha 0 must still be keyed");
+        assertEquals(0, alpha(pixels[2 * SIZE + 2]), "the additive case must not leak the background");
     }
 
     @Test
     public void erodeShrinksAndFeatherSoftensTheEdge() throws Exception
     {
-        int[] hard = render(true, 0F, 0F);
-        int[] eroded = render(true, 2F, 0F);
-        int[] feathered = render(true, 0F, 2F);
+        int[] hard = render(false, 0F, 0F, ReplayEntityKeyPixelTest::coverage);
+        int[] eroded = render(false, 2F, 0F, ReplayEntityKeyPixelTest::coverage);
+        int[] feathered = render(false, 0F, 2F, ReplayEntityKeyPixelTest::coverage);
 
-        /* The matte boundary is at x = 16 (occluder edge) and x = 24 (entity edge). Erode samples
-         * two texels away, so the pixel just inside the entity edge must lose its coverage. */
         assertEquals(255, alpha(hard[16 * SIZE + 22]), "the hard matte covers the pixel next to the edge");
         assertEquals(0, alpha(eroded[16 * SIZE + 22]), "erode must pull the matte in");
         assertTrue(alpha(eroded[16 * SIZE + 20]) > 200, "erode must not erase the interior");
 
-        /* Feather averages neighbours, so a pixel on the boundary becomes partially covered. */
         int edge = alpha(feathered[16 * SIZE + 23]);
 
         assertTrue(edge > 0 && edge < 255, "feather must produce a partial edge, got " + edge);
@@ -174,9 +151,9 @@ public class ReplayEntityKeyPixelTest
     {
         /* A colour ramp by texture row: the shader flips V, so the top of the composition must
          * show the top of the texture (row 31), not the bottom. */
-        int[] pixels = renderWithRamp();
+        int[] pixels = renderScene(false, 0F, 0F, (x, y) -> 0xFF000000 | ((y * 8) << 16),
+            ReplayEntityKeyPixelTest::coverage);
 
-        /* Inside the entity, above and below its centre; the ramp is only visible there. */
         int top = red(pixels[22 * SIZE + 20]);
         int bottom = red(pixels[9 * SIZE + 20]);
 
@@ -185,25 +162,20 @@ public class ReplayEntityKeyPixelTest
 
     /* ------------------------------------------------------------------ GL */
 
-    private static int[] render(boolean occlusion, float erode, float feather) throws Exception
+    private static int[] render(boolean occlusion, float erode, float feather, ColorSource maskSource) throws Exception
     {
-        return renderScene(occlusion, erode, feather, ReplayEntityKeyPixelTest::worldColor);
+        return renderScene(occlusion, erode, feather, ReplayEntityKeyPixelTest::worldColor, maskSource);
     }
 
-    private static int[] renderWithRamp() throws Exception
-    {
-        return renderScene(true, 0F, 0F, (x, y) -> 0xFF000000 | ((y * 8) << 16));
-    }
-
-    private static int[] renderScene(boolean occlusion, float erode, float feather, ColorSource source) throws Exception
+    private static int[] renderScene(boolean occlusion, float erode, float feather, ColorSource worldSource,
+                                     ColorSource maskSource) throws Exception
     {
         int program = link(ShaderSources.ENTITY_KEY);
 
         assertEquals(0, program == 0 ? 1 : 0, "the entity key shader must compile and link");
 
-        int colorTexture = colorTexture(source);
-        int worldDepth = depthTexture(ReplayEntityKeyPixelTest::worldDepth);
-        int entityDepth = depthTexture(ReplayEntityKeyPixelTest::entityDepth);
+        int colorTexture = colorTexture(worldSource);
+        int maskTexture = colorTexture(maskSource);
         int target = colorTexture((x, y) -> 0);
         int fbo = GL30.glGenFramebuffers();
         int vao = GL30.glGenVertexArrays();
@@ -233,8 +205,7 @@ public class ReplayEntityKeyPixelTest
             GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
 
             bind(program, "WorldColor", 0, colorTexture);
-            bind(program, "WorldDepth", 1, worldDepth);
-            bind(program, "EntityDepth", 2, entityDepth);
+            bind(program, "EntityMask", 1, maskTexture);
 
             /* Layer-local mapping: NDC -> a 32x32 layer centred on its anchor, exactly what
              * inverse(projection * model) produces for a full-frame layer. Y is negated because
@@ -245,13 +216,10 @@ public class ReplayEntityKeyPixelTest
             GL20.glUniformMatrix4fv(GL20.glGetUniformLocation(program, "InvMvp"), false, inverse);
             GL20.glUniform4f(GL20.glGetUniformLocation(program, "Rect"), -16F, -16F, 32F, 32F);
             GL20.glUniform2f(GL20.glGetUniformLocation(program, "DepthTexel"), 1F / SIZE, 1F / SIZE);
-            GL20.glUniform1f(GL20.glGetUniformLocation(program, "Near"), 0.05F);
-            GL20.glUniform1f(GL20.glGetUniformLocation(program, "Far"), 1000F);
-            GL20.glUniform1f(GL20.glGetUniformLocation(program, "Tolerance"), 0.08F);
             GL20.glUniform1f(GL20.glGetUniformLocation(program, "Erode"), erode);
             GL20.glUniform1f(GL20.glGetUniformLocation(program, "Feather"), feather);
-            GL20.glUniform1i(GL20.glGetUniformLocation(program, "UseOcclusion"), occlusion ? 1 : 0);
             GL20.glUniform4f(GL20.glGetUniformLocation(program, "Tint"), 1F, 1F, 1F, 1F);
+            GL20.glUniform1i(GL20.glGetUniformLocation(program, "DebugView"), 0);
 
             GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 3);
 
@@ -279,8 +247,7 @@ public class ReplayEntityKeyPixelTest
             GL30.glDeleteVertexArrays(vao);
             GL30.glDeleteFramebuffers(fbo);
             GL11.glDeleteTextures(colorTexture);
-            GL11.glDeleteTextures(worldDepth);
-            GL11.glDeleteTextures(entityDepth);
+            GL11.glDeleteTextures(maskTexture);
             GL11.glDeleteTextures(target);
             GL20.glDeleteProgram(program);
         }
@@ -289,11 +256,6 @@ public class ReplayEntityKeyPixelTest
     private interface ColorSource
     {
         int argb(int x, int y);
-    }
-
-    private interface DepthSource
-    {
-        float depth(int x, int y);
     }
 
     private static void bind(int program, String sampler, int unit, int texture)
@@ -329,31 +291,6 @@ public class ReplayEntityKeyPixelTest
 
         pixels.flip();
         GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, SIZE, SIZE, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
-
-        return texture;
-    }
-
-    private static int depthTexture(DepthSource source)
-    {
-        int texture = GL11.glGenTextures();
-
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
-        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
-        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT24, SIZE, SIZE, 0, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, (ByteBuffer) null);
-
-        FloatBuffer pixels = BufferUtils.createFloatBuffer(SIZE * SIZE);
-
-        for (int y = 0; y < SIZE; y++)
-        {
-            for (int x = 0; x < SIZE; x++)
-            {
-                pixels.put(source.depth(x, y));
-            }
-        }
-
-        pixels.flip();
-        GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, SIZE, SIZE, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, pixels);
 
         return texture;
     }

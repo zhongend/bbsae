@@ -293,7 +293,13 @@ final class LayerContentRenderer
              * still queued in the batcher would be flushed after it and paint over the result. */
             batcher.flush();
 
-            if (dev.bbsae.client.render.ReplayEntityKey.draw(layer, context, world, projection))
+            /* Production path: the full-screen coverage shader. The batcher variant is kept
+             * behind a flag for A/B verification of sampler/state issues. */
+            boolean keyed = Boolean.getBoolean("bbsae.entityKeyTextured")
+                ? dev.bbsae.client.render.ReplayEntityKey.drawTextured(layer, context, batcher)
+                : dev.bbsae.client.render.ReplayEntityKey.draw(layer, context, world, projection);
+
+            if (keyed)
             {
                 return;
             }

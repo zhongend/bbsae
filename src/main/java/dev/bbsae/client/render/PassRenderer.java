@@ -1,6 +1,7 @@
 package dev.bbsae.client.render;
 
 import com.mojang.blaze3d.platform.GlStateManager;
+import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 
@@ -223,15 +224,49 @@ public final class PassRenderer
 
     public static void bind(GlslProgram program, String sampler, int unit, GlFramebuffer texture)
     {
+        bindRaw(program, sampler, unit, texture == null ? 0 : texture.color.id);
+    }
+
+    /**
+     * Binds a texture to a unit with raw GL calls.
+     *
+     * <p>{@link GlStateManager} caches the binding per texture unit. BBS, Sodium and Iris all issue
+     * raw GL calls too, so a cached "already bound" can be a lie; for the replay matte that lie was
+     * indistinguishable from "the depth texture is empty". Raw calls and an explicit
+     * {@code glBindSampler(unit, 0)} make the binding an observed fact rather than an assumption,
+     * and also neutralise a leftover sampler object (a shadow sampler with
+     * {@code COMPARE_REF_TO_TEXTURE} would turn every {@code sampler2D} sample into 0/1).</p>
+     */
+    public static void bindRaw(GlslProgram program, String sampler, int unit, int texture)
+    {
+        /* Force the actual active unit first, then bring GlStateManager's caches in line.
+         *
+         * <p>Both halves matter. A raw-only bind left GlStateManager's active-unit cache stale, so
+         * the next cached {@code _activeTexture(0)} was skipped and later layers sampled the wrong
+         * unit. A cached-only bind has the opposite failure: BBS/Iris raw GL calls can leave the
+         * cache pointing at a different unit than the one GL is really on, so the "active" unit is
+         * never selected and the mask texture lands somewhere the sampler does not read. Forcing
+         * raw first and then syncing the cache makes both the actual state and the cache correct.</p> */
+        GL13.glActiveTexture(GL13.GL_TEXTURE0 + unit);
         GlStateManager._activeTexture(GL13.GL_TEXTURE0 + unit);
-        GlStateManager._bindTexture(texture == null ? 0 : texture.color.id);
+        GlStateManager._bindTexture(texture);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
+        clearSampler(unit);
         program.set(sampler, unit);
     }
 
-    public static void bindRaw(GlslProgram program, String sampler, int unit, int texture)
+    private static void clearSampler(int unit)
     {
-        GlStateManager._activeTexture(GL13.GL_TEXTURE0 + unit);
-        GlStateManager._bindTexture(texture);
-        program.set(sampler, unit);
+        try
+        {
+            if (GL.getCapabilities().GL_ARB_sampler_objects)
+            {
+                org.lwjgl.opengl.ARBSamplerObjects.glBindSampler(unit, 0);
+            }
+        }
+        catch (RuntimeException | LinkageError ignored)
+        {
+            /* A context without sampler objects cannot have one bound. */
+        }
     }
 }

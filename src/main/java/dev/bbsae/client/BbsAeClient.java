@@ -65,6 +65,37 @@ public class BbsAeClient implements BBSAddonMod
 
         BbsAeAddon.LOGGER.info("BBS Compositor client ready");
 
+        /* Verification hook: force the OS window (and therefore the framebuffer) to an exact
+         * size. Minecraft's --width/--height are not reliable on every launcher/window manager;
+         * layout screenshots must be taken at a known pixel size. */
+        final String debugWindow = System.getProperty("bbsae.debugWindow", "");
+
+        if (!debugWindow.isBlank())
+        {
+            final int[] windowTicks = {0};
+
+            ClientTickEvents.END_CLIENT_TICK.register((client) ->
+            {
+                if (client.getWindow() == null || ++windowTicks[0] != 40)
+                {
+                    return;
+                }
+
+                try
+                {
+                    String[] size = debugWindow.split("x");
+
+                    org.lwjgl.glfw.GLFW.glfwSetWindowSize(client.getWindow().getHandle(),
+                        Integer.parseInt(size[0]), Integer.parseInt(size[1]));
+                    BbsAeAddon.LOGGER.info("Debug window resized to {}", debugWindow);
+                }
+                catch (RuntimeException e)
+                {
+                    BbsAeAddon.LOGGER.warn("Could not resize the debug window to {}", debugWindow, e);
+                }
+            });
+        }
+
         if (Boolean.getBoolean("bbsae.debugPreview"))
         {
             final int[] ticks = {0};
@@ -136,12 +167,7 @@ public class BbsAeClient implements BBSAddonMod
                                 if (--wait[0] <= 0)
                                 {
                                     done[0] = true;
-                                    net.minecraft.client.util.ScreenshotRecorder.saveScreenshot(
-                                        c.runDirectory,
-                                        shotName,
-                                        c.getFramebuffer(),
-                                        (text) -> BbsAeAddon.LOGGER.info("screenshot: {}", text.getString())
-                                    );
+                                    saveVerificationShot(c, shotName);
                                 }
                             });
                         }
@@ -171,12 +197,7 @@ public class BbsAeClient implements BBSAddonMod
 
                 if (++shotTicks[0] == shotAt)
                 {
-                    net.minecraft.client.util.ScreenshotRecorder.saveScreenshot(
-                        client.runDirectory,
-                        shot,
-                        client.getFramebuffer(),
-                        (text) -> BbsAeAddon.LOGGER.info("screenshot: {}", text.getString())
-                    );
+                    saveVerificationShot(client, shot);
                 }
             });
         }
@@ -214,6 +235,13 @@ public class BbsAeClient implements BBSAddonMod
          * the film editor controller into the world pass, so the bridge needs the same hook the
          * film panel uses; it is inert while the compositor is not on screen. */
         WorldRenderEvents.START.register((context) -> dev.bbsae.client.render.ReplayEntityMask.beginFrame());
+
+        /* Capture the camera/stack/matrices at the exact moment BBS is about to draw a world
+         * actor. BEFORE_ENTITIES fires before the world projection exists, and the live state
+         * after the actor pass may be on a limb transform; the actor's own entry point is the only
+         * state guaranteed to be the one that put it on screen. */
+        mchorse.bbs_mod.api.client.events.FormPoseEvents.ACTOR_BEFORE.register(
+            dev.bbsae.client.render.ReplayEntityMask::captureActorState);
         WorldRenderEvents.AFTER_ENTITIES.register(BbsPreviewBridge::renderFilmActors);
 
         /* The replay entity matte needs a second, depth-only pass of the film's actors. It runs
@@ -226,6 +254,33 @@ public class BbsAeClient implements BBSAddonMod
          * LAST here was too late in practice: the BBS preview layer could sample the previous
          * composition frame, producing a scanlined feedback ghost in the exported video. */
         WorldRenderEvents.AFTER_TRANSLUCENT.register((context) -> BbsPreviewBridge.captureFrame());
+    }
+
+    /**
+     * Saves a screenshot for a verification run and, with {@code -Dbbsae.debugQuitAfterShot=true},
+     * closes the client once the PNG is on disk.
+     *
+     * <p>Automated visual checks need a bounded run: without this the client stays open forever
+     * after the shot (the screenshot callback only logs), so a script would have to guess when it
+     * is safe to kill the process. Quitting from the callback is deterministic and keeps the test
+     * client's world saved cleanly.</p>
+     */
+    private static void saveVerificationShot(net.minecraft.client.MinecraftClient client, String name)
+    {
+        net.minecraft.client.util.ScreenshotRecorder.saveScreenshot(
+            client.runDirectory,
+            name,
+            client.getFramebuffer(),
+            (text) ->
+            {
+                BbsAeAddon.LOGGER.info("screenshot: {}", text.getString());
+
+                if (Boolean.getBoolean("bbsae.debugQuitAfterShot"))
+                {
+                    client.execute(client::scheduleStop);
+                }
+            }
+        );
     }
 
     /**

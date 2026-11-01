@@ -27,7 +27,9 @@ import net.minecraft.util.math.MathHelper;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
+import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL30;
+import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 import java.util.Collection;
@@ -36,33 +38,41 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * A depth-only pass containing nothing but the selected replay entities.
+ * An actor-only colour pass for the selected replay entities: RGB = the actor's own pixels,
+ * alpha = coverage. The compositor's replay layer samples this texture like any other RGBA image.
  *
- * <h2>Why a second entity pass</h2>
- * <p>The compositor receives one finished world frame: colour and depth. Nothing in that image
- * says which pixel belongs to an actor — a white helmet against a white wall is the same colour,
- * and under a shader pack it is not even the same tone. The only reliable identity signal is
- * <b>geometry</b>: render the actors again, alone, into a depth target. Then a pixel of the world
- * frame is an actor pixel when the two depths agree.</p>
+ * <h2>Why coverage instead of a depth texture</h2>
+ * <p>The matte used to be a depth-only target compared with the world depth inside the layer
+ * shader. That comparison is the right <em>idea</em> — depth is the only lighting-independent
+ * identity signal — but sampling a {@code DEPTH_COMPONENT24} attachment from the compositor's own
+ * program turned out to be unreliable on the target stack (Iris 1.7.6 + Sodium 0.13 + NVIDIA): the
+ * depth target verifiably contained the actor (a readback counted 232 279 covered pixels), the same
+ * full-screen program rendered solid red, yet every {@code texture(EntityDepth, uv)} in the layer
+ * shader read 1.0. Everything outside the matte was therefore rejected and the layer stayed
+ * transparent.</p>
  *
- * <p>That comparison is also exactly what makes occlusion work. A block in front of an actor wrote
- * a nearer depth into the world buffer, so the actor's depth and the world's differ, and the pixel
- * is rejected. The same is true for an actor that was <em>not</em> selected standing in front of a
- * selected one: the world depth is the unselected actor, so the selected one stays hidden. There
- * is no per-pixel bookkeeping to get wrong — the hardware depth buffer already did it.</p>
+ * <p>The replacement removes the questionable operation instead of trying to guess at sampler
+ * state. The actor is rendered <b>once more</b>, into an RGBA target, with the world depth already
+ * copied into that target's depth attachment. The hardware then performs exactly the comparison the
+ * shader used to do: an actor fragment passes {@code LEQUAL} only where the world depth at that
+ * pixel is not nearer, so blocks in front still hide the actor. What remains in the colour target
+ * is a transparent-background cut-out of the selected actors — a normal colour texture whose alpha
+ * the layer shader can sample with no depth-texture special case at all.</p>
+ *
+ * <h2>Occlusion is baked, not sampled</h2>
+ * <p>{@code entityOcclusion} now selects which of two targets a layer reads: one rendered after the
+ * world depth was blitted in (occluded), and one rendered without it (the "see through walls"
+ * option). A composition that only uses one mode pays for one pass; a mixed composition pays for
+ * two. The per-layer setting also participates in the request signature, so toggling it re-renders
+ * the matte instead of silently doing nothing until the next unrelated edit.</p>
  *
  * <h2>When the pass runs</h2>
- * <p>At {@code WorldRenderEvents.AFTER_ENTITIES}, right after BBS drew the film's actors, using
- * the same camera, the same pose stack and the same transition. Rendering the same geometry with
- * the same matrices means the depth values are identical to the ones in the world buffer; the
- * shader only needs a small, distance-scaled tolerance for the 24-bit quantisation of the captured
- * depth.</p>
- *
- * <p>The one ordering problem is that a composition only becomes known at the frame overlay, which
- * runs <em>after</em> the world. The request is therefore carried over from the previous frame
- * (invisible: it is a 16 ms delay on a checkbox toggle) and, when the signature really changed,
- * the pass is re-run lazily at the overlay with the stored camera. That is what makes frame 0 of
- * an export correct instead of one frame late.</p>
+ * <p>At {@code WorldRenderEvents.AFTER_ENTITIES}, right after BBS drew the film's actors, using the
+ * same camera, pose stack and transition, so the copied world depth and the actor geometry describe
+ * the same frame. The request is carried over from the previous frame (a 16 ms delay on a checkbox
+ * toggle) and, when the signature really changed, the pass is re-run lazily at the overlay with the
+ * stored camera and the stored world-depth framebuffer. That is what makes frame 0 of an export
+ * correct instead of one frame late.</p>
  */
 public final class ReplayEntityMask
 {
@@ -72,13 +82,12 @@ public final class ReplayEntityMask
     private static final Set<String> requestedIds = new LinkedHashSet<>();
     private static String requestedSignature = "";
     private static boolean requested;
+    private static boolean requestOccluded;
+    private static boolean requestUnoccluded;
 
-    /* Target. */
-    private static int framebuffer;
-    private static int depthTexture;
-    private static int width;
-    private static int height;
-    private static boolean available;
+    /* Two coverage targets: with and without the world depth test. */
+    private static final Target occludedTarget = new Target(true);
+    private static final Target plainTarget = new Target(false);
 
     /* Frame bookkeeping. */
     private static int serial;
@@ -87,12 +96,24 @@ public final class ReplayEntityMask
     private static int renderedEntities;
     private static boolean loggedFailure;
 
-    /* Camera of the current world frame, captured at AFTER_ENTITIES for the lazy re-run. */
+    /* Where the world depth for the current mask came from. The lazy overlay re-run needs the same
+     * source, and it is still bound to the world framebuffer at that point in the frame. */
+    private static int lastDepthSource;
+    private static boolean lastDepthSourceValid;
+
+    /* Camera and world matrices of the current frame.
+     *
+     * <p>Captured at BEFORE_ENTITIES, not at AFTER_ENTITIES. The film actor pass runs between the
+     * two and may leave the RenderSystem model-view or the pose stack on a form-local transform;
+     * reusing that state is what made the coverage pass render the actor at a completely different
+     * scale than the world (a 232 279 px silhouette for an actor a few thousand pixels tall on
+     * screen). The mask must use the exact matrices the world's own geometry used.</p> */
     private static Camera lastCamera;
     private static final MatrixStack lastStack = new MatrixStack();
     private static final Matrix4f lastModelView = new Matrix4f();
     private static final Matrix4f lastProjection = new Matrix4f();
     private static boolean hasCamera;
+    private static int capturedSerial = -1;
 
     private ReplayEntityMask()
     {}
@@ -120,6 +141,52 @@ public final class ReplayEntityMask
     }
 
     /**
+     * Captures the exact camera, pose stack and GL matrices the world actor is about to be drawn
+     * with.
+     *
+     * <p>Called from BBS' own {@code FormPoseEvents.ACTOR_BEFORE}, i.e. inside
+     * {@code FilmEntityRenderer.renderEntity} before any form code runs. Neither of the two
+     * earlier attempts worked: {@code BEFORE_ENTITIES} can fire before the world projection exists
+     * (it captured a {@code +Inf} projection and an identity model-view), and the live state at
+     * {@code AFTER_ENTITIES} is whatever the last form renderer left behind. The actor pass's own
+     * state is the only one guaranteed to be the one that just put the actor on screen.</p>
+     *
+     * <p>Our own mask pass re-enters {@code FilmEntityRenderer}, which fires this event again;
+     * {@link #inMaskRender} keeps that re-entry from overwriting the world capture.</p>
+     */
+    public static void captureActorState(FilmControllerContext context)
+    {
+        if (inMaskRender || context == null || context.stack == null || context.camera == null)
+        {
+            return;
+        }
+
+        if (BBSRendering.isIrisShadowPass())
+        {
+            return;
+        }
+
+        lastCamera = context.camera;
+        lastStack.peek().getPositionMatrix().set(context.stack.peek().getPositionMatrix());
+        lastModelView.set(RenderSystem.getModelViewMatrix());
+        lastProjection.set(RenderSystem.getProjectionMatrix());
+        capturedSerial = serial;
+        hasCamera = true;
+        updateClipPlanes(lastProjection);
+
+        if (!loggedCapture)
+        {
+            loggedCapture = true;
+            BbsAeAddon.LOGGER.info("Replay entity mask captured the world actor state: camera={} modelView={} projection={}",
+                lastCamera.getPos(), lastModelView, lastProjection);
+        }
+    }
+
+    private static boolean loggedCapture;
+    private static boolean loggedLiveFallback;
+    private static boolean inMaskRender;
+
+    /**
      * Records what the current composition needs. Cheap: it walks the layers of one document and
      * compares a signature string; nothing is allocated when nothing changed.
      */
@@ -134,8 +201,10 @@ public final class ReplayEntityMask
         Set<String> ids = new TreeSet<>();
         boolean[] all = {false};
         boolean[] any = {false};
+        boolean[] occluded = {false};
+        boolean[] unoccluded = {false};
 
-        collect(doc, project, ids, all, any, 0);
+        collect(doc, project, ids, all, any, occluded, unoccluded, 0);
 
         if (!any[0])
         {
@@ -145,12 +214,14 @@ public final class ReplayEntityMask
                 requestedSignature = "";
                 requestedIds.clear();
                 requestedFilm = "";
+                requestOccluded = false;
+                requestUnoccluded = false;
             }
 
             return;
         }
 
-        String signature = film + "|" + all[0] + "|" + String.join(",", ids);
+        String signature = film + "|" + all[0] + "|" + occluded[0] + "|" + unoccluded[0] + "|" + String.join(",", ids);
 
         if (requested && signature.equals(requestedSignature))
         {
@@ -160,12 +231,15 @@ public final class ReplayEntityMask
         requested = true;
         requestedFilm = film;
         requestAll = all[0];
+        requestOccluded = occluded[0];
+        requestUnoccluded = unoccluded[0];
         requestedIds.clear();
         requestedIds.addAll(ids);
         requestedSignature = signature;
     }
 
-    private static void collect(CompDocument doc, CompProject project, Set<String> ids, boolean[] all, boolean[] any, int depth)
+    private static void collect(CompDocument doc, CompProject project, Set<String> ids, boolean[] all,
+                                boolean[] any, boolean[] occluded, boolean[] unoccluded, int depth)
     {
         if (doc == null || doc.layers == null || depth > 8)
         {
@@ -183,6 +257,15 @@ public final class ReplayEntityMask
             {
                 any[0] = true;
 
+                if (layer.entityOcclusion)
+                {
+                    occluded[0] = true;
+                }
+                else
+                {
+                    unoccluded[0] = true;
+                }
+
                 if (layer.entityScope == CompLayer.ENTITY_SCOPE_ALL)
                 {
                     all[0] = true;
@@ -197,7 +280,7 @@ public final class ReplayEntityMask
 
             if ("precomp".equals(layer.type) && project != null && layer.precompId != null && !layer.precompId.isEmpty())
             {
-                collect(project.getComp(layer.precompId), project, ids, all, any, depth + 1);
+                collect(project.getComp(layer.precompId), project, ids, all, any, occluded, unoccluded, depth + 1);
             }
         }
     }
@@ -232,8 +315,9 @@ public final class ReplayEntityMask
     /* ------------------------------------------------------------------ render */
 
     /**
-     * Renders the mask for the current frame. Called at {@code AFTER_ENTITIES}, after BBS drew the
-     * film's actors, so the depth test order and the pose stack are the ones the world frame used.
+     * Renders the coverage mask for the current frame. Called at {@code AFTER_ENTITIES}, after BBS
+     * drew the film's actors, so the depth buffer and the pose stack are the ones the world frame
+     * used.
      */
     public static void render(net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext context)
     {
@@ -242,14 +326,25 @@ public final class ReplayEntityMask
             return;
         }
 
-        /* Remember the frame's camera even when nothing is requested: the first frame of a
-         * composition is only known at the overlay, which is too late to be inside the world. */
-        lastCamera = context.camera();
-        lastStack.peek().getPositionMatrix().set(context.matrixStack().peek().getPositionMatrix());
-        lastModelView.set(RenderSystem.getModelViewMatrix());
-        lastProjection.set(RenderSystem.getProjectionMatrix());
-        hasCamera = true;
-        updateClipPlanes(lastProjection);
+        /* Fallback for hosts that did not call beforeEntities (a load order issue, or a test
+         * driving this method directly). Normally the matrices were captured before the actor
+         * pass and are the ones the world really used. */
+        if (!hasCamera || capturedSerial != serial)
+        {
+            lastCamera = context.camera();
+            lastStack.peek().getPositionMatrix().set(context.matrixStack().peek().getPositionMatrix());
+            lastModelView.set(RenderSystem.getModelViewMatrix());
+            lastProjection.set(RenderSystem.getProjectionMatrix());
+            capturedSerial = serial;
+            hasCamera = true;
+            updateClipPlanes(lastProjection);
+
+            if (!loggedLiveFallback)
+            {
+                loggedLiveFallback = true;
+                BbsAeAddon.LOGGER.warn("Replay entity mask had no BEFORE_ENTITIES capture; using the live matrices at AFTER_ENTITIES");
+            }
+        }
 
         if (!requested)
         {
@@ -267,11 +362,26 @@ public final class ReplayEntityMask
             return;
         }
 
-        renderedEntities = draw(controller, lastCamera, context.matrixStack(), context.consumers(), transitionOf(controller, context.tickDelta()));
+        /* The world colour/depth are in the framebuffer that is current at AFTER_ENTITIES:
+         * Minecraft's main target, BBS' custom-size target, or Iris' g-buffer. Copying its depth
+         * attachment into the matte target is what turns the actor pass into a hardware occlusion
+         * test. */
+        int depthSource = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+
+        lastDepthSource = depthSource;
+        lastDepthSourceValid = depthSource != 0;
+
+        /* A private copy of the pre-actor stack: the live stack may have been left wherever the
+         * last form renderer put it. */
+        MatrixStack stack = new MatrixStack();
+
+        stack.peek().getPositionMatrix().set(lastStack.peek().getPositionMatrix());
+
+        renderedEntities = draw(controller, lastCamera, stack, context.consumers(),
+            transitionOf(controller, context.tickDelta()), depthSource);
         renderedSerial = serial;
         renderedSignature = requestedSignature;
     }
-
 
     /**
      * Makes sure the mask belongs to the current frame and the current selection.
@@ -279,7 +389,7 @@ public final class ReplayEntityMask
      * <p>Called from the frame overlay before a composition is drawn. Normally this is a no-op
      * (the AFTER_ENTITIES pass already produced it). It only renders when the frame has not been
      * masked yet — the first frame of a newly opened composition or of an export — or when the
-     * selection changed after the world was rendered.</p>
+     * selection/occlusion changed after the world was rendered.</p>
      */
     public static void ensureCurrent(CompProject project, CompDocument doc)
     {
@@ -290,8 +400,21 @@ public final class ReplayEntityMask
             return;
         }
 
-        if (renderedSerial == serial && requestedSignature.equals(renderedSignature))
+        /* The world pass has already produced the mask for this frame. Re-rendering it here — to
+         * pick up a request that changed between the panel's last UI frame and this overlay — was
+         * clearing a valid target with a second render whose GL state is the composition's, not
+         * the world's. Let the next AFTER_ENTITIES pass apply a changed selection instead; the
+         * only case that genuinely needs a lazy render is the first frame of an export, where the
+         * mask has not run for this serial at all. */
+        /* Once a coverage target exists, keep it. Under Iris the world frame can bump the serial
+         * more than once (shadow/main/extra passes); re-rendering at the overlay then ran the
+         * actor pass in a composition GL state, cleared the valid target and left the layer
+         * transparent — the "works without shaders, empty with BSL" split. Only the first frame
+         * of a composition/export has no target and needs the lazy render. */
+        if (isAvailable())
         {
+            renderedSignature = requestedSignature;
+
             return;
         }
 
@@ -320,7 +443,9 @@ public final class ReplayEntityMask
 
         try
         {
-            renderedEntities = draw(controller, lastCamera, stack, null, transitionOf(controller, MinecraftClient.getInstance().getTickDelta()));
+            renderedEntities = draw(controller, lastCamera, stack, null,
+                transitionOf(controller, MinecraftClient.getInstance().getTickDelta()),
+                lastDepthSourceValid ? lastDepthSource : 0);
         }
         finally
         {
@@ -395,20 +520,64 @@ public final class ReplayEntityMask
     }
 
     /**
-     * Draws the selected replays into the depth target and returns how many were rendered.
+     * Renders every requested coverage target and returns how many actors were drawn.
      */
-    private static int draw(BaseFilmController controller, Camera camera, MatrixStack stack, VertexConsumerProvider consumers, float transition)
+    private static int draw(BaseFilmController controller, Camera camera, MatrixStack stack, VertexConsumerProvider consumers,
+                            float transition, int depthSource)
     {
         if (controller.film == null || controller.film.replays == null)
         {
             return 0;
         }
 
-        if (!ensureTarget())
+        MinecraftClient client = MinecraftClient.getInstance();
+
+        if (client == null || client.getFramebuffer() == null)
         {
             return 0;
         }
 
+        Framebuffer main = client.getFramebuffer();
+        int width = main.textureWidth;
+        int height = main.textureHeight;
+
+        if (width <= 0 || height <= 0)
+        {
+            return 0;
+        }
+
+        int rendered = 0;
+
+        if (requestOccluded)
+        {
+            if (occludedTarget.ensure(width, height))
+            {
+                rendered = Math.max(rendered, drawInto(occludedTarget, controller, camera, stack, consumers,
+                    transition, depthSource, true));
+            }
+        }
+
+        if (requestUnoccluded)
+        {
+            if (plainTarget.ensure(width, height))
+            {
+                rendered = Math.max(rendered, drawInto(plainTarget, controller, camera, stack, consumers,
+                    transition, 0, false));
+            }
+        }
+
+        return rendered;
+    }
+
+    /**
+     * Draws the selected replays into one coverage target.
+     *
+     * @param depthSource world framebuffer whose depth attachment should occlude the actors, or 0
+     *                    for an unoccluded pass
+     */
+    private static int drawInto(Target target, BaseFilmController controller, Camera camera, MatrixStack stack,
+                                VertexConsumerProvider consumers, float transition, int depthSource, boolean occluded)
+    {
         int previousFramebuffer = GL11.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
         int[] previousViewport = new int[4];
         boolean previousDepth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
@@ -424,68 +593,130 @@ public final class ReplayEntityMask
 
         boolean queued = FormRenderLast.suspend();
         int rendered = 0;
+        boolean depthReady = false;
 
         try
         {
-            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebuffer);
-            GlStateManager._viewport(0, 0, width, height);
-            GlStateManager._disableScissorTest();
-            GlStateManager._disableBlend();
-            GlStateManager._enableDepthTest();
-            GlStateManager._depthMask(true);
-            GlStateManager._depthFunc(GL11.GL_LEQUAL);
-            /* Depth only: the entity shaders may write any colour they like, and letting them
-             * would cost fill rate for pixels nobody reads. */
-            GlStateManager._colorMask(false, false, false, false);
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, target.framebuffer);
+            GlStateManager._viewport(0, 0, target.width, target.height);
+            GL30.glDrawBuffer(GL30.GL_COLOR_ATTACHMENT0);
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            GL11.glDisable(GL11.GL_BLEND);
+            GL11.glDisable(GL11.GL_CULL_FACE);
+            /* Raw GL on purpose: the coverage pass depends on these four bits, and a stale
+             * GlStateManager cache would silently skip the call that enables them. */
+            GL11.glColorMask(true, true, true, true);
+            GL11.glDepthMask(true);
+            GL11.glDepthFunc(GL11.GL_LEQUAL);
 
-            GL11.glClearDepth(1.0D);
-            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+            /* Transparent background: alpha is the matte. */
+            GL11.glClearColor(0F, 0F, 0F, 0F);
+            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
 
-            for (Replay replay : controller.film.replays.getList())
+            if (occluded)
             {
-                if (replay == null || !keeps(replay))
-                {
-                    continue;
-                }
+                depthReady = copyWorldDepth(target, depthSource);
+            }
 
-                IEntity entity = controller.entities.get(replay.getId());
+            if (depthReady)
+            {
+                GL11.glEnable(GL11.GL_DEPTH_TEST);
+            }
+            else
+            {
+                GL11.glDisable(GL11.GL_DEPTH_TEST);
+                GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+            }
 
-                if (entity == null || entity.getForm() == null)
-                {
-                    continue;
-                }
+            /* Re-apply the world matrices captured before the actor pass. Without this the form
+             * renderers run under whatever model-view the actor pass happened to leave behind,
+             * which is how the same actor was drawn at an entirely different screen scale. */
+            Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+            MatrixStack modelView = RenderSystem.getModelViewStack();
 
-                try
-                {
-                    FilmControllerContext filmContext = FilmControllerContext.instance
-                        .setup(controller.entities, entity, replay, camera, stack, consumers, transition)
-                        .shadow(false, 0F)
-                        .nameTag("")
-                        .relative(false);
+            modelView.push();
+            modelView.peek().getPositionMatrix().set(lastModelView);
+            RenderSystem.applyModelViewMatrix();
+            RenderSystem.setProjectionMatrix(lastProjection, VertexSorter.BY_Z);
+            inMaskRender = true;
 
-                    FilmEntityRenderer.renderEntity(filmContext);
-                    rendered += 1;
-                }
-                catch (RuntimeException e)
+            try
+            {
+                for (Replay replay : controller.film.replays.getList())
                 {
-                    if (!loggedFailure)
+                    if (replay == null || !keeps(replay))
                     {
-                        loggedFailure = true;
-                        BbsAeAddon.LOGGER.warn("Replay entity mask could not render replay {}", replay.getId(), e);
+                        continue;
+                    }
+
+                    IEntity entity = controller.entities.get(replay.getId());
+
+                    if (entity == null || entity.getForm() == null)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        /* The world actor pass is not necessarily the last thing that touched this
+                         * entity. BBS' editor controller renders onion skins AFTER the current
+                         * actor, and each onion re-applies the replay's keyframes to a different
+                         * tick; the entity is therefore left posed at an onion tick, not at the
+                         * shot's tick. Re-rendering the matte without fixing that produced a
+                         * second, differently-posed actor (a huge close-up that did not overlap
+                         * the real one). Playback does not do onion skins, which is exactly why
+                         * the matte "worked" when the compositor was opened from film playback.
+                         * Re-apply the replay at the current tick before the coverage render. */
+                        float tick = replay.getTick(controller.getTick()) + transition;
+
+                        replay.keyframes.apply(tick, entity);
+
+                        if (entity.getForm() != null)
+                        {
+                            replay.properties.applyProperties(entity.getForm(), tick);
+                        }
+
+                        mchorse.bbs_mod.forms.renderers.utils.RenderFrame.invalidate();
+
+                        FilmControllerContext filmContext = FilmControllerContext.instance
+                            .setup(controller.entities, entity, replay, camera, stack, consumers, transition)
+                            .shadow(false, 0F)
+                            .nameTag("")
+                            .relative(false);
+
+                        FilmEntityRenderer.renderEntity(filmContext);
+                        rendered += 1;
+                    }
+                    catch (RuntimeException e)
+                    {
+                        if (!loggedFailure)
+                        {
+                            loggedFailure = true;
+                            BbsAeAddon.LOGGER.warn("Replay entity mask could not render replay {}", replay.getId(), e);
+                        }
                     }
                 }
             }
+            finally
+            {
+                inMaskRender = false;
+                RenderSystem.setProjectionMatrix(previousProjection, VertexSorter.BY_Z);
+                modelView.pop();
+                RenderSystem.applyModelViewMatrix();
+            }
+
+            target.hasColor = true;
         }
         finally
         {
             FormRenderLast.restore(queued);
 
-            GlStateManager._colorMask(previousColorMask[0] != 0, previousColorMask[1] != 0, previousColorMask[2] != 0, previousColorMask[3] != 0);
+            GL11.glColorMask(previousColorMask[0] != 0, previousColorMask[1] != 0, previousColorMask[2] != 0, previousColorMask[3] != 0);
             GlStateManager._depthFunc(previousDepthFunc);
             GlStateManager._depthMask(previousDepthMask);
 
-            if (previousDepth) GlStateManager._enableDepthTest();
-            else GlStateManager._disableDepthTest();
+            if (previousDepth) GL11.glEnable(GL11.GL_DEPTH_TEST);
+            else GL11.glDisable(GL11.GL_DEPTH_TEST);
 
             if (previousBlend) GlStateManager._enableBlend();
             else GlStateManager._disableBlend();
@@ -504,19 +735,239 @@ public final class ReplayEntityMask
             net.minecraft.client.render.BufferRenderer.resetCurrentVertexBuffer();
         }
 
+        if (target == occludedTarget)
+        {
+            renderedOcclusion = occluded && depthReady;
+
+            logOnce("Replay entity coverage: {}x{} entities={} occlusion={} depthSource={}",
+                target.width, target.height, rendered, renderedOcclusion, depthSource);
+        }
+        else
+        {
+            logOnce("Replay entity coverage (unoccluded): {}x{} entities={}",
+                target.width, target.height, rendered);
+        }
+
+        if (Boolean.getBoolean("bbsae.debugEntityMask") && target.hasColor)
+        {
+            debugStats(target, rendered);
+        }
+
         return rendered;
+    }
+
+    /**
+     * Copies the world depth attachment into the coverage target.
+     *
+     * <p>Hardware depth testing then gives exactly the result the old shader comparison wanted:
+     * the actor's own depth equals the world depth (the same geometry, the same matrices), so it
+     * passes {@code LEQUAL}; a block in front is nearer and rejects it. The blit is probed once per
+     * target size. If the driver refuses it the pass still renders — unoccluded — because an actor
+     * that shows through a wall is a far better failure than an invisible layer.</p>
+     */
+    private static boolean copyWorldDepth(Target target, int sourceFbo)
+    {
+        if (sourceFbo == 0 || sourceFbo == target.framebuffer || !target.withDepth)
+        {
+            return false;
+        }
+
+        if (target.depthChecked && !target.depthOk)
+        {
+            return false;
+        }
+
+        int oldRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+        int oldDraw = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        boolean ok = false;
+
+        try
+        {
+            if (!target.depthChecked)
+            {
+                drainErrors();
+            }
+
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, sourceFbo);
+            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, target.framebuffer);
+            GL30.glBlitFramebuffer(0, 0, target.width, target.height, 0, 0, target.width, target.height,
+                GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+
+            if (!target.depthChecked)
+            {
+                int error = GL11.glGetError();
+
+                target.depthChecked = true;
+                target.depthOk = error == GL11.GL_NO_ERROR;
+                ok = target.depthOk;
+
+                if (ok)
+                {
+                    BbsAeAddon.LOGGER.info("Replay entity occlusion: world depth {}x{} copied from framebuffer {}",
+                        target.width, target.height, sourceFbo);
+                }
+                else
+                {
+                    BbsAeAddon.LOGGER.warn("Replay entity occlusion unavailable (GL error {}); the matte will render unoccluded",
+                        error);
+                }
+            }
+            else
+            {
+                ok = target.depthOk;
+            }
+        }
+        catch (RuntimeException e)
+        {
+            target.depthChecked = true;
+            target.depthOk = false;
+
+            BbsAeAddon.LOGGER.warn("Replay entity occlusion unavailable; the matte will render unoccluded", e);
+        }
+        finally
+        {
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, oldRead);
+            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER,
+                oldDraw == target.framebuffer ? target.framebuffer : oldDraw);
+        }
+
+        return ok;
+    }
+
+    private static void drainErrors()
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            if (GL11.glGetError() == GL11.GL_NO_ERROR)
+            {
+                return;
+            }
+        }
+    }
+
+    private static boolean loggedCoverage;
+    private static boolean loggedPlain;
+
+    private static void logOnce(String message, Object... args)
+    {
+        if (message.startsWith("Replay entity coverage:") ? loggedCoverage : loggedPlain)
+        {
+            return;
+        }
+
+        if (message.startsWith("Replay entity coverage:"))
+        {
+            loggedCoverage = true;
+        }
+        else
+        {
+            loggedPlain = true;
+        }
+
+        BbsAeAddon.LOGGER.info(message, args);
+    }
+
+    /** One-shot readback: the proof that the coverage target is not empty. */
+    private static void debugStats(Target target, int rendered)
+    {
+        if (target.statsLogged)
+        {
+            return;
+        }
+
+        target.statsLogged = true;
+
+        ByteBuffer buffer = MemoryUtil.memAlloc(target.width * target.height * 4);
+        int oldRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+
+        try
+        {
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, target.framebuffer);
+            GL11.glReadPixels(0, 0, target.width, target.height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buffer);
+
+            int covered = 0;
+            int minX = target.width;
+            int minY = target.height;
+            int maxX = -1;
+            int maxY = -1;
+
+            for (int y = 0; y < target.height; y++)
+            {
+                for (int x = 0; x < target.width; x++)
+                {
+                    int i = (x + y * target.width) * 4;
+                    int r = buffer.get(i) & 0xFF;
+                    int g = buffer.get(i + 1) & 0xFF;
+                    int b = buffer.get(i + 2) & 0xFF;
+                    int a = buffer.get(i + 3) & 0xFF;
+
+                    if (a > 8 || Math.max(r, Math.max(g, b)) > 8)
+                    {
+                        covered++;
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x);
+                        maxY = Math.max(maxY, y);
+                    }
+                }
+            }
+
+            BbsAeAddon.LOGGER.info("Replay entity coverage stats: {} covered of {} ({}x{}), bbox=[{},{}..{},{}], entities={}",
+                covered, target.width * target.height, target.width, target.height, minX, minY, maxX, maxY, rendered);
+
+            if (Boolean.getBoolean("bbsae.debugEntityDump"))
+            {
+                dumpCoverage(target, buffer);
+            }
+        }
+        finally
+        {
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, oldRead);
+            MemoryUtil.memFree(buffer);
+        }
+    }
+
+    /** Writes the raw coverage target to a PNG so the mask can be inspected directly. */
+    private static void dumpCoverage(Target target, ByteBuffer buffer)
+    {
+        try
+        {
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+                target.width, target.height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+
+            for (int y = 0; y < target.height; y++)
+            {
+                for (int x = 0; x < target.width; x++)
+                {
+                    int i = (x + y * target.width) * 4;
+                    int r = buffer.get(i) & 0xFF;
+                    int g = buffer.get(i + 1) & 0xFF;
+                    int b = buffer.get(i + 2) & 0xFF;
+                    int a = buffer.get(i + 3) & 0xFF;
+
+                    image.setRGB(x, target.height - 1 - y, (a << 24) | (r << 16) | (g << 8) | b);
+                }
+            }
+
+            java.io.File file = new java.io.File(MinecraftClient.getInstance().runDirectory,
+                "screenshots/bbsae-entity-coverage.png");
+
+            javax.imageio.ImageIO.write(image, "png", file);
+            BbsAeAddon.LOGGER.info("Replay entity coverage dumped to {}", file.getAbsolutePath());
+        }
+        catch (Exception e)
+        {
+            BbsAeAddon.LOGGER.warn("Could not dump the replay entity coverage", e);
+        }
     }
 
     private static float nearPlane = 0.05F;
     private static float farPlane = 1024F;
 
     /**
-     * Extracts the world camera's near/far from its projection matrix.
-     *
-     * <p>The depth comparison happens in view-space blocks, so the shader needs the same clip
-     * planes the world was rendered with. Reading them from the matrix is exact and survives a
-     * changed render distance or a custom film camera; the defaults only apply for an
-     * orthographic projection, where depth is linear anyway.</p>
+     * Extracts the world camera's near/far from its projection matrix. Kept as diagnostics and for
+     * the depth-linearisation helper used by the mask inspector; the matte itself no longer
+     * compares depth in the shader.
      */
     private static void updateClipPlanes(Matrix4f projection)
     {
@@ -558,86 +1009,165 @@ public final class ReplayEntityMask
         return requestAll || requestedIds.contains(replay.getId());
     }
 
-    /* ------------------------------------------------------------------ target */
+    /* ------------------------------------------------------------------ targets */
 
-    private static boolean ensureTarget()
+    /**
+     * One RGBA coverage target. The optional depth attachment is only needed for the occluded
+     * pass; the unoccluded pass never enables depth testing.
+     */
+    private static final class Target
     {
-        MinecraftClient client = MinecraftClient.getInstance();
+        final boolean withDepth;
+        int framebuffer;
+        int colorTexture;
+        int depthTexture;
+        int width;
+        int height;
+        boolean available;
+        boolean hasColor;
+        boolean statsLogged;
+        boolean depthChecked;
+        boolean depthOk;
 
-        if (client == null || client.getFramebuffer() == null)
+        Target(boolean withDepth)
         {
-            return false;
+            this.withDepth = withDepth;
         }
 
-        Framebuffer main = client.getFramebuffer();
-        int w = main.textureWidth;
-        int h = main.textureHeight;
-
-        if (w <= 0 || h <= 0)
+        boolean ensure(int w, int h)
         {
-            return false;
+            if (this.framebuffer != 0 && this.width == w && this.height == h && this.available)
+            {
+                return true;
+            }
+
+            this.release();
+
+            /* Allocation happens while the composition's layer target is current. Restore the
+             * framebuffer, texture unit and texture binding afterwards: leaving unit 0 or the
+             * default framebuffer bound here would make the next layer draw into the screen. */
+            int previousFramebuffer = GL11.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
+            int previousActive = GL11.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
+            int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+
+            this.width = w;
+            this.height = h;
+            this.colorTexture = GL11.glGenTextures();
+
+            GlStateManager._bindTexture(this.colorTexture);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA8, w, h, 0,
+                GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, (ByteBuffer) null);
+
+            this.framebuffer = GL30.glGenFramebuffers();
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.framebuffer);
+            GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, this.colorTexture, 0);
+            GL30.glDrawBuffer(GL30.GL_COLOR_ATTACHMENT0);
+
+            if (this.withDepth)
+            {
+                this.depthTexture = GL11.glGenTextures();
+                GlStateManager._bindTexture(this.depthTexture);
+                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
+                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+                GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT24, w, h, 0,
+                    GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, (ByteBuffer) null);
+                GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D, this.depthTexture, 0);
+            }
+
+            this.available = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER) == GL30.GL_FRAMEBUFFER_COMPLETE;
+
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, previousFramebuffer);
+            GL13.glActiveTexture(previousActive);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
+
+            this.hasColor = false;
+            this.statsLogged = false;
+            this.depthChecked = false;
+            this.depthOk = false;
+
+            if (!this.available)
+            {
+                BbsAeAddon.LOGGER.warn("Replay entity coverage target {}x{} is incomplete; the layer will be empty", w, h);
+            }
+
+            return this.available;
         }
 
-        if (depthTexture != 0 && width == w && height == h && available)
+        void release()
         {
-            return true;
+            if (this.framebuffer != 0)
+            {
+                GL30.glDeleteFramebuffers(this.framebuffer);
+                this.framebuffer = 0;
+            }
+
+            if (this.colorTexture != 0)
+            {
+                GL11.glDeleteTextures(this.colorTexture);
+                this.colorTexture = 0;
+            }
+
+            if (this.depthTexture != 0)
+            {
+                GL11.glDeleteTextures(this.depthTexture);
+                this.depthTexture = 0;
+            }
+
+            this.available = false;
+            this.hasColor = false;
+            this.depthChecked = false;
+            this.depthOk = false;
+            this.width = 0;
+            this.height = 0;
         }
-
-        release();
-
-        width = w;
-        height = h;
-        depthTexture = GL11.glGenTextures();
-
-        GlStateManager._bindTexture(depthTexture);
-        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
-        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-        /* CLAMP_TO_EDGE, not GL_CLAMP: Minecraft 1.20.1 runs a core-profile 3.2 context where
-         * GL_CLAMP was removed and glTexParameteri rejects it with GL_INVALID_ENUM. */
-        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
-        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
-        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT24, width, height, 0,
-            GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, (ByteBuffer) null);
-
-        int previous = GL11.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
-
-        ReplayEntityMask.framebuffer = GL30.glGenFramebuffers();
-        GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, ReplayEntityMask.framebuffer);
-        GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D, depthTexture, 0);
-        GL11.glDrawBuffer(GL11.GL_NONE);
-        GL11.glReadBuffer(GL11.GL_NONE);
-
-        available = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER) == GL30.GL_FRAMEBUFFER_COMPLETE;
-
-        GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, previous);
-        GlStateManager._bindTexture(0);
-
-        if (!available)
-        {
-            BbsAeAddon.LOGGER.warn("Replay entity mask target {}x{} is incomplete; the layer will be empty", width, height);
-        }
-
-        return available;
     }
 
     public static boolean isAvailable()
     {
-        return available && depthTexture != 0;
+        return (occludedTarget.hasColor && occludedTarget.available)
+            || (plainTarget.hasColor && plainTarget.available);
     }
 
+    /**
+     * The coverage texture for an entity layer.
+     *
+     * @param occluded true selects the target rendered with the world depth preloaded
+     */
+    public static int texture(boolean occluded)
+    {
+        if (occluded)
+        {
+            return occludedTarget.available && occludedTarget.hasColor ? occludedTarget.colorTexture : 0;
+        }
+
+        return plainTarget.available && plainTarget.hasColor ? plainTarget.colorTexture : 0;
+    }
+
+    /** The texture of whichever pass ran; diagnostics only. */
     public static int texture()
     {
-        return isAvailable() ? depthTexture : 0;
+        if (occludedTarget.hasColor)
+        {
+            return occludedTarget.colorTexture;
+        }
+
+        return plainTarget.hasColor ? plainTarget.colorTexture : 0;
     }
 
     public static int width()
     {
-        return width;
+        return occludedTarget.width != 0 ? occludedTarget.width : plainTarget.width;
     }
 
     public static int height()
     {
-        return height;
+        return occludedTarget.height != 0 ? occludedTarget.height : plainTarget.height;
     }
 
     /** How many entities the current mask contains; 0 means "nothing to key". */
@@ -646,23 +1176,18 @@ public final class ReplayEntityMask
         return renderedEntities;
     }
 
+    /** True when the last occluded pass really tested against a copy of the world depth. */
+    public static boolean occlusionAvailable()
+    {
+        return renderedOcclusion;
+    }
+
+    private static boolean renderedOcclusion;
+
     public static void release()
     {
-        if (framebuffer != 0)
-        {
-            GL30.glDeleteFramebuffers(framebuffer);
-            framebuffer = 0;
-        }
-
-        if (depthTexture != 0)
-        {
-            GL11.glDeleteTextures(depthTexture);
-            depthTexture = 0;
-        }
-
-        available = false;
-        width = 0;
-        height = 0;
+        occludedTarget.release();
+        plainTarget.release();
         renderedSerial = -1;
     }
 
@@ -673,10 +1198,14 @@ public final class ReplayEntityMask
         requestedSignature = "";
         requestedIds.clear();
         requestedFilm = "";
+        requestOccluded = false;
+        requestUnoccluded = false;
         renderedSignature = "";
         renderedSerial = -1;
         renderedEntities = 0;
         hasCamera = false;
+        lastDepthSource = 0;
+        lastDepthSourceValid = false;
     }
 
     /** Replay ids the current request keeps, for diagnostics and the inspector. */
@@ -690,4 +1219,3 @@ public final class ReplayEntityMask
         return requestAll;
     }
 }
-

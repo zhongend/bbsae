@@ -1507,78 +1507,57 @@ public final class ShaderSources
         """;
 
     /**
-     * Depth-keyed replay entity matte.
+     * Colour-keyed replay entity matte.
      *
-     * <p>The layer has three inputs from the same rendered frame: the world colour, the world
-     * depth and a depth-only pass that contains <b>only the selected replay entities</b>. A pixel
-     * belongs to an entity when its entity depth equals the world depth — that is the whole
-     * idea. It is lighting independent because no colour is ever compared, and it is occluded by
-     * construction: if a block is in front, the world depth is nearer than the entity depth, the
-     * two values differ, and the pixel is rejected. The same test also rejects an entity that is
-     * hidden behind another entity that was not selected.</p>
+     * <p>The layer has two inputs from the same rendered frame: the world colour, and an
+     * <b>actor-only RGBA coverage pass</b> whose alpha is 1 exactly where a selected replay entity
+     * was drawn. Occlusion is already baked into that pass by hardware depth testing against a
+     * copy of the world depth, so this shader only has to answer "is this texel an actor?" and
+     * copy the world colour there.</p>
      *
-     * <p>Depth is compared in <b>view-space units</b>, not in NDC: near the far plane one NDC unit
-     * is hundreds of blocks, so an NDC epsilon would either leak the whole background or reject a
-     * distant actor. The tolerance scales with distance, which covers the 24-bit quantisation of
-     * the captured depth buffer.</p>
+     * <p>Why not compare depth textures here? Because that is the operation that failed on the
+     * target stack: the depth target demonstrably contained the actor, the full-screen program ran,
+     * yet every depth sample read 1.0. An RGBA texture has no compare mode, no shadow-sampler
+     * interpretation and no depth-attachment state to inherit — it is the same texture path every
+     * other layer already uses.</p>
+     *
+     * <p>Coverage is {@code max(alpha, any strong colour channel)}. Alpha is the normal case; the
+     * colour fallback covers additive form renderers that emit RGB with alpha 0. The target is
+     * cleared to transparent black, so neither term can be set by the background.</p>
      */
     public static final String ENTITY_KEY = """
         #version 150 core
 
         uniform sampler2D WorldColor;
-        uniform sampler2D WorldDepth;
-        uniform sampler2D EntityDepth;
+        uniform sampler2D EntityMask;
         uniform mat4 InvMvp;
         uniform vec4 Rect;
         uniform vec2 DepthTexel;
-        uniform float Near;
-        uniform float Far;
-        uniform float Tolerance;
         uniform float Erode;
         uniform float Feather;
-        uniform int UseOcclusion;
         uniform vec4 Tint;
+        uniform int DebugView;
 
         in vec2 vUv;
         out vec4 fragColor;
 
-        float linearDepth(float d)
-        {
-            return (Near * Far) / max(Far - d * (Far - Near), 0.0001);
-        }
-
         float coverage(vec2 uv)
         {
-            float de = texture(EntityDepth, uv).r;
+            vec4 m = texture(EntityMask, uv);
+            float rgb = max(m.r, max(m.g, m.b));
 
-            /* Nothing was rendered at this texel (the mask target is cleared to 1). */
-            if (de >= 0.9999995)
-            {
-                return 0.0;
-            }
-
-            if (UseOcclusion == 0)
-            {
-                return 1.0;
-            }
-
-            float dw = texture(WorldDepth, uv).r;
-
-            /* Sky/void in the world frame: the entity cannot be in front of it. */
-            if (dw >= 0.9999995)
-            {
-                return 0.0;
-            }
-
-            float le = linearDepth(de);
-            float lw = linearDepth(dw);
-            float tol = max(Tolerance, le * 0.0015);
-
-            return 1.0 - smoothstep(tol, tol + max(tol, le * 0.003), abs(lw - le));
+            return clamp(max(m.a, step(0.004, rgb)), 0.0, 1.0);
         }
 
         void main()
         {
+            if (DebugView == 3)
+            {
+                /* "Did the pass reach the target at all?" — before any mapping. */
+                fragColor = vec4(0.0, 1.0, 0.0, 1.0);
+                return;
+            }
+
             /* Screen position -> layer-local composition pixels -> world-frame UV. The layer
              * target is drawn with the layer's own model/projection, so its inverse is the only
              * thing needed to know which world pixel a fragment samples. */
@@ -1594,6 +1573,22 @@ public final class ShaderSources
 
             /* Framebuffer copies are bottom-up; composition space is top-down. */
             vec2 suv = vec2(uv.x, 1.0 - uv.y);
+
+            if (DebugView == 1)
+            {
+                /* Verification view: the coverage texture itself, opaque. If this is black the
+                 * mask pass produced nothing; if it is white the sampling path works. */
+                fragColor = vec4(vec3(coverage(suv)), 1.0);
+                return;
+            }
+
+            if (DebugView == 2)
+            {
+                /* Verification view: the world-frame UV, so a wrong mapping is visible. */
+                fragColor = vec4(suv, 0.0, 1.0);
+                return;
+            }
+
             float a = coverage(suv);
 
             if (Erode > 0.5)

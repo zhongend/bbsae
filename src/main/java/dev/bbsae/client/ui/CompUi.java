@@ -268,6 +268,354 @@ public final class CompUi
         };
     }
 
+    /* --------------------------------------------------------- toolbar geometry */
+
+    /**
+     * Geometry of the editor's top bar.
+     *
+     * <p>This is pure arithmetic on purpose. The old header placed the right-hand buttons with
+     * {@code x = 1F - right} and then advanced {@code right} by the <em>next</em> button's width,
+     * which made "设置" (48 px wide, placed immediately after the 18 px focus button) overlap the
+     * focus button by 22 px at every width. A layout that can be asserted in a unit test cannot
+     * regress that way unnoticed.</p>
+     *
+     * <p>Priority, left to right: the right cluster is anchored to the right edge and grows
+     * leftwards; the left cluster grows rightwards. When they would collide, low-priority actions
+     * disappear (save → export → render → timecode → frame step → replay → title) rather than
+     * overlap. Focus and settings are never hidden.</p>
+     */
+    public static HeaderLayout headerLayout(int width, int control)
+    {
+        int w = Math.max(0, width);
+        int c = Math.max(12, control);
+
+        boolean showTitle = w >= 880;
+        boolean showReplay = w >= 720;
+        boolean showTimecode = w >= 620;
+        boolean showFrames = w >= 480;
+        boolean showRender = w >= 780;
+        boolean showExport = w >= 860;
+        boolean showSave = w >= 980;
+        boolean showPlay = w >= 120;
+
+        int[] left;
+        int[] right;
+
+        while (true)
+        {
+            left = leftPositions(w, c, showTitle, showReplay, showPlay, showTimecode, showFrames);
+            right = rightPositions(w, c, showRender, showExport, showSave);
+
+            if (left[9] + 8 <= right[5] || (!showTitle && !showReplay && !showPlay && !showTimecode && !showFrames))
+            {
+                break;
+            }
+
+            if (showSave)
+            {
+                showSave = false;
+            }
+            else if (showExport)
+            {
+                showExport = false;
+            }
+            else if (showRender)
+            {
+                showRender = false;
+            }
+            else if (showTimecode)
+            {
+                showTimecode = false;
+            }
+            else if (showFrames)
+            {
+                showFrames = false;
+            }
+            else if (showReplay)
+            {
+                showReplay = false;
+            }
+            else if (showTitle)
+            {
+                showTitle = false;
+            }
+            else
+            {
+                showPlay = false;
+            }
+        }
+
+        return new HeaderLayout(w, c, showTitle, showReplay, showPlay, showTimecode, showFrames,
+            showRender, showExport, showSave, left, right);
+    }
+
+    /** Left cluster: title, replay selector, play, frame step, timecode. */
+    private static int[] leftPositions(int w, int c, boolean title, boolean replay, boolean play,
+                                       boolean timecode, boolean frames)
+    {
+        int x = 8;
+        int titleX = x;
+
+        if (title)
+        {
+            x += 92;
+        }
+
+        int replayX = x;
+        int replayW = Math.max(96, Math.min(150, w - 600));
+
+        if (replay)
+        {
+            x += replayW + 6;
+        }
+
+        int playX = x;
+
+        if (play)
+        {
+            x += 48;
+        }
+
+        int prevX = x;
+        int nextX = x + c + 2;
+
+        if (frames)
+        {
+            x += c * 2 + 8;
+        }
+
+        int timecodeX = x;
+        int timecodeW = Math.max(70, Math.min(86, w - x - 330));
+
+        if (timecode)
+        {
+            x += timecodeW;
+        }
+
+        return new int[] {titleX, replayX, replayW, playX, prevX, nextX, timecodeX, timecodeW, x, x};
+    }
+
+    /** Right cluster: anchored to {@code width - margin}, grown leftwards by each width + gap. */
+    private static int[] rightPositions(int w, int c, boolean render, boolean export, boolean save)
+    {
+        int right = Math.max(0, w - 8);
+        int focusX = right - c;
+
+        right = focusX - 8;
+
+        int settingsX = right - 48;
+
+        right = settingsX - 8;
+
+        int renderX = -1;
+        int exportX = -1;
+        int saveX = -1;
+
+        if (render)
+        {
+            renderX = right - 54;
+            right = renderX - 8;
+        }
+
+        if (export)
+        {
+            exportX = right - 54;
+            right = exportX - 8;
+        }
+
+        if (save)
+        {
+            saveX = right - 48;
+            right = saveX - 8;
+        }
+
+        int start = focusX;
+
+        if (settingsX < start) start = settingsX;
+        if (renderX >= 0 && renderX < start) start = renderX;
+        if (exportX >= 0 && exportX < start) start = exportX;
+        if (saveX >= 0 && saveX < start) start = saveX;
+
+        return new int[] {focusX, settingsX, renderX, exportX, saveX, start};
+    }
+
+    /** Resolved top-bar layout. All X values are relative to the 24 px header. */
+    public static final class HeaderLayout
+    {
+        public final int width;
+        public final int control;
+        public final boolean showTitle;
+        public final boolean showReplay;
+        public final boolean showPlay;
+        public final boolean showTimecode;
+        public final boolean showFrames;
+        public final boolean showRender;
+        public final boolean showExport;
+        public final boolean showSave;
+
+        public final int titleX;
+        public final int replayX;
+        public final int replayW;
+        public final int playX;
+        public final int prevX;
+        public final int nextX;
+        public final int timecodeX;
+        public final int timecodeW;
+        public final int focusX;
+        public final int settingsX;
+        public final int renderX;
+        public final int exportX;
+        public final int saveX;
+        public final int leftEnd;
+        public final int rightStart;
+
+        HeaderLayout(int width, int control, boolean showTitle, boolean showReplay, boolean showPlay,
+                     boolean showTimecode, boolean showFrames, boolean showRender, boolean showExport,
+                     boolean showSave, int[] left, int[] right)
+        {
+            this.width = width;
+            this.control = control;
+            this.showTitle = showTitle;
+            this.showReplay = showReplay;
+            this.showPlay = showPlay;
+            this.showTimecode = showTimecode;
+            this.showFrames = showFrames;
+            this.showRender = showRender;
+            this.showExport = showExport;
+            this.showSave = showSave;
+
+            this.titleX = left[0];
+            this.replayX = left[1];
+            this.replayW = left[2];
+            this.playX = left[3];
+            this.prevX = left[4];
+            this.nextX = left[5];
+            this.timecodeX = left[6];
+            this.timecodeW = left[7];
+            this.leftEnd = left[8];
+
+            this.focusX = right[0];
+            this.settingsX = right[1];
+            this.renderX = right[2];
+            this.exportX = right[3];
+            this.saveX = right[4];
+            this.rightStart = right[5];
+        }
+    }
+
+    /**
+     * Geometry of the floating preview bar.
+     *
+     * <p>The filter chip is a collapsible group, not a three-state cycle: the header stays in the
+     * row and a small three-row menu opens below it. The chip is kept even when the wide toggles
+     * no longer fit, because hiding the one control this change is about would make narrow
+     * previews unable to choose a filter at all. The FX / mask / BBS toggles are dropped from the
+     * right (BBS first) instead of being squeezed.</p>
+     */
+    public static PreviewBarLayout previewBarLayout(int previewWidth, int control, boolean barCollapsed, boolean filterExpanded)
+    {
+        int c = Math.max(12, control);
+        int toggleW = 58;
+        int filterW = 82;
+        int collapseW = 20;
+        int pad = 4;
+        int gap = 2;
+
+        if (barCollapsed)
+        {
+            return new PreviewBarLayout(24, true, false, false, false, false, true,
+                -1, -1, -1, -1, 2, -1, 22, 110, 58, false, c);
+        }
+
+        int width = Math.max(32, Math.min(292, Math.max(0, previewWidth) - 12));
+        int collapseX = width - pad - collapseW;
+        int filterX = collapseX - gap - filterW;
+        boolean showFilter = filterX >= pad;
+        int toggleLimit = (showFilter ? filterX : collapseX) - gap;
+        int x = pad;
+        boolean showEffects = false;
+        boolean showMasks = false;
+        boolean showBbs = false;
+
+        if (x + toggleW <= toggleLimit)
+        {
+            showEffects = true;
+            x += toggleW + gap;
+        }
+
+        if (x + toggleW <= toggleLimit)
+        {
+            showMasks = true;
+            x += toggleW + gap;
+        }
+
+        if (x + toggleW <= toggleLimit)
+        {
+            showBbs = true;
+            x += toggleW + gap;
+        }
+
+        int effectsX = pad;
+        int masksX = effectsX + (showEffects ? toggleW + gap : 0);
+        int bbsX = masksX + (showMasks ? toggleW + gap : 0);
+
+        int menuW = Math.min(112, Math.max(70, width - pad * 2));
+        int menuX = showFilter ? Math.max(pad, Math.min(filterX, width - pad - menuW)) : -1;
+        boolean menuVisible = showFilter && filterExpanded;
+
+        return new PreviewBarLayout(width, false, showEffects, showMasks, showBbs, showFilter, true,
+            effectsX, masksX, bbsX, filterX, collapseX, menuX, 22, menuW, 58, menuVisible, c);
+    }
+
+    /** Resolved preview-bar layout. X/Y of the menu are relative to the bar. */
+    public static final class PreviewBarLayout
+    {
+        public final int width;
+        public final boolean barCollapsed;
+        public final boolean showEffects;
+        public final boolean showMasks;
+        public final boolean showBbs;
+        public final boolean showFilter;
+        public final boolean showCollapse;
+        public final int effectsX;
+        public final int masksX;
+        public final int bbsX;
+        public final int filterX;
+        public final int collapseX;
+        public final int filterMenuX;
+        public final int filterMenuY;
+        public final int filterMenuW;
+        public final int filterMenuH;
+        public final boolean filterMenuVisible;
+        public final int control;
+
+        PreviewBarLayout(int width, boolean barCollapsed, boolean showEffects, boolean showMasks,
+                         boolean showBbs, boolean showFilter, boolean showCollapse, int effectsX,
+                         int masksX, int bbsX, int filterX, int collapseX, int filterMenuX,
+                         int filterMenuY, int filterMenuW, int filterMenuH, boolean filterMenuVisible,
+                         int control)
+        {
+            this.width = width;
+            this.barCollapsed = barCollapsed;
+            this.showEffects = showEffects;
+            this.showMasks = showMasks;
+            this.showBbs = showBbs;
+            this.showFilter = showFilter;
+            this.showCollapse = showCollapse;
+            this.effectsX = effectsX;
+            this.masksX = masksX;
+            this.bbsX = bbsX;
+            this.filterX = filterX;
+            this.collapseX = collapseX;
+            this.filterMenuX = filterMenuX;
+            this.filterMenuY = filterMenuY;
+            this.filterMenuW = filterMenuW;
+            this.filterMenuH = filterMenuH;
+            this.filterMenuVisible = filterMenuVisible;
+            this.control = control;
+        }
+    }
+
     /* ---------------------------------------------------------------- widgets */
 
     /** A neutral, left-aligned button. The workhorse — replaces the accent-filled default. */

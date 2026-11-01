@@ -46,4 +46,125 @@ public class CompUiResponsiveTest
         assertTrue(CompUi.quickWidth(300, 210) <= 150);
         assertTrue(CompUi.quickWidth(300, 210) >= 0);
     }
+
+    /**
+     * Regression: the 48 px settings button used to be placed at {@code 1F - 66} while the 18 px
+     * focus button occupied {@code 1F - 40 .. 1F - 22}, so the two overlapped by 22 px at every
+     * window size. The layout is now arithmetic, and arithmetic can be asserted.
+     */
+    @Test
+    public void headerButtonsNeverOverlap()
+    {
+        int[] widths = {320, 360, 420, 480, 520, 620, 640, 720, 780, 800, 860, 960, 980, 1080, 1280, 1600, 1920};
+        int[] controls = {14, 16, 18, 20, 22};
+
+        for (int control : controls)
+        {
+            for (int width : widths)
+            {
+                CompUi.HeaderLayout layout = CompUi.headerLayout(width, control);
+                int[][] right = {
+                    {layout.focusX, control, 1},
+                    {layout.settingsX, 48, 1},
+                    {layout.renderX, 54, layout.showRender ? 1 : 0},
+                    {layout.exportX, 54, layout.showExport ? 1 : 0},
+                    {layout.saveX, 48, layout.showSave ? 1 : 0}
+                };
+
+                int previousEnd = -1;
+
+                /* The right cluster grows leftwards: walk it left-to-right so "previous end" is
+                 * always the right edge of the control immediately to the left. */
+                for (int index = right.length - 1; index >= 0; index--)
+                {
+                    int[] button = right[index];
+
+                    if (button[2] == 0)
+                    {
+                        continue;
+                    }
+
+                    assertTrue(button[0] >= 0, "right button off-screen at " + width + "px: " + button[0]);
+                    assertTrue(button[0] + button[1] <= width, "right button past the edge at " + width + "px");
+
+                    if (previousEnd >= 0)
+                    {
+                        assertTrue(button[0] >= previousEnd,
+                            "right buttons overlap at " + width + "px, control " + control
+                                + " (start " + button[0] + " < previous end " + previousEnd + ")");
+                    }
+
+                    previousEnd = button[0] + button[1];
+                }
+
+                if (layout.showTimecode || layout.showTitle || layout.showReplay || layout.showFrames || layout.showPlay)
+                {
+                    assertTrue(layout.leftEnd + 8 <= layout.rightStart,
+                        "left/right header clusters collide at " + width + "px, control " + control
+                            + " (left ends " + layout.leftEnd + ", right starts " + layout.rightStart + ")");
+                }
+            }
+        }
+    }
+
+    @Test
+    public void previewBarFilterIsCollapsibleAndNeverOverlaps()
+    {
+        int[] widths = {64, 100, 120, 140, 160, 200, 240, 280, 320, 420, 640, 900};
+
+        for (int width : widths)
+        {
+            for (boolean expanded : new boolean[] {false, true})
+            {
+                CompUi.PreviewBarLayout layout = CompUi.previewBarLayout(width, 18, false, expanded);
+                int[] xs = {layout.effectsX, layout.masksX, layout.bbsX, layout.filterX, layout.collapseX};
+                int[] ws = {58, 58, 58, 82, 20};
+                boolean[] shown = {layout.showEffects, layout.showMasks, layout.showBbs, layout.showFilter, layout.showCollapse};
+                int previousEnd = -1;
+
+                for (int i = 0; i < xs.length; i++)
+                {
+                    if (!shown[i])
+                    {
+                        continue;
+                    }
+
+                    assertTrue(xs[i] >= 0, "preview control off-screen at " + width + "px");
+                    assertTrue(xs[i] + ws[i] <= layout.width + 1, "preview control past the bar at " + width + "px");
+
+                    if (previousEnd >= 0)
+                    {
+                        assertTrue(xs[i] >= previousEnd,
+                            "preview controls overlap at " + width + "px (x=" + xs[i] + ", previous end=" + previousEnd + ")");
+                    }
+
+                    previousEnd = xs[i] + ws[i];
+                }
+
+                if (expanded)
+                {
+                    assertEquals(layout.showFilter && width >= 112, layout.filterMenuVisible,
+                        "filter menu visibility at " + width + "px");
+
+                    if (layout.filterMenuVisible)
+                    {
+                        assertTrue(layout.filterMenuX >= 0);
+                        assertTrue(layout.filterMenuX + layout.filterMenuW <= layout.width,
+                            "filter menu past the bar at " + width + "px");
+                    }
+                }
+                else
+                {
+                    assertTrue(!layout.filterMenuVisible, "folded filter must not show its menu");
+                }
+            }
+        }
+
+        /* The chip is the control being made collapsible: it must survive far longer than the
+         * three wide toggles, otherwise narrow previews cannot change the filter at all. */
+        assertTrue(CompUi.previewBarLayout(140, 18, false, false).showFilter, "filter chip must survive at 140px");
+        assertTrue(!CompUi.previewBarLayout(64, 18, false, true).filterMenuVisible, "no menu in a 64px preview");
+        assertTrue(CompUi.previewBarLayout(300, 18, true, true).barCollapsed, "collapsed bar keeps only the arrow");
+        assertTrue(!CompUi.previewBarLayout(300, 18, true, true).showFilter, "collapsed bar hides the filter");
+    }
 }

@@ -95,6 +95,9 @@ public final class GlslProgram
     public void use()
     {
         GlStateManager._glUseProgram(this.id);
+        /* Also force it: a stale GlStateManager cache after BBS/Iris raw GL calls would leave a
+         * different program current while every uniform below still targets this one. */
+        GL20.glUseProgram(this.id);
     }
 
     public int uniform(String name)
@@ -112,6 +115,12 @@ public final class GlslProgram
     {
         GL20.glUniform1i(this.uniform(name), value);
         return this;
+    }
+
+    /** Diagnostics only: reads a sampler/int uniform back from the program object. */
+    public int getInt(String name)
+    {
+        return GL20.glGetUniformi(this.id, this.uniform(name));
     }
 
     public GlslProgram set(String name, float x, float y)
@@ -144,9 +153,12 @@ public final class GlslProgram
     public void drawFullscreen()
     {
         GlStateManager._glBindVertexArray(this.vao);
+        GL30.glBindVertexArray(this.vao);
         GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, this.vbo);
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, this.vbo);
         GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 3);
         GlStateManager._glBindVertexArray(0);
+        GL30.glBindVertexArray(0);
     }
 
     public void delete()

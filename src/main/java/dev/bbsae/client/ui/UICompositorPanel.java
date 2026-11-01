@@ -235,6 +235,15 @@ public class UICompositorPanel extends UIDashboardPanel
     private UIToggle bbsBackdropToggle;
     /** Preview-bar shortcut for the project texture-filter policy (auto/linear/nearest). */
     private UICompButton previewFilter;
+    /** The three explicit options shown when the filter chip is expanded. */
+    private UICompButton previewFilterAuto;
+    private UICompButton previewFilterLinear;
+    private UICompButton previewFilterNearest;
+    /** The dropdown surface under the filter chip. */
+    private UIElement previewFilterMenu;
+    private boolean previewFilterExpanded;
+    /** Last preview width seen by {@link #layoutPreviewBar(int)}; used by state-only re-layouts. */
+    private int lastPreviewWidth = 300;
     private UIIcon cameraViewButton;
     private UIIcon space3DButton;
     private UIIcon precompBack;
@@ -3167,23 +3176,30 @@ public class UICompositorPanel extends UIDashboardPanel
         this.bbsBackdropToggle.relative(this.previewBar).x(124).y(1).w(58).h(18);
         this.bbsBackdropToggle.tooltip(IKey.constant("在合成后面显示 BBS 实时画面"));
 
-        /* Texture filtering is a first-class image concern, not a hidden global. The label always
-         * says which policy is active; the settings page explains the automatic detection rule. */
-        this.previewFilter = new UICompButton(IKey.constant("线性: 自动"), (button) ->
-        {
-            if (this.project == null || this.project.settings == null)
-            {
-                return;
-            }
-
-            this.project.settings.textureFilter = (this.project.settings.textureFilter + 1) % 3;
-            this.updateFilterButton();
-            this.save();
-            this.setStatus("纹理过滤：" + TextureFilter.name(this.project.settings.textureFilter)
-                + " — " + TextureFilter.describe(this.project.settings.textureFilter));
-        });
+        /* Texture filtering is a first-class image concern, not a hidden global. The chip shows the
+         * active policy and folds out three explicit choices: a cycle button makes "go back one
+         * step" impossible and hides the other two states. */
+        this.previewFilter = new UICompButton(IKey.constant("线性: 自动"), (button) -> this.toggleFilterMenu());
         this.previewFilter.relative(this.previewBar).x(184).y(1).w(82).h(18);
-        this.previewFilter.tooltip(IKey.constant("自动：高分辨率素材开线性过滤，低分辨率像素素材保持最近邻。点击切换 自动 / 线性 / 最近邻"));
+        this.previewFilter.tooltip(IKey.constant("纹理过滤：自动 / 线性 / 最近邻。点击展开三个选项，再点收起；自动规则见设置 → 界面布局"));
+        this.updateFilterButton();
+
+        this.previewFilterMenu = new UIElement()
+        {
+            @Override
+            public void render(UIContext context)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xF20B0E14);
+                context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF3B4556);
+                super.render(context);
+            }
+        };
+        this.previewFilterMenu.relative(this.preview).x(190).y(28).w(110).h(58);
+        this.previewFilterAuto = this.filterOption("自动", TextureFilter.AUTO, 2);
+        this.previewFilterLinear = this.filterOption("线性", TextureFilter.LINEAR, 20);
+        this.previewFilterNearest = this.filterOption("最近邻", TextureFilter.NEAREST, 38);
+        this.previewFilterMenu.add(this.previewFilterAuto, this.previewFilterLinear, this.previewFilterNearest);
+        this.previewFilterMenu.setVisible(false);
         this.updateFilterButton();
 
         /* Collapse handle: the toggles cover the top-left of the frame, which is usually where the
@@ -3209,6 +3225,9 @@ public class UICompositorPanel extends UIDashboardPanel
         this.previewBar.add(this.effectsToggle, this.masksToggle, this.bbsBackdropToggle, this.previewFilter, this.previewCollapse);
         this.applyPreviewBarState();
         this.preview.add(this.previewBar);
+        /* After the bar so the dropdown is drawn over it, and clipped by the preview like every
+         * other floating control. */
+        this.preview.add(this.previewFilterMenu);
 
         this.cameraViewButton = new UIIcon(
             () -> this.cameraPreviewMode ? Icons.CAMERA : Icons.FRUSTUM,
@@ -3859,6 +3878,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.previewControlsCollapsed = this.project != null && this.project.settings != null && this.project.settings.previewControlsCollapsed;
+        this.previewFilterExpanded = this.project != null && this.project.settings != null && this.project.settings.previewFilterExpanded;
         this.applyPreviewBarState();
         this.loadPanelLayout();
 
@@ -4283,6 +4303,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.previewControlsCollapsed = this.project != null && this.project.settings != null && this.project.settings.previewControlsCollapsed;
+        this.previewFilterExpanded = this.project != null && this.project.settings != null && this.project.settings.previewFilterExpanded;
         this.applyPreviewBarState();
         this.loadPanelLayout();
         this.updateCompPath();
@@ -6559,6 +6580,22 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         }
 
+        /* Verification hook: open the preview-bar filter dropdown so a screenshot shows the three
+         * explicit options instead of only the folded chip. */
+        if (Boolean.getBoolean("bbsae.debugFilterMenu"))
+        {
+            this.previewFilterExpanded = true;
+            this.previewControlsCollapsed = false;
+
+            if (this.project != null && this.project.settings != null)
+            {
+                this.project.settings.previewFilterExpanded = true;
+                this.project.settings.previewControlsCollapsed = false;
+            }
+
+            this.applyPreviewBarState();
+        }
+
         /* Verification hook: force the frame-server pipeline without walking the risk dialog. */
         if (Boolean.getBoolean("bbsae.debugEncoderAe"))
         {
@@ -6616,6 +6653,11 @@ public class UICompositorPanel extends UIDashboardPanel
             case "settingslayout":
                 this.openSettings("layout");
                 return;
+
+            case "demo":
+                /* No scene changes: verification runs use this to reach the pre-switch hooks
+                 * (filter dropdown, debug shots) without opening the curve editor. */
+                break;
 
             case "onboarding":
                 this.openOnboarding();
@@ -6988,6 +7030,18 @@ public class UICompositorPanel extends UIDashboardPanel
                 layer.entityOcclusion = false;
             }
 
+            if (Boolean.getBoolean("bbsae.debugEntityOcclusion"))
+            {
+                layer.entityOcclusion = true;
+            }
+
+            /* Verification: a saturated stage makes "transparent layer" and "opaque black layer"
+             * impossible to confuse in a screenshot. */
+            if (Boolean.getBoolean("bbsae.debugEntityStage"))
+            {
+                this.doc.background = 0xFFFF00FF;
+            }
+
             /* Isolation view: the entity layer normally sits over the BBS world plate, so a
              * screenshot cannot tell a working matte from the plate showing the actor. */
             if (Boolean.getBoolean("bbsae.debugHideWorldPlate"))
@@ -6995,6 +7049,36 @@ public class UICompositorPanel extends UIDashboardPanel
                 for (CompLayer candidate : this.doc.layers)
                 {
                     if (candidate != null && "bbs".equals(candidate.type))
+                    {
+                        candidate.visible = false;
+                    }
+                }
+
+                this.refreshLayers();
+            }
+
+            /* Re-show the world plate for the "actor + plate, no duplicate" check. Applied after
+             * the hide flags so a single run can request either isolation or composition. */
+            if (Boolean.getBoolean("bbsae.debugWorldPlate"))
+            {
+                for (CompLayer candidate : this.doc.layers)
+                {
+                    if (candidate != null && "bbs".equals(candidate.type))
+                    {
+                        candidate.visible = true;
+                    }
+                }
+
+                this.refreshLayers();
+            }
+
+            /* Strongest isolation: the entity layer and its camera only. Every other pixel in the
+             * preview is therefore either the matte or the stage colour. */
+            if (Boolean.getBoolean("bbsae.debugOnlyEntityLayer"))
+            {
+                for (CompLayer candidate : this.doc.layers)
+                {
+                    if (candidate != null && !candidate.isEntityLayer() && !"camera".equals(candidate.type))
                     {
                         candidate.visible = false;
                     }
@@ -7162,6 +7246,28 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 this.debugView("entity");
                 this.time = Math.min(2F, Math.max(0F, this.doc.duration * 0.25F));
+
+                /* The film panel's asynchronous fill can win the dashboard race and leave the
+                 * replay properties on screen. Re-assert the compositor once the callback has
+                 * settled; normal use opens it from the replay menu after the film is filled. */
+                final mchorse.bbs_mod.ui.film.UIFilmPanel debugPanel = panel;
+                final mchorse.bbs_mod.film.Film debugFilm = film;
+
+                net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(
+                    new net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.EndTick()
+                    {
+                        private int reassert = 40;
+
+                        @Override
+                        public void onEndTick(net.minecraft.client.MinecraftClient client)
+                        {
+                            if (--this.reassert == 0)
+                            {
+                                BbsAeClient.openCompositorForFilm(debugPanel, debugFilm,
+                                    debugFilm.replays.getList().isEmpty() ? null : debugFilm.replays.getList().get(0));
+                            }
+                        }
+                    });
                 this.applyTimelinePage(true);
                 this.refreshSheets();
                 this.setStatus("调试：真实影片回放抠像 · " + filmId);
@@ -8579,6 +8685,54 @@ public class UICompositorPanel extends UIDashboardPanel
         this.setStatus(this.describeTextureFilter());
     }
 
+    /** Creates one row of the filter dropdown. */
+    private UICompButton filterOption(String label, int mode, int y)
+    {
+        UICompButton button = new UICompButton(IKey.constant(label), (b) -> this.applyPreviewFilter(mode));
+
+        button.relative(this.previewFilterMenu).x(2).y(y).w(1F, -4).h(18);
+        button.tooltip(IKey.constant(TextureFilter.describe(mode)));
+
+        return button;
+    }
+
+    /** Expands/folds the filter group. The chip always shows the active value. */
+    private void toggleFilterMenu()
+    {
+        if (this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        this.previewFilterExpanded = !this.previewFilterExpanded;
+        this.project.settings.previewFilterExpanded = this.previewFilterExpanded;
+        this.applyPreviewBarState();
+        this.save();
+
+        int mode = TextureFilter.projectMode(this.project);
+
+        this.setStatus(this.previewFilterExpanded
+            ? "选择纹理过滤方式（当前 " + TextureFilter.name(mode) + "）"
+            : "纹理过滤：" + TextureFilter.name(mode));
+    }
+
+    /** Applies one explicit filter policy. Unlike the old cycle, every choice is one click away. */
+    private void applyPreviewFilter(int mode)
+    {
+        if (this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        int resolved = Math.max(TextureFilter.AUTO, Math.min(TextureFilter.NEAREST, mode));
+
+        this.project.settings.textureFilter = resolved;
+        this.updateFilterButton();
+        this.applyPreviewBarState();
+        this.save();
+        this.setStatus("纹理过滤：" + TextureFilter.name(resolved) + " — " + TextureFilter.describe(resolved));
+    }
+
     /** Refreshes the preview-bar texture-filter chip from the project settings. */
     private void updateFilterButton()
     {
@@ -8591,7 +8745,17 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.previewFilter.label = IKey.constant("线性: " + TextureFilter.name(mode));
         this.previewFilter.tooltip(IKey.constant(TextureFilter.describe(mode)
-            + "。点击切换 自动 / 线性 / 最近邻；自动的检测结果也会显示在设置 → 界面布局 中。"));
+            + "。点击展开 自动 / 线性 / 最近邻，再点收起；自动的检测结果也会显示在设置 → 界面布局 中。"));
+
+        UICompButton[] options = {this.previewFilterAuto, this.previewFilterLinear, this.previewFilterNearest};
+
+        for (int i = 0; i < options.length; i++)
+        {
+            if (options[i] != null)
+            {
+                options[i].label = IKey.constant((i == mode ? "✓ " : "") + TextureFilter.name(i));
+            }
+        }
     }
 
     /**
@@ -8865,84 +9029,66 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        int w = this.area.w;
-        int control = CompUi.control();
+        /* Pure geometry in CompUi: the right cluster is laid out from the right edge by each
+         * control's own width. The previous implementation advanced by the *next* width and made
+         * the 48 px settings button overlap the 18 px focus button by 22 px at every size. */
+        CompUi.HeaderLayout layout = CompUi.headerLayout(this.area.w, CompUi.control());
+        int control = layout.control;
         int inset = Math.max(2, (24 - control) / 2);
 
-        boolean showTitle = w >= 880;
-        boolean showReplay = w >= 720;
-        boolean showTimecode = w >= 620;
-        boolean showFrames = w >= 480;
-        boolean showSave = w >= 980;
-        boolean showExport = w >= 860;
-        boolean showRender = w >= 780;
+        this.title.setVisible(layout.showTitle);
+        this.replaySelector.setVisible(layout.showReplay);
+        this.play.setVisible(layout.showPlay);
+        this.timecode.setVisible(layout.showTimecode);
+        this.prevFrame.setVisible(layout.showFrames);
+        this.nextFrame.setVisible(layout.showFrames);
+        this.save.setVisible(layout.showSave);
+        this.exportFilm.setVisible(layout.showExport);
+        this.renderMode.setVisible(layout.showRender);
 
-        this.title.setVisible(showTitle);
-        this.replaySelector.setVisible(showReplay);
-        this.timecode.setVisible(showTimecode);
-        this.prevFrame.setVisible(showFrames);
-        this.nextFrame.setVisible(showFrames);
-        this.save.setVisible(showSave);
-        this.exportFilm.setVisible(showExport);
-        this.renderMode.setVisible(showRender);
-
-        int x = 8;
-
-        if (showTitle)
+        if (layout.showTitle)
         {
-            this.title.relative(this.header).x(x).y(inset).w(86).h(control);
-            x += 92;
+            this.title.relative(this.header).x(layout.titleX).y(inset).w(86).h(control);
         }
 
-        if (showReplay)
+        if (layout.showReplay)
         {
-            int replayWidth = Math.max(96, Math.min(150, w - 600));
-
-            this.replaySelector.relative(this.header).x(x).y(inset).w(replayWidth).h(control);
-            x += replayWidth + 6;
+            this.replaySelector.relative(this.header).x(layout.replayX).y(inset).w(layout.replayW).h(control);
         }
 
-        this.play.relative(this.header).x(x).y(inset).w(44).h(control);
-        x += 48;
-
-        if (showFrames)
+        if (layout.showPlay)
         {
-            this.prevFrame.relative(this.header).x(x).y(inset).w(control).h(control);
-            this.nextFrame.relative(this.header).x(x + control + 2).y(inset).w(control).h(control);
-            x += control * 2 + 8;
+            this.play.relative(this.header).x(layout.playX).y(inset).w(44).h(control);
         }
 
-        if (showTimecode)
+        if (layout.showFrames)
         {
-            this.timecode.relative(this.header).x(x).y(inset).w(Math.max(70, Math.min(86, w - x - 330))).h(control);
+            this.prevFrame.relative(this.header).x(layout.prevX).y(inset).w(control).h(control);
+            this.nextFrame.relative(this.header).x(layout.nextX).y(inset).w(control).h(control);
         }
 
-        /* Right cluster: anchors are derived from the right edge, and each hidden action simply
-         * leaves no gap. */
-        int right = 40;
-
-        this.focusButton.relative(this.header).x(1F, -right).y(inset).w(control).h(control);
-        right += control + 8;
-
-        this.settingsButton.relative(this.header).x(1F, -right).y(inset).w(48).h(control);
-        right += 56;
-
-        if (showRender)
+        if (layout.showTimecode)
         {
-            this.renderMode.relative(this.header).x(1F, -right).y(inset).w(54).h(control);
-            right += 62;
+            this.timecode.relative(this.header).x(layout.timecodeX).y(inset).w(layout.timecodeW).h(control);
         }
 
-        if (showExport)
+        /* Focus and settings are always visible: they are the two actions the header exists for. */
+        this.focusButton.relative(this.header).x(layout.focusX).y(inset).w(control).h(control);
+        this.settingsButton.relative(this.header).x(layout.settingsX).y(inset).w(48).h(control);
+
+        if (layout.showRender)
         {
-            this.exportFilm.relative(this.header).x(1F, -right).y(inset).w(54).h(control);
-            right += 62;
+            this.renderMode.relative(this.header).x(layout.renderX).y(inset).w(54).h(control);
         }
 
-        if (showSave)
+        if (layout.showExport)
         {
-            this.save.relative(this.header).x(1F, -right).y(inset).w(48).h(control);
-            right += 56;
+            this.exportFilm.relative(this.header).x(layout.exportX).y(inset).w(54).h(control);
+        }
+
+        if (layout.showSave)
+        {
+            this.save.relative(this.header).x(layout.saveX).y(inset).w(48).h(control);
         }
     }
 
@@ -8954,14 +9100,54 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        int width = Math.max(32, Math.min(292, previewWidth - 12));
+        this.lastPreviewWidth = Math.max(48, previewWidth);
 
-        this.previewBar.relative(this.preview).x(6).y(6).w(width).h(20);
-        this.effectsToggle.setVisible(width >= 158);
-        this.masksToggle.setVisible(width >= 202);
-        this.bbsBackdropToggle.setVisible(width >= 246);
-        this.previewFilter.setVisible(width >= 278);
-        this.previewCollapse.relative(this.previewBar).x(1F, -24).y(1).w(20).h(18);
+        CompUi.PreviewBarLayout layout = CompUi.previewBarLayout(this.lastPreviewWidth, CompUi.control(),
+            this.previewControlsCollapsed, this.previewFilterExpanded);
+
+        this.previewBar.relative(this.preview).x(6).y(6).w(layout.width).h(20);
+        this.effectsToggle.setVisible(layout.showEffects);
+        this.masksToggle.setVisible(layout.showMasks);
+        this.bbsBackdropToggle.setVisible(layout.showBbs);
+        this.previewFilter.setVisible(layout.showFilter);
+        this.previewCollapse.setVisible(layout.showCollapse);
+
+        if (layout.showEffects)
+        {
+            this.effectsToggle.relative(this.previewBar).x(layout.effectsX).y(1).w(58).h(18);
+        }
+
+        if (layout.showMasks)
+        {
+            this.masksToggle.relative(this.previewBar).x(layout.masksX).y(1).w(58).h(18);
+        }
+
+        if (layout.showBbs)
+        {
+            this.bbsBackdropToggle.relative(this.previewBar).x(layout.bbsX).y(1).w(58).h(18);
+        }
+
+        if (layout.showFilter)
+        {
+            this.previewFilter.relative(this.previewBar).x(layout.filterX).y(1).w(82).h(18);
+        }
+
+        this.previewCollapse.relative(this.previewBar).x(layout.collapseX).y(1).w(20).h(18);
+
+        if (this.previewFilterMenu != null)
+        {
+            this.previewFilterMenu.setVisible(layout.filterMenuVisible);
+
+            if (layout.filterMenuVisible)
+            {
+                this.previewFilterMenu.relative(this.preview)
+                    .x(6 + layout.filterMenuX).y(6 + layout.filterMenuY)
+                    .w(layout.filterMenuW).h(layout.filterMenuH);
+                this.previewFilterMenu.resize();
+            }
+        }
+
+        this.previewBar.resize();
     }
 
     private void savePanelLayout()
@@ -10364,8 +10550,6 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        boolean collapsed = this.previewControlsCollapsed;
-
         /* The toggles are views of the settings, not their owners: a project that was saved with
          * the BBS backdrop on must show the switch as on when it is reopened. */
         if (this.project != null && this.project.settings != null)
@@ -10373,12 +10557,8 @@ public class UICompositorPanel extends UIDashboardPanel
             this.bbsBackdropToggle.setValue(this.project.settings.previewBackground == 1);
         }
 
-        this.previewBar.w(collapsed ? 24 : 200);
-        this.effectsToggle.setVisible(!collapsed);
-        this.masksToggle.setVisible(!collapsed);
-        this.bbsBackdropToggle.setVisible(!collapsed);
-        this.previewCollapse.relative(this.previewBar).x(collapsed ? 2 : 176).y(1).w(20).h(18);
-        this.previewBar.resize();
+        this.updateFilterButton();
+        this.layoutPreviewBar(this.lastPreviewWidth > 0 ? this.lastPreviewWidth : 300);
     }
 
     private UISection quickStartSection()
@@ -10415,8 +10595,8 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     private void appendEntityControls(UISection section, CompLayer layer)
     {
-        section.fields.add(UI.label(IKey.constant("深度抠像 · 只保留勾选的回放实体，其余像素透明"), 15));
-        section.fields.add(UI.label(IKey.constant("判断依据是“实体深度 = 世界深度”：方块挡在前面时两个深度不同，实体自然被挡住；全程不比较颜色，所以换光影、换材质都不影响。"), 13));
+        section.fields.add(UI.label(IKey.constant("回放实体抠像 · 只保留勾选的回放实体，其余像素透明"), 15));
+        section.fields.add(UI.label(IKey.constant("做法：把勾选的实体单独渲染到透明背景，并用世界深度做硬件遮挡测试；合成器再把这层覆盖贴回世界颜色。不比较颜色，也不依赖深度纹理采样，所以换光影、换材质都不影响。"), 13));
 
         boolean all = layer.entityScope == CompLayer.ENTITY_SCOPE_ALL;
 
@@ -10514,11 +10694,10 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.entityErode = (float) Math.max(0D, value);
             this.save();
         }));
-        section.fields.add(this.numberRow("深度容差（方块）", layer.entityTolerance, 0.001D, 4D, false, (value) ->
-        {
-            layer.entityTolerance = (float) Math.max(0.001D, value);
-            this.save();
-        }));
+        /* Depth tolerance is deliberately not exposed any more: occlusion is a hardware depth
+         * test against the world depth, not an epsilon comparison in a shader. The field stays in
+         * the project format so older compositions still load without a migration. */
+        section.fields.add(UI.label(IKey.constant("遮挡由显卡深度测试完成，旧工程的“深度容差”已不再需要。"), 13));
         section.fields.add(this.numberRow("适配（0 包含 1 覆盖 2 拉伸）", layer.imageFit, 0D, 2D, true, (value) -> layer.imageFit = value.intValue()));
 
         section.fields.add(UI.label(IKey.constant(this.entityStatus(layer)), 13));
@@ -10559,14 +10738,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         String status = "本帧抠出 " + count + " 个实体";
 
-        if (layer.entityOcclusion)
+        if (!dev.bbsae.client.render.ReplayEntityMask.isAvailable())
         {
-            dev.bbsae.client.render.SceneDepth depth = dev.bbsae.client.overlay.BbsPreviewBridge.depth();
-
-            if (depth == null || !depth.isAvailable())
-            {
-                status += " · 世界深度不可用，已退化为无遮挡（可在上面关闭遮挡）";
-            }
+            status += " · 覆盖目标尚未就绪（等待下一帧）";
+        }
+        else if (layer.entityOcclusion && !dev.bbsae.client.render.ReplayEntityMask.occlusionAvailable())
+        {
+            status += " · 世界深度复制失败，本帧退化为无遮挡";
         }
 
         return status;
