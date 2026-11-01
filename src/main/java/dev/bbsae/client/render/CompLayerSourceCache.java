@@ -286,6 +286,24 @@ public final class CompLayerSourceCache
 
             if ("precomp".equals(layer.type))
             {
+                /* The plate is a draft annotation for the 3D workspace. An export must never
+                 * contain the text "预合成（草稿）", so refuse to build a raster there: the caller
+                 * falls back to the direct path, which renders the real nested composition. */
+                if (!context.preview)
+                {
+                    if (reuseContent != null && reuseContent != reuseStraightTarget)
+                    {
+                        FboPool.release(reuseContent);
+                    }
+
+                    if (reuseStraightTarget != null)
+                    {
+                        FboPool.release(reuseStraightTarget);
+                    }
+
+                    return null;
+                }
+
                 drawPrecompPlate(layer, batcher, rect);
             }
             else
@@ -331,6 +349,9 @@ public final class CompLayerSourceCache
 
             if (result != straight)
             {
+                /* The reused staging buffer cannot be handed back any more: release it here or it
+                 * leaks one raster-sized FBO per rebuild (animated layer + a style/mask). */
+                releaseStaging(staging, straight, result);
                 straight = result;
                 staging = null;
             }
@@ -342,6 +363,7 @@ public final class CompLayerSourceCache
 
             if (masked != straight)
             {
+                releaseStaging(staging, straight, masked);
                 straight = masked;
                 staging = null;
             }
@@ -351,6 +373,10 @@ public final class CompLayerSourceCache
         catch (RuntimeException e)
         {
             dev.bbsae.BbsAeAddon.LOGGER.error("Viewport source raster failed for layer {}", layer.id, e);
+
+            /* The target was acquired above; an exception here used to leak one raster-sized FBO
+             * per failure (a broken layer re-rasterized every frame). */
+            FboPool.release(target);
 
             return null;
         }
@@ -365,6 +391,21 @@ public final class CompLayerSourceCache
         }
 
         return new Entry(target, staging, rect.x, rect.y, rect.width, rect.height, signature);
+    }
+
+    /**
+     * Releases the reused staging buffer when a pixel-op produced a new target.
+     *
+     * <p>On the reuse path the entry's two buffers are swapped into the new raster instead of being
+     * released. As soon as a style or a mask allocates another target, the staging buffer can no
+     * longer be handed back, and dropping the local reference leaked it.</p>
+     */
+    private static void releaseStaging(GlFramebuffer staging, GlFramebuffer replaced, GlFramebuffer result)
+    {
+        if (staging != null && staging != replaced && staging != result)
+        {
+            FboPool.release(staging);
+        }
     }
 
     /**
@@ -388,10 +429,14 @@ public final class CompLayerSourceCache
             return content;
         }
 
-        boolean hasMasks = layer.masks != null && !layer.masks.isEmpty();
+        /* The 蒙版 / 效果 A/B switches in the preview bar must reach the baked path too. Before
+         * this the proxy context re-defaulted both flags to true, so a 3D layer kept its masks when
+         * 蒙版 was off and lost its masks when 效果 was off. */
+        boolean hasMasks = parent.renderMasks && layer.masks != null && !layer.masks.isEmpty();
+        boolean hasEffects = parent.renderEffects && layer.effects != null && !layer.effects.isEmpty();
+        boolean hasStyles = parent.renderEffects && layer.styles != null && !layer.styles.isEmpty();
 
-        if ((layer.effects == null || layer.effects.isEmpty())
-            && (layer.styles == null || layer.styles.isEmpty()) && !hasMasks)
+        if (!hasEffects && !hasStyles && !hasMasks)
         {
             return content;
         }
@@ -406,7 +451,16 @@ public final class CompLayerSourceCache
 
         CompRenderContext context = new CompRenderContext(parent.project, proxy, parent.time, null, null, null);
         Matrix4f world = new Matrix4f().scale(scale).translate(-rect.x, -rect.y, 0F);
-        EffectSpace space = EffectSpace.ofBounds(layer, world, context, rect.x, rect.y, rect.width, rect.height);
+
+        /* The effect space is the LAYER rect, not the padded raster: the padding exists so a blur
+         * can spread, but generative effects (gradient, checkerboard, circle, grid, halftone) must
+         * keep covering exactly the layer or they shift and stretch whenever a glow is added. */
+        float pad = EffectPadding.of(layer, parent.frame);
+        float bx = rect.x + pad;
+        float by = rect.y + pad;
+        float bw = Math.max(1F, rect.width - pad * 2F);
+        float bh = Math.max(1F, rect.height - pad * 2F);
+        EffectSpace space = EffectSpace.ofBounds(layer, world, context, bx, by, bw, bh);
         GlFramebuffer current = content;
 
         /* Masks are layer pixels, so they belong in the same raster and before the effects: a
@@ -428,7 +482,7 @@ public final class CompLayerSourceCache
             }
         }
 
-        if (layer.effects != null)
+        if (hasEffects)
         for (CompEffect effect : layer.effects)
         {
             if (effect == null || !effect.enabled)
@@ -464,7 +518,7 @@ public final class CompLayerSourceCache
          * shadow must be clipped by the same raster margin (EffectPadding) and must follow the
          * plane in 3D. Baking them here makes the viewport and the final 3D frame agree, and lets
          * the composition skip its after-projection style pass for this layer. */
-        if (layer.styles != null)
+        if (hasStyles)
         {
             for (CompStyle style : layer.styles)
             {
@@ -540,6 +594,9 @@ public final class CompLayerSourceCache
             case "rgb_split" -> scaleParam(scaled, "amount", scale);
             case "displacement", "bulge", "pinch", "twist", "turbulent_displace" ->
                 scaleParam(scaled, "amount", scale);
+            case "turbulent_displace_size" -> scaleParam(scaled, "size", scale);
+            case "noise" -> scaleParam(scaled, "scale", scale);
+            case "grain" -> scaleParam(scaled, "size", scale);
             case "wave" ->
             {
                 scaleParam(scaled, "amplitude", scale);
@@ -833,6 +890,10 @@ public final class CompLayerSourceCache
         h = mix(h, layer.textStrokeAt(frame));
         h = mix(h, layer.align);
         h = mix(h, layer.wrap ? 1 : 0);
+        /* The wrap box decides how the text is laid out, so it changes pixels; leaving it out
+         * meant the 文本框宽度 slider did nothing until some other edit invalidated the raster. */
+        h = mix(h, layer.textBoxWidth);
+        h = mix(h, layer.textBoxHeight);
         h = mix(h, layer.imagePath == null ? 0 : layer.imagePath.hashCode());
         h = mix(h, layer.imageFit);
         /* Filtering is applied while the source raster is built, so a policy change must rebuild
@@ -841,6 +902,11 @@ public final class CompLayerSourceCache
         h = mix(h, layer.precompId == null ? 0 : layer.precompId.hashCode());
         h = mix(h, layer.trackMatteEnabled ? 1 : 0);
         h = mix(h, layer.squash);
+
+        /* The preview bar's 效果/蒙版 switches change what is baked into this raster, so they
+         * belong to the fingerprint (otherwise toggling them served the old pixels). */
+        h = mix(h, context.renderEffects ? 1 : 0);
+        h = mix(h, context.renderMasks ? 1 : 0);
 
         /* Masks are multiplied into the raster before the effects; their geometry and feather
          * must invalidate the cached texture just like an effect parameter does. */
@@ -860,11 +926,17 @@ public final class CompLayerSourceCache
                 h = mix(h, mask.enabled ? 1 : 0);
                 h = mix(h, mask.inverted ? 1 : 0);
                 h = mix(h, mask.mode);
-                h = mix(h, mask.opacity);
-                h = mix(h, mask.feather);
-                h = mix(h, mask.expansion);
 
-                for (CompMask.CompMaskPoint point : mask.points)
+                /* The RESOLVED mask, not the base fields: animating a mask point or its feather
+                 * through the mask/<id>/... channels left the signature unchanged, so a keyed mask
+                 * froze at its first frame on every baked (3D) layer, in the export too. */
+                CompMask resolved = layer.maskAt(mask, frame);
+
+                h = mix(h, resolved.opacity);
+                h = mix(h, resolved.feather);
+                h = mix(h, resolved.expansion);
+
+                for (CompMask.CompMaskPoint point : resolved.points)
                 {
                     h = mix(h, point.x);
                     h = mix(h, point.y);
@@ -1082,7 +1154,8 @@ public final class CompLayerSourceCache
         {
             for (String path : layer.animatedPaths())
             {
-                if (path != null && (path.startsWith("text/") || path.startsWith("shape/") || path.startsWith("fx/")))
+                if (path != null && (path.startsWith("text/") || path.startsWith("shape/")
+                    || path.startsWith("fx/") || path.startsWith("mask/")))
                 {
                     return true;
                 }

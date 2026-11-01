@@ -241,6 +241,16 @@ public final class CompViewportRenderer
                 continue;
             }
 
+            if (doc.isSoloedOut(layer))
+            {
+                continue;
+            }
+
+            if (layer.effects == null)
+            {
+                continue;
+            }
+
             for (CompEffect effect : layer.effects)
             {
                 if (effect == null || !effect.enabled)
@@ -384,6 +394,14 @@ public final class CompViewportRenderer
         for (CompLayer layer : doc.layers)
         {
             if (layer == null || !layer.visible || !layer.activeAt(context.time))
+            {
+                continue;
+            }
+
+            /* Solo is a property of the composition, not of one view: showing every layer in the
+             * 3D workspace while the 2D preview/export show one made the picture flip when the user
+             * switched to 看穿. */
+            if (doc.isSoloedOut(layer))
             {
                 continue;
             }
@@ -666,6 +684,12 @@ public final class CompViewportRenderer
         for (CompLayer layer : context.comp.layers)
         {
             if (layer == null || !layer.visible || !layer.activeAt(context.time) || "camera".equals(layer.type))
+            {
+                continue;
+            }
+
+            /* Picking a soloed-out layer let the user drag something they cannot see. */
+            if (context.comp.isSoloedOut(layer))
             {
                 continue;
             }

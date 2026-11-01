@@ -146,7 +146,25 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
                         dev.bbsae.client.render.ReplayEntityMask.ensureCurrent(project, doc);
                     }
 
-                    CompRenderer.render(project, doc, time, instance.opacity, width, height, instance.fit, false, true, worldProjection, batcher);
+                    /* Outside the film editor this overlay IS the recording path (BBS records the
+                     * framebuffer it is drawn into), so guide layers must not be baked in. Inside
+                     * the editor it is the interactive preview, where 参考层 is meant to be seen. */
+                    if (external)
+                    {
+                        CompRenderer.beginExport();
+                    }
+
+                    try
+                    {
+                        CompRenderer.render(project, doc, time, instance.opacity, width, height, instance.fit, false, true, worldProjection, batcher);
+                    }
+                    finally
+                    {
+                        if (external)
+                        {
+                            CompRenderer.endExport();
+                        }
+                    }
                 }
                 catch (RuntimeException e)
                 {

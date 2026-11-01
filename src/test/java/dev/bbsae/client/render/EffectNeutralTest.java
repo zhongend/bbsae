@@ -35,9 +35,14 @@ public class EffectNeutralTest
         assertTrue(EffectRenderer.isNeutral(effect("drop_shadow").put("opacity", 0D), "drop_shadow"));
         assertTrue(EffectRenderer.isNeutral(effect("stroke").put("width", 0D), "stroke"));
         assertTrue(EffectRenderer.isNeutral(effect("rgb_split").put("amount", 0D), "rgb_split"));
-        assertTrue(EffectRenderer.isNeutral(effect("linear_wipe").put("progress", 0D), "linear_wipe"));
-        assertTrue(EffectRenderer.isNeutral(effect("radial_wipe").put("progress", 0D), "radial_wipe"));
-        assertTrue(EffectRenderer.isNeutral(effect("dissolve").put("progress", 0D), "dissolve"));
+        /* A wipe/dissolve at progress 0 is fully HIDDEN in the shader (and 1 is the untouched
+         * layer), so its identity value is 1. The old rule treated 0 as identity, which made the
+         * first keyframe of a wipe pop the layer on for a frame. */
+        assertTrue(EffectRenderer.isNeutral(effect("linear_wipe").put("progress", 1D), "linear_wipe"));
+        assertTrue(EffectRenderer.isNeutral(effect("radial_wipe").put("progress", 1D), "radial_wipe"));
+        assertTrue(EffectRenderer.isNeutral(effect("dissolve").put("progress", 1D), "dissolve"));
+        assertFalse(EffectRenderer.isNeutral(effect("linear_wipe").put("progress", 0D), "linear_wipe"));
+        assertFalse(EffectRenderer.isNeutral(effect("radial_wipe").put("progress", 0.5D), "radial_wipe"));
         assertTrue(EffectRenderer.isNeutral(effect("depth_fog").put("amount", 0D), "depth_fog"));
         assertTrue(EffectRenderer.isNeutral(effect("depth_dof").put("amount", 0D), "depth_dof"));
         assertTrue(EffectRenderer.isNeutral(effect("light_sweep").put("opacity", 0D), "light_sweep"));

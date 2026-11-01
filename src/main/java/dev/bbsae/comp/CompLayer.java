@@ -335,6 +335,32 @@ public class CompLayer
     }
 
     /**
+     * Removes every transform axis channel, 2D <b>and</b> 3D, without creating empty channels.
+     *
+     * <p>{@link #clearTransformAxes()} only visits the axes of the layer's current mode, so resetting
+     * a layer that had been tilted left the rotationX/rotationY/scaleZ channels alive and the layer
+     * stayed tilted behind a "reset transform" button. This is the reset for that button.</p>
+     */
+    public void clearAllTransformAxes()
+    {
+        if (this.scalarChannels != null)
+        {
+            for (int axis : CompCurves.axes(true))
+            {
+                KeyframeChannel<Float> channel = this.scalarChannels.get(CompCurves.axisPath(axis));
+
+                if (channel != null)
+                {
+                    channel.removeAll();
+                }
+            }
+        }
+
+        this.transformChannel().removeAll();
+        this.transformData = "";
+    }
+
+    /**
      * Converts a project written before independent axes into the new representation.
      *
      * <p>If there are no axis keys every legacy 2D component is copied. If some axes already have
@@ -500,8 +526,8 @@ public class CompLayer
             case "width": this.width = value; break;
             case "height": this.height = value; break;
             case "rotation": this.rotation = value; break;
-            case "scaleX": this.scaleX = value; break;
-            case "scaleY": this.scaleY = value; break;
+            case "scaleX": this.scaleX = Math.max(0.0001F, value); break;
+            case "scaleY": this.scaleY = Math.max(0.0001F, value); break;
             case "z": this.z = value; break;
             case "rotationX": this.rotationX = value; break;
             case "rotationY": this.rotationY = value; break;
@@ -967,7 +993,13 @@ public class CompLayer
         return value == null ? this.opacity : value;
     }
 
-    /** Source time of a footage layer, in seconds. */
+    /**
+     * Source time of a footage layer, in seconds.
+     *
+     * <p>{@code startTime} is a <b>source</b>-time offset, so it is added <em>after</em> the speed
+     * change: {@code (t - in) * timeScale + startTime}. The old formula stretched the offset by the
+     * speed too, so a clip at 2× that started 1 s into its footage began on source second 2.</p>
+     */
     public float sourceTime(float compTime)
     {
         if (this.freeze)
@@ -975,7 +1007,7 @@ public class CompLayer
             return this.freezeTime;
         }
 
-        return (compTime - this.in + this.startTime) * this.timeScale;
+        return (compTime - this.in) * this.timeScale + this.startTime;
     }
 
     /** Source time at an explicitly supplied frame; used by the renderer. */
@@ -983,11 +1015,11 @@ public class CompLayer
     {
         if (this.timeRemap)
         {
-            float base = this.freeze ? this.freezeTime : (compTime - this.in + this.startTime) * this.timeScale;
+            float base = this.freeze ? this.freezeTime : this.sourceTime(compTime);
             return this.scalarAt("timeRemap", base, frame);
         }
 
-        return this.freeze ? this.freezeTime : (compTime - this.in + this.startTime) * this.timeScale;
+        return this.freeze ? this.freezeTime : this.sourceTime(compTime);
     }
 
     /* Track editing (timeline bars) */
@@ -1108,7 +1140,9 @@ public class CompLayer
         float delta = newIn - this.in;
 
         this.in = newIn;
-        this.startTime += delta;
+        /* Keeps the source time constant under the corrected sourceTime(): the offset is in source
+         * seconds, so it has to move by the trimmed amount times the speed. */
+        this.startTime += delta * this.timeScale;
     }
 
     /** Trim the out point. The in point and the source timing are untouched. */
@@ -1138,7 +1172,7 @@ public class CompLayer
         right.id = newId;
         right.name = newName;
         right.in = time;
-        right.startTime = this.startTime + (time - this.in);
+        right.startTime = this.startTime + (time - this.in) * this.timeScale;
         this.out = time;
 
         return right;

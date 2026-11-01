@@ -100,7 +100,9 @@ public class EffectPaddingTest
         magnify.put("radius", 300D);
         layer.effects.add(magnify);
 
-        assertEquals(302F, EffectPadding.of(layer, 0F), 0.01F);
+        /* Spherize/magnify/ripple only resample inside the layer, so they need no margin at all:
+         * reserving 300 px per side only shrank the cached 3D raster. */
+        assertEquals(0F, EffectPadding.of(layer, 0F), 0.01F);
     }
 
     @Test

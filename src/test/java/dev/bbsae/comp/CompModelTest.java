@@ -412,7 +412,9 @@ public class CompModelTest
         assertEquals(5F, layer.sourceTimeAt(2F, 30F), 0.0001F);
         assertEquals(72F, layer.fontSizeAt(30F), 0.0001F);
         assertEquals(0F, layer.trackingAt(30F), 0.0001F);
-        assertEquals(6F, layer.sourceTime(2F), 0.0001F);
+        /* startTime is a SOURCE offset: (2 - 0) * 2 + 1. The old formula stretched it by the
+         * speed ((2 - 0 + 1) * 2 = 6), so a 2x clip that started 1 s in actually began on second 2. */
+        assertEquals(5F, layer.sourceTime(2F), 0.0001F);
     }
 
     @Test

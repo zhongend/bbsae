@@ -32,6 +32,28 @@ public final class CompScene
     private CompScene()
     {}
 
+    /**
+     * A scale that is safe to put into a matrix without losing its sign.
+     *
+     * <p>Zero would make the matrix singular, so it is nudged to the smallest representable
+     * magnitude — keeping the sign, because a negative scale is a mirror and must keep rendering a
+     * mirrored layer instead of a 0.0001 px sliver.</p>
+     */
+    static float safeScale(float scale)
+    {
+        if (Float.isNaN(scale))
+        {
+            return 1F;
+        }
+
+        if (Math.abs(scale) >= 0.0001F)
+        {
+            return scale;
+        }
+
+        return scale < 0F ? -0.0001F : 0.0001F;
+    }
+
     /** The camera of this frame (cached on the context). */
     public static CompCamera camera(CompRenderContext ctx)
     {
@@ -93,8 +115,13 @@ public final class CompScene
             y = bound.y;
         }
 
-        float sx = Math.max(0.0001F, transform.scale.x * (1F + layer.squash));
-        float sy = Math.max(0.0001F, transform.scale.y * (1F - layer.squash));
+        /* A scale of exactly 0 makes the matrix singular (nothing is drawable and the selection box
+         * collapses), so the guard stays. It must not clamp the MAGNITUDE, though: -1 is a mirror,
+         * not an error, and the old positive clamp turned every flip into a 0.0001 px sliver. */
+        float rawSx = transform.scale.x * (1F + layer.squash);
+        float rawSy = transform.scale.y * (1F - layer.squash);
+        float sx = safeScale(rawSx);
+        float sy = safeScale(rawSy);
         float z = 0F;
         float rx = 0F;
         float ry = 0F;
@@ -384,9 +411,19 @@ public final class CompScene
         {
             if (effect != null && effect.enabled && "shake".equals(effect.type))
             {
-                float amount = Math.max(0F, layer.effectParam(effect.id, "amplitude", 18F, ctx.frame));
+                /* Shake is a transform, so the pixel pass is a no-op; the 效果强度 cross-fade has to
+                 * be applied here instead of being silently ignored. */
+                float strength = Math.max(0F, Math.min(1F,
+                    layer.effectParam(effect.id, dev.bbsae.comp.CompEffect.STRENGTH, 1F, ctx.frame)));
+
+                if (strength <= 0.0001F)
+                {
+                    continue;
+                }
+
+                float amount = Math.max(0F, layer.effectParam(effect.id, "amplitude", 18F, ctx.frame)) * strength;
                 float frequency = Math.max(0.01F, layer.effectParam(effect.id, "frequency", 6F, ctx.frame));
-                float rotation = Math.max(0F, layer.effectParam(effect.id, "rotation", 2F, ctx.frame));
+                float rotation = Math.max(0F, layer.effectParam(effect.id, "rotation", 2F, ctx.frame)) * strength;
                 float seed = layer.effectParam(effect.id, "seed", 0F, ctx.frame);
                 float t = ctx.time * frequency * 6.2831855F;
                 Shake shake = new Shake();

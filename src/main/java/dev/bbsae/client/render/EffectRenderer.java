@@ -186,7 +186,10 @@ public final class EffectRenderer
             case "drop_shadow" -> effect.valueF("opacity", 0.65F) <= eps;
             case "stroke" -> effect.valueF("width", 3F) <= eps || effect.valueF("opacity", 1F) <= eps;
             case "rgb_split" -> effect.valueF("amount", 14F) <= eps;
-            case "linear_wipe", "radial_wipe", "dissolve" -> effect.valueF("progress", 0.5F) <= eps;
+            /* A wipe at progress 0 is fully hidden in the shader and progress 1 is the untouched
+             * layer, so the identity value is 1, not 0 (0 produced a one-frame pop at the start
+             * of every keyed wipe). The fallback matches the catalogue's default of 0.5. */
+            case "linear_wipe", "radial_wipe", "dissolve" -> effect.valueF("progress", 0.5F) >= 1F - eps;
             case "grid_repeat", "random_repeat" -> effect.valueF("opacity", 1F) <= eps;
             case "depth_fog", "depth_dof" -> effect.valueF("amount", 0.5F) <= eps;
             case "light_sweep" -> effect.valueF("opacity", 0.8F) <= eps;
@@ -211,31 +214,31 @@ public final class EffectRenderer
         switch (type)
         {
             case "blur":
-                return blur(input, effect.valueF("radius", 10F), effect.valueF("opacity", 1F), false);
+                return blur(input, effect.valueF("radius", 10F), effect.valueF("opacity", 1F), false, space);
             case "box_blur":
-                return blur(input, effect.valueF("radius", 8F), effect.valueF("opacity", 1F), true);
+                return blur(input, effect.valueF("radius", 8F), effect.valueF("opacity", 1F), true, space);
             case "radial_blur":
                 return radialBlur(input, effect, space);
             case "directional_blur":
-                return directionalBlur(input, effect.valueF("radius", 20F), effect.valueF("angle", 0F), effect.valueF("opacity", 1F));
+                return directionalBlur(input, effect.valueF("radius", 20F), effect.valueF("angle", 0F), effect.valueF("opacity", 1F), space);
             case "sharpen":
-                return sharpen(input, effect);
+                return sharpen(input, effect, space);
             case "cc_cross_blur":
-                return aeBlur(input, effect, 0);
+                return aeBlur(input, effect, 0, space);
             case "cc_radial_fast_blur":
-                return aeBlur(input, effect, 1);
+                return aeBlur(input, effect, 1, space);
             case "cc_lens_blur":
-                return aeBlur(input, effect, 2);
+                return aeBlur(input, effect, 2, space);
             case "channel_blur":
-                return aeBlur(input, effect, 3);
+                return aeBlur(input, effect, 3, space);
             case "compound_blur":
-                return aeBlur(input, effect, 4);
+                return aeBlur(input, effect, 4, space);
             case "bilateral_blur":
             case "smart_blur":
-                return aeBlur(input, effect, 5);
+                return aeBlur(input, effect, 5, space);
             case "unsharp_mask":
             case "camera_shake_deblur":
-                return aeBlur(input, effect, 6);
+                return aeBlur(input, effect, 6, space);
             case "color_grade":
                 return grade(input, effect);
             case "brightness_contrast":
@@ -264,9 +267,9 @@ public final class EffectRenderer
                 return pixel(input, effect, context, space);
             case "chroma_key":
             case "luma_key":
-                return key(input, effect, type);
+                return key(input, effect, type, space);
             case "matte_choker":
-                return key(input, effect, "matte_choker");
+                return key(input, effect, "matte_choker", space);
             case "rgb_split":
                 return rgbSplit(input, effect);
             case "shake":
@@ -289,29 +292,29 @@ public final class EffectRenderer
             case "turbulent_displace":
                 return distort(input, effect, context, type, space);
             case "offset":
-                return aeDistort(input, effect, 0);
+                return aeDistort(input, effect, 0, space);
             case "polar_coordinates":
-                return aeDistort(input, effect, 1);
+                return aeDistort(input, effect, 1, space);
             case "spherize":
-                return aeDistort(input, effect, 2);
+                return aeDistort(input, effect, 2, space);
             case "optics_compensation":
-                return aeDistort(input, effect, 3);
+                return aeDistort(input, effect, 3, space);
             case "cc_lens":
-                return aeDistort(input, effect, 4);
+                return aeDistort(input, effect, 4, space);
             case "cc_slant":
-                return aeDistort(input, effect, 5);
+                return aeDistort(input, effect, 5, space);
             case "magnify":
-                return aeDistort(input, effect, 6);
+                return aeDistort(input, effect, 6, space);
             case "cc_ripple_pulse":
-                return aeDistort(input, effect, 7);
+                return aeDistort(input, effect, 7, space);
             case "cc_bend":
-                return aeDistort(input, effect, 8);
+                return aeDistort(input, effect, 8, space);
             case "cc_split":
-                return aeDistort(input, effect, 9);
+                return aeDistort(input, effect, 9, space);
             case "rolling_shutter_repair":
-                return aeDistort(input, effect, 10);
+                return aeDistort(input, effect, 10, space);
             case "transform":
-                return aeDistort(input, effect, 11);
+                return aeDistort(input, effect, 11, space);
             case "light_sweep":
                 return pixel(input, effect, context, space);
             case "grid_repeat":
@@ -322,25 +325,66 @@ public final class EffectRenderer
             case "dissolve":
                 return transition(input, effect, context, type, space);
             case "glow":
-                return glow(input, effect, false);
+                return glow(input, effect, false, space);
             case "outer_glow":
-                return glow(input, effect, true);
+                return glow(input, effect, true, space);
             case "drop_shadow":
-                return dropShadow(input, effect);
+                return dropShadow(input, effect, space);
             case "stroke":
-                return stroke(input, effect);
+                return stroke(input, effect, space);
             case "depth_matte":
             case "depth_fog":
             case "depth_dof":
-                return depth(input, effect, context, type);
+                return depth(input, effect, context, type, space);
             default:
                 return input;
         }
     }
 
-    private static GlFramebuffer blur(GlFramebuffer input, float radius, float mix, boolean box)
+    /* ------------------------------------------------------------------ pixel units */
+
+    /**
+     * The reference pixel grid every shader computes in: <b>composition</b> pixels.
+     *
+     * <p>{@link EffectSpace} expresses layer bounds in composition pixels, but the shaders were fed
+     * the framebuffer size. A preview renders the composition at a proxy scale (down to 0.2×), so
+     * every pixel-unit parameter — blur radius, offset, mosaic cell, halftone dots, local
+     * resampling — came out 1/scale times too large in the preview and snapped back when the panel
+     * was resized, and never matched the 1:1 export. The layer basis and the shader basis have to
+     * be the same grid.</p>
+     */
+    private static int refWidth(EffectSpace space, GlFramebuffer input)
     {
-        GlFramebuffer blurred = PassRenderer.blur(input, radius, box);
+        return space == null ? Math.max(1, input.width) : Math.max(1, space.compWidth);
+    }
+
+    private static int refHeight(EffectSpace space, GlFramebuffer input)
+    {
+        return space == null ? Math.max(1, input.height) : Math.max(1, space.compHeight);
+    }
+
+    private static void setPixelUnits(GlslProgram program, EffectSpace space, GlFramebuffer input)
+    {
+        program.set("Texel", 1F / refWidth(space, input), 1F / refHeight(space, input));
+        program.set("Size", refWidth(space, input), refHeight(space, input));
+    }
+
+    /**
+     * Converts a layer-local centre (0..1 inside the layer) into the composition UV the
+     * AE-style programs sample with, including the FBO's bottom-up V axis.
+     */
+    private static org.joml.Vector2f layerCenter(EffectSpace space, CompEffect effect)
+    {
+        float cx = effect.valueF("center_x", 0.5F);
+        float cy = effect.valueF("center_y", 0.5F);
+
+        return space == null ? new org.joml.Vector2f(cx, 1F - cy) : space.localToCompUv(cx, cy);
+    }
+
+    private static GlFramebuffer blur(GlFramebuffer input, float radius, float mix, boolean box, EffectSpace space)
+    {
+        GlFramebuffer blurred = PassRenderer.blur(input, radius, box,
+            1F / refWidth(space, input), 1F / refHeight(space, input));
 
         if (blurred == input || mix >= 0.999F)
         {
@@ -369,18 +413,34 @@ public final class EffectRenderer
             effect.valueF("center_y", 0.5F)
         );
 
+        /* A radial zoom is a resample: straight alpha would drag black from the transparent
+         * surround into the streaks. Same premultiplied round-trip as the AE family. */
+        GlFramebuffer premultiplied = PassRenderer.premultiply(input);
+
         output.begin();
         GlStateManager._disableBlend();
         program.use();
-        PassRenderer.bind(program, "Source", 0, input);
+        PassRenderer.bind(program, "Source", 0, premultiplied);
         program.set("Center", center.x, center.y);
         program.set("Amount", effect.valueF("radius", 0.15F));
         program.drawFullscreen();
 
-        return output;
+        if (premultiplied != input)
+        {
+            FboPool.release(premultiplied);
+        }
+
+        GlFramebuffer straightened = PassRenderer.unpremultiply(output);
+
+        if (straightened != output)
+        {
+            FboPool.release(output);
+        }
+
+        return straightened;
     }
 
-    private static GlFramebuffer sharpen(GlFramebuffer input, CompEffect effect)
+    private static GlFramebuffer sharpen(GlFramebuffer input, CompEffect effect, EffectSpace space)
     {
         GlslProgram program = CompShaders.sharpen;
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
@@ -395,7 +455,7 @@ public final class EffectRenderer
         GlStateManager._disableBlend();
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
-        program.set("Texel", 1F / input.width, 1F / input.height);
+        setPixelUnits(program, space, input);
         program.set("Amount", Math.max(0F, effect.valueF("amount", 1F)));
         program.drawFullscreen();
 
@@ -406,7 +466,7 @@ public final class EffectRenderer
      * The AE blur family. The pass works on premultiplied pixels and converts back once, so the
      * symmetric kernels do not pull black through an alpha edge.
      */
-    private static GlFramebuffer aeBlur(GlFramebuffer input, CompEffect effect, int mode)
+    private static GlFramebuffer aeBlur(GlFramebuffer input, CompEffect effect, int mode, EffectSpace space)
     {
         GlslProgram program = CompShaders.aeBlur;
 
@@ -422,7 +482,7 @@ public final class EffectRenderer
         GlStateManager._disableBlend();
         program.use();
         PassRenderer.bind(program, "Source", 0, premultiplied);
-        program.set("Texel", 1F / input.width, 1F / input.height);
+        setPixelUnits(program, space, input);
         program.set("Mode", mode);
 
         float radius = effect.valueF("radius", mode == 1 ? 0.3F : 12F);
@@ -433,7 +493,13 @@ public final class EffectRenderer
         program.set("MapSoftness", effect.valueF("softness", 0.5F));
         program.set("RadiusG", Math.max(0F, effect.valueF("radius_g", radius)));
         program.set("RadiusB", Math.max(0F, effect.valueF("radius_b", radius)));
-        program.set("Center", effect.valueF("center_x", 0.5F), effect.valueF("center_y", 0.5F));
+
+        /* The AE programs sample composition UV; the UI authors the centre in layer space. The raw
+         * value only worked while the layer happened to fill the composition (and it was mirrored in
+         * Y), so 球面化/径向快速模糊 looked dead as soon as the layer was moved off-centre. */
+        org.joml.Vector2f center = layerCenter(space, effect);
+
+        program.set("Center", center.x, center.y);
         program.drawFullscreen();
 
         if (premultiplied != input)
@@ -455,7 +521,7 @@ public final class EffectRenderer
      * The AE geometric distortion family. Every mode is a single-input resample; the composition
      * bakes it into the layer raster exactly like the existing distort shader.
      */
-    private static GlFramebuffer aeDistort(GlFramebuffer input, CompEffect effect, int mode)
+    private static GlFramebuffer aeDistort(GlFramebuffer input, CompEffect effect, int mode, EffectSpace space)
     {
         GlslProgram program = CompShaders.aeDistort;
 
@@ -473,10 +539,14 @@ public final class EffectRenderer
         GlStateManager._disableBlend();
         program.use();
         PassRenderer.bind(program, "Source", 0, premultiplied);
-        program.set("Size", input.width, input.height);
+        setPixelUnits(program, space, input);
         program.set("Mode", mode);
         program.set("Amount", effect.valueF("amount", 1F));
-        program.set("Center", effect.valueF("center_x", 0.5F), effect.valueF("center_y", 0.5F));
+
+        /* Same layer-space centre conversion as aeBlur: the shader works in composition UV. */
+        org.joml.Vector2f center = layerCenter(space, effect);
+
+        program.set("Center", center.x, center.y);
         program.set("Radius", Math.max(0F, effect.valueF("radius", 300F)));
         program.set("Angle", effect.valueF("angle", 0F));
         program.set("Offset", effect.valueF("offset_x", 0F), effect.valueF("offset_y", 0F));
@@ -502,7 +572,7 @@ public final class EffectRenderer
         return straightened;
     }
 
-    private static GlFramebuffer directionalBlur(GlFramebuffer input, float radius, float angle, float mix)
+    private static GlFramebuffer directionalBlur(GlFramebuffer input, float radius, float angle, float mix, EffectSpace space)
     {
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
         GlslProgram program = CompShaders.blur;
@@ -513,24 +583,43 @@ public final class EffectRenderer
             return input;
         }
 
+        /* The BLUR program is shared with PassRenderer.blur, which sets Mode. Leaving it stale let
+         * a box_blur elsewhere in the composition turn this pass into a box kernel. */
+        GlFramebuffer premultiplied = PassRenderer.premultiply(input);
+        int w = refWidth(space, input);
+        int h = refHeight(space, input);
+
         output.begin();
         GlStateManager._disableBlend();
         program.use();
-        PassRenderer.bind(program, "Source", 0, input);
-        program.set("Texel", 1F / input.width, 1F / input.height);
+        PassRenderer.bind(program, "Source", 0, premultiplied);
+        program.set("Texel", 1F / w, 1F / h);
+        program.set("Mode", 0);
         program.set("Direction", (float) Math.cos(Math.toRadians(angle)), (float) Math.sin(Math.toRadians(angle)));
         program.set("Radius", Math.min(200F, radius));
         program.drawFullscreen();
 
+        if (premultiplied != input)
+        {
+            FboPool.release(premultiplied);
+        }
+
+        GlFramebuffer straightened = PassRenderer.unpremultiply(output);
+
+        if (straightened != output)
+        {
+            FboPool.release(output);
+        }
+
         if (mix < 0.999F)
         {
-            GlFramebuffer blended = PassRenderer.draw(output, input, null, CompLayer.BLEND_NORMAL, mix, 0F, 0F, 0xFFFFFF);
+            GlFramebuffer blended = PassRenderer.draw(straightened, input, null, CompLayer.BLEND_NORMAL, mix, 0F, 0F, 0xFFFFFF);
 
-            FboPool.release(output);
+            FboPool.release(straightened);
             return blended;
         }
 
-        return output;
+        return straightened;
     }
 
     private static GlFramebuffer color(GlFramebuffer input, CompEffect effect, float frame, CompRenderContext context, String type, EffectSpace space)
@@ -830,7 +919,7 @@ public final class EffectRenderer
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
         space.bind(program);
-        program.set("Size", input.width, input.height);
+        setPixelUnits(program, space, input);
         program.set("Mode", plan.mode);
         program.set("Amount", plan.amount);
         program.set("Invert", plan.invert);
@@ -843,7 +932,7 @@ public final class EffectRenderer
         return output;
     }
 
-    private static GlFramebuffer key(GlFramebuffer input, CompEffect effect, String type)
+    private static GlFramebuffer key(GlFramebuffer input, CompEffect effect, String type, EffectSpace space)
     {
         GlslProgram program = CompShaders.key;
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
@@ -854,17 +943,22 @@ public final class EffectRenderer
             return input;
         }
 
+        boolean choker = "matte_choker".equals(type);
+
         output.begin();
         GlStateManager._disableBlend();
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
+        setPixelUnits(program, space, input);
         program.set("Mode", "chroma_key".equals(type) ? 0 : "luma_key".equals(type) ? 1 : 2);
         setColor(program, "KeyColor", effect.color("key", 0xFF00FF00));
         program.set("Tolerance", effect.valueF("tolerance", 0.2F));
-        program.set("Softness", Math.max(0.001F, effect.valueF("softness", 0.08F)));
+        /* Softness is a 0..1 distance falloff for the keyers but a pixel radius for the choker. */
+        program.set("Softness", Math.max(0.001F, effect.valueF("softness", choker ? 2F : 0.08F)));
         program.set("Spill", effect.valueF("spill", 0.4F));
-        program.set("Threshold", effect.valueF("threshold", effect.valueF("choke", 0.3F)));
+        program.set("Threshold", effect.valueF("threshold", 0.3F));
         program.set("Invert", effect.valueF("invert", 0F));
+        program.set("Choke", choker ? effect.valueF("choke", 2F) : 0F);
         program.drawFullscreen();
 
         return output;
@@ -886,7 +980,7 @@ public final class EffectRenderer
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
         space.bind(program);
-        program.set("Size", input.width, input.height);
+        setPixelUnits(program, space, input);
         program.set("Type", type.equals("gradient_ramp") ? 0 : type.equals("noise_gradient") ? 1 : type.equals("checkerboard") ? 2 : type.equals("grid") ? 3 : 4);
         setColor(program, "ColorA", effect.color("start", effect.color("a", effect.color("color", 0xFF55AAFF))));
         setColor(program, "ColorB", effect.color("end", effect.color("b", 0x00000000)));
@@ -940,10 +1034,16 @@ public final class EffectRenderer
             : type.equals("wave") ? 4
             : 5;
 
+        /* A geometric warp resamples: straight-alpha edges would bleed black. Same premultiplied
+         * round-trip as aeDistort. Done BEFORE output.begin(): the premultiply pass binds its own
+         * target, and drawing after it would land in that buffer instead of `output`. */
+        GlFramebuffer sampler = PassRenderer.premultiply(input);
+
         output.begin();
         GlStateManager._disableBlend();
         program.use();
-        PassRenderer.bind(program, "Source", 0, input);
+
+        PassRenderer.bind(program, "Source", 0, sampler);
         space.bind(program);
 
         if (context.hasDepth())
@@ -958,7 +1058,7 @@ public final class EffectRenderer
         }
 
         program.set("Mode", mode);
-        program.set("Size", input.width, input.height);
+        setPixelUnits(program, space, input);
         program.set("Amount", "wave".equals(type) ? effect.valueF("amplitude", effect.valueF("amount", 24F)) : effect.valueF("amount", 48F));
         program.set("Angle", effect.valueF("angle", 30F));
         program.set("Center", effect.valueF("center_x", 0.5F), effect.valueF("center_y", 0.5F));
@@ -969,12 +1069,25 @@ public final class EffectRenderer
         program.set("Phase", effect.valueF("phase", 0F));
         program.set("Evolution", effect.valueF("evolution", 0F));
         program.set("Vertical", effect.valueF("vertical", 0F) > 0.5F ? 1 : 0);
-        program.set("Scale", effect.valueF("size", 160F));
+        /* displacement calls its noise frequency "scale", turbulent_displace calls it "size". */
+        program.set("Scale", effect.valueF("scale", effect.valueF("size", 160F)));
         program.set("Octaves", Math.max(1, Math.min(8, Math.round(effect.valueF("complexity", 4F)))));
         program.set("Seed", effect.valueF("seed", 0F));
         program.drawFullscreen();
 
-        return output;
+        if (sampler != input)
+        {
+            FboPool.release(sampler);
+        }
+
+        GlFramebuffer straightened = PassRenderer.unpremultiply(output);
+
+        if (straightened != output)
+        {
+            FboPool.release(output);
+        }
+
+        return straightened;
     }
 
     /**
@@ -999,7 +1112,7 @@ public final class EffectRenderer
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
         space.bind(program);
-        program.set("Size", input.width, input.height);
+        setPixelUnits(program, space, input);
         program.set("Mode", random ? 1 : 0);
         program.set("Grid",
             Math.max(1F, effect.valueF("columns", random ? 5F : 4F)),
@@ -1084,10 +1197,11 @@ public final class EffectRenderer
         return output;
     }
 
-    private static GlFramebuffer glow(GlFramebuffer input, CompEffect effect, boolean outer)
+    private static GlFramebuffer glow(GlFramebuffer input, CompEffect effect, boolean outer, EffectSpace space)
     {
         float radius = effect.valueF("radius", outer ? 24F : 40F);
-        GlFramebuffer blurred = PassRenderer.blur(input, radius);
+        GlFramebuffer blurred = PassRenderer.blur(input, radius, false,
+            1F / refWidth(space, input), 1F / refHeight(space, input));
 
         if (blurred == input)
         {
@@ -1096,7 +1210,13 @@ public final class EffectRenderer
 
         int color = effect.color("color", outer ? 0xFF55AAFF : 0xFFFFFFFF);
         GlFramebuffer tinted = PassRenderer.copy(blurred, color, effect.valueF("opacity", 1F));
-        GlFramebuffer output = PassRenderer.draw(tinted, input, null, CompLayer.BLEND_ADD, effect.valueF("intensity", 1F), 0F, 0F, 0xFFFFFF);
+        float intensity = Math.max(0F, effect.valueF("intensity", 1F));
+
+        /* A glow is added on top of the layer; an OUTER glow has to live behind it, otherwise it
+         * washes colour into the layer's own pixels and is indistinguishable from 辉光. */
+        GlFramebuffer output = outer
+            ? PassRenderer.draw(input, tinted, null, CompLayer.BLEND_NORMAL, 1F, 0F, 0F, 0xFFFFFF)
+            : PassRenderer.draw(tinted, input, null, CompLayer.BLEND_ADD, intensity, 0F, 0F, 0xFFFFFF);
 
         FboPool.release(blurred);
         FboPool.release(tinted);
@@ -1104,11 +1224,12 @@ public final class EffectRenderer
         return output;
     }
 
-    private static GlFramebuffer dropShadow(GlFramebuffer input, CompEffect effect)
+    private static GlFramebuffer dropShadow(GlFramebuffer input, CompEffect effect, EffectSpace space)
     {
         float distance = effect.valueF("distance", 12F);
         float angle = (float) Math.toRadians(effect.valueF("angle", 45F));
-        GlFramebuffer blurred = PassRenderer.blur(input, effect.valueF("softness", 6F));
+        GlFramebuffer blurred = PassRenderer.blur(input, effect.valueF("softness", 6F), false,
+            1F / refWidth(space, input), 1F / refHeight(space, input));
         GlFramebuffer shadow = PassRenderer.copy(blurred, effect.color("color", 0xFF000000), effect.valueF("opacity", 0.65F));
         float dx = (float) Math.cos(angle) * distance;
         float dy = (float) Math.sin(angle) * distance;
@@ -1128,7 +1249,7 @@ public final class EffectRenderer
         return output;
     }
 
-    private static GlFramebuffer stroke(GlFramebuffer input, CompEffect effect)
+    private static GlFramebuffer stroke(GlFramebuffer input, CompEffect effect, EffectSpace space)
     {
         GlslProgram program = CompShaders.stroke;
         GlFramebuffer stroke = FboPool.acquire(input.width, input.height);
@@ -1143,7 +1264,7 @@ public final class EffectRenderer
         GlStateManager._disableBlend();
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
-        program.set("Texel", 1F / input.width, 1F / input.height);
+        setPixelUnits(program, space, input);
         program.set("Width", effect.valueF("width", 3F));
         int color = effect.color("color", 0xFFFFFFFF);
         color = Colors.setA(color, Colors.getA(color) * effect.valueF("opacity", 1F));
@@ -1156,7 +1277,7 @@ public final class EffectRenderer
         return output;
     }
 
-    private static GlFramebuffer depth(GlFramebuffer input, CompEffect effect, CompRenderContext context, String type)
+    private static GlFramebuffer depth(GlFramebuffer input, CompEffect effect, CompRenderContext context, String type, EffectSpace space)
     {
         GlslProgram program = CompShaders.depth;
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
@@ -1202,7 +1323,7 @@ public final class EffectRenderer
         }
         program.set("Amount", effect.valueF("amount", 0.5F));
         program.set("Radius", effect.valueF("radius", 12F));
-        program.set("Texel", 1F / input.width, 1F / input.height);
+        setPixelUnits(program, space, input);
         setColor(program, "Color", effect.color("color", 0xFFAFC7D9));
         program.drawFullscreen();
 
@@ -1252,7 +1373,7 @@ public final class EffectRenderer
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
         space.bind(program);
-        program.set("Size", input.width, input.height);
+        setPixelUnits(program, space, input);
         program.set("Progress", effect.valueF("progress", 0.35F));
         program.set("Blocks", effect.valueF("blocks", 12F));
         program.set("Spread", effect.valueF("spread", 0.45F));

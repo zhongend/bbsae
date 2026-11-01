@@ -64,7 +64,7 @@ public class UISponsorBoard extends UIElement
                 this.renderCard(context, cx, cy, cardW, cardH, i);
             }
 
-            context.batcher.textShadow("感谢你们对 BBS 合成器的支持。", x + 16F, y + h - 22F, 0xFF918573);
+            context.batcher.textShadow("感谢你们赞助支持本插件的开发。", x + 16F, y + h - 22F, 0xFF918573);
         }
         finally
         {
@@ -79,7 +79,7 @@ public class UISponsorBoard extends UIElement
 
         context.batcher.textShadow(kicker, x + 16F, y + 12F, UiGfx.alpha(gold, 0.65F));
         context.batcher.textShadow("赞助者", x + 16F, y + 28F, 0xFFFFF4DE);
-        context.batcher.textShadow("名字会一直留在这里。", x + 16F + context.batcher.getFont().getWidth("赞助者") + 20F,
+        context.batcher.textShadow("你们的赞助支持了本插件的开发。", x + 16F + context.batcher.getFont().getWidth("赞助者") + 20F,
             y + 30F, 0xFF8C8171);
 
         /* A small orbital mark, using the same vocabulary as the previous sponsor page. */
@@ -152,7 +152,7 @@ public class UISponsorBoard extends UIElement
         float nameY = y + (h < 90F ? 16F : 34F);
 
         context.batcher.textShadow(NAMES[index], x + 14F, nameY, 0xFFF4EBDD);
-        context.batcher.textShadow("感谢你的支持。", x + 14F, nameY + 22F, 0xFFA99D8B);
+        context.batcher.textShadow("感谢你赞助本插件的开发。", x + 14F, nameY + 22F, 0xFFA99D8B);
         context.batcher.textShadow(String.format(java.util.Locale.ROOT, "%02d", index + 1),
             x + w - 26F, y + 12F, UiGfx.alpha(accent, 0.35F));
 

@@ -392,9 +392,11 @@ final class LayerContentRenderer
         batcher.flush();
 
         /* The child inherits the parent pass: a depth/guide pass that disabled effects must not
-         * get them back just because the layer happens to be a precomp. */
+         * get them back just because the layer happens to be a precomp. The stage is transparent:
+         * a nested comp is not the film canvas, so its background colour must not paint an opaque
+         * rectangle over every layer below (that is what turned "预合成" into a black box). */
         GlFramebuffer framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth, context.projection, context.camera, context.stack, batcher, 0,
-            context.renderEffects, context.renderMasks, context.preview, context.scale);
+            context.renderEffects, context.renderMasks, context.preview, context.scale, true);
 
         if (framebuffer == null)
         {
@@ -411,16 +413,20 @@ final class LayerContentRenderer
         float sy = layer.height / sub.height;
         float scale = layer.imageFit == 1 ? Math.max(sx, sy) : layer.imageFit == 2 ? 0F : Math.min(sx, sy);
 
+        /* Only the RGB is a tint; the alpha must stay 255 or the nested comp is multiplied by the
+         * colour's alpha AND by the layer opacity (double transparency). */
+        int tint = layer.color | 0xFF000000;
+
         if (scale == 0F)
         {
-            batcher.texturedBox(framebuffer.color.id, layer.color, -layer.width * layer.anchorX, -layer.height * layer.anchorY, layer.width, layer.height, 0F, sub.height, sub.width, 0F, sub.width, sub.height);
+            batcher.texturedBox(framebuffer.color.id, tint, -layer.width * layer.anchorX, -layer.height * layer.anchorY, layer.width, layer.height, 0F, sub.height, sub.width, 0F, sub.width, sub.height);
         }
         else
         {
             float w = sub.width * scale;
             float h = sub.height * scale;
 
-            batcher.texturedBox(framebuffer.color.id, layer.color, -w * layer.anchorX, -h * layer.anchorY, w, h, 0F, sub.height, sub.width, 0F, sub.width, sub.height);
+            batcher.texturedBox(framebuffer.color.id, tint, -w * layer.anchorX, -h * layer.anchorY, w, h, 0F, sub.height, sub.width, 0F, sub.width, sub.height);
         }
 
         /* The Batcher only queues the textured quad. Flush before returning the FBO to the pool,

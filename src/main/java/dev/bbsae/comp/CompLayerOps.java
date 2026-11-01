@@ -266,6 +266,23 @@ public final class CompLayerOps
         }
 
         int index = doc.layers.indexOf(ordered.get(ordered.size() - 1));
+
+        /* How many selected layers sit BELOW the topmost one. Removing them shifts the insertion
+         * point they leave behind, and using the pre-removal index directly put the new precomp
+         * one slot too high: [A,B,C,D] with {A,B} became [C,precomp,D] instead of [precomp,C,D],
+         * a silent z-order change. */
+        int removedBelow = 0;
+
+        for (CompLayer layer : ordered)
+        {
+            int at = doc.layers.indexOf(layer);
+
+            if (at >= 0 && at < index)
+            {
+                removedBelow++;
+            }
+        }
+
         int serial = project.comps.size() + 1;
         String name = (baseName == null || baseName.isBlank() ? "预合成" : baseName) + " " + serial;
         CompDocument sub = project.addComp("precomp_" + serial, doc.width, doc.height, doc.fps, doc.duration);
@@ -319,7 +336,7 @@ public final class CompLayerOps
         precomp.out = end;
         precomp.startTime = 0F;
 
-        doc.layers.add(Math.max(0, Math.min(index, doc.layers.size())), precomp);
+        doc.layers.add(Math.max(0, Math.min(index - removedBelow, doc.layers.size())), precomp);
 
         /* Everything that pointed at one of the moved layers now points at the precomp, otherwise
          * the parent/matte relationship would silently vanish. */
@@ -423,6 +440,8 @@ public final class CompLayerOps
             return copies;
         }
 
+        java.util.Map<String, String> remap = new java.util.LinkedHashMap<>();
+
         for (CompLayer layer : new ArrayList<>(selection))
         {
             int index = doc.layers.indexOf(layer);
@@ -436,12 +455,82 @@ public final class CompLayerOps
 
             copy.id = CompStore.uniqueId(layer.id + "_copy", doc.layers, (candidate) -> candidate.id);
             copy.name = layer.name + " 副本";
-            copy.x += 24F;
-            copy.y += 24F;
+            offsetCopy(copy, 24F, 24F);
             doc.layers.add(Math.min(doc.layers.size(), index + 1), copy);
             copies.add(copy);
+            remap.put(layer.id, copy.id);
+        }
+
+        /* References between duplicated layers must point inside the copy, not at the originals.
+         * Without the remap a duplicated null + its children still drove the ORIGINAL null, so the
+         * copy looked like a still image ("duplicating a group breaks the copy"). */
+        for (CompLayer copy : copies)
+        {
+            if (copy.parentId != null && remap.containsKey(copy.parentId))
+            {
+                copy.parentId = remap.get(copy.parentId);
+            }
+
+            if (copy.trackMatteId != null && remap.containsKey(copy.trackMatteId))
+            {
+                copy.trackMatteId = remap.get(copy.trackMatteId);
+            }
         }
 
         return copies;
+    }
+
+    /**
+     * Moves a fresh copy so it is visibly not the original.
+     *
+     * <p>{@code x/y} alone are not enough: once a layer has transform keyframes, {@code transformAt}
+     * evaluates the axis channels and ignores the base fields, so the "+24 px" offset was invisible
+     * and Ctrl+D looked like it had done nothing. The keyed values are shifted by the same delta,
+     * which translates the whole copied animation.</p>
+     */
+    public static void offsetCopy(CompLayer copy, float dx, float dy)
+    {
+        if (copy == null)
+        {
+            return;
+        }
+
+        copy.x += dx;
+        copy.y += dy;
+
+        /* Legacy shared Transform keys have to become independent axes before they can move. */
+        if (copy.transformData != null && !copy.transformData.isEmpty())
+        {
+            copy.ensureIndependentAxes();
+        }
+
+        shiftAxis(copy, CompCurves.AXIS_X, dx);
+        shiftAxis(copy, CompCurves.AXIS_Y, dy);
+    }
+
+    private static void shiftAxis(CompLayer layer, int axis, float delta)
+    {
+        if (delta == 0F)
+        {
+            return;
+        }
+
+        String path = CompCurves.axisPath(axis);
+
+        /* hasScalarChannel does not create the channel, so an un-animated copy does not end up with
+         * empty x/y channels that later look like keyframed properties. */
+        if (!layer.hasScalarChannel(path))
+        {
+            return;
+        }
+
+        for (Object entry : layer.axisChannel(axis).getKeyframes())
+        {
+            @SuppressWarnings("unchecked")
+            mchorse.bbs_mod.utils.keyframes.Keyframe<Float> keyframe =
+                (mchorse.bbs_mod.utils.keyframes.Keyframe<Float>) entry;
+
+            keyframe.setValue(keyframe.getValue() + delta);
+        }
     }
 }

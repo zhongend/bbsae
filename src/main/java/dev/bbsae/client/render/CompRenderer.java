@@ -112,10 +112,14 @@ public final class CompRenderer
         dev.bbsae.client.render.ReplayEntityMask.ensureCurrent(project, doc);
 
         float fps = Math.max(1F, doc.fps);
-        int frameIndex = Math.round(Math.max(0F, time) * fps);
+        /* Clamped like every other frame lookup: past the composition's end the green bar and the
+         * AE preview must agree instead of the cache silently missing. */
+        int frameIndex = frameIndex(doc, time);
 
-        /* 1. Green frames: the whole point of the pre-render cache. */
-        GlTexture cached = CompPrecache.texture(project, doc, frameIndex);
+        /* 1. Green frames: the whole point of the pre-render cache. Only when the A/B switches are
+         * on, because a cached frame always contains effects and masks; otherwise the 效果/蒙版
+         * toggles would do nothing while the playhead sits on a green frame. */
+        GlTexture cached = (renderEffects && renderMasks) ? CompPrecache.texture(project, doc, frameIndex) : null;
 
         if (cached != null)
         {
@@ -160,9 +164,22 @@ public final class CompRenderer
         if (!liveWorld)
         {
             CompRenderCache.put(composition, signature, doc, doc.width, doc.height, frameIndex);
+            blit(batcher, composition, doc, alpha, frameWidth, frameHeight, fit);
+
+            return;
         }
 
-        blit(batcher, composition, doc, alpha, frameWidth, frameHeight, fit);
+        /* A live-world composition is never cached, so nobody else owns this target: without the
+         * release every display frame leaked one composition-sized FBO (8 MB at 1080p), which
+         * exhausted VRAM after a few seconds of playing a BBS-preview / entity / depth comp. */
+        try
+        {
+            blit(batcher, composition, doc, alpha, frameWidth, frameHeight, fit);
+        }
+        finally
+        {
+            FboPool.release(composition);
+        }
     }
 
     /**
@@ -514,7 +531,19 @@ public final class CompRenderer
 
         float scale = Math.max(0.05F, Math.min(1F, Math.min(width / (float) Math.max(1, doc.width), height / (float) Math.max(1, doc.height))));
 
-        return renderToTexture(project, doc, time, false, true, true, false, null, scale);
+        /* A cached frame has to be exactly the exported frame, and guide layers are editor-only.
+         * Without this the green bar (and therefore the AE preview, which trusts it first) contained
+         * 参考层 shapes that the encoder never wrote. */
+        beginExport();
+
+        try
+        {
+            return renderToTexture(project, doc, time, false, true, true, false, null, scale);
+        }
+        finally
+        {
+            endExport();
+        }
     }
 
     /** Marks the film-overlay/recording path, where guide layers must not be baked in. */
@@ -580,18 +609,9 @@ public final class CompRenderer
 
         accumulation.begin(stageColor(project, comp, preview, transparentStage));
 
-        boolean solo = false;
-
-        for (CompLayer layer : comp.layers)
-        {
-            /* A camera is a view, not content: it must never enter the solo scan either, or
-             * soloing a camera would hide the whole composition. */
-            if (layer.visible && layer.solo && !"camera".equals(layer.type))
-            {
-                solo = true;
-                break;
-            }
-        }
+        /* One shared solo rule (see CompDocument.hasSolo): a camera never counts as a solo layer. */
+        boolean solo = comp.hasSolo();
+        boolean completed = false;
 
         try
         {
@@ -642,43 +662,6 @@ public final class CompRenderer
 
                         FboPool.release(content);
                         content = masked;
-                    }
-                }
-
-                /* Track mattes are screen-space for both 2D and 3D targets. The matte layer is
-                 * rasterized in composition space; applying it to the projected 3D content is what
-                 * makes "用作蒙版 / 用作排除" do something on a 3D layer instead of being silently
-                 * skipped by the old is2D guard. */
-                if (renderMasks && layer.trackMatteEnabled && layer.trackMatteId != null && !layer.trackMatteId.isEmpty())
-                {
-                    CompLayer matte = comp.getLayer(layer.trackMatteId);
-
-                    if (matte != null && matte != layer)
-                    {
-                        Matrix4f matteModel = CompScene.model(context, matte);
-                        LayerRender matteRender = renderLayerContent(matte, context, matteModel, CompScene.projection(context, matte), stack, batcher, renderEffects);
-                        GlFramebuffer matteFbo = matteRender == null ? null : matteRender.framebuffer;
-
-                        if (matteFbo != null)
-                        {
-                            /* A 2D matte over a 3D target has to be projected too, otherwise the
-                             * matte lives in camera-view space while the target content is already
-                             * in perspective composition space. */
-                            if (!is2D && CompScene.spatial(context) && !CompScene.usePerspective(context, matte))
-                            {
-                                GlFramebuffer projectedMatte = projectPlane(matteFbo, matte, context, batcher);
-
-                                FboPool.release(matteFbo);
-                                matteFbo = projectedMatte;
-                            }
-
-                            int channel = layer.trackMatteMode == CompLayer.MATTE_LUMA ? 1 : layer.trackMatteMode == CompLayer.MATTE_ALPHA_INVERTED ? 2 : layer.trackMatteMode == CompLayer.MATTE_LUMA_INVERTED ? 3 : 0;
-                            GlFramebuffer matted = PassRenderer.mask(content, matteFbo.color.id, channel);
-
-                            FboPool.release(content);
-                            FboPool.release(matteFbo);
-                            content = matted;
-                        }
                     }
                 }
 
@@ -733,6 +716,60 @@ public final class CompRenderer
                     content = applyStyles(layer, content, context, effectSpace);
                 }
 
+                /* Track matte last, for 2D and 3D alike.
+                 *
+                 * <p>The matte clips the layer's finished pixels, which is what a track matte means
+                 * in AE; applying it before the effects made a 2D glow bleed outside the matte while
+                 * the same setup clipped it on a 3D layer. The matte layer's own masks and effects
+                 * are applied to its content, so "masked shape used as matte" behaves identically in
+                 * both paths.</p> */
+                if (renderMasks && layer.trackMatteEnabled && layer.trackMatteId != null && !layer.trackMatteId.isEmpty())
+                {
+                    CompLayer matte = comp.getLayer(layer.trackMatteId);
+
+                    if (matte != null && matte != layer && hasPixels(matte))
+                    {
+                        Matrix4f matteModel = CompScene.model(context, matte);
+                        LayerRender matteRender = renderLayerContent(matte, context, matteModel, CompScene.projection(context, matte), stack, batcher, renderEffects);
+                        GlFramebuffer matteFbo = matteRender == null ? null : matteRender.framebuffer;
+
+                        if (matteFbo != null)
+                        {
+                            /* The matte's own masks belong to its own pixels. */
+                            if (matte.masks != null && !matte.masks.isEmpty())
+                            {
+                                MaskCache.MaskTexture matteMask = MaskCache.get(matte, comp.width, comp.height, matteModel, context.frame);
+
+                                if (matteMask != null)
+                                {
+                                    GlFramebuffer maskedMatte = PassRenderer.mask(matteFbo, matteMask.texture.id, 0);
+
+                                    FboPool.release(matteFbo);
+                                    matteFbo = maskedMatte;
+                                }
+                            }
+
+                            /* A 2D matte over a 3D target has to be projected too, otherwise the
+                             * matte lives in camera-view space while the target content is already
+                             * in perspective composition space. */
+                            if (!is2D && CompScene.spatial(context) && !CompScene.usePerspective(context, matte))
+                            {
+                                GlFramebuffer projectedMatte = projectPlane(matteFbo, matte, context, batcher);
+
+                                FboPool.release(matteFbo);
+                                matteFbo = projectedMatte;
+                            }
+
+                            int channel = layer.trackMatteMode == CompLayer.MATTE_LUMA ? 1 : layer.trackMatteMode == CompLayer.MATTE_ALPHA_INVERTED ? 2 : layer.trackMatteMode == CompLayer.MATTE_LUMA_INVERTED ? 3 : 0;
+                            GlFramebuffer matted = PassRenderer.mask(content, matteFbo.color.id, channel);
+
+                            FboPool.release(content);
+                            FboPool.release(matteFbo);
+                            content = matted;
+                        }
+                    }
+                }
+
                 /* A flat layer under a tilted camera: the finished comp-space image is projected
                  * onto the layer's z plane. Doing it here — after masks, effects and styles — is
                  * what keeps those passes exact: they never see the perspective, they just draw
@@ -762,10 +799,18 @@ public final class CompRenderer
 
             batcher.flush();
             BufferRenderer.resetCurrentVertexBuffer();
+            completed = true;
         }
         finally
         {
             stack.remove(comp.id);
+
+            /* A malformed project that throws mid-graph must not leak the accumulation target:
+             * the exception propagates and nobody else knows this framebuffer exists. */
+            if (!completed)
+            {
+                FboPool.release(accumulation);
+            }
 
             /* A precomp is rendered while its parent's layer target is bound. Restore that
              * framebuffer, viewport and projection so the caller can continue drawing into it. */
@@ -991,7 +1036,10 @@ public final class CompRenderer
          * gradient slide across the plane while the shot moved. The viewport already bakes them in
          * layer space; this path makes the exported frame agree with it.</p>
          */
-        GlFramebuffer baked = renderEffects ? renderBaked3D(layer, context, model, layerProjection, batcher) : null;
+        /* Masks and layer styles are not "effects": a 3D layer needs the baked path whenever it
+         * has any pixel operation. The 效果/蒙版 A/B switches are honoured *inside* the bake, so
+         * turning 效果 off no longer silently removes the layer's masks and styles. */
+        GlFramebuffer baked = renderBaked3D(layer, context, model, layerProjection, batcher);
 
         if (baked != null)
         {
@@ -1246,6 +1294,21 @@ public final class CompRenderer
         boolean depth = effect.type != null && effect.type.startsWith("depth_");
 
         return !effectsBaked || depth;
+    }
+
+    /**
+     * Camera / null / adjustment layers produce no pixels of their own.
+     *
+     * <p>Using one as a track matte multiplied the target by a fully transparent raster, so the
+     * layer simply vanished with no message. The matte picker still lists them, so the renderer has
+     * to refuse them as well.</p>
+     */
+    private static boolean hasPixels(CompLayer layer)
+    {
+        return layer != null
+            && !"camera".equals(layer.type)
+            && !"null".equals(layer.type)
+            && !"adjustment".equals(layer.type);
     }
 
     private static boolean hasEnabledEffects(CompLayer layer)

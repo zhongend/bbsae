@@ -29,6 +29,22 @@ public final class CompParenting
     private CompParenting()
     {}
 
+    /** Zero would be singular; a negative value must stay negative because it is a mirror. */
+    private static float safeScale(float scale)
+    {
+        if (Float.isNaN(scale))
+        {
+            return 1F;
+        }
+
+        if (Math.abs(scale) >= 0.0001F)
+        {
+            return scale;
+        }
+
+        return scale < 0F ? -0.0001F : 0.0001F;
+    }
+
     /**
      * The local matrix a layer contributes to its world matrix, at one frame.
      *
@@ -39,8 +55,9 @@ public final class CompParenting
     public static Matrix4f localMatrix(CompLayer layer, float frame)
     {
         Transform transform = layer.transformAt(frame);
-        float sx = Math.max(0.0001F, transform.scale.x);
-        float sy = Math.max(0.0001F, transform.scale.y);
+        /* Sign-preserving: a negative scale is a mirror, not a singular matrix. */
+        float sx = safeScale(transform.scale.x);
+        float sy = safeScale(transform.scale.y);
         float z = 0F;
         float rx = 0F;
         float ry = 0F;
@@ -51,7 +68,7 @@ public final class CompParenting
             z = layer.scalarAt("z", layer.z, frame);
             rx = layer.scalarAt("rotationX", layer.rotationX, frame);
             ry = layer.scalarAt("rotationY", layer.rotationY, frame);
-            sz = Math.max(0.0001F, layer.scalarAt("scaleZ", layer.scaleZ, frame));
+            sz = safeScale(layer.scalarAt("scaleZ", layer.scaleZ, frame));
         }
 
         return new Matrix4f()

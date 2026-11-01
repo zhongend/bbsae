@@ -186,6 +186,29 @@ public class UILayerLibrary extends UIElement
     /* ------------------------------------------------------------------ layout */
 
     @Override
+    protected boolean subMouseClicked(UIContext context)
+    {
+        /* The whole overlay is modal: clicks on the dimmed area must stop here instead of falling
+         * through to the track header or the inspector behind it, which used to select layers and
+         * move the playhead while the picker stayed open. Children are dispatched first, so the
+         * dialog's own buttons keep working. */
+        return true;
+    }
+
+    @Override
+    protected boolean subMouseReleased(UIContext context)
+    {
+        return true;
+    }
+
+    @Override
+    protected boolean subMouseScrolled(UIContext context)
+    {
+        /* Scrolling over the dim area must not zoom the timeline behind the picker. */
+        return true;
+    }
+
+    @Override
     public void render(UIContext context)
     {
         this.layout();
@@ -322,13 +345,24 @@ public class UILayerLibrary extends UIElement
 
             if (this.pressY != Integer.MIN_VALUE)
             {
-                int delta = this.pressY - context.mouseY;
-
-                if (Math.abs(delta) > 4)
+                /* A release delivered outside this element (cursor left the grid, or the dialog was
+                 * closed mid-drag) never resets pressY, and the list then kept scrolling with the
+                 * mouse and no button held. Poll the button, like the timeline's drag loop does. */
+                if (!mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0))
                 {
-                    this.dragged = true;
-                    this.scrollY = this.pressScroll + delta;
-                    this.clamp();
+                    this.pressY = Integer.MIN_VALUE;
+                    this.dragged = false;
+                }
+                else
+                {
+                    int delta = this.pressY - context.mouseY;
+
+                    if (Math.abs(delta) > 4)
+                    {
+                        this.dragged = true;
+                        this.scrollY = this.pressScroll + delta;
+                        this.clamp();
+                    }
                 }
             }
 

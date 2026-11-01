@@ -3074,6 +3074,13 @@ public class UICompositorPanel extends UIDashboardPanel
                         continue;
                     }
 
+                    /* Soloed-out layers are not pickable: selecting a layer the preview/export
+                     * hides let the user drag something invisible. */
+                    if (doc.isSoloedOut(layer))
+                    {
+                        continue;
+                    }
+
                     /* Cameras have no content rectangle: they are picked by the same gizmo the
                      * editor draws (see renderCameraGizmo / handleAt). Re-implementing that geometry
                      * here is how the old build ended up with a hit test that only worked when the
@@ -8015,8 +8022,23 @@ public class UICompositorPanel extends UIDashboardPanel
         this.selectedLayer = layer;
     }
 
-    /** Ctrl+click: add or remove one layer without disturbing the rest. */
-    public void toggleLayerSelection(CompLayer layer)
+    /**
+     * Moves the primary selection without touching the highlighted set.
+     *
+     * <p>Used when the user right-clicks inside an existing multi-selection: the context menu is
+     * built from the set, so collapsing it to one row would hide every batch command.</p>
+     */
+    public void setPrimarySelection(CompLayer layer)
+    {
+        if (layer == null || !this.selectedIds.contains(layer.id))
+        {
+            return;
+        }
+
+        this.applySelection(layer);
+    }
+
+    /** Ctrl+click: add or remove one layer without disturbing the rest. */    public void toggleLayerSelection(CompLayer layer)
     {
         if (layer == null)
         {
@@ -8295,8 +8317,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         copy.id = CompStore.uniqueId(layer.id + "_copy", this.doc.layers, (candidate) -> candidate.id);
         copy.name = this.layerLabel(layer) + " 副本";
-        copy.x += 24F;
-        copy.y += 24F;
+        dev.bbsae.comp.CompLayerOps.offsetCopy(copy, 24F, 24F);
         this.doc.layers.add(this.doc.layers.indexOf(layer) + 1, copy);
         this.setSingleSelection(copy);
         this.refreshLayers();
@@ -8628,6 +8649,14 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* A click on the drag grip (or a drop back onto the same row) asks for a reorder that is
+         * already true. beginAction() would push a duplicate checkpoint and clear the redo stack,
+         * so the no-op has to be detected before the undo bookkeeping. */
+        if (!this.doc.wouldMoveLayerToDisplayIndex(layer, displayIndex))
+        {
+            return;
+        }
+
         this.beginAction("调整图层顺序");
 
         if (!this.doc.moveLayerToDisplayIndex(layer, displayIndex))
@@ -8635,7 +8664,9 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.selectedLayer = layer;
+        /* Programmatic navigation must keep selectedIds and selectedLayer in sync; assigning the
+         * field directly left "删除所选"/"复制所选" acting on a different layer than the inspector. */
+        this.setSingleSelection(layer);
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -8649,7 +8680,6 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.beginAction("移动图层顺序");
         int index = this.doc.layers.indexOf(layer);
         int target = Math.max(0, Math.min(this.doc.layers.size() - 1, index + direction));
 
@@ -8658,6 +8688,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        this.beginAction("移动图层顺序");
         this.doc.layers.remove(index);
         this.doc.layers.add(target, layer);
         this.refreshLayers();
@@ -8732,6 +8763,23 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.selectedLayer == null)
         {
             this.setStatus("先在时间轴选择一条轨道，再应用效果");
+
+            return;
+        }
+
+        /* The inspector shows the multi-selection panel when more than one layer is highlighted, so
+         * an effect added to the primary in that state had no visible parameter rows at all: the
+         * status line said "已添加" and nothing on screen changed. */
+        if (this.getSelectionCount() > 1)
+        {
+            this.setStatus("已选中 " + this.getSelectionCount() + " 个图层：请只选中一个图层再应用效果");
+
+            return;
+        }
+
+        if (this.selectedLayer.locked)
+        {
+            this.setStatus("图层已锁定：先解锁再应用效果");
 
             return;
         }
@@ -10396,6 +10444,16 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void duplicateSelected()
     {
+        /* One Ctrl+D, one meaning: duplicate what is highlighted. The single-layer path was wired
+         * to the key even when the inspector showed "多选 · 5 个图层", so four of them silently
+         * stayed behind. */
+        if (this.getSelectionCount() > 1)
+        {
+            this.duplicateSelection();
+
+            return;
+        }
+
         this.duplicateLayer(this.selectedLayer);
     }
 
@@ -10414,6 +10472,15 @@ public class UICompositorPanel extends UIDashboardPanel
             this.refreshInspector();
             this.save();
             this.setStatus("已移除音频：" + clip.name);
+
+            return;
+        }
+
+        /* The highlighted set is the selection. Deleting only the primary left every other
+         * highlighted row on screen and made the key look broken. */
+        if (this.getSelectionCount() > 1)
+        {
+            this.deleteSelection();
 
             return;
         }
@@ -11453,11 +11520,23 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.numberRow("锚点 Y", layer.anchorY, 0F, 1F, false, (value) -> layer.anchorY = value.floatValue()));
         section.fields.add(this.smallButton("重置变换", () ->
         {
+            this.beginAction("重置变换");
+
+            /* The base fields are ignored as soon as an axis channel has a key, so resetting only
+             * x/rotation/scale did nothing on an animated layer. Clearing the channels first makes
+             * the reset actually take effect; all nine components are restored, including the 3D
+             * ones, because a layer that was tilted kept its tilt behind a "reset" button. */
+            layer.clearAllTransformAxes();
             layer.x = this.doc.width / 2F;
             layer.y = this.doc.height / 2F;
+            layer.z = 0F;
             layer.rotation = 0F;
+            layer.rotationX = 0F;
+            layer.rotationY = 0F;
             layer.scaleX = 1F;
             layer.scaleY = 1F;
+            layer.scaleZ = 1F;
+            layer.squash = 0F;
             this.refreshInspector();
             this.save();
         }));
@@ -11823,7 +11902,15 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(UI.label(IKey.constant("三段色轮 + 主曲线 + 曝光/对比度/饱和度/色温。参数都能打关键帧。"), 14));
             section.fields.add(new UICompButton(IKey.constant("＋ 添加调色效果"), (button) ->
             {
-                layer.effects.add(CompEffectRegistry.create("color_grade", layer.effects.size() + 1));
+                this.beginAction("添加调色效果");
+
+                CompEffect added = CompEffectRegistry.create("color_grade", layer.effects.size() + 1);
+
+                /* "fx" + size+1 collided after a deletion: a layer with [fx1, fx2] that loses fx1
+                 * has size 1, so the new grade took the id "fx2" and every parameter edit and every
+                 * keyframe landed on the old effect that happened to come first in the list. */
+                added.id = CompStore.uniqueEffectId(layer);
+                layer.effects.add(added);
                 this.refreshInspector();
                 this.save();
             }));
@@ -11977,7 +12064,7 @@ public class UICompositorPanel extends UIDashboardPanel
         int index = layer.effects.indexOf(effect) + 1;
         UISection section = new UISection(IKey.constant(index + ". " + name));
 
-        section.remember(this.sectionFolds, "fx:" + effect.id, true);
+        section.remember(this.sectionFolds, "fx:" + layer.id + ":" + effect.id, true);
 
         UIToggle enabled = new UIToggle(IKey.constant("启用"), effect.enabled, (toggle) ->
         {
@@ -12194,7 +12281,7 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         UISection section = new UISection(IKey.constant(style.type));
 
-        section.remember(this.sectionFolds, "style:" + style.type + ":" + layer.styles.indexOf(style), false);
+        section.remember(this.sectionFolds, "style:" + layer.id + ":" + style.type + ":" + layer.styles.indexOf(style), false);
 
         UIToggle enabled = new UIToggle(IKey.constant("启用"), style.enabled, (toggle) ->
         {
@@ -12753,15 +12840,41 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(UI.label(IKey.constant(l.type + " · " + l.id), 16));
         section.fields.add(UI.label(IKey.constant("变换、不透明度与效果在“效果控件”页。"), 14));
 
-        UITextbox name = new UITextbox(64, (text) -> l.name = text);
+        UITextbox name = new UITextbox(64, (text) ->
+        {
+            /* A rename that never called save() was not undoable and, with auto-save off, never
+             * reached the project file: the row looked edited until the panel was reopened. */
+            l.name = text;
+            this.save();
+        });
 
         name.setText(l.name);
         section.fields.add(this.fieldRow("名称", name));
 
-        UIToggle visible = new UIToggle(IKey.constant("可见"), l.visible, (toggle) -> l.visible = toggle.getValue());
-        UIToggle locked = new UIToggle(IKey.constant("锁定"), l.locked, (toggle) -> l.locked = toggle.getValue());
-        UIToggle solo = new UIToggle(IKey.constant("独显"), l.solo, (toggle) -> l.solo = toggle.getValue());
-        UIToggle guide = new UIToggle(IKey.constant("参考层"), l.guide, (toggle) -> l.guide = toggle.getValue());
+        UIToggle visible = new UIToggle(IKey.constant("可见"), l.visible, (toggle) ->
+        {
+            this.beginAction("图层可见");
+            l.visible = toggle.getValue();
+            this.save();
+        });
+        UIToggle locked = new UIToggle(IKey.constant("锁定"), l.locked, (toggle) ->
+        {
+            this.beginAction("图层锁定");
+            l.locked = toggle.getValue();
+            this.save();
+        });
+        UIToggle solo = new UIToggle(IKey.constant("独显"), l.solo, (toggle) ->
+        {
+            this.beginAction("图层独显");
+            l.solo = toggle.getValue();
+            this.save();
+        });
+        UIToggle guide = new UIToggle(IKey.constant("参考层"), l.guide, (toggle) ->
+        {
+            this.beginAction("参考层");
+            l.guide = toggle.getValue();
+            this.save();
+        });
         section.fields.add(UI.row(visible, locked));
         section.fields.add(UI.row(solo, guide));
 
@@ -12784,6 +12897,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         UIToggle freeze = new UIToggle(IKey.constant("冻结帧"), l.freeze, (toggle) ->
         {
+            this.beginAction("冻结帧");
             l.freeze = toggle.getValue();
             this.refreshInspector();
             this.save();
@@ -12801,8 +12915,10 @@ public class UICompositorPanel extends UIDashboardPanel
 
         UIToggle timeRemap = new UIToggle(IKey.constant("时间重映射"), l.timeRemap, (toggle) ->
         {
+            this.beginAction("时间重映射");
             l.timeRemap = toggle.getValue();
             this.refreshInspector();
+            this.save();
         });
         section.fields.add(timeRemap);
 
@@ -12852,11 +12968,18 @@ public class UICompositorPanel extends UIDashboardPanel
         matte.tooltip(IKey.constant("选择作为遮罩的图层；开启下面的“使用遮罩”后生效"));
         section.fields.add(this.fieldRow("轨道遮罩", matte));
 
-        UIToggle matteEnabled = new UIToggle(IKey.constant("使用遮罩"), l.trackMatteEnabled, (toggle) -> l.trackMatteEnabled = toggle.getValue());
+        UIToggle matteEnabled = new UIToggle(IKey.constant("使用遮罩"), l.trackMatteEnabled, (toggle) ->
+        {
+            this.beginAction("使用遮罩");
+            l.trackMatteEnabled = toggle.getValue();
+            this.save();
+        });
         UIButton matteMode = new UICompButton(IKey.constant(matteName(l.trackMatteMode)), (button) ->
         {
+            this.beginAction("切换遮罩模式");
             l.trackMatteMode = (l.trackMatteMode + 1) % 4;
             button.label = IKey.constant(matteName(l.trackMatteMode));
+            this.save();
         });
         section.fields.add(UI.row(matteEnabled, matteMode));
 
@@ -12975,6 +13098,14 @@ public class UICompositorPanel extends UIDashboardPanel
                 continue;
             }
 
+            /* Cameras, nulls and adjustment layers have no pixels: using one as a matte multiplied
+             * the target's alpha by zero and made the layer disappear with no message. */
+            if ("camera".equals(candidate.type) || "null".equals(candidate.type)
+                || "adjustment".equals(candidate.type))
+            {
+                continue;
+            }
+
             String label = this.layerLabel(candidate) + "  ·  " + candidate.id;
 
             values.add(label);
@@ -13081,9 +13212,15 @@ public class UICompositorPanel extends UIDashboardPanel
 
         CompBinding binding = layer.binding;
 
-        UIToggle enabled = new UIToggle(IKey.constant("启用"), binding.enabled, (toggle) -> binding.enabled = toggle.getValue());
+        UIToggle enabled = new UIToggle(IKey.constant("启用"), binding.enabled, (toggle) ->
+        {
+            this.beginAction("启用绑定");
+            binding.enabled = toggle.getValue();
+            this.save();
+        });
         UIButton type = new UICompButton(IKey.constant(binding.type), (button) ->
         {
+            this.beginAction("切换绑定类型");
             binding.type = switch (binding.type)
             {
                 case CompBinding.CAMERA -> CompBinding.REPLAY;
@@ -13092,10 +13229,15 @@ public class UICompositorPanel extends UIDashboardPanel
                 default -> CompBinding.CAMERA;
             };
             button.label = IKey.constant(binding.type);
+            this.save();
         });
         section.fields.add(UI.row(enabled, type));
 
-        UITextbox target = new UITextbox(64, (text) -> binding.target = text);
+        UITextbox target = new UITextbox(64, (text) ->
+        {
+            binding.target = text;
+            this.save();
+        });
 
         target.setText(binding.target);
         section.fields.add(this.fieldRow("回放 / 图层目标", target));
@@ -13110,7 +13252,11 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection textSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("文字"));
-        UITextbox text = new UITextbox(2048, (value) -> layer.text = value);
+        UITextbox text = new UITextbox(2048, (value) ->
+        {
+            layer.text = value;
+            this.save();
+        });
 
         text.setText(layer.text);
         section.fields.add(text);
@@ -13202,7 +13348,13 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.colorRow("描边", layer.strokeColor, (color) -> layer.strokeColor = color));
         section.fields.add(this.animatedNumberRow("描边宽度", layer, "text/strokeWidth", layer.textStrokeAt(this.getFrame()), (value) -> layer.strokeWidth = (float) Math.max(0D, value), 0F, 40F));
         section.fields.add(this.numberRow("对齐（0 左 1 中 2 右）", layer.align, 0, 2, true, (value) -> layer.align = value.intValue()));
-        section.fields.add(new UIToggle(IKey.constant("自动换行"), layer.wrap, (toggle) -> layer.wrap = toggle.getValue()));
+        section.fields.add(new UIToggle(IKey.constant("自动换行"), layer.wrap, (toggle) ->
+        {
+            this.beginAction("自动换行");
+            layer.wrap = toggle.getValue();
+            this.refreshInspector();
+            this.save();
+        }));
         section.fields.add(this.numberRow("换行宽度", layer.textBoxWidth, 10F, 10000F, false, (value) -> layer.textBoxWidth = value.floatValue()));
 
         return section;
@@ -13225,7 +13377,12 @@ public class UICompositorPanel extends UIDashboardPanel
         for (CompTextAnimator animator : layer.textAnimators)
         {
             section.fields.add(UI.label(IKey.constant(animator.name), 16));
-            section.fields.add(new UIToggle(IKey.constant("启用"), animator.enabled, (toggle) -> animator.enabled = toggle.getValue()));
+            section.fields.add(new UIToggle(IKey.constant("启用"), animator.enabled, (toggle) ->
+            {
+                this.beginAction("启用文字动画");
+                animator.enabled = toggle.getValue();
+                this.save();
+            }));
             section.fields.add(this.numberRow("起点", animator.start, 0F, 1F, false, (value) -> animator.start = value.floatValue()));
             section.fields.add(this.numberRow("结束", animator.end, 0F, 1F, false, (value) -> animator.end = value.floatValue()));
             section.fields.add(this.numberRow("偏移", animator.offset, -1F, 1F, false, (value) -> animator.offset = value.floatValue()));
@@ -13567,12 +13724,18 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             section.fields.add(UI.label(IKey.constant(mask.name), 16));
 
-            UIToggle enabled = new UIToggle(IKey.constant("启用"), mask.enabled, (toggle) -> mask.enabled = toggle.getValue());
+            UIToggle enabled = new UIToggle(IKey.constant("启用"), mask.enabled, (toggle) ->
+            {
+                this.beginAction("启用蒙版");
+                mask.enabled = toggle.getValue();
+                this.save();
+            });
             UIButton remove = new UICompButton(IKey.constant("移除"), (button) ->
             {
                 this.beginAction("删除蒙版");
                 layer.masks.remove(mask);
                 this.refreshInspector();
+                this.save();
             });
             section.fields.add(UI.row(enabled, remove));
             section.fields.add(this.animatedNumberRow("羽化", layer, CompLayer.maskPath(mask.id, "feather"), layer.scalarAt(CompLayer.maskPath(mask.id, "feather"), mask.feather, this.getFrame()), (value) -> mask.feather = (float) Math.max(0D, value), 0F, 200F));
@@ -13612,20 +13775,29 @@ public class UICompositorPanel extends UIDashboardPanel
                 manager.action(Icons.FADING, IKey.constant("排除"), () -> this.setMaskMode(modeMask, CompMask.MODE_EXCLUDE));
             });
             section.fields.add(this.fieldRow("模式", mode));
-            section.fields.add(new UIToggle(IKey.constant("反转"), mask.inverted, (toggle) -> mask.inverted = toggle.getValue()));
+            section.fields.add(new UIToggle(IKey.constant("反转"), mask.inverted, (toggle) ->
+            {
+                this.beginAction("反转蒙版");
+                mask.inverted = toggle.getValue();
+                this.save();
+            }));
             section.fields.add(UI.row(
                 this.smallButton("添加蒙版点", () ->
                 {
+                    this.beginAction("添加蒙版点");
                     mask.points.add(new CompMask.CompMaskPoint(layer.width / 2F, layer.height / 2F));
                     this.refreshInspector();
+                    this.save();
                 }),
                 this.smallButton("删除最后一点", () ->
                 {
                     if (!mask.points.isEmpty())
                     {
+                        this.beginAction("删除蒙版点");
                         mask.points.remove(mask.points.size() - 1);
+                        this.refreshInspector();
+                        this.save();
                     }
-                    this.refreshInspector();
                 })
             ));
         }
@@ -13644,15 +13816,24 @@ public class UICompositorPanel extends UIDashboardPanel
 
         section.fields.add(this.smallButton("在播放头添加图层标记", () ->
         {
-            CompMarker marker = new CompMarker("layer_marker_" + (layer.markers.size() + 1), "Marker", this.time);
+            this.beginAction("添加图层标记");
 
-            layer.markers.add(marker);
+            /* "size + 1" reuses an id after a deletion: delete marker 1 of 2, add another and both
+             * live markers claim "layer_marker_2", so keying or deleting one edited the other. */
+            String id = CompStore.uniqueId("layer_marker", layer.markers, (candidate) -> candidate.id);
+
+            layer.markers.add(new CompMarker(id, "Marker", this.time));
             this.refreshInspector();
+            this.save();
         }));
 
         for (CompMarker marker : layer.markers)
         {
-            UITextbox name = new UITextbox(128, (value) -> marker.name = value);
+            UITextbox name = new UITextbox(128, (value) ->
+            {
+                marker.name = value;
+                this.save();
+            });
 
             name.setText(marker.name);
             section.fields.add(this.fieldRow("名称", name));
@@ -13663,6 +13844,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.beginAction("删除图层标记");
                 layer.markers.remove(marker);
                 this.refreshInspector();
+                this.save();
             });
 
             section.fields.add(UI.row(this.smallButton("跳转", () -> this.setTime(marker.time)), remove));
@@ -13723,10 +13905,14 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.smallButton("在播放头添加标记", () ->
         {
             this.beginAction("添加合成标记");
-            CompMarker marker = new CompMarker("marker_" + (this.doc.markers.size() + 1), "Marker", this.time);
 
-            this.doc.markers.add(marker);
+            /* Unique id, not "size + 1": deleting a marker and adding another produced two markers
+             * with the same id, and the list then highlight/removes the wrong one. */
+            String id = CompStore.uniqueId("marker", this.doc.markers, (candidate) -> candidate.id);
+
+            this.doc.markers.add(new CompMarker(id, "Marker", this.time));
             this.refreshInspector();
+            this.save();
         }));
 
         for (CompMarker marker : this.doc.markers)
@@ -13741,6 +13927,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.beginAction("删除合成标记");
                 this.doc.markers.remove(marker);
                 this.refreshInspector();
+                this.save();
             });
 
             UIElement row = new UIElement();

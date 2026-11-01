@@ -20,11 +20,28 @@ public final class GlTexture
     public GlTexture()
     {
         this.id = GL11.glGenTextures();
-        GlStateManager._bindTexture(this.id);
+        bindForUpdate(this.id);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+    }
+
+    /**
+     * Binds a texture for a state change and keeps GlStateManager's cache honest.
+     *
+     * <p>Both halves are required. The cached call is what every later {@code _bindTexture} trusts,
+     * the raw call is what the driver actually does. A texture deleted behind the cache's back —
+     * the FBO pool deletes its idle targets when it is full — leaves the cache naming a GL name
+     * that no longer exists; the next texture that recycles that name gets its bind silently
+     * skipped, so uploads land on no texture (GL_INVALID_OPERATION) and filter/parameter writes are
+     * applied to whatever happened to be bound. Forcing the raw bind makes the state an observed
+     * fact instead of an assumption, exactly like {@link PassRenderer#bindRaw}.</p>
+     */
+    private static void bindForUpdate(int texture)
+    {
+        GlStateManager._bindTexture(texture);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
     }
 
     public GlTexture allocate(int width, int height)

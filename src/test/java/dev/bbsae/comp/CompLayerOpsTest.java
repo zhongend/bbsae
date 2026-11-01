@@ -108,6 +108,88 @@ public class CompLayerOpsTest
     }
 
     @Test
+    public void precomposeInsertsThePrecompAtTheGroupsOldDepth()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.id = "main";
+        doc.width = 1920;
+        doc.height = 1080;
+        doc.duration = 10F;
+
+        /* Bottom-to-top: C, A, B, D. Selecting the two middle layers must leave the precomp
+         * between C and D -- the old code used the pre-removal index and produced [C, precomp, D]
+         * with the precomp one slot too high, silently changing the z-order. */
+        CompLayer c = layer(doc, "c", 0F, 0F);
+        CompLayer a = layer(doc, "a", 0F, 0F);
+        CompLayer b = layer(doc, "b", 0F, 0F);
+        CompLayer d = layer(doc, "d", 0F, 0F);
+
+        CompProject project = new CompProject();
+
+        project.comps.add(doc);
+
+        CompLayer precomp = CompLayerOps.precompose(project, doc, List.of(a, b), "组");
+
+        assertEquals(3, doc.layers.size());
+        assertEquals(c.id, doc.layers.get(0).id);
+        assertEquals(precomp.id, doc.layers.get(1).id, "the precomp takes the group's slot");
+        assertEquals(d.id, doc.layers.get(2).id);
+    }
+
+    @Test
+    public void duplicateRemapsParentAndMatteInsideTheSelection()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.width = 1920;
+        doc.height = 1080;
+
+        CompLayer parent = layer(doc, "null", 0F, 0F);
+        CompLayer child = layer(doc, "child", 100F, 100F);
+        CompLayer matte = layer(doc, "matte", 200F, 200F);
+
+        child.parentId = parent.id;
+        child.trackMatteId = matte.id;
+        child.trackMatteEnabled = true;
+
+        java.util.List<CompLayer> copies = CompLayerOps.duplicate(doc, List.of(parent, child, matte));
+
+        assertEquals(3, copies.size());
+
+        CompLayer parentCopy = copies.get(0);
+        CompLayer childCopy = copies.get(1);
+        CompLayer matteCopy = copies.get(2);
+
+        assertNotSame(parent, parentCopy);
+        assertEquals(parentCopy.id, childCopy.parentId, "the duplicated child follows the duplicated parent");
+        assertEquals(matteCopy.id, childCopy.trackMatteId, "the duplicated child follows the duplicated matte");
+        assertEquals(6, doc.layers.size(), "three originals and three copies");
+    }
+
+    @Test
+    public void duplicateOfAnAnimatedLayerIsVisiblyOffset()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.width = 1920;
+        doc.height = 1080;
+
+        CompLayer layer = layer(doc, "anim", 100F, 100F);
+
+        layer.insertAxisKey(CompCurves.AXIS_X, 0F, 100F);
+        layer.insertAxisKey(CompCurves.AXIS_X, 30F, 300F);
+
+        java.util.List<CompLayer> copies = CompLayerOps.duplicate(doc, List.of(layer));
+        CompLayer copy = copies.get(0);
+
+        /* The base fields are ignored once an axis channel has keys, so the +24 px has to be in
+         * the keyed values as well, otherwise the copy sits exactly on the original. */
+        assertEquals(124F, copy.axisAt(CompCurves.AXIS_X, 0F, 0F), 0.001F);
+        assertEquals(324F, copy.axisAt(CompCurves.AXIS_X, 30F, 0F), 0.001F);
+    }
+
+    @Test
     public void groupUnderNullParentsWithoutMoving()
     {
         CompDocument doc = new CompDocument();

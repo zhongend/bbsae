@@ -164,6 +164,16 @@ public final class PassRenderer
 
     public static GlFramebuffer blur(GlFramebuffer input, float radius, boolean box)
     {
+        return blur(input, radius, box, 1F / Math.max(1, input.width), 1F / Math.max(1, input.height));
+    }
+
+    /**
+     * @param texelX/texelY one <b>composition</b> pixel expressed in UV. The composition is often
+     *        rendered into a smaller proxy target, and a radius authored in composition pixels must
+     *        not grow by 1/scale just because the target is smaller.
+     */
+    public static GlFramebuffer blur(GlFramebuffer input, float radius, boolean box, float texelX, float texelY)
+    {
         if (radius <= 0.5F)
         {
             return input;
@@ -192,7 +202,7 @@ public final class PassRenderer
 
         program.use();
         bind(program, "Source", 0, premultiplied);
-        program.set("Texel", 1F / input.width, 1F / input.height);
+        program.set("Texel", texelX, texelY);
         program.set("Direction", 1F, 0F);
         program.set("Radius", (float) r);
         program.set("Mode", box ? 1 : 0);
@@ -205,6 +215,7 @@ public final class PassRenderer
         output.begin();
         GlStateManager._disableBlend();
         bind(program, "Source", 0, horizontal);
+        program.set("Texel", texelX, texelY);
         program.set("Direction", 0F, 1F);
         program.set("Radius", (float) r);
         program.set("Mode", box ? 1 : 0);

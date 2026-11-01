@@ -142,7 +142,9 @@ public final class CompEffectRegistry
             .p("exposure", "曝光", -5, 5, 0, 0.01F)
             .p("gamma", "伽马", 0.1F, 4, 1, 0.01F));
         add(new Definition("tint", "着色", "色彩校正")
-            .p("amount", "强度", 0, 1, 1, 0.01F)
+            /* Default below 1: at full strength the single-colour mix replaces the image with a flat
+             * colour, so adding 着色 used to erase every detail of the layer. */
+            .p("amount", "强度", 0, 1, 0.5F, 0.01F)
             .c("color", "着色", 0xFFFFAA55));
         add(new Definition("levels", "色阶", "色彩校正")
             .p("black", "输入黑场", 0, 1, 0, 0.01F)

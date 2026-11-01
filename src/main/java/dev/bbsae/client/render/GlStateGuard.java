@@ -46,6 +46,8 @@ public final class GlStateGuard implements AutoCloseable
     private final boolean[] colorMask = new boolean[4];
     private final int depthFunc;
     private final float[] clearColor = new float[4];
+    private final int unpackAlignment;
+    private final int unpackRowLength;
 
     public GlStateGuard()
     {
@@ -82,6 +84,11 @@ public final class GlStateGuard implements AutoCloseable
         GL11.glGetIntegerv(GL20.GL_BLEND_EQUATION_RGB, this.blendEquation);
         GL11.glGetIntegerv(GL20.GL_BLEND_EQUATION_ALPHA, this.blendEquationAlpha);
         GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX, this.scissorBox);
+
+        /* Texture uploads reset the pixel-store mode (tight RGBA rows). It is part of the shared
+         * context too, and a non-32-bit upload elsewhere would read the wrong stride. */
+        this.unpackAlignment = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT);
+        this.unpackRowLength = GL11.glGetInteger(GL11.GL_UNPACK_ROW_LENGTH);
 
         for (int i = 0; i < this.textures.length; i++)
         {
@@ -136,6 +143,8 @@ public final class GlStateGuard implements AutoCloseable
         }
 
         GlStateManager._clearColor(this.clearColor[0], this.clearColor[1], this.clearColor[2], this.clearColor[3]);
+        GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, this.unpackAlignment);
+        GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, this.unpackRowLength);
 
         BufferRenderer.resetCurrentVertexBuffer();
         RenderSystem.applyModelViewMatrix();

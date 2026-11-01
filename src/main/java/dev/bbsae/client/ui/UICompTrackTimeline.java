@@ -1330,7 +1330,20 @@ public class UICompTrackTimeline extends UIElement
 
             if (row >= 0 && row < rows.size())
             {
-                this.selectWithModifiers(rows.get(row));
+                CompLayer clicked = rows.get(row);
+
+                /* Right-clicking inside an existing multi-selection must keep it: the context menu
+                 * only offers 预合成/编组/对齐/分布/删除所选 when more than one layer is selected,
+                 * and the old unconditional select-with-modifiers collapsed the set to the clicked
+                 * row before the menu was built, so those commands could never appear. */
+                if (this.panel.isLayerSelected(clicked) && this.panel.getSelectionCount() > 1)
+                {
+                    this.panel.setPrimarySelection(clicked);
+                }
+                else
+                {
+                    this.selectWithModifiers(clicked);
+                }
             }
 
             /* Let UIElement open the context menu after this handler. */

@@ -129,7 +129,11 @@ public final class ShaderSources
             {
                 float fi = float(i);
                 float weight = Mode == 1 ? 1.0 : exp(-fi * fi / 30.0);
-                vec2 uv = vUv + Direction * Texel * fi * max(Radius, 0.0);
+                /* fi is the tap index; the kernel reach is Radius *composition* pixels, so the
+                 * offset has to be normalised by the tap count. Without the /8 a radius of 12
+                 * sampled up to 96 px, which made every blur/glow/shadow eight times too strong
+                 * and its halo eight times wider than the padding reserved for it. */
+                vec2 uv = vUv + Direction * Texel * (fi / 8.0) * max(Radius, 0.0);
                 sum += texture(Source, clamp(uv, vec2(0.0), vec2(1.0))) * weight;
                 total += weight;
             }
@@ -714,7 +718,11 @@ public final class ShaderSources
 
             if (Vignette > 0.0)
             {
-                float d = distance(layerUv(vUv), vec2(0.5));
+                /* Normalised by the corner distance (sqrt(0.5)) so the slider is "fraction of the
+                 * way to the corner". The raw 0..0.707 in-layer distance made the default radius
+                 * of 0.75 unreachable: the effect did nothing at all until the slider went below
+                 * 0.7, for the whole useful part of its range. */
+                float d = distance(layerUv(vUv), vec2(0.5)) / 0.70710678;
                 float edge = smoothstep(VignetteRadius, VignetteRadius + VignetteSoftness, d);
                 c.rgb = mix(c.rgb, VignetteColor.rgb, edge * Vignette);
             }
@@ -740,6 +748,9 @@ public final class ShaderSources
         uniform float Spill;
         uniform float Threshold;
         uniform float Invert;
+        uniform float Choke;
+        uniform vec2 Texel;
+        uniform vec2 Size;
 
         in vec2 vUv;
         out vec4 fragColor;
@@ -764,10 +775,34 @@ public final class ShaderSources
             }
             else
             {
-                alpha = smoothstep(Threshold, Threshold + max(Softness, 0.001), alpha);
+                /* Matte choke: erode (Choke > 0) or dilate (< 0) the alpha by Choke pixels.
+                 * The value used to be compared straight against a 0..1 alpha, so the default
+                 * choke of 2 made smoothstep(2, 4, a) zero everywhere: adding the effect simply
+                 * erased the layer. */
+                float reach = clamp(abs(Choke), 0.0, 64.0);
+                float soft = clamp(Softness / max(Size.y, 1.0), 0.0005, 0.49);
+                float m = alpha;
+
+                if (reach >= 0.5)
+                {
+                    for (int i = 0; i < 8; i++)
+                    {
+                        float ang = float(i) * 0.7853981634;
+                        vec2 dir = vec2(cos(ang), sin(ang)) * Texel * reach;
+                        float s = texture(Source, clamp(vUv + dir, vec2(0.0), vec2(1.0))).a;
+
+                        m = Choke > 0.0 ? min(m, s) : max(m, s);
+                    }
+                }
+
+                /* Softness feathers the new edge; 0 keeps the eroded alpha as-is. */
+                float feathered = smoothstep(0.5 - soft, 0.5 + soft, m);
+                alpha = mix(m, feathered, clamp(Softness / 20.0, 0.0, 1.0));
             }
 
-            fragColor = vec4(c.rgb, c.a * alpha);
+            /* alpha already contains the source alpha in every mode; writing c.a * alpha squared
+             * it, which thinned every keyed soft edge (a 50% edge became 25%). */
+            fragColor = vec4(c.rgb, alpha);
         }
         """;
 
@@ -1001,7 +1036,7 @@ public final class ShaderSources
                 }
                 else
                 {
-                    vec2 n = vec2(noise(luv * 80.0 + Evolution), noise(luv * 80.0 + Evolution + 13.1)) - 0.5;
+                    vec2 n = vec2(noise(luv * max(Scale, 1.0) + Evolution), noise(luv * max(Scale, 1.0) + Evolution + 13.1)) - 0.5;
                     offset = n * Amount;
                 }
 
@@ -1404,7 +1439,10 @@ public final class ShaderSources
             }
 
             float scale = max(0.01, Scale);
-            float angle = radians(Rotation);
+            /* The grid mode has no random rotation: Rotation is the base angle. The random mode
+             * uses Rotation as the jitter RANGE, so its base has to be zero or every cell is
+             * rotated by the range itself even at randomness 0. */
+            float angle = Mode == 1 ? 0.0 : radians(Rotation);
             vec2 offset = vec2(0.0);
             float alpha = clamp(Opacity, 0.0, 1.0);
 

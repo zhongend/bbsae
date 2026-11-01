@@ -209,6 +209,10 @@ public final class CompRenderCache
         h = mix(h, layer.lineHeight);
         h = mix(h, layer.align);
         h = mix(h, layer.wrap ? 1 : 0);
+        /* The wrap box changes how text is laid out; without it the 文本框宽度 slider did not
+         * invalidate the parked-playhead frame. */
+        h = mix(h, layer.textBoxWidth);
+        h = mix(h, layer.textBoxHeight);
         h = mix(h, layer.imagePath == null ? 0 : layer.imagePath.hashCode());
         h = mix(h, layer.imageFit);
         h = mix(h, layer.textureFilter);

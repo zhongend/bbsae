@@ -94,7 +94,9 @@ public final class EffectPadding
             case "unsharp_mask", "camera_shake_deblur" -> 2F;
             case "offset" -> Math.max(Math.abs(effect.valueF("offset_x", 0F)),
                 Math.abs(effect.valueF("offset_y", 0F))) + 2F;
-            case "spherize", "magnify", "cc_ripple_pulse" -> effect.valueF("radius", 300F) + 2F;
+            /* These resample inside the layer; extra margin buys nothing and only shrinks the
+             * cached 3D raster (300 px of padding per side pushed it down a mip). */
+            case "spherize", "magnify", "cc_ripple_pulse" -> 0F;
             case "optics_compensation", "cc_lens" ->
                 Math.abs(effect.valueF("amount", 0.3F)) * Math.max(layer.width, layer.height) * 0.5F + 2F;
             case "cc_slant" -> Math.abs(effect.valueF("amount", 0.3F)) * layer.height * 0.5F + 2F;

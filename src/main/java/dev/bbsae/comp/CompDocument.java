@@ -151,6 +151,16 @@ public class CompDocument
             {
                 layer.trackMatteId = "";
             }
+
+            /* A tracked binding is the third reference that names a layer id. Leaving it pointing
+             * at a deleted layer made the binding silently resolve to nothing — the HUD layer that
+             * followed a null simply stopped moving while the inspector still printed the dead id. */
+            if (layer.binding != null && CompBinding.LAYER.equals(layer.binding.type)
+                && layerId.equals(layer.binding.target))
+            {
+                layer.binding.target = "";
+                layer.binding.enabled = false;
+            }
         }
 
         if (layerId.equals(this.activeCameraId))
@@ -166,6 +176,23 @@ public class CompDocument
      * entry in {@link #layers}). Returns true when the order actually changed.
      */
     public boolean moveLayerToDisplayIndex(CompLayer layer, int displayIndex)
+    {
+        return this.moveLayerToDisplayIndex(layer, displayIndex, true);
+    }
+
+    /**
+     * Whether {@link #moveLayerToDisplayIndex} would change anything.
+     *
+     * <p>The editor pushes an undo checkpoint before a reorder and that checkpoint clears the redo
+     * stack. A plain click on a track's drag grip asks to move the layer onto its own row; without
+     * this test that no-op wiped the user's redo history.</p>
+     */
+    public boolean wouldMoveLayerToDisplayIndex(CompLayer layer, int displayIndex)
+    {
+        return this.moveLayerToDisplayIndex(layer, displayIndex, false);
+    }
+
+    private boolean moveLayerToDisplayIndex(CompLayer layer, int displayIndex, boolean apply)
     {
         if (layer == null)
         {
@@ -197,6 +224,11 @@ public class CompDocument
             return false;
         }
 
+        if (!apply)
+        {
+            return true;
+        }
+
         display.add(to, layer);
 
         this.layers.clear();
@@ -209,8 +241,7 @@ public class CompDocument
         return true;
     }
 
-    public CompMarker markerAt(float seconds)
-    {
+    public CompMarker markerAt(float seconds)    {
         for (CompMarker marker : this.markers)
         {
             if (Math.abs(marker.time - seconds) < 0.0001F)
@@ -222,9 +253,34 @@ public class CompDocument
         return null;
     }
 
-    public CompParameter getParameter(String name)
+    /**
+     * True when at least one visible, non-camera layer is soloed.
+     *
+     * <p>Solo lives here because four different places need the same answer: the composition graph,
+     * the 3D workspace, the preview hit test and the track header. Each of them re-implementing it
+     * is how soloing a layer hid everything in the export while the 3D workspace still drew it.</p>
+     */
+    public boolean hasSolo()
     {
-        for (CompParameter parameter : this.parameters)
+        for (CompLayer layer : this.layers)
+        {
+            if (layer != null && layer.visible && layer.solo && !"camera".equals(layer.type))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Solo semantics: when the comp has a solo layer, every non-soloed layer is hidden. */
+    public boolean isSoloedOut(CompLayer layer)
+    {
+        return (layer == null || !layer.solo) && this.hasSolo();
+    }
+
+    public CompParameter getParameter(String name)
+    {        for (CompParameter parameter : this.parameters)
         {
             if (parameter.name.equals(name))
             {
