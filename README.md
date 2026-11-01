@@ -90,15 +90,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.20.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.1/bbsae-0.20.1.jar)
-   from the **v0.20.1** release (the asset is updated with each source push).
+1. Download [`bbsae-0.20.2.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.2/bbsae-0.20.2.jar)
+   from the **v0.20.2** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.20.1.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.20.2.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.20.1.jar` SHA-256: `B58948A3E5A40AE0E971EA2637ADBCC2CF2A538139D0351F68C65851791F275F`.
+`bbsae-0.20.2.jar` SHA-256: `CD72B1C9F62491212043448966557FC3C45F013AD8D24A0F48331165583E1454`.
 
 ## Gallery
 
@@ -165,6 +165,13 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.20.2
+
+- **Fonts in subfolders resolve correctly.** The picker used to strip a font link down to its
+  basename, so `fonts/sub/Name.ttf` was looked up as `fonts/Name.ttf` (often missing, or a
+  different root font). The path under `fonts/` is now preserved; existing root-font projects are
+  unchanged.
 
 ## What's new in 0.20.1
 

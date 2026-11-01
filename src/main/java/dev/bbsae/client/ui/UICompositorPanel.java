@@ -12626,7 +12626,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         for (mchorse.bbs_mod.resources.Link link : mchorse.bbs_mod.fonts.FontManager.getFontLinks())
         {
-            fontNames.add(link.path.substring(link.path.lastIndexOf('/') + 1));
+            /* Keep the path *under* fonts/, not just the basename: a font in fonts/sub/Name.ttf
+             * is loaded as "fonts/sub/Name.ttf", and storing only "Name.ttf" used to look up a
+             * different (or missing) root file. Root fonts are unchanged. */
+            String path = link.path;
+            int slash = path.indexOf('/');
+
+            fontNames.add(slash >= 0 ? path.substring(slash + 1) : path);
         }
 
         java.io.File fontFolder = mchorse.bbs_mod.fonts.FontManager.getFolder();
