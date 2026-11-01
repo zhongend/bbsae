@@ -67,6 +67,8 @@ loom {
             vmArg "-Dbbsae.debugVideoImport=" + (project.findProperty("bbsaeVideo") ?: "")
             vmArg "-Dbbsae.debugShot=" + (project.findProperty("bbsaeShot") ?: "")
             vmArg "-Dbbsae.debugShotTicks=" + (project.findProperty("bbsaeShotTicks") ?: "260")
+            vmArg "-Dbbsae.debugShotEachView=" + (project.findProperty("bbsaeShotEachView") ?: "false")
+            vmArg "-Dbbsae.debugShotPrefix=" + (project.findProperty("bbsaeShotPrefix") ?: "round31-")
             programArgs "--quickPlaySingleplayer", "TestWorld"
             /* The panel is laid out for a 1920x1080 editor canvas. The default tiny dev window
              * (854x480) clips the timeline and the quick panel, which makes verification

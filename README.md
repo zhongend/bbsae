@@ -62,6 +62,8 @@
   [`docs/ROUND29-UI-MOTION-ONBOARDING.zh.md`](docs/ROUND29-UI-MOTION-ONBOARDING.zh.md)
 - **Round 30 (sponsor hall / BBS flight camera / 3D effect fix / repeats / adaptive UI, v0.19.0):**
   [`docs/ROUND30-FINAL.zh.md`](docs/ROUND30-FINAL.zh.md)
+- **Round 31 (effect-library decluttering / camera hints / settings-only sponsors / premium UI light, v0.19.1):**
+  [`docs/ROUND31-UI-POLISH.zh.md`](docs/ROUND31-UI-POLISH.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -81,11 +83,11 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.19.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.19.0/bbsae-0.19.0.jar)
-   from the **v0.19.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.19.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.19.1/bbsae-0.19.1.jar)
+   from the **v0.19.1** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.19.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.19.1.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
@@ -156,15 +158,15 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
 
-## What's new in 0.19.0
+## What's new in 0.19.0 / 0.19.1
 
 **The thank-you release: a sponsor hall, BBS-style flight cameras, a faster AE curve, adaptive
 layout, texture-filter intelligence, and a real fix for effects on 3D layers.**
 
-*Sponsor hall.* A dedicated, animated page for **星辰久梦君**, **血之书** and **Szv文森特37**.
-Deep navy stage, drifting gold light, orbital rings and three hand-composed cards; the list is
-also in the Settings → About page and `CREDITS.md`. This is deliberately not another settings
-list.
+*Sponsor credits.* **星辰久梦君**, **血之书** and **Szv文森特37** now live in a dedicated
+**Settings → 赞助者** category, not on the editing page: a compact gold-lit board, three cards,
+and one plain thank-you per person. No per-person motivational copy. The same names are in
+`CREDITS.md`.
 
 *BBS flight camera.* Camera settings now switch between **AE 摄像机** (position + target) and
 **BBS 原版摄像机** (free yaw/pitch). A BBS camera shows a flight icon; press **F** to fly with
@@ -188,6 +190,15 @@ issuing thousands of boxes per frame (halo + core, per row, per column). The gra
 batch scope, samples each curve once and paints both strokes from the same column array. The
 vertex/draw-call count no longer scales with curve slope.
 
+*Effect library decluttered.* The 56 px effect preview and the 16 px per-row thumbnails are gone;
+the list gains their space and uses 17 px rows. A 16 px thumbnail could not communicate a blur or
+a displacement, while it made the 190 px sidebar read as a dense grid.
+
+*Interface light.* The onboarding backdrop now uses a warm/cool aurora, slow light shafts, an
+orbital structure line and dust behind the card. The editor shell gets a quiet blue-black
+gradient, two low-alpha pools and four stage corner brackets; none of it covers controls or the
+program picture.
+
 *Adaptive UI.* Header actions disappear before they collide, side columns shrink around a
 preview floor, the timeline never steals the body on short windows, the settings card fits small
 panels, and the preview controls fold themselves away on narrow previews.
@@ -203,7 +214,15 @@ are skipped, and a missing depth attachment is visible in the preview readout in
 turning depth effects into a black frame.
 
 <p align="center">
-  <img src="docs/gallery/sponsors.png" alt="BBS Compositor sponsor hall with three founding supporters" width="100%">
+  <img src="docs/gallery/sponsors.png" alt="Sponsor credits inside Settings, with three names and a plain thank-you" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/gallery/effects-library-clean.png" alt="Effect library without preview thumbnails, leaving room for names and categories" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/gallery/onboarding-premium.png" alt="Onboarding background with warm/cool aurora and light shafts" width="100%">
 </p>
 
 <p align="center">

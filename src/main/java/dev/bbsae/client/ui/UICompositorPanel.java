@@ -30,6 +30,7 @@ import dev.bbsae.comp.CompTime;
 import dev.bbsae.comp.CompositionClip;
 import dev.bbsae.client.render.CompRenderContext;
 import dev.bbsae.client.ui.CompInput;
+import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.utils.TimeUtils;
 import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
@@ -143,8 +144,6 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UiMotion panelMotion = new UiMotion();
     private UICompSettings settingsOverlay;
     private UIOnboarding onboarding;
-    private UISponsors sponsorsOverlay;
-    private UICompButton sponsorsButton;
 
     private final UICompRenderJobList queue;
     /** Output module (video or audio) chosen for the next job; shows the preset's real name. */
@@ -347,11 +346,6 @@ public class UICompositorPanel extends UIDashboardPanel
         this.focusButton = CompUi.iconButton(Icons.MAXIMIZE, "聚焦预览：把预览铺满合成器面板（F 再按还原）", () -> this.toggleFocusMode());
 
         this.settingsButton = CompUi.flat("设置", "合成器设置：导出时长、默认图层时长、界面密度、快捷键方案", () -> this.showSettings());
-        this.sponsorsButton = new UICompButton(IKey.constant("赞助"), (button) -> this.openSponsors());
-
-        this.sponsorsButton.symbol(Icons.HEART);
-        this.sponsorsButton.style(UICompButton.Style.GHOST);
-        this.sponsorsButton.tooltip(IKey.constant("赞助者殿堂：感谢支持本项目的人，也查看如何支持后续开发"));
 
         this.header = new UIElement();
         this.header.h(24);
@@ -369,8 +363,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.focusButton.relative(this.header).x(1F, -40).y(inset).w(control).h(control);
 
         this.header.add(this.title, this.replaySelector, this.play, this.prevFrame, this.nextFrame,
-            this.timecode, this.save, this.exportFilm, this.renderMode, this.sponsorsButton,
-            this.settingsButton, this.focusButton);
+            this.timecode, this.save, this.exportFilm, this.renderMode, this.settingsButton, this.focusButton);
 
         /* Left column: the two panels an editor actually browses from - effects and media.
          * The layer stack lives in the timeline's track headers; keeping a second layer list
@@ -530,6 +523,44 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 this.updateCursor(context);
                 super.render(context);
+                this.renderStageFrame(context);
+            }
+
+            /**
+             * Premium stage edge: four corner brackets instead of a full border. It frames the
+             * picture without competing with the 2D guides, the camera gizmo or the floating
+             * preview bar, and it is only four quads.
+             */
+            private void renderStageFrame(UIContext context)
+            {
+                if (!CompPrefs.get().glow || this.area.w < 160 || this.area.h < 100)
+                {
+                    return;
+                }
+
+                int accent = BBSSettings.primaryColor() | 0xFF000000;
+                int len = 13;
+                float x0 = this.area.x + 4;
+                float y0 = this.area.y + 4;
+                float x1 = this.area.ex() - 4;
+                float y1 = this.area.ey() - 4;
+                float damp = 0.22F + 0.06F * (float) Math.sin(UICompositorPanel.this.panelMotion.time * 1.1F);
+                int color = UiGfx.alpha(accent, damp);
+
+                context.batcher.box(x0, y0, x0 + len, y0 + 1, color);
+                context.batcher.box(x0, y0, x0 + 1, y0 + len, color);
+                context.batcher.box(x1 - len, y0, x1, y0 + 1, color);
+                context.batcher.box(x1 - 1, y0, x1, y0 + len, color);
+                context.batcher.box(x0, y1 - 1, x0 + len, y1, color);
+                context.batcher.box(x0, y1 - len, x0 + 1, y1, color);
+                context.batcher.box(x1 - len, y1 - 1, x1, y1, color);
+                context.batcher.box(x1 - 1, y1 - len, x1, y1, color);
+
+                if (UICompositorPanel.this.cameraFlying)
+                {
+                    context.batcher.box(x0 + len + 8, y0, x1 - len - 8, y0 + 1,
+                        UiGfx.alpha(0xFF7AD8FF, 0.38F));
+                }
             }
 
             private void updateCursor(UIContext context)
@@ -3643,12 +3674,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.settingsOverlay.relative(this).x(0).y(0).w(1F).h(1F);
         this.settingsOverlay.setVisible(false);
 
-        this.sponsorsOverlay = new UISponsors(this);
-        this.sponsorsOverlay.relative(this).x(0).y(0).w(1F).h(1F);
-        this.sponsorsOverlay.setVisible(false);
-
         this.add(this.header, this.body, this.renderPanel, this.timeline, this.quickPanel, this.status,
-            this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay, this.sponsorsOverlay);
+            this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay);
 
         this.focusButton.h(18);
 
@@ -4575,22 +4602,6 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.settingsOverlay.open(category);
-    }
-
-    public void openSponsors()
-    {
-        if (this.sponsorsOverlay == null)
-        {
-            return;
-        }
-
-        if (this.settingsOverlay != null && this.settingsOverlay.isOpen())
-        {
-            this.settingsOverlay.close();
-        }
-
-        this.sponsorsOverlay.open();
-        this.setStatus("感谢赞助者：星辰久梦君、血之书、Szv文森特37");
     }
 
     public void openOnboarding()
@@ -6544,11 +6555,6 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 this.settingsOverlay.close();
             }
-
-            if (this.sponsorsOverlay != null && this.sponsorsOverlay.isOpen())
-            {
-                this.sponsorsOverlay.close();
-            }
         }
 
         /* Verification hook: force the frame-server pipeline without walking the risk dialog. */
@@ -6614,7 +6620,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 return;
 
             case "sponsor":
-                this.openSponsors();
+                this.openSettings("sponsor");
                 return;
 
             case "cameraflight":
@@ -8272,7 +8278,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.save();
         this.refreshInspector();
         this.setStatus(style == CompLayer.CAMERA_BBS
-            ? "已切换到 BBS 原版摄像机；按 F 进入飞行，退出时自动打关键帧"
+            ? "BBS 原版摄像机：F 进入飞行并用鼠标转向；预览右键拖动仍是 3D 视口环绕，不是旋转镜头"
             : "已切换到 AE 摄像机；目标点已根据当前朝向重建");
     }
 
@@ -8742,6 +8748,41 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /**
+     * A very quiet atmosphere under the editor chrome.
+     *
+     * <p>First principle: an editor is read for hours, so "advanced" cannot mean more contrast.
+     * This layer is a vertical tonal gradient plus two wide, low-alpha pools at the upper corners.
+     * It only shows in the gutters between panels; no control loses contrast, and the glow is only
+     * two primitives.</p>
+     */
+    private void renderShellAtmosphere(UIContext context)
+    {
+        if (this.area.w <= 0 || this.area.h <= 0)
+        {
+            return;
+        }
+
+        UiGfx.gradientV(context.batcher, this.area.x, this.area.y, this.area.w, this.area.h,
+            0xFF111821, 0xFF080A0E);
+
+        if (!CompPrefs.get().glow)
+        {
+            return;
+        }
+
+        int accent = BBSSettings.primaryColor() | 0xFF000000;
+
+        UiGfx.glow(context.batcher, this.area.x + 40, this.area.y + 10,
+            Math.max(90, this.area.w / 7), UiGfx.alpha(accent, 0.035F), 36);
+        UiGfx.glow(context.batcher, this.area.ex() - 40, this.area.y + 10,
+            Math.max(90, this.area.w / 8), UiGfx.alpha(0xFFD9A85C, 0.028F), 36);
+
+        /* Bottom inner shadow: separates the timeline strip from the desktop without a border. */
+        UiGfx.gradientV(context.batcher, this.area.x, this.area.ey() - 36, this.area.w, 36,
+            0x00000000, 0x33000000);
+    }
+
+    /**
      * Reflows the fixed-position header for the current width.
      *
      * <p>The header used to be absolutely positioned for a 1920 px editor. At 800 px the replay
@@ -8767,7 +8808,6 @@ public class UICompositorPanel extends UIDashboardPanel
         boolean showSave = w >= 980;
         boolean showExport = w >= 860;
         boolean showRender = w >= 780;
-        boolean showSponsors = w >= 620;
 
         this.title.setVisible(showTitle);
         this.replaySelector.setVisible(showReplay);
@@ -8777,7 +8817,6 @@ public class UICompositorPanel extends UIDashboardPanel
         this.save.setVisible(showSave);
         this.exportFilm.setVisible(showExport);
         this.renderMode.setVisible(showRender);
-        this.sponsorsButton.setVisible(showSponsors);
 
         int x = 8;
 
@@ -8819,12 +8858,6 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.settingsButton.relative(this.header).x(1F, -right).y(inset).w(48).h(control);
         right += 56;
-
-        if (showSponsors)
-        {
-            this.sponsorsButton.relative(this.header).x(1F, -right).y(inset).w(54).h(control);
-            right += 60;
-        }
 
         if (showRender)
         {
@@ -10758,6 +10791,8 @@ public class UICompositorPanel extends UIDashboardPanel
             flight.tooltip(IKey.constant("BBS 原版飞行：WASD 移动，空格/Shift 升降，鼠标转向，滚轮调速；再按 F 退出并在当前位置留下关键帧"));
             section.fields.add(flight);
             section.fields.add(UI.label(IKey.constant("BBS 相机使用自由偏航/俯仰；退出飞行时自动写入当前位置、朝向、滚转和 FOV 关键帧。AE 相机仍保留在轨道上，可随时切回。"), 14));
+            section.fields.add(UI.label(IKey.constant("BBS 快捷键差异：右键拖动 = 3D 视口环绕"), 14));
+            section.fields.add(UI.label(IKey.constant("旋转镜头：按 F 进入飞行，用鼠标转向"), 14));
         }
 
         UIToggle perspective = new UIToggle(IKey.constant("透视投影（关 = 正交/平面）"), layer.camera3D, (toggle) ->
@@ -14266,13 +14301,6 @@ public class UICompositorPanel extends UIDashboardPanel
             return true;
         }
 
-        if (this.sponsorsOverlay != null && this.sponsorsOverlay.isOpen())
-        {
-            this.sponsorsOverlay.subKeyPressed(context);
-
-            return true;
-        }
-
         if (this.startScreenOpen)
         {
             if (pressed && !typing && key == GLFW.GLFW_KEY_ESCAPE)
@@ -15098,6 +15126,7 @@ public class UICompositorPanel extends UIDashboardPanel
          * rect here means "no transparency" does not depend on a global setting the user cannot
          * find. */
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF0E1116);
+        this.renderShellAtmosphere(context);
 
         this.primeTimeline();
         this.reconcileTimelinePage();
@@ -15187,9 +15216,11 @@ public class UICompositorPanel extends UIDashboardPanel
                 String shader = dev.bbsae.client.render.ShaderCompat.label();
                 String depth = this.hasDepthEffects() && !dev.bbsae.client.overlay.BbsPreviewBridge.depthAvailable()
                     ? "  ·  深度不可用（效果自动降级）" : "";
+                String cameraHint = this.canFlyCamera() && !this.cameraFlying
+                    ? "  ·  BBS: F 飞行 / 右键=视口" : "";
 
                 this.previewInfo.label = IKey.constant(this.doc.width + "x" + this.doc.height + "  " + (int) this.doc.fps
-                    + "fps  " + effects + " FX  ·  " + shader + depth + cachedLabel);
+                    + "fps  " + effects + " FX  ·  " + shader + depth + cameraHint + cachedLabel);
                 this.updatePrecacheLabel();
             }
             else
@@ -15219,8 +15250,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         boolean overlay = (this.onboarding != null && this.onboarding.isOpen())
-            || (this.settingsOverlay != null && this.settingsOverlay.isOpen())
-            || (this.sponsorsOverlay != null && this.sponsorsOverlay.isOpen());
+            || (this.settingsOverlay != null && this.settingsOverlay.isOpen());
 
         if (overlay)
         {

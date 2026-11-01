@@ -156,7 +156,8 @@ public class UIOnboarding extends UIElement
         this.hoverX = context.mouseX;
         this.hoverY = context.mouseY;
         this.backdrop.render(context, this.area);
-        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0x4A000000);
+        this.renderPremiumBackdrop(context);
+        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0x3D000000);
 
         float p = this.motion.introBack(0F);
         int cardW = Math.min(820, Math.max(620, this.area.w - 48));
@@ -209,6 +210,90 @@ public class UIOnboarding extends UIElement
         super.render(context);
     }
 
+    /**
+     * A second, warmer light layer over the BBS backdrop.
+     *
+     * <p>The onboarding card is nearly opaque, so the old backdrop mostly disappeared behind it.
+     * This layer deliberately spends its contrast <b>outside</b> the card: an amber orbit behind
+     * the edges, two slow aurora fields, and thin light shafts that read as depth rather than
+     * decoration. The same vocabulary as the sponsor board, but much quieter.</p>
+     */
+    private void renderPremiumBackdrop(UIContext context)
+    {
+        if (!CompPrefs.get().glow || CompPrefs.get().backdropIntensity <= 0.01F)
+        {
+            return;
+        }
+
+        float strength = Math.max(0F, Math.min(1.5F, CompPrefs.get().backdropIntensity)) * CompPrefs.intensity();
+        float t = this.motion.time;
+        int gold = 0xFFFFC86A;
+        int blue = 0xFF6EA8FF;
+
+        context.batcher.clip(this.area, context);
+
+        try
+        {
+            /* Two large, slow aurora pools. They are intentionally off-centre so the card sits in
+             * a pool of warm edge light instead of on a flat black field. */
+            float ax = this.area.x + this.area.w * (0.18F + 0.03F * (float) Math.sin(t * 0.09F));
+            float ay = this.area.y + this.area.h * (0.73F + 0.02F * (float) Math.cos(t * 0.07F));
+            float bx = this.area.x + this.area.w * (0.84F + 0.02F * (float) Math.cos(t * 0.075F));
+            float by = this.area.y + this.area.h * (0.22F + 0.025F * (float) Math.sin(t * 0.06F));
+
+            UiGfx.glow(context.batcher, (int) ax, (int) ay, (int) (this.area.h * 0.42F),
+                UiGfx.alpha(gold, 0.10F * strength), 48);
+            UiGfx.glow(context.batcher, (int) bx, (int) by, (int) (this.area.h * 0.34F),
+                UiGfx.alpha(blue, 0.075F * strength), 48);
+
+            /* Diagonal shafts, rotating around their own centre. MatrixStack keeps this inside the
+             * existing UI batch; no GL state is touched. */
+            MatrixStack stack = context.batcher.getContext().getMatrices();
+
+            for (int i = 0; i < 4; i++)
+            {
+                float phase = (t * (0.018F + i * 0.003F) + i * 0.23F) % 1F;
+                float sx = this.area.x + this.area.w * (0.10F + phase * 0.95F);
+                float sw = 1F + i * 0.35F;
+
+                stack.push();
+                stack.translate(sx, this.area.y + this.area.h * 0.3F, 0F);
+                stack.multiply(new org.joml.Quaternionf().rotateZ((float) Math.toRadians(-17F + i * 2.5F)));
+                context.batcher.gradientVBox(0F, 0F, sw, this.area.h * 0.78F,
+                    UiGfx.alpha(gold, 0.035F * strength), 0x00FFC86A);
+                stack.pop();
+            }
+
+            /* A barely-visible ellipse around the card: structure without a hard frame. */
+            context.batcher.outlineCenter(this.area.mx(), this.area.my(),
+                Math.min(this.area.w, this.area.h) * 0.46F, 0,
+                UiGfx.alpha(gold, 0.045F * strength));
+            context.batcher.outlineCenter(this.area.mx(), this.area.my(),
+                Math.min(this.area.w, this.area.h) * 0.54F, 0,
+                UiGfx.alpha(blue, 0.035F * strength));
+
+            /* Dust: sparse and slow, so it reads as depth behind the card. */
+            for (int i = 0; i < 34; i++)
+            {
+                float px = this.area.x + ((i * 37 + 11) % 100) / 100F * this.area.w;
+                float travel = (t * (3F + i % 5) + i * 0.137F) % 1F;
+                float py = this.area.y + (1F - travel) * this.area.h;
+                float twinkle = 0.5F + 0.5F * (float) Math.sin(t * (0.6F + i * 0.04F) + i * 1.3F);
+                int a = (int) ((0.025F + 0.10F * twinkle) * strength * 255F);
+
+                context.batcher.box(px, py, px + 1F, py + 1F, (a << 24) | (gold & 0xFFFFFF));
+            }
+
+            /* Bottom vignette: focuses the eye on the card without darkening the title. */
+            UiGfx.gradientV(context.batcher, this.area.x, this.area.y + this.area.h * 0.72F,
+                this.area.w, this.area.h * 0.28F, 0x00000000, 0x55000000);
+        }
+        finally
+        {
+            context.batcher.unclip(context);
+        }
+    }
+
     private void renderCard(UIContext context, int x, int y, int w, int h)
     {
         UiGfx.shadow(context.batcher, x, y, w, h, 22F, 0x88000000);
@@ -217,6 +302,7 @@ public class UIOnboarding extends UIElement
         UiGfx.gradientV(context.batcher, x, y + 2, w, 70,
             UiGfx.alpha(BBSSettings.primaryColor(), 0.10F), 0x00FFFFFF);
         context.batcher.outline(x, y, x + w, y + h, 0xFF3A4658);
+        this.renderCardAtmosphere(context, x, y, w, h);
 
         String title = "BBS 合成器   ·   欢迎";
         FontRenderer font = context.batcher.getFont();
@@ -240,6 +326,76 @@ public class UIOnboarding extends UIElement
         context.batcher.text("跳过", sx + 10, y + 16, 0x99B8C4D6);
         this.hits.add(new Hit(sx, y + 8, 58, 24, () -> this.close(false)));
         context.batcher.box(sx, y + 30, sx + 52, y + 31, 0x44FFFFFF);
+    }
+
+    /**
+     * The card is almost opaque, so the outside aurora cannot carry the screen. This is the same
+     * light language rendered <b>inside</b> the card, behind the type: two wide corner pools, two
+     * low-frequency shafts, a sparse dust field and a top/bottom vignette. The type is drawn after
+     * it, so contrast never drops below the pre-0.19.1 baseline.
+     */
+    private void renderCardAtmosphere(UIContext context, int x, int y, int w, int h)
+    {
+        if (!CompPrefs.get().glow || CompPrefs.get().backdropIntensity <= 0.01F)
+        {
+            return;
+        }
+
+        float strength = Math.max(0F, Math.min(1.5F, CompPrefs.get().backdropIntensity)) * CompPrefs.intensity();
+        int gold = 0xFFFFC86A;
+        int blue = 0xFF6EA8FF;
+
+        context.batcher.clip(new Area(x, y, w, h), context);
+
+        try
+        {
+            UiGfx.glow(context.batcher, x + w / 8, y + h / 5, Math.max(90, w / 4),
+                UiGfx.alpha(gold, 0.070F * strength), 40);
+            UiGfx.glow(context.batcher, x + w - w / 7, y + h - h / 5, Math.max(90, w / 5),
+                UiGfx.alpha(blue, 0.055F * strength), 40);
+
+            /* Title halo and a thin orbital signature: the sponsor-page language, scaled down to
+             * a header ornament that stays behind the type. */
+            UiGfx.glow(context.batcher, x + w / 2, y + 42, Math.max(120, w / 5),
+                UiGfx.alpha(gold, 0.050F * strength), 40);
+            context.batcher.outlineCenter(x + w / 2F, y + 38F, Math.min(w * 0.26F, 260F), 0,
+                UiGfx.alpha(gold, 0.10F * Math.min(1F, strength)));
+            context.batcher.outlineCenter(x + w / 2F, y + 38F, Math.min(w * 0.34F, 340F), 0,
+                UiGfx.alpha(blue, 0.06F * Math.min(1F, strength)));
+
+            MatrixStack stack = context.batcher.getContext().getMatrices();
+
+            for (int i = 0; i < 2; i++)
+            {
+                float phase = (this.motion.time * (0.012F + i * 0.003F) + i * 0.37F) % 1F;
+                float sx = x + w * (0.15F + phase * 0.7F);
+
+                stack.push();
+                stack.translate(sx, y + h * 0.12F, 0F);
+                stack.multiply(new org.joml.Quaternionf().rotateZ((float) Math.toRadians(-19F + i * 4F)));
+                context.batcher.gradientVBox(0F, 0F, 1F, h * 0.7F,
+                    UiGfx.alpha(gold, 0.026F * strength), 0x00FFC86A);
+                stack.pop();
+            }
+
+            for (int i = 0; i < 18; i++)
+            {
+                float px = x + 18F + ((i * 41 + 7) % 100) / 100F * (w - 36F);
+                float py = y + 84F + ((i * 59 + 13) % 100) / 100F * (h - 140F);
+                float twinkle = 0.5F + 0.5F * (float) Math.sin(this.motion.time * (0.5F + i * 0.04F) + i);
+
+                context.batcher.box(px, py, px + 1F, py + 1F,
+                    UiGfx.alpha(gold, (0.035F + 0.10F * twinkle) * strength));
+            }
+
+            UiGfx.gradientV(context.batcher, x, y + h - 54F, w, 54F, 0x00000000, 0x33000000);
+            context.batcher.box(x + 1F, y + 1F, x + w - 1F, y + 2F,
+                UiGfx.alpha(0xFFFFE1B0, 0.22F * Math.min(1F, strength)));
+        }
+        finally
+        {
+            context.batcher.unclip(context);
+        }
     }
 
     private void renderNavigation(UIContext context, int x, int y, int w, int h)

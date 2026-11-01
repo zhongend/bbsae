@@ -41,11 +41,11 @@ public class UICompSettings extends UIElement
 {
     private static final String[] CATEGORIES =
     {
-        "动效与光效", "界面布局", "快捷键", "项目设置", "高级", "新手引导"
+        "动效与光效", "界面布局", "快捷键", "项目设置", "高级", "新手引导", "赞助者"
     };
     private static final String[] CATEGORY_IDS =
     {
-        "motion", "layout", "keys", "project", "advanced", "guide"
+        "motion", "layout", "keys", "project", "advanced", "guide", "sponsor"
     };
 
     private final UICompositorPanel panel;
@@ -98,7 +98,7 @@ public class UICompSettings extends UIElement
         this.title.color(0xFFF2F5FA, false);
         this.subtitle = new UILabel(IKey.constant("外观、动效、快捷键与工程默认值。修改会立即生效并保存。"));
         this.subtitle.color(0xFF8995A8, false);
-        this.footer = new UILabel(IKey.constant("BBS Compositor 0.19.0 · 设置随工程和全局偏好保存"));
+        this.footer = new UILabel(IKey.constant("BBS Compositor 0.19.1 · 设置随工程和全局偏好保存"));
         this.footer.color(0xFF687386, false);
 
         this.search = new UITextbox(96, (text) ->
@@ -127,6 +127,7 @@ public class UICompSettings extends UIElement
                 case 3 -> Icons.FILM;
                 case 4 -> Icons.WRENCH;
                 case 5 -> Icons.HELP;
+                case 6 -> Icons.HEART;
                 default -> Icons.LIGHT;
             });
             nav.h(22);
@@ -355,6 +356,7 @@ public class UICompSettings extends UIElement
             case "project" -> this.buildProject();
             case "advanced" -> this.buildAdvanced();
             case "guide" -> this.buildGuide();
+            case "sponsor" -> this.buildSponsors();
             default -> this.buildMotion();
         }
 
@@ -866,14 +868,29 @@ public class UICompSettings extends UIElement
             this.rebuild();
         }));
         this.add(this.section("关于"));
-        this.add(this.fullButton("赞助者殿堂", "查看赞助名单与支持方式；感谢每一位让合成器继续更新的人", () ->
+        this.add(this.fullButton("赞助者", "查看赞助名单；感谢每一位支持合成器的人", () ->
         {
-            this.close();
-            this.panel.openSponsors();
+            this.category = "sponsor";
+            this.rebuild();
         }));
         this.add(this.fullButton("快捷键一览", "列出当前方案和所有可编辑命令", this.panel::showShortcutHelp));
         this.add(this.fullButton("查看项目文档", "打开工程内的 docs/HANDOFF.zh.md", () ->
             this.status("文档位于项目目录 docs/HANDOFF.zh.md")));
+    }
+
+    /**
+     * Sponsor credits are part of Settings, not a dashboard page. There is no per-person pitch:
+     * the board is only names and a plain thank-you.
+     */
+    private void buildSponsors()
+    {
+        this.add(this.section("感谢"));
+        this.add(UI.label(IKey.constant("这些名字留在这里，是因为他们支持了 BBS 合成器。"), 14));
+
+        UISponsorBoard board = new UISponsorBoard();
+
+        board.w(1F).h(326);
+        this.add(board);
     }
 
     private void status(String text)

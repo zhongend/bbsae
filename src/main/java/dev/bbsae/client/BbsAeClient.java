@@ -71,6 +71,8 @@ public class BbsAeClient implements BBSAddonMod
             final boolean[] opened = {false};
             final int[] afterOpen = {0};
             final String view = System.getProperty("bbsae.debugView", "");
+            final String[] views = view.split(",");
+            final int[] applied = {0};
 
             ClientTickEvents.END_CLIENT_TICK.register((client) ->
             {
@@ -103,17 +105,46 @@ public class BbsAeClient implements BBSAddonMod
                  * so a single client run can be screenshotted in each of them. */
                 if (opened[0] && !view.isBlank())
                 {
-                    final String[] views = view.split(",");
-                    final int[] applied = {0};
-
                     /* One view = one application. Re-applying it every eight seconds used to
                      * re-enter the workspace and fight whatever the user was doing (and a live
                      * window receives real mouse input), which made verification screenshots
                      * non-deterministic. A list still cycles, for multi-shot runs. */
                     if (++afterOpen[0] == 20 + applied[0] * 160 && (views.length > 1 || applied[0] == 0))
                     {
-                        compositorPanel.debugView(views[applied[0] % views.length].trim());
+                        String viewName = views[applied[0] % views.length].trim();
+
+                        compositorPanel.debugView(viewName);
                         applied[0]++;
+
+                        /* Multi-shot verification: one screenshot per requested view. This keeps
+                         * a multi-state visual audit in a single client launch instead of starting
+                         * the game once per screenshot. */
+                        if (Boolean.getBoolean("bbsae.debugShotEachView"))
+                        {
+                            String prefix = System.getProperty("bbsae.debugShotPrefix", "round31-");
+                            String shotName = prefix + viewName.replaceAll("[^A-Za-z0-9_-]", "-");
+                            final int[] wait = {70};
+                            final boolean[] done = {false};
+
+                            ClientTickEvents.END_CLIENT_TICK.register((c) ->
+                            {
+                                if (c.world == null || c.player == null || done[0])
+                                {
+                                    return;
+                                }
+
+                                if (--wait[0] <= 0)
+                                {
+                                    done[0] = true;
+                                    net.minecraft.client.util.ScreenshotRecorder.saveScreenshot(
+                                        c.runDirectory,
+                                        shotName,
+                                        c.getFramebuffer(),
+                                        (text) -> BbsAeAddon.LOGGER.info("screenshot: {}", text.getString())
+                                    );
+                                }
+                            });
+                        }
                     }
                 }
             });

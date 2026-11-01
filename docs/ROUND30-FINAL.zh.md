@@ -89,6 +89,10 @@ AE 相机与 BBS 相机是同一列表里的普通图层，`CompDocument.activeC
 支持三列/单列响应式、滚轮和 Esc。名单：**星辰久梦君、血之书、Szv文森特37**。
 入口：头部“赞助”按钮、设置 → 关于、CREDITS。
 
+> 0.19.1 按用户反馈调整：删除头部“赞助”入口和全屏覆盖层，改为
+> `UICompSettings → 赞助者` 分类内的 `UISponsorBoard`；卡片下只保留“感谢你的支持。”，
+> 不再有每人一段激励文案。详见 [`ROUND31-UI-POLISH.zh.md`](ROUND31-UI-POLISH.zh.md)。
+
 ## 9. 验证
 
 - `test`：**223/223**，0 failures / 0 errors。
