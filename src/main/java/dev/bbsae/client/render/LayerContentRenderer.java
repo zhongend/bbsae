@@ -535,11 +535,11 @@ final class LayerContentRenderer
                         int color = animator.useColor ? animator.color : layer.color;
 
                         color = withAlpha(color, Colors.getA(color) * animator.opacity);
-                        drawGlyph(batcher, glyph, charX, y, color, layer.strokeColor, textStroke);
+                        drawGlyph(batcher, font, glyph, charX, y, color, layer.strokeColor, textStroke);
                     }
                     else
                     {
-                        drawGlyph(batcher, glyph, charX, y, layer.color, layer.strokeColor, textStroke);
+                        drawGlyph(batcher, font, glyph, charX, y, layer.color, layer.strokeColor, textStroke);
                     }
 
                     stack.pop();
@@ -575,24 +575,42 @@ final class LayerContentRenderer
         }
     }
 
-    private static void drawGlyph(Batcher2D batcher, String glyph, float x, float y, int color, int strokeColor, float strokeWidth)
+    /**
+     * Draws one glyph with the layer's FontRenderer.
+     *
+     * <p>Batcher2D.text() always uses {@code batcher.getFont()}. The imported font was only used
+     * for measuring (line width/height), while the glyphs themselves were drawn with BBS's
+     * default font — the classic "font metrics change but the letters do not" bug. Setting the
+     * batcher font around the draw makes the renderer and the measurement agree.</p>
+     */
+    private static void drawGlyph(Batcher2D batcher, FontRenderer font, String glyph, float x, float y,
+                                  int color, int strokeColor, float strokeWidth)
     {
         if (Colors.getA(color) <= 0F)
         {
             return;
         }
 
-        if (Colors.getA(strokeColor) > 0F && strokeWidth > 0F)
+        FontRenderer previous = batcher.setFont(font);
+
+        try
         {
-            float offset = Math.max(1F, strokeWidth * 0.5F);
+            if (Colors.getA(strokeColor) > 0F && strokeWidth > 0F)
+            {
+                float offset = Math.max(1F, strokeWidth * 0.5F);
 
-            batcher.text(glyph, x - offset, y, strokeColor, false);
-            batcher.text(glyph, x + offset, y, strokeColor, false);
-            batcher.text(glyph, x, y - offset, strokeColor, false);
-            batcher.text(glyph, x, y + offset, strokeColor, false);
+                batcher.text(glyph, x - offset, y, strokeColor, false);
+                batcher.text(glyph, x + offset, y, strokeColor, false);
+                batcher.text(glyph, x, y - offset, strokeColor, false);
+                batcher.text(glyph, x, y + offset, strokeColor, false);
+            }
+
+            batcher.text(glyph, x, y, color, false);
         }
-
-        batcher.text(glyph, x, y, color, false);
+        finally
+        {
+            batcher.setFont(previous);
+        }
     }
 
     private static float lineWidth(FontRenderer font, String line, float tracking)

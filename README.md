@@ -83,6 +83,8 @@
   [`docs/ROUND40-MASK-EXCLUDE.zh.md`](docs/ROUND40-MASK-EXCLUDE.zh.md)
 - **Round 41 (projected layer and warp alpha association, v0.21.3):**
   [`docs/ROUND41-PREMULTIPLY.zh.md`](docs/ROUND41-PREMULTIPLY.zh.md)
+- **Round 42 (custom font rendering / BBS font folder import flow, v0.21.4):**
+  [`docs/ROUND42-FONT-RENDER.zh.md`](docs/ROUND42-FONT-RENDER.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -102,15 +104,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.21.3.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.3/bbsae-0.21.3.jar)
-   from the **v0.21.3** release (the asset is updated with each source push).
+1. Download [`bbsae-0.21.4.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.4/bbsae-0.21.4.jar)
+   from the **v0.21.4** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.21.3.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.21.4.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.21.3.jar` SHA-256: `01BAE733BE7728619EA6676C76B63F0492EDCBD179D5FCE8CF338F29FA4022D2`.
+`bbsae-0.21.4.jar` SHA-256: `E209D3DB98D954A58AF59161C84368BC3A99254EEF89046A127D7A6CB69076FD`.
 
 ## Gallery
 
@@ -177,6 +179,19 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.21.4
+
+- **Imported fonts actually render.** The text layer measured with the custom FontRenderer but
+  drew glyphs through `Batcher2D.text`, which always uses the default font; metrics changed while
+  the letters did not. Glyph drawing now sets the batcher font to the layer's font (and restores
+  it afterwards), so measurement and rendering agree.
+- **Import flow mirrors original BBS.** The text section now has "Open BBS fonts folder" and
+  "Refresh font list" buttons next to import; fonts copied to `config/bbs/assets/fonts` are listed
+  immediately, the same folder/link contract BBS uses.
+- Import still verifies the copy through BBS' own stb loader and explains TTC/WOFF/unsupported
+  OTF/CFF instead of silently selecting a font that falls back.
+- 250/250 tests pass.
 
 ## What's new in 0.21.3
 

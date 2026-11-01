@@ -13115,7 +13115,22 @@ public class UICompositorPanel extends UIDashboardPanel
             this.save();
         });
         section.fields.add(this.fieldRow("字体", fontChoice));
-        section.fields.add(this.smallButton("导入字体（ttf / otf）…", () -> this.importFont(layer)));
+        section.fields.add(UI.row(
+            this.smallButton("导入字体（ttf / otf）…", () -> this.importFont(layer)),
+            this.smallButton("打开 BBS 字体文件夹…", () ->
+            {
+                java.io.File folder = mchorse.bbs_mod.fonts.FontManager.getFolder();
+
+                if (folder == null || !OsOpen.openFolder(folder.toPath()))
+                {
+                    this.setStatus("无法打开 BBS 字体文件夹");
+                }
+            })
+        ));
+        section.fields.add(this.smallButton("刷新字体列表", () -> {
+            this.refreshInspector();
+            this.setStatus("字体列表已刷新");
+        }));
 
         section.fields.add(this.animatedNumberRow("字号", layer, "text/fontSize", layer.fontSizeAt(this.getFrame()), (value) -> layer.fontSize = (float) Math.max(1D, value), 1F, 2000F));
         section.fields.add(this.animatedNumberRow("字距", layer, "text/tracking", layer.trackingAt(this.getFrame()), (value) -> layer.tracking = value.floatValue(), -200F, 500F));
