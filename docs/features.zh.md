@@ -98,7 +98,7 @@
 ## 验证状态
 
 - `compileJava`：通过。
-- `test`：**223** 个测试通过（模型/曲线/音频/导出/摄像机/shader/PIXEL/重复/纹理过滤/响应式/覆盖数据/图标等）。0.19.1 删除了效果预览缩略图，未改变渲染测试。包含 0.17.0 新增的贝塞尔默认手柄展开、播放时钟、3D 标量回退、Mod Menu 图标等断言。第八轮的 PIXEL 像素测试包含层空间、恒等性、颜色和万花筒对称性断言，并输出 `docs/verify/round8-pixel-effects.png`。
+- `test`：**223** 个测试通过（模型/曲线/音频/导出/摄像机/shader/PIXEL/重复/纹理过滤/响应式/覆盖数据/图标等）。0.19.1 删除了效果预览缩略图；0.19.2 增加 Iris final-pass/深度捕获，未改变渲染测试。包含 0.17.0 新增的贝塞尔默认手柄展开、播放时钟、3D 标量回退、Mod Menu 图标等断言。第八轮的 PIXEL 像素测试包含层空间、恒等性、颜色和万花筒对称性断言，并输出 `docs/verify/round8-pixel-effects.png`。
 - 真实导出：`1920x1080 @ 60 fps`、494 帧、8.23 s；`docs/verify/round6-export-1080p60.png` 抽帧含合成器面板/标题/进度条。扭曲 shader 有真实 GL 像素断言（`ShaderDistortTest`，未跳过）。
 - 开发客户端：Fabric Loader 0.16.14 + BBS 2.7-1.20.1 下启动成功，BBS Compositor 面板注册成功；预览能显示合成内容，布局为 效果库 / 预览 / Effect Controls / 轨道时间轴，无重叠；轨道头、可移动/裁剪 bar、秒刻度、播放头、工作区、FX 徽章可见；关键帧抽屉与轨道播放头对齐。截图见 `docs/ui-track-redesign.png`。
 - 真实导出：使用 BBS 自带 recorder 生成了 `320x180@20fps`、39 帧的 H.264 MP4；抽帧确认合成层（面板、标题、HUD）进入视频，不只是屏幕预览。
@@ -114,3 +114,10 @@
 4. 预览已按视口像素渲染（0.5.0），重效果不再是按合成分辨率全屏开销；动画蒙版和形状仍每帧 CPU 栅格化，4K 下明显。后续可加 layer-local mask 纹理与 GPU 蒙版。
 5. 预览/导出中曾出现过 Minecraft `BufferRenderer` 的 VAO 缓存与自定义 pass 不同步的问题；已通过 `BufferRenderer.resetCurrentVertexBuffer()` 修复，并在自定义 pass 前后重置。
 6. 预览网格、安全区、深度和自动保存开关均已接到实际渲染/保存逻辑；UI 已做过一次完整视觉检查。普通开发机仍建议按 README 使用 `gradlew.bat build`，本机因执行沙箱无法让 TinyRemapper 直接写 zip，最终 jar 通过“重映射 class 目录 + PowerShell 重打包”生成。
+
+
+## Iris / 光影（0.19.2）
+
+- 预览颜色改为在 Iris `finalizeLevelRendering()` 之后采样 final pass；无光影时回退原拷贝。
+- 回放抠像优先读 Iris 自己的深度附件；主 framebuffer 深度为空时不会把实体全部判成背景。
+- BSL/Complementary 等 Iris 光影包的曝光、泛光、色调映射和调色会出现在合成器预览里。

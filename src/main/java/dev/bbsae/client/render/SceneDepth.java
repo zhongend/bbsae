@@ -1,6 +1,7 @@
 package dev.bbsae.client.render;
 
 import com.mojang.blaze3d.platform.GlStateManager;
+import dev.bbsae.BbsAeAddon;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL30;
@@ -17,15 +18,19 @@ import org.lwjgl.opengl.GL30;
 public final class SceneDepth
 {
     private int framebuffer;
+    private int sourceFramebuffer;
     private int texture;
     private int width;
     private int height;
     private boolean available;
+    private boolean sourceAvailable;
     private boolean tested;
+    private boolean loggedIrisFallback;
 
     public SceneDepth()
     {
         this.framebuffer = GL30.glGenFramebuffers();
+        this.sourceFramebuffer = GL30.glGenFramebuffers();
         this.texture = GL11.glGenTextures();
 
         GlStateManager._bindTexture(this.texture);
@@ -55,12 +60,117 @@ public final class SceneDepth
     }
 
     /**
+     * Copies Iris' own depth attachment when a shader pack is active.
+     *
+     * <p>Iris renders the world into its own render targets; the main depth attachment can be
+     * empty by the time the compositor copies it. The replay matte compares the world depth with a
+     * depth-only actor pass, so reading the wrong attachment turns "key the actor" into "key
+     * nothing". The source framebuffer is a temporary depth-only FBO wrapping Iris' depth texture,
+     * then a normal depth blit copies it into this object's texture.</p>
+     *
+     * @return true when an Iris depth texture was copied
+     */
+    public boolean captureIris()
+    {
+        if (!ShaderCompat.canCaptureWorld())
+        {
+            return false;
+        }
+
+        int irisTexture = IrisDepth.texture();
+
+        if (irisTexture == 0)
+        {
+            if (!loggedIrisFallback)
+            {
+                loggedIrisFallback = true;
+                BbsAeAddon.LOGGER.info("Iris depth unavailable; replay matte falls back to the main depth attachment");
+            }
+
+            return false;
+        }
+
+        int w = IrisDepth.width();
+        int h = IrisDepth.height();
+
+        if (w <= 0 || h <= 0)
+        {
+            return false;
+        }
+
+        this.ensureSize(w, h);
+
+        if (!this.available)
+        {
+            return false;
+        }
+
+        int oldRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+        int oldDraw = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+
+        try
+        {
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.sourceFramebuffer);
+
+            if (!this.sourceAvailable || this.sourceTexture != irisTexture)
+            {
+                GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D, irisTexture, 0);
+                GL11.glDrawBuffer(GL11.GL_NONE);
+                GL11.glReadBuffer(GL11.GL_NONE);
+                this.sourceAvailable = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER) == GL30.GL_FRAMEBUFFER_COMPLETE;
+                this.sourceTexture = irisTexture;
+            }
+
+            if (!this.sourceAvailable)
+            {
+                return false;
+            }
+
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, this.sourceFramebuffer);
+            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, this.framebuffer);
+            GL30.glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+
+            return true;
+        }
+        finally
+        {
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, oldRead);
+            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, oldDraw);
+        }
+    }
+
+    private int sourceTexture;
+
+    private void ensureSize(int w, int h)
+    {
+        if (w == this.width && h == this.height && this.tested)
+        {
+            return;
+        }
+
+        this.width = w;
+        this.height = h;
+        this.tested = true;
+
+        GlStateManager._bindTexture(this.texture);
+        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT24, w, h, 0, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, (java.nio.ByteBuffer) null);
+        GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.framebuffer);
+        GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D, this.texture, 0);
+        GL11.glDrawBuffer(GL11.GL_NONE);
+        GL11.glReadBuffer(GL11.GL_NONE);
+
+        this.available = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER) == GL30.GL_FRAMEBUFFER_COMPLETE;
+        this.sourceAvailable = false;
+        this.sourceTexture = 0;
+    }
+
+    /**
      * Copies the depth attachment of a specific framebuffer.
      *
      * <p>Used by the compositor preview: the world's depth is copied at
-     * {@code WorldRenderEvents.LAST} from Minecraft's main framebuffer, which is the only source
-     * that contains the film's real geometry. Relying on "whatever is bound" worked for the
-     * overlay path but read an empty attachment once the compositor had bound its own target.</p>
+     * {@code WorldRenderEvents.AFTER_TRANSLUCENT} from Minecraft's main framebuffer, which is the
+     * fallback source when Iris is absent. Relying on "whatever is bound" worked for the overlay
+     * path but read an empty attachment once the compositor had bound its own target.</p>
      */
     public void captureFrom(int readFramebuffer, int width, int height)
     {
@@ -78,21 +188,7 @@ public final class SceneDepth
             return;
         }
 
-        if (w != this.width || h != this.height || !this.tested)
-        {
-            this.width = w;
-            this.height = h;
-            this.tested = true;
-
-            GlStateManager._bindTexture(this.texture);
-            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT24, w, h, 0, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, (java.nio.ByteBuffer) null);
-            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.framebuffer);
-            GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D, this.texture, 0);
-            GL11.glDrawBuffer(GL11.GL_NONE);
-            GL11.glReadBuffer(GL11.GL_NONE);
-
-            this.available = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER) == GL30.GL_FRAMEBUFFER_COMPLETE;
-        }
+        this.ensureSize(w, h);
 
         if (!this.available)
         {
@@ -134,7 +230,9 @@ public final class SceneDepth
     {
         GL11.glDeleteTextures(this.texture);
         GL30.glDeleteFramebuffers(this.framebuffer);
+        GL30.glDeleteFramebuffers(this.sourceFramebuffer);
         this.texture = 0;
         this.framebuffer = 0;
+        this.sourceFramebuffer = 0;
     }
 }

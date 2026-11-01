@@ -12,6 +12,9 @@
     "sources": "https://github.com/zhongend/bbsae"
   },
   "environment": "client",
+  "mixins": [
+    "bbsae.mixins.json"
+  ],
   "entrypoints": {
     "bbs-addon": ["dev.bbsae.BbsAeAddon"],
     "bbs-client-addon": ["dev.bbsae.client.BbsAeClient"]

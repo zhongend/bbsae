@@ -64,6 +64,8 @@
   [`docs/ROUND30-FINAL.zh.md`](docs/ROUND30-FINAL.zh.md)
 - **Round 31 (effect-library decluttering / camera hints / settings-only sponsors / premium UI light, v0.19.1):**
   [`docs/ROUND31-UI-POLISH.zh.md`](docs/ROUND31-UI-POLISH.zh.md)
+- **Round 32 (Iris final-pass capture / shader-aware replay matte, v0.19.2):**
+  [`docs/ROUND32-IRIS-SHADERS.zh.md`](docs/ROUND32-IRIS-SHADERS.zh.md)
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -83,13 +85,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.19.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.19.1/bbsae-0.19.1.jar)
-   from the **v0.19.1** release (the asset is updated with each source push).
+1. Download [`bbsae-0.19.2.jar`](https://github.com/zhongend/bbsae/releases/download/v0.19.2/bbsae-0.19.2.jar)
+   from the **v0.19.2** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.19.1.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.19.2.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
+
+`bbsae-0.19.2.jar` SHA-256: `00FA8A9240A396924EFD82DD70712510C4FA0CB8C2327DF964919B568B53B077`.
 
 ## Gallery
 
@@ -158,6 +162,14 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
 
+## What's new in 0.19.2
+
+- The compositor preview now samples Iris' **final pass** instead of the pre-composite G-buffer,
+  so BSL/Complementary-style exposure, bloom, tonemap and colour grading match the live game.
+- Replay entity mattes read Iris' **own depth attachment** and match the live film id, fixing
+  "mask shows 0 entities" under a shader pack.
+- Fixed the 2D preview hint overprinting the resolution/shader readout.
+
 ## What's new in 0.19.0 / 0.19.1
 
 **The thank-you release: a sponsor hall, BBS-style flight cameras, a faster AE curve, adaptive
@@ -223,6 +235,10 @@ turning depth effects into a black frame.
 
 <p align="center">
   <img src="docs/gallery/onboarding-premium.png" alt="Onboarding background with warm/cool aurora and light shafts" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/gallery/iris-bsl-preview.png" alt="Iris + BSL final-pass image visible in the compositor preview" width="100%">
 </p>
 
 <p align="center">

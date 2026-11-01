@@ -1,6 +1,7 @@
 package dev.bbsae.client.ui;
 
 import dev.bbsae.BbsAeAddon;
+import dev.bbsae.client.BbsAeClient;
 import dev.bbsae.client.export.CompExportManager;
 import dev.bbsae.client.render.CompCamera;
 import dev.bbsae.client.render.CompRenderer;
@@ -515,10 +516,10 @@ public class UICompositorPanel extends UIDashboardPanel
                     this.renderGuides(context);
                     this.renderSelection(context);
 
-                    /* Say which view this is: "dragging does nothing" was really "this is the 2D
-                     * editor, not the 3D workspace". */
-                    context.batcher.textShadow("2D 编辑视图 · 右键拖动进入 3D 视口 · 选中摄像机后 Alt+拖动 = 环绕",
-                        this.area.ex() - 340, this.area.ey() - 16, 0x77B9C6DA);
+                    /* The old bottom-right hint shared the exact line with the preview readout,
+                     * producing two overprinted sentences. The 3D sphere button, its tooltip and
+                     * the camera inspector already explain the gesture, so the readout owns this
+                     * strip alone. */
                 }
 
                 this.updateCursor(context);
@@ -824,7 +825,8 @@ public class UICompositorPanel extends UIDashboardPanel
                 {
                     /* The 3D HUD owns the bottom strip; two readouts on top of each other read as
                      * a rendering bug. */
-                    UICompositorPanel.this.previewInfo.setVisible(!UICompositorPanel.this.is3DSpace());
+                    UICompositorPanel.this.previewInfo.setVisible(
+                        !UICompositorPanel.this.is3DSpace() && !UICompositorPanel.this.cameraFlying);
                 }
 
                 if (!UICompositorPanel.this.is3DSpace())
@@ -6719,6 +6721,10 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.debugEntityScene();
                 break;
 
+            case "filmreplay":
+                this.debugOpenFilm(System.getProperty("bbsae.debugFilmId", "A2(MAIN)_"));
+                return;
+
             case "quick":
                 this.debugQuick3D();
                 break;
@@ -6977,6 +6983,26 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (layer != null)
         {
+            if (Boolean.getBoolean("bbsae.debugNoEntityOcclusion"))
+            {
+                layer.entityOcclusion = false;
+            }
+
+            /* Isolation view: the entity layer normally sits over the BBS world plate, so a
+             * screenshot cannot tell a working matte from the plate showing the actor. */
+            if (Boolean.getBoolean("bbsae.debugHideWorldPlate"))
+            {
+                for (CompLayer candidate : this.doc.layers)
+                {
+                    if (candidate != null && "bbs".equals(candidate.type))
+                    {
+                        candidate.visible = false;
+                    }
+                }
+
+                this.refreshLayers();
+            }
+
             this.inspectorPage = PAGE_LAYER;
             this.selectLayer(layer);
             this.refreshInspector();
@@ -7105,6 +7131,48 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshSheets();
         this.trackTimeline.fit();
         this.updatePlayLabel();
+    }
+
+    /**
+     * Development-only: open an existing film and its replay composition, without starting an
+     * export. Used to verify the replay entity matte against a real film actor under Iris.
+     */
+    public void debugOpenFilm(String filmId)
+    {
+        mchorse.bbs_mod.ui.ContentType.FILMS.getRepository().load(filmId, (data) ->
+        {
+            net.minecraft.client.MinecraftClient.getInstance().execute(() ->
+            {
+                if (!(data instanceof mchorse.bbs_mod.film.Film film))
+                {
+                    BbsAeAddon.LOGGER.error("Debug film: {} not found", filmId);
+
+                    return;
+                }
+
+                mchorse.bbs_mod.ui.film.UIFilmPanel panel = this.dashboard.getPanel(mchorse.bbs_mod.ui.film.UIFilmPanel.class);
+
+                if (panel == null)
+                {
+                    panel = new mchorse.bbs_mod.ui.film.UIFilmPanel(this.dashboard);
+                }
+
+                panel.fill(film);
+                BbsAeClient.openCompositorForFilm(panel, film, film.replays.getList().isEmpty() ? null : film.replays.getList().get(0));
+
+                this.debugView("entity");
+                this.time = Math.min(2F, Math.max(0F, this.doc.duration * 0.25F));
+                this.applyTimelinePage(true);
+                this.refreshSheets();
+                this.setStatus("调试：真实影片回放抠像 · " + filmId);
+                BbsAeAddon.LOGGER.info("Debug film replay opened: {} replays={} time={} maskAvailable={} maskSize={}x{} entities={}",
+                    filmId, film.replays.getList().size(), this.time,
+                    dev.bbsae.client.render.ReplayEntityMask.isAvailable(),
+                    dev.bbsae.client.render.ReplayEntityMask.width(),
+                    dev.bbsae.client.render.ReplayEntityMask.height(),
+                    dev.bbsae.client.render.ReplayEntityMask.entityCount());
+            });
+        });
     }
 
     /**
@@ -15210,17 +15278,15 @@ public class UICompositorPanel extends UIDashboardPanel
                     }
                 }
 
-                int cached = dev.bbsae.client.render.CompPrecache.cachedCount(this.project, this.doc);
-                String cachedLabel = cached > 0 ? "  ·  " + cached + " 帧缓存" : "";
-
                 String shader = dev.bbsae.client.render.ShaderCompat.label();
                 String depth = this.hasDepthEffects() && !dev.bbsae.client.overlay.BbsPreviewBridge.depthAvailable()
-                    ? "  ·  深度不可用（效果自动降级）" : "";
-                String cameraHint = this.canFlyCamera() && !this.cameraFlying
-                    ? "  ·  BBS: F 飞行 / 右键=视口" : "";
+                    ? "  ·  深度降级" : "";
 
+                /* One short line. The old readout appended shader/depth/camera/cache status and
+                 * overflowed the preview's own width, which made it collide with the BBS flight
+                 * HUD. The authoritative camera hint lives in the inspector and the status bar. */
                 this.previewInfo.label = IKey.constant(this.doc.width + "x" + this.doc.height + "  " + (int) this.doc.fps
-                    + "fps  " + effects + " FX  ·  " + shader + depth + cameraHint + cachedLabel);
+                    + "fps  " + effects + " FX  ·  " + shader + depth);
                 this.updatePrecacheLabel();
             }
             else

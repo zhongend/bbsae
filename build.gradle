@@ -33,6 +33,25 @@ test {
     useJUnitPlatform()
 }
 
+/*
+ * Iris 1.7.6 / Sodium 0.5.13 refuse to start on LWJGL 3.3.2-snapshot. The production launcher
+ * uses 3.3.1, but Loom's dev runtime resolves the newer snapshot. This opt-in flag pins the dev
+ * runtime to the production LWJGL so an actual Iris + BSL shader regression can be reproduced:
+ *
+ *   ./gradlew runClientView -PbbsaeIrisTest=true ...
+ */
+if (project.hasProperty("bbsaeIrisTest"))
+{
+    configurations.configureEach {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == "org.lwjgl")
+            {
+                details.useVersion "3.3.1"
+            }
+        }
+    }
+}
+
 loom {
     runs {
         clientTest {

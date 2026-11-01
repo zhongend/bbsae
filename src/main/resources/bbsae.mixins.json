@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "dev.bbsae.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "IrisFinalizeMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

@@ -25,6 +25,18 @@ public final class SceneColor
     private static int width;
     private static int height;
 
+    /**
+     * A second copy taken after Iris' final pass. This is the image that includes the shader
+     * pack's exposure, bloom, tonemap and colour grading; the early copy is only the pre-composite
+     * G-buffer scene and is kept as a fallback for non-Iris setups.
+     */
+    private static GlTexture finalTexture;
+    private static int finalWidth;
+    private static int finalHeight;
+    private static boolean finalValid;
+    private static boolean finalRequested;
+    private static boolean finalLogged;
+
     private SceneColor()
     {}
 
@@ -101,11 +113,108 @@ public final class SceneColor
             GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, previousRead);
             GlStateManager._bindTexture(0);
         }
+
+        /* Iris will call captureFinal() at the tail of finalizeLevelRendering(). The early copy
+         * remains the fallback for vanilla/no-shader and for the very first frame while the
+         * pipeline is still compiling. */
+        finalRequested = ShaderCompat.irisLoaded();
     }
 
+    /**
+     * Copies the framebuffer that Iris has just finished compositing.
+     *
+     * <p>Called from an optional mixin at the tail of {@code IrisRenderingPipeline.finalizeLevelRendering}.
+     * The draw framebuffer at that point is the final target (main framebuffer or BBS' target),
+     * so reading it back with {@code glCopyTexSubImage2D} gives the exact graded frame. The copy is
+     * bottom-up, the same convention as {@link #capture()}.</p>
+     */
+    public static void captureFinal()
+    {
+        if (!finalRequested || !ShaderCompat.irisLoaded())
+        {
+            return;
+        }
+
+        MinecraftClient mc = MinecraftClient.getInstance();
+
+        if (mc == null || mc.world == null)
+        {
+            return;
+        }
+
+        int drawFramebuffer = GL30.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        int[] viewport = new int[4];
+        GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport);
+
+        int w = viewport[2];
+        int h = viewport[3];
+
+        /* At the tail of the final pass the viewport may already have been restored to the window.
+         * Prefer the known main-framebuffer size when the draw target is that framebuffer. */
+        Framebuffer main = mc.getFramebuffer();
+        int mainFbo = main == null ? 0 : main.fbo;
+
+        if (drawFramebuffer == mainFbo && main != null)
+        {
+            w = main.textureWidth;
+            h = main.textureHeight;
+        }
+
+        if (w <= 0 || h <= 0)
+        {
+            return;
+        }
+
+        if (finalTexture == null || finalWidth != w || finalHeight != h)
+        {
+            if (finalTexture != null)
+            {
+                finalTexture.delete();
+            }
+
+            finalTexture = new GlTexture();
+            finalTexture.allocate(w, h);
+            finalWidth = w;
+            finalHeight = h;
+        }
+
+        int previousRead = GL30.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+
+        try
+        {
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, drawFramebuffer);
+            GlStateManager._bindTexture(finalTexture.id);
+            GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, w, h);
+            finalValid = true;
+        }
+        catch (RuntimeException e)
+        {
+            finalValid = false;
+        }
+        finally
+        {
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, previousRead);
+            GlStateManager._bindTexture(0);
+        }
+
+        if (finalValid && !finalLogged)
+        {
+            finalLogged = true;
+            dev.bbsae.BbsAeAddon.LOGGER.info("Iris final-pass capture enabled: {}x{} from framebuffer {}",
+                w, h, drawFramebuffer);
+        }
+    }
+
+    /** The shader-final copy when Iris is active, otherwise the early world copy. */
     public static GlTexture texture()
     {
-        return texture;
+        return ShaderCompat.irisLoaded() && finalValid && finalTexture != null ? finalTexture : texture;
+    }
+
+    /** True when a shader-pack final frame has actually been captured. */
+    public static boolean hasFinal()
+    {
+        return finalValid && finalTexture != null;
     }
 
     public static void delete()
@@ -116,7 +225,18 @@ public final class SceneColor
             texture = null;
         }
 
+        if (finalTexture != null)
+        {
+            finalTexture.delete();
+            finalTexture = null;
+        }
+
         width = 0;
         height = 0;
+        finalWidth = 0;
+        finalHeight = 0;
+        finalValid = false;
+        finalRequested = false;
+        finalLogged = false;
     }
 }

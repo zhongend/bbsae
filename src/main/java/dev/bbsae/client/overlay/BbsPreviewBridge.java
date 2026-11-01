@@ -540,6 +540,7 @@ public final class BbsPreviewBridge
     }
 
     private static int captureTrace;
+    private static boolean depthCaptureLogged;
 
     private static void captureDepthNow()
     {
@@ -559,7 +560,21 @@ public final class BbsPreviewBridge
                 worldDepth = new dev.bbsae.client.render.SceneDepth();
             }
 
-            worldDepth.captureFrom(framebuffer.fbo, framebuffer.textureWidth, framebuffer.textureHeight);
+            /* A shader pack renders into Iris' depth target, not necessarily Minecraft's main
+             * attachment. Try the real source first; without Iris this is a cheap no-op. */
+            boolean irisDepth = worldDepth.captureIris();
+
+            if (!irisDepth)
+            {
+                worldDepth.captureFrom(framebuffer.fbo, framebuffer.textureWidth, framebuffer.textureHeight);
+            }
+
+            if (!depthCaptureLogged)
+            {
+                depthCaptureLogged = true;
+                BbsAeAddon.LOGGER.info("World depth captured: iris={} available={} size={}x{}",
+                    irisDepth, worldDepth.isAvailable(), worldDepth.width(), worldDepth.height());
+            }
         }
         catch (RuntimeException e)
         {

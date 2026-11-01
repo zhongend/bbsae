@@ -209,6 +209,23 @@ public final class ReplayEntityMask
             return "";
         }
 
+        /* The project id is sanitised for storage (parentheses and spaces become underscores),
+         * while the film controller is keyed by the original film id. Prefer the live film panel:
+         * a mismatch here is silent and makes the actor matte find no controller at all. */
+        try
+        {
+            UIFilmPanel panel = BBSModClient.getDashboard() == null
+                ? null
+                : BBSModClient.getDashboard().getPanel(UIFilmPanel.class);
+
+            if (panel != null && panel.getData() != null)
+            {
+                return panel.getData().getId();
+            }
+        }
+        catch (RuntimeException ignored)
+        {}
+
         return project.id.startsWith("film_") ? project.id.substring(5) : "";
     }
 
@@ -254,6 +271,7 @@ public final class ReplayEntityMask
         renderedSerial = serial;
         renderedSignature = requestedSignature;
     }
+
 
     /**
      * Makes sure the mask belongs to the current frame and the current selection.
