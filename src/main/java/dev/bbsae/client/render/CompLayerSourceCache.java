@@ -5,7 +5,9 @@ import com.mojang.blaze3d.systems.VertexSorter;
 import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompEffect;
 import dev.bbsae.comp.CompLayer;
+import dev.bbsae.comp.CompMask;
 import dev.bbsae.comp.CompShape;
+import dev.bbsae.comp.CompStyle;
 import dev.bbsae.comp.CompTextAnimator;
 import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
 import net.minecraft.client.render.BufferRenderer;
@@ -37,10 +39,13 @@ import java.util.Map;
  * muddy and the BBS preview layer's sky went black. The raster is therefore un-premultiplied once
  * per rebuild (a full-screen pass, not per frame), and every consumer can use normal blending.</p>
  *
- * <h2>What is not here</h2>
- * <p>Effects, masks, track mattes and blending modes are <b>composite</b> operations, not source
- * pixels. The viewport is a draft: it says so in the HUD. The exact frame is one key away
- * (look through the camera), and that path still runs the full graph.</p>
+ * <h2>What is baked here</h2>
+ * <p>Effects, layer styles and masks are properties of the layer's own pixels, so they are applied
+ * to this raster before projection (effects, then styles, with the mask multiplied in first). This
+ * is what keeps a gradient glued to a 3D plane and lets a glow keep its full falloff: the raster is
+ * padded by {@link EffectPadding}. Track mattes, blend modes and adjustment layers are genuinely
+ * composite operations and stay outside; depth effects need the live world depth, which this draft
+ * raster does not have.</p>
  */
 public final class CompLayerSourceCache
 {
@@ -218,6 +223,19 @@ public final class CompLayerSourceCache
             }
         }
 
+        /* The raster is the effect kernel's support. Without this margin a glow/blur/shadow is
+         * cut at the layer rectangle — the effects looked "not applied" on 3D layers because the
+         * visible part was only the layer box. */
+        float padding = EffectPadding.of(layer, frame);
+
+        if (padding > 0F)
+        {
+            rect.x -= padding;
+            rect.y -= padding;
+            rect.width += padding * 2F;
+            rect.height += padding * 2F;
+        }
+
         return rect;
     }
 
@@ -309,7 +327,7 @@ public final class CompLayerSourceCache
              * releases the previous one itself. Releasing `straight` here as well put the same
              * framebuffer in the pool twice, and two later consumers rendered into one texture —
              * the "UI flickers during playback" corruption the pool guard now reports. */
-            GlFramebuffer result = applyEffects(layer, straight, rect, scale, context);
+            GlFramebuffer result = applyPixelOps(layer, straight, rect, scale, context);
 
             if (result != straight)
             {
@@ -362,10 +380,18 @@ public final class CompLayerSourceCache
      * <p>Depth effects are skipped (they need the world depth buffer, which the viewport does not
      * carry); shake is a transform, not a pixel pass.</p>
      */
-    private static GlFramebuffer applyEffects(CompLayer layer, GlFramebuffer content, Rect rect, float scale,
-                                              CompRenderContext parent)
+    private static GlFramebuffer applyPixelOps(CompLayer layer, GlFramebuffer content, Rect rect, float scale,
+                                               CompRenderContext parent)
     {
-        if (content == null || layer.effects == null || layer.effects.isEmpty())
+        if (content == null)
+        {
+            return content;
+        }
+
+        boolean hasMasks = layer.masks != null && !layer.masks.isEmpty();
+
+        if ((layer.effects == null || layer.effects.isEmpty())
+            && (layer.styles == null || layer.styles.isEmpty()) && !hasMasks)
         {
             return content;
         }
@@ -383,6 +409,26 @@ public final class CompLayerSourceCache
         EffectSpace space = EffectSpace.ofBounds(layer, world, context, rect.x, rect.y, rect.width, rect.height);
         GlFramebuffer current = content;
 
+        /* Masks are layer pixels, so they belong in the same raster and before the effects: a
+         * glow/stroke on a masked layer must be able to spread outside the mask, which is exactly
+         * the 2D order. Before this the 3D path simply ignored masks. */
+        if (hasMasks)
+        {
+            MaskCache.MaskTexture mask = MaskCache.get(layer, current.width, current.height, world, parent.frame);
+
+            if (mask != null)
+            {
+                GlFramebuffer masked = PassRenderer.mask(current, mask.texture.id, 0);
+
+                if (masked != current)
+                {
+                    FboPool.release(current);
+                    current = masked;
+                }
+            }
+        }
+
+        if (layer.effects != null)
         for (CompEffect effect : layer.effects)
         {
             if (effect == null || !effect.enabled)
@@ -399,7 +445,7 @@ public final class CompLayerSourceCache
 
             try
             {
-                CompEffect resolved = layer.resolveEffect(effect, parent.frame);
+                CompEffect resolved = scaleEffectForRaster(layer.resolveEffect(effect, parent.frame), scale);
                 GlFramebuffer next = EffectRenderer.apply(layer, resolved, current, context, space);
 
                 if (next != current)
@@ -414,7 +460,127 @@ public final class CompLayerSourceCache
             }
         }
 
+        /* Styles are part of what the layer looks like, not a post-projection annotation: a drop
+         * shadow must be clipped by the same raster margin (EffectPadding) and must follow the
+         * plane in 3D. Baking them here makes the viewport and the final 3D frame agree, and lets
+         * the composition skip its after-projection style pass for this layer. */
+        if (layer.styles != null)
+        {
+            for (CompStyle style : layer.styles)
+            {
+                if (style == null || !style.enabled)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    GlFramebuffer next = StyleRenderer.apply(scaleStyleForRaster(style, scale), current, context, layer, world);
+
+                    if (next != current)
+                    {
+                        FboPool.release(current);
+                        current = next;
+                    }
+                }
+                catch (RuntimeException e)
+                {
+                    dev.bbsae.BbsAeAddon.LOGGER.error("Viewport style {} failed on layer {}", style.type, layer.id, e);
+                }
+            }
+        }
+
         return current;
+    }
+
+    /**
+     * Converts pixel-space effect radii from layer pixels to raster pixels.
+     *
+     * <p>The raster is capped at {@link #MAX_EDGE}; a 600 px layer may be rasterized at half
+     * resolution. A 40 px glow is then 40 raster pixels — twice as large in the composition — and
+     * the {@link EffectPadding} margin (computed in layer pixels) is only half as wide as the
+     * kernel, so the effect is clipped again. Multiplying the radius by the raster scale keeps the
+     * visual radius in layer pixels and makes the margin exactly cover the kernel.</p>
+     */
+    static CompEffect scaleEffectForRaster(CompEffect effect, float scale)
+    {
+        if (effect == null || scale >= 0.999F)
+        {
+            return effect;
+        }
+
+        CompEffect scaled = effect.copy();
+        String type = scaled.type == null ? "" : scaled.type;
+
+        switch (type)
+        {
+            case "blur", "box_blur", "directional_blur", "glow", "outer_glow" ->
+                scaleParam(scaled, "radius", scale);
+            case "drop_shadow" ->
+            {
+                scaleParam(scaled, "distance", scale);
+                scaleParam(scaled, "softness", scale);
+            }
+            case "stroke" -> scaleParam(scaled, "width", scale);
+            case "rgb_split" -> scaleParam(scaled, "amount", scale);
+            case "displacement", "bulge", "pinch", "twist", "turbulent_displace" ->
+                scaleParam(scaled, "amount", scale);
+            case "wave" ->
+            {
+                scaleParam(scaled, "amplitude", scale);
+                scaleParam(scaled, "wavelength", scale);
+            }
+            case "glitch" -> scaleParam(scaled, "amount", scale);
+            case "mosaic" -> scaleParam(scaled, "size", scale);
+            case "scanlines" -> scaleParam(scaled, "spacing", scale);
+            case "halftone" -> scaleParam(scaled, "amount", scale);
+            case "generate", "gradient_ramp", "noise_gradient", "checkerboard", "grid", "circle" ->
+            {
+                scaleParam(scaled, "scale", scale);
+                scaleParam(scaled, "size", scale);
+            }
+            default ->
+            {
+            }
+        }
+
+        return scaled;
+    }
+
+    private static void scaleParam(CompEffect effect, String key, float scale)
+    {
+        Double value = effect.params.get(key);
+
+        if (value != null)
+        {
+            effect.params.put(key, value * (double) scale);
+        }
+    }
+
+    /**
+     * The same conversion for styles, whose shadow/glow/stroke sizes are fields rather than effect
+     * parameters.
+     */
+    static CompStyle scaleStyleForRaster(CompStyle style, float scale)
+    {
+        if (style == null || scale >= 0.999F)
+        {
+            return style;
+        }
+
+        CompStyle scaled = new CompStyle(style.type);
+
+        scaled.enabled = style.enabled;
+        scaled.color = style.color;
+        scaled.color2 = style.color2;
+        scaled.opacity = style.opacity;
+        scaled.size = style.size * scale;
+        scaled.distance = style.distance * scale;
+        scaled.angle = style.angle;
+        scaled.blur = style.blur * scale;
+        scaled.blendMode = style.blendMode;
+
+        return scaled;
     }
 
     /** Guards against a matte cycle (A masks B, B masks A). */
@@ -661,6 +827,40 @@ public final class CompLayerSourceCache
         h = mix(h, layer.trackMatteEnabled ? 1 : 0);
         h = mix(h, layer.squash);
 
+        /* Masks are multiplied into the raster before the effects; their geometry and feather
+         * must invalidate the cached texture just like an effect parameter does. */
+        h = mix(h, layer.masks == null ? 0 : layer.masks.size());
+
+        if (layer.masks != null)
+        {
+            for (CompMask mask : layer.masks)
+            {
+                if (mask == null)
+                {
+                    h = mix(h, 0);
+                    continue;
+                }
+
+                h = mix(h, mask.id == null ? 0 : mask.id.hashCode());
+                h = mix(h, mask.enabled ? 1 : 0);
+                h = mix(h, mask.inverted ? 1 : 0);
+                h = mix(h, mask.mode);
+                h = mix(h, mask.opacity);
+                h = mix(h, mask.feather);
+                h = mix(h, mask.expansion);
+
+                for (CompMask.CompMaskPoint point : mask.points)
+                {
+                    h = mix(h, point.x);
+                    h = mix(h, point.y);
+                    h = mix(h, point.inX);
+                    h = mix(h, point.inY);
+                    h = mix(h, point.outX);
+                    h = mix(h, point.outY);
+                }
+            }
+        }
+
         /* Effects are baked into this raster. Leaving them out of the fingerprint was the reason
          * every 3D-layer effect appeared "dead": changing a blur radius, adding an effect or
          * toggling one off did not change the signature, so the old unfiltered texture was served
@@ -694,6 +894,32 @@ public final class CompLayerSourceCache
                     h = mix(h, entry.getKey() == null ? 0 : entry.getKey().hashCode());
                     h = mix(h, entry.getValue() == null ? 0 : entry.getValue());
                 }
+            }
+        }
+
+        /* Styles are baked after the effects, so they belong to the same fingerprint. */
+        h = mix(h, layer.styles == null ? 0 : layer.styles.size());
+
+        if (layer.styles != null)
+        {
+            for (CompStyle style : layer.styles)
+            {
+                if (style == null)
+                {
+                    h = mix(h, 0);
+                    continue;
+                }
+
+                h = mix(h, style.type == null ? 0 : style.type.hashCode());
+                h = mix(h, style.enabled ? 1 : 0);
+                h = mix(h, style.color);
+                h = mix(h, style.color2);
+                h = mix(h, style.opacity);
+                h = mix(h, style.size);
+                h = mix(h, style.distance);
+                h = mix(h, style.angle);
+                h = mix(h, style.blur);
+                h = mix(h, style.blendMode);
             }
         }
 

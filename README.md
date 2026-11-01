@@ -73,6 +73,8 @@
   [`docs/ROUND35-FONT-IMPORT-OS-OPEN.zh.md`](docs/ROUND35-FONT-IMPORT-OS-OPEN.zh.md)
 - **Round 36 (single layer/effect application / keyframed strength / precomp pass inheritance, v0.20.3):**
   [`docs/ROUND36-LAYER-EFFECT-APPLICATION.zh.md`](docs/ROUND36-LAYER-EFFECT-APPLICATION.zh.md)
+- **Round 37 (3D effect support region / baked styles and masks / 3D effect completeness, v0.20.4):**
+  [`docs/ROUND37-3D-EFFECT-SUPPORT.zh.md`](docs/ROUND37-3D-EFFECT-SUPPORT.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -92,15 +94,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.20.3.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.3/bbsae-0.20.3.jar)
-   from the **v0.20.3** release (the asset is updated with each source push).
+1. Download [`bbsae-0.20.4.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.4/bbsae-0.20.4.jar)
+   from the **v0.20.4** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.20.3.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.20.4.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.20.3.jar` SHA-256: `87533104DF02D3662E5CB3CB8FECC5D93DD8D0AC7CC20408207AE2DD24026E75`.
+`bbsae-0.20.4.jar` SHA-256: `2F4E0180D10DD23517E48823CE52F7F94767F65FB8C15D23308FAA915E4D4E01`.
 
 ## Gallery
 
@@ -167,6 +169,20 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.20.4
+
+- **3D layers reserve room for their effects.** A blur, glow, drop shadow or stroke used to be
+  clipped at the layer rectangle because the 3D raster was exactly the layer box. The raster is now
+  padded by the effect kernel's radius (`EffectPadding`), so the falloff is complete in the viewport,
+  the camera view and the export.
+- **Layer styles are baked with the layer.** Drop shadow, outer glow, stroke and gradient overlay
+  were applied after projection (or not at all in the 3D workspace). They now run in layer space
+  after the effects, are skipped by the composition pass, and follow the plane.
+- **Masks work on 3D layers.** The mask is rasterized in layer space, multiplied in before the
+  effects, and the layer is now projected through the baked path even when the mask is its only
+  pixel operation.
+- 246/246 tests pass.
 
 ## What's new in 0.20.3
 

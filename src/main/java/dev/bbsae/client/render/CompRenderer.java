@@ -710,7 +710,10 @@ public final class CompRenderer
                     }
                 }
 
-                if (renderEffects)
+                /* Styles were baked into the layer-space raster together with the effects; running
+                 * them again here would double a shadow/glow and apply it in composition space
+                 * instead of on the plane. Only the fallback (cache unavailable) styles here. */
+                if (renderEffects && !effectsBaked)
                 {
                     content = applyStyles(layer, content, context, effectSpace);
                 }
@@ -931,7 +934,8 @@ public final class CompRenderer
     }
 
     /**
-     * A layer's content for one pass, plus whether its non-depth effect stack is already in it.
+     * A layer's content for one pass, plus whether its non-depth effects, styles and masks are
+     * already in it.
      *
      * <p>The "baked" bit cannot be recomputed by the caller from {@code layer.threeD}: a 3D layer
      * whose source raster could not be built falls back to the direct path, and then its effects
@@ -1003,31 +1007,21 @@ public final class CompRenderer
     private static final int BAKED_CELLS = 16;
 
     /**
-     * Draws a 3D layer from its layer-space raster (content + effects), or returns null when the
-     * layer has no enabled effects (the direct path is cheaper and already correct).
+     * Draws a 3D layer from its layer-space raster (content + masks + effects + styles), or returns
+     * null when none of those pixel operations exist (the direct path is cheaper and already
+     * correct).
      */
     private static GlFramebuffer renderBaked3D(CompLayer layer, CompRenderContext context, Matrix4f model,
                                                Matrix4f layerProjection, Batcher2D batcher)
     {
-        if (!layer.threeD || layer.effects == null || layer.effects.isEmpty() || "camera".equals(layer.type)
-            || "adjustment".equals(layer.type))
+        if (!layer.threeD || "camera".equals(layer.type) || "adjustment".equals(layer.type))
         {
             return null;
         }
 
-        boolean hasEffect = false;
+        boolean masked = layer.masks != null && !layer.masks.isEmpty();
 
-        for (CompEffect effect : layer.effects)
-        {
-            if (effect != null && effect.enabled)
-            {
-                hasEffect = true;
-
-                break;
-            }
-        }
-
-        if (!hasEffect)
+        if (!hasEnabledEffects(layer) && !hasEnabledStyles(layer) && !masked)
         {
             return null;
         }
@@ -1237,6 +1231,24 @@ public final class CompRenderer
         for (CompEffect effect : layer.effects)
         {
             if (effect != null && effect.enabled)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean hasEnabledStyles(CompLayer layer)
+    {
+        if (layer.styles == null)
+        {
+            return false;
+        }
+
+        for (dev.bbsae.comp.CompStyle style : layer.styles)
+        {
+            if (style != null && style.enabled)
             {
                 return true;
             }
