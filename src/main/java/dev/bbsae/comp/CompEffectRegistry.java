@@ -94,6 +94,42 @@ public final class CompEffectRegistry
             .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F));
         add(new Definition("sharpen", "锐化", "模糊与锐化")
             .p("amount", "强度", 0, 4, 1, 0.01F));
+        add(new Definition("cc_cross_blur", "CC 交叉模糊", "模糊与锐化")
+            .p("radius", "半径", 0, 100, 12, 1)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("cc_radial_fast_blur", "CC 径向快速模糊", "模糊与锐化")
+            .p("radius", "强度", 0, 1, 0.3F, 0.01F)
+            .p("center_x", "中心 X", 0, 1, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("cc_lens_blur", "摄像机镜头模糊", "模糊与锐化")
+            .p("radius", "半径", 0, 100, 15, 1)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("channel_blur", "通道模糊", "模糊与锐化")
+            .p("radius", "半径", 0, 100, 12, 1)
+            .p("radius_g", "绿通道半径", 0, 100, 12, 1)
+            .p("radius_b", "蓝通道半径", 0, 100, 12, 1)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("compound_blur", "复合模糊", "模糊与锐化")
+            .p("radius", "半径", 0, 200, 40, 1)
+            .p("softness", "贴图影响", 0, 1, 0.5F, 0.01F)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("bilateral_blur", "双边模糊", "模糊与锐化")
+            .p("radius", "半径", 0, 50, 8, 1)
+            .p("threshold", "颜色容差", 0.01F, 1, 0.2F, 0.01F)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("smart_blur", "智能模糊", "模糊与锐化")
+            .p("radius", "半径", 0, 50, 8, 1)
+            .p("threshold", "颜色容差", 0.01F, 1, 0.2F, 0.01F)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("unsharp_mask", "USM 锐化", "模糊与锐化")
+            .p("radius", "半径", 0, 50, 3, 1)
+            .p("amount", "强度", 0, 4, 1, 0.01F)
+            .p("threshold", "阈值", 0, 1, 0.05F, 0.01F));
+        add(new Definition("camera_shake_deblur", "摄像机抖动去模糊", "模糊与锐化")
+            .p("radius", "半径", 0, 50, 3, 1)
+            .p("amount", "强度", 0, 4, 1, 0.01F)
+            .p("threshold", "阈值", 0, 1, 0.05F, 0.01F));
 
         add(new Definition("brightness_contrast", "亮度对比度", "色彩校正")
             .p("brightness", "亮度", -1, 1, 0, 0.01F)

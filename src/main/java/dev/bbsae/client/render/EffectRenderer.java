@@ -28,6 +28,8 @@ public final class EffectRenderer
      */
     private static final java.util.Set<String> SUPPORTED = java.util.Set.of(
         "blur", "box_blur", "radial_blur", "directional_blur", "sharpen",
+        "cc_cross_blur", "cc_radial_fast_blur", "cc_lens_blur", "channel_blur",
+        "compound_blur", "bilateral_blur", "smart_blur", "unsharp_mask", "camera_shake_deblur",
         "color_grade", "brightness_contrast", "hue_saturation", "exposure", "tint",
         "levels", "curves", "invert", "vignette", "noise", "grain", "posterize",
         "threshold", "mosaic", "find_edges", "scanlines", "glitch", "vhs",
@@ -148,6 +150,13 @@ public final class EffectRenderer
             case "directional_blur" -> effect.valueF("radius", 20F) <= 0.5F;
             case "radial_blur" -> effect.valueF("radius", 0.15F) <= eps;
             case "sharpen" -> effect.valueF("amount", 1F) <= eps;
+            case "cc_cross_blur", "cc_lens_blur", "channel_blur", "compound_blur",
+                 "bilateral_blur", "smart_blur" ->
+                effect.valueF("radius", 12F) <= 0.5F || effect.valueF("amount", 1F) <= eps;
+            case "cc_radial_fast_blur" ->
+                effect.valueF("radius", 0.3F) <= eps || effect.valueF("amount", 1F) <= eps;
+            case "unsharp_mask", "camera_shake_deblur" ->
+                effect.valueF("amount", 1F) <= eps || effect.valueF("radius", 3F) <= 0.5F;
             case "displacement", "bulge", "pinch", "twist", "turbulent_displace" ->
                 effect.valueF("amount", 48F) <= eps;
             case "wave" -> effect.valueF("amplitude", effect.valueF("amount", 24F)) <= eps;
@@ -192,6 +201,22 @@ public final class EffectRenderer
                 return directionalBlur(input, effect.valueF("radius", 20F), effect.valueF("angle", 0F), effect.valueF("opacity", 1F));
             case "sharpen":
                 return sharpen(input, effect);
+            case "cc_cross_blur":
+                return aeBlur(input, effect, 0);
+            case "cc_radial_fast_blur":
+                return aeBlur(input, effect, 1);
+            case "cc_lens_blur":
+                return aeBlur(input, effect, 2);
+            case "channel_blur":
+                return aeBlur(input, effect, 3);
+            case "compound_blur":
+                return aeBlur(input, effect, 4);
+            case "bilateral_blur":
+            case "smart_blur":
+                return aeBlur(input, effect, 5);
+            case "unsharp_mask":
+            case "camera_shake_deblur":
+                return aeBlur(input, effect, 6);
             case "color_grade":
                 return grade(input, effect);
             case "brightness_contrast":
@@ -332,6 +357,55 @@ public final class EffectRenderer
         program.drawFullscreen();
 
         return output;
+    }
+
+    /**
+     * The AE blur family. The pass works on premultiplied pixels and converts back once, so the
+     * symmetric kernels do not pull black through an alpha edge.
+     */
+    private static GlFramebuffer aeBlur(GlFramebuffer input, CompEffect effect, int mode)
+    {
+        GlslProgram program = CompShaders.aeBlur;
+
+        if (program == null)
+        {
+            return input;
+        }
+
+        GlFramebuffer premultiplied = PassRenderer.premultiply(input);
+        GlFramebuffer output = FboPool.acquire(input.width, input.height);
+
+        output.begin();
+        GlStateManager._disableBlend();
+        program.use();
+        PassRenderer.bind(program, "Source", 0, premultiplied);
+        program.set("Texel", 1F / input.width, 1F / input.height);
+        program.set("Mode", mode);
+
+        float radius = effect.valueF("radius", mode == 1 ? 0.3F : 12F);
+
+        program.set("Radius", Math.max(0F, radius));
+        program.set("Amount", effect.valueF("amount", 1F));
+        program.set("Threshold", effect.valueF("threshold", 0.2F));
+        program.set("MapSoftness", effect.valueF("softness", 0.5F));
+        program.set("RadiusG", Math.max(0F, effect.valueF("radius_g", radius)));
+        program.set("RadiusB", Math.max(0F, effect.valueF("radius_b", radius)));
+        program.set("Center", effect.valueF("center_x", 0.5F), effect.valueF("center_y", 0.5F));
+        program.drawFullscreen();
+
+        if (premultiplied != input)
+        {
+            FboPool.release(premultiplied);
+        }
+
+        GlFramebuffer straightened = PassRenderer.unpremultiply(output);
+
+        if (straightened != output)
+        {
+            FboPool.release(output);
+        }
+
+        return straightened;
     }
 
     private static GlFramebuffer directionalBlur(GlFramebuffer input, float radius, float angle, float mix)

@@ -75,6 +75,8 @@
   [`docs/ROUND36-LAYER-EFFECT-APPLICATION.zh.md`](docs/ROUND36-LAYER-EFFECT-APPLICATION.zh.md)
 - **Round 37 (3D effect support region / baked styles and masks / 3D effect completeness, v0.20.4):**
   [`docs/ROUND37-3D-EFFECT-SUPPORT.zh.md`](docs/ROUND37-3D-EFFECT-SUPPORT.zh.md)
+- **Round 38 (AE effect programme / blur and sharpen family complete, v0.21.0):**
+  [`docs/ROUND38-AE-BLUR-FAMILY.zh.md`](docs/ROUND38-AE-BLUR-FAMILY.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -94,15 +96,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.20.4.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.4/bbsae-0.20.4.jar)
-   from the **v0.20.4** release (the asset is updated with each source push).
+1. Download [`bbsae-0.21.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.0/bbsae-0.21.0.jar)
+   from the **v0.21.0** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.20.4.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.21.0.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.20.4.jar` SHA-256: `2F4E0180D10DD23517E48823CE52F7F94767F65FB8C15D23308FAA915E4D4E01`.
+`bbsae-0.21.0.jar` SHA-256: `344D927BE4DBD8F71AD0F2C3725A75C54573C41ED51DA6F077822AB3336E11FF`.
 
 ## Gallery
 
@@ -169,6 +171,20 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.21.0
+
+- **AE effect programme, batch 1: Blur & Sharpen is complete (17/17).** Nine new effects —
+  bilateral, smart, CC cross, CC radial fast, lens/bokeh, channel, compound, unsharp mask and
+  camera-shake deblur — join the existing Gaussian/box/directional/radial blurs, sharpen and
+  linear wipe. One `AE_BLUR` shader family supplies the modes; the pass works in premultiplied
+  alpha so falloffs do not darken.
+- The new effects participate in the existing strength, neutral-value, 3D padding and
+  proxy-radius systems, so they behave like every other effect in 2D and 3D.
+- This is a staged programme, not a claim to all 200+ AE effects: audio, particles, tracking,
+  Cryptomatte/EXtractoR and temporal effects need engines this compositor does not have yet.
+  The roadmap is in the round document.
+- 246/246 tests pass; the new shader is covered by the headless GLSL compile test.
 
 ## What's new in 0.20.4
 

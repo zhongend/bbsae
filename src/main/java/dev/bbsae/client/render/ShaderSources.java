@@ -138,6 +138,188 @@ public final class ShaderSources
         }
         """;
 
+    /**
+     * AE-style blur family: cross, fast radial, lens/bokeh, per-channel, compound and
+     * bilateral/smart, plus an unsharp mode.
+     *
+     * <p>Input and output are premultiplied; the renderer converts around the pass. Sampling a
+     * straight-alpha edge with a symmetric kernel would otherwise pull black into the falloff.</p>
+     */
+    public static final String AE_BLUR = """
+        #version 150 core
+
+        uniform sampler2D Source;
+        uniform vec2 Texel;
+        uniform int Mode;
+        uniform float Radius;
+        uniform float Amount;
+        uniform float Threshold;
+        uniform float MapSoftness;
+        uniform float RadiusG;
+        uniform float RadiusB;
+        uniform vec2 Center;
+
+        in vec2 vUv;
+        out vec4 fragColor;
+
+        vec4 tap(vec2 uv)
+        {
+            return texture(Source, clamp(uv, vec2(0.0005), vec2(0.9995)));
+        }
+
+        void main()
+        {
+            vec4 src = tap(vUv);
+            vec4 result = src;
+            float r = max(Radius, 0.0);
+            float mixAmount = clamp(Amount, 0.0, 1.0);
+
+            if (Mode == 0)
+            {
+                vec4 sum = src;
+                float total = 1.0;
+
+                for (int i = 1; i <= 8; i++)
+                {
+                    float t = float(i) / 8.0;
+                    float w = (1.0 - t) * (1.0 - t);
+                    vec2 dx = vec2(Texel.x * r * t, 0.0);
+                    vec2 dy = vec2(0.0, Texel.y * r * t);
+
+                    sum += (tap(vUv + dx) + tap(vUv - dx) + tap(vUv + dy) + tap(vUv - dy)) * w;
+                    total += 4.0 * w;
+                }
+
+                result = sum / total;
+            }
+            else if (Mode == 1)
+            {
+                vec4 sum = src;
+                float total = 1.0;
+                float strength = clamp(r, 0.0, 1.0);
+
+                for (int i = 1; i <= 8; i++)
+                {
+                    float t = float(i) / 8.0;
+                    float w = 1.0 - t;
+
+                    sum += tap(mix(vUv, Center, t * strength)) * w;
+                    total += w;
+                }
+
+                result = sum / total;
+            }
+            else if (Mode == 2)
+            {
+                vec4 sum = src;
+                float total = 1.0;
+
+                for (int i = 0; i < 24; i++)
+                {
+                    float a = float(i) * 2.39996323;
+                    float rr = sqrt((float(i) + 0.5) / 24.0);
+                    vec2 offset = vec2(cos(a), sin(a)) * rr * r;
+
+                    sum += tap(vUv + offset * Texel);
+                    total += 1.0;
+                }
+
+                result = sum / total;
+            }
+            else if (Mode == 3)
+            {
+                vec3 channel = vec3(0.0);
+                float alpha = 0.0;
+                float total = 0.0;
+
+                for (int i = -8; i <= 8; i++)
+                {
+                    float t = float(i) / 8.0;
+                    float w = 1.0 - abs(t);
+                    vec4 hx = tap(vUv + vec2(Texel.x * r * t, 0.0));
+                    vec4 hy = tap(vUv + vec2(0.0, Texel.y * r * t));
+                    vec4 gx = tap(vUv + vec2(Texel.x * RadiusG * t, 0.0));
+                    vec4 gy = tap(vUv + vec2(0.0, Texel.y * RadiusG * t));
+                    vec4 bx = tap(vUv + vec2(Texel.x * RadiusB * t, 0.0));
+                    vec4 by = tap(vUv + vec2(0.0, Texel.y * RadiusB * t));
+
+                    channel.r += (hx.r + hy.r) * w;
+                    channel.g += (gx.g + gy.g) * w;
+                    channel.b += (bx.b + by.b) * w;
+                    alpha += (hx.a + hy.a) * w;
+                    total += 2.0 * w;
+                }
+
+                result = vec4(channel / max(total, 0.0001), alpha / max(total, 0.0001));
+            }
+            else if (Mode == 4)
+            {
+                float map = clamp(dot(src.rgb, vec3(0.299, 0.587, 0.114)) + (1.0 - src.a), 0.0, 1.0);
+                float rr = r * mix(1.0, map, clamp(MapSoftness, 0.0, 1.0));
+                vec4 sum = src;
+                float total = 1.0;
+
+                for (int i = 1; i <= 8; i++)
+                {
+                    float t = float(i) / 8.0;
+                    float w = (1.0 - t) * (1.0 - t);
+                    vec2 dx = vec2(Texel.x * rr * t, 0.0);
+                    vec2 dy = vec2(0.0, Texel.y * rr * t);
+
+                    sum += (tap(vUv + dx) + tap(vUv - dx) + tap(vUv + dy) + tap(vUv - dy)) * w;
+                    total += 4.0 * w;
+                }
+
+                result = sum / total;
+            }
+            else if (Mode == 5)
+            {
+                vec4 sum = src;
+                float total = 1.0;
+                float sigma = max(r * 0.5, 0.5);
+                float range = max(Threshold, 0.001);
+
+                for (int j = -2; j <= 2; j++)
+                {
+                    for (int i = -2; i <= 2; i++)
+                    {
+                        if (i == 0 && j == 0)
+                        {
+                            continue;
+                        }
+
+                        vec2 offset = vec2(float(i), float(j)) * max(1.0, r * 0.25) * Texel;
+                        vec4 s = tap(vUv + offset);
+                        float spatial = exp(-float(i * i + j * j) / (2.0 * sigma * sigma));
+                        float diff = distance(s.rgb, src.rgb);
+                        float rangeW = exp(-(diff * diff) / (2.0 * range * range));
+
+                        sum += s * (spatial * rangeW);
+                        total += spatial * rangeW;
+                    }
+                }
+
+                result = sum / total;
+            }
+            else
+            {
+                vec4 blurred = src;
+                blurred += tap(vUv + vec2(Texel.x * r, 0.0));
+                blurred += tap(vUv - vec2(Texel.x * r, 0.0));
+                blurred += tap(vUv + vec2(0.0, Texel.y * r));
+                blurred += tap(vUv - vec2(0.0, Texel.y * r));
+                blurred *= 0.2;
+
+                vec4 detail = src - blurred;
+                float keep = step(Threshold, length(detail.rgb));
+                result = src + detail * (max(Amount, 0.0) * keep);
+                mixAmount = 1.0;
+            }
+
+            fragColor = mix(src, result, mixAmount);
+        }
+        """;
+
     public static final String PREMULTIPLY = """
         #version 150 core
 

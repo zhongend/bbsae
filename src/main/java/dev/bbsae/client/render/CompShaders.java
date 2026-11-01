@@ -12,6 +12,7 @@ public final class CompShaders
     public static GlslProgram inner;
     public static GlslProgram gradient;
     public static GlslProgram blur;
+    public static GlslProgram aeBlur;
     public static GlslProgram sharpen;
     public static GlslProgram radial;
     public static GlslProgram color;
@@ -46,6 +47,7 @@ public final class CompShaders
         inner = make("inner", ShaderSources.INNER);
         gradient = make("gradient", ShaderSources.GRADIENT);
         blur = make("blur", ShaderSources.BLUR);
+        aeBlur = make("ae_blur", ShaderSources.AE_BLUR);
         sharpen = make("sharpen", ShaderSources.SHARPEN);
         radial = make("radial", ShaderSources.RADIAL);
         color = make("color", ShaderSources.COLOR);
@@ -92,6 +94,7 @@ public final class CompShaders
         delete(inner);
         delete(gradient);
         delete(blur);
+        delete(aeBlur);
         delete(sharpen);
         delete(radial);
         delete(color);
@@ -108,7 +111,7 @@ public final class CompShaders
         delete(repeat);
         delete(entityKey);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = sharpen = radial = color = key = generate = distort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = null;
         initialized = false;
     }
 

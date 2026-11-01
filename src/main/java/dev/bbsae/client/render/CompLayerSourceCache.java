@@ -514,8 +514,16 @@ public final class CompLayerSourceCache
 
         switch (type)
         {
-            case "blur", "box_blur", "directional_blur", "glow", "outer_glow" ->
+            case "blur", "box_blur", "directional_blur", "glow", "outer_glow",
+                 "cc_cross_blur", "cc_lens_blur", "compound_blur", "bilateral_blur",
+                 "smart_blur", "unsharp_mask", "camera_shake_deblur" ->
                 scaleParam(scaled, "radius", scale);
+            case "channel_blur" ->
+            {
+                scaleParam(scaled, "radius", scale);
+                scaleParam(scaled, "radius_g", scale);
+                scaleParam(scaled, "radius_b", scale);
+            }
             case "drop_shadow" ->
             {
                 scaleParam(scaled, "distance", scale);

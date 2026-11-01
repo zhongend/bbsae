@@ -87,6 +87,11 @@ public final class EffectPadding
             case "wave" -> effect.valueF("amplitude", effect.valueF("amount", 24F)) + 2F;
             case "glitch" -> effect.valueF("amount", 18F) + 2F;
             case "radial_blur" -> effect.valueF("radius", 0.15F) * Math.max(layer.width, layer.height) + 2F;
+            case "cc_cross_blur", "cc_lens_blur", "compound_blur", "bilateral_blur", "smart_blur" ->
+                effect.valueF("radius", 12F) + 2F;
+            case "channel_blur" -> Math.max(effect.valueF("radius", 12F),
+                Math.max(effect.valueF("radius_g", 12F), effect.valueF("radius_b", 12F))) + 2F;
+            case "unsharp_mask", "camera_shake_deblur" -> 2F;
             default -> 0F;
         };
     }
