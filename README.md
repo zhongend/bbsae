@@ -85,6 +85,8 @@
   [`docs/ROUND41-PREMULTIPLY.zh.md`](docs/ROUND41-PREMULTIPLY.zh.md)
 - **Round 42 (custom font rendering / BBS font folder import flow, v0.21.4):**
   [`docs/ROUND42-FONT-RENDER.zh.md`](docs/ROUND42-FONT-RENDER.zh.md)
+- **Round 43 (automatic system font discovery and import, v0.21.5):**
+  [`docs/ROUND43-SYSTEM-FONTS.zh.md`](docs/ROUND43-SYSTEM-FONTS.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -104,15 +106,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.21.4.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.4/bbsae-0.21.4.jar)
-   from the **v0.21.4** release (the asset is updated with each source push).
+1. Download [`bbsae-0.21.5.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.5/bbsae-0.21.5.jar)
+   from the **v0.21.5** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.21.4.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.21.5.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.21.4.jar` SHA-256: `E209D3DB98D954A58AF59161C84368BC3A99254EEF89046A127D7A6CB69076FD`.
+`bbsae-0.21.5.jar` SHA-256: `2DF642993B9B511FA6B3045F837E363F2CEE3EA1886B9CE4ED2758B2FE81D864`.
 
 ## Gallery
 
@@ -179,6 +181,19 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.21.5
+
+- **System fonts are available in the text inspector.** A searchable "System fonts…" list scans
+  `Windows\Fonts` (and the macOS/Linux font folders), reads each font's OpenType name table for a
+  real display name, and imports the chosen file into BBS' fonts folder through the normal link
+  loader. Fonts are copied only when selected.
+- **Name-table parsing bug fixed.** The parser read `count` from the name table's `format` field,
+  so every font looked like it had zero records and the list fell back to filenames; `count` is at
+  offset 2. `SystemFontsTest` pins the real Arial name.
+- TTC collections are not listed: BBS' stb loader cannot address an individual face in a
+  collection. TTF/OTF are listed; protected folders and malformed files are skipped safely.
+- 254/254 tests pass.
 
 ## What's new in 0.21.4
 

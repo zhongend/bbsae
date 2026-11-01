@@ -55,6 +55,7 @@ import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIListOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIPromptOverlayPanel;
+import mchorse.bbs_mod.ui.framework.elements.overlay.UIStringOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.utils.ScrollDirection;
 import mchorse.bbs_mod.ui.utils.UI;
@@ -5753,6 +5754,64 @@ public class UICompositorPanel extends UIDashboardPanel
         this.importBrowser.relative(this).x(0).y(0).w(1F).h(1F);
         this.add(this.importBrowser);
         this.resize();
+    }
+
+    /**
+     * Lists the operating system's TTF/OTF files and imports the chosen one through the same
+     * path every other font uses. The fonts are not copied until they are chosen: a machine can
+     * have hundreds of installed fonts, and BBS' loader only accepts links inside its own fonts
+     * folder. Names come from the font's name table, so the list reads "Microsoft YaHei" rather
+     * than "msyh".
+     */
+    private void openSystemFontPicker(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return;
+        }
+
+        java.util.List<SystemFonts.Entry> fonts = SystemFonts.list();
+
+        if (fonts.isEmpty())
+        {
+            this.setStatus("没有找到系统 TTF/OTF 字体（TTC 字体集合暂不支持）");
+            return;
+        }
+
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        java.util.Map<String, SystemFonts.Entry> byLabel = new java.util.LinkedHashMap<>();
+
+        for (SystemFonts.Entry entry : fonts)
+        {
+            String label = entry.displayName;
+
+            if (byLabel.containsKey(label))
+            {
+                label = label + " · " + entry.fileName();
+            }
+
+            int serial = 2;
+
+            while (byLabel.containsKey(label))
+            {
+                label = entry.displayName + " (" + (serial++) + ")";
+            }
+
+            labels.add(label);
+            byLabel.put(label, entry);
+        }
+
+        UIStringOverlayPanel panel = new UIStringOverlayPanel(IKey.constant("系统字体"), labels, (label) ->
+        {
+            SystemFonts.Entry entry = byLabel.get(label);
+
+            if (entry != null)
+            {
+                this.importFontFile(layer, entry.path.toFile());
+            }
+        });
+
+        UIOverlay.addOverlay(this.getContext(), panel);
     }
 
     private void importFontFile(CompLayer layer, java.io.File file)
@@ -13117,6 +13176,9 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.fieldRow("字体", fontChoice));
         section.fields.add(UI.row(
             this.smallButton("导入字体（ttf / otf）…", () -> this.importFont(layer)),
+            this.smallButton("系统字体…", () -> this.openSystemFontPicker(layer))
+        ));
+        section.fields.add(UI.row(
             this.smallButton("打开 BBS 字体文件夹…", () ->
             {
                 java.io.File folder = mchorse.bbs_mod.fonts.FontManager.getFolder();
@@ -13125,12 +13187,13 @@ public class UICompositorPanel extends UIDashboardPanel
                 {
                     this.setStatus("无法打开 BBS 字体文件夹");
                 }
+            }),
+            this.smallButton("刷新字体列表", () -> {
+                SystemFonts.refresh();
+                this.refreshInspector();
+                this.setStatus("字体列表已刷新");
             })
         ));
-        section.fields.add(this.smallButton("刷新字体列表", () -> {
-            this.refreshInspector();
-            this.setStatus("字体列表已刷新");
-        }));
 
         section.fields.add(this.animatedNumberRow("字号", layer, "text/fontSize", layer.fontSizeAt(this.getFrame()), (value) -> layer.fontSize = (float) Math.max(1D, value), 1F, 2000F));
         section.fields.add(this.animatedNumberRow("字距", layer, "text/tracking", layer.trackingAt(this.getFrame()), (value) -> layer.tracking = value.floatValue(), -200F, 500F));
