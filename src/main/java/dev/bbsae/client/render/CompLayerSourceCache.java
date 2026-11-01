@@ -98,7 +98,7 @@ public final class CompLayerSourceCache
         }
 
         String key = context.comp.id + "/" + layer.id;
-        Rect rect = bounds(layer, context.frame);
+        Rect rect = bounds(layer, context);
         float scale = Math.min(1F, MAX_EDGE / Math.max(rect.width, rect.height));
         int pixelWidth = Math.max(1, Math.round(rect.width * scale));
         int pixelHeight = Math.max(1, Math.round(rect.height * scale));
@@ -195,8 +195,9 @@ public final class CompLayerSourceCache
      * is allowed to grow (stroke, trim, repeater), so the union is taken. Everything else is the
      * content rectangle the inspector edits.</p>
      */
-    private static Rect bounds(CompLayer layer, float frame)
+    private static Rect bounds(CompLayer layer, CompRenderContext context)
     {
+        float frame = context.frame;
         Rect rect = new Rect();
 
         rect.width = Math.max(1F, layer.width);
@@ -220,6 +221,33 @@ public final class CompLayerSourceCache
                 rect.y = Math.min(rect.y, raster.originY);
                 rect.width = Math.max(1F, maxX - rect.x);
                 rect.height = Math.max(1F, maxY - rect.y);
+            }
+        }
+        else if (("image".equals(layer.type) || "footage".equals(layer.type)) && layer.imageFit == 1)
+        {
+            /* "Fill / cover" scales the image until it covers the box, so the drawn rectangle is
+             * larger than the box on one axis. Rasterizing only the box cropped the top/bottom of
+             * a Fill image (and of the exported frame of a 3D layer with effects). */
+            ImageTextureCache.Entry image = ImageTextureCache.get(
+                context.project == null ? "" : context.project.id,
+                layer.imagePath == null ? "" : layer.imagePath);
+
+            if (image != null && image.width > 0 && image.height > 0)
+            {
+                float scale = Math.max(layer.width / image.width, layer.height / image.height);
+                float w = image.width * scale;
+                float h = image.height * scale;
+                float x0 = -w * layer.anchorX;
+                float y0 = -h * layer.anchorY;
+                float minX = Math.min(rect.x, x0);
+                float minY = Math.min(rect.y, y0);
+                float maxX = Math.max(rect.x + rect.width, x0 + w);
+                float maxY = Math.max(rect.y + rect.height, y0 + h);
+
+                rect.x = minX;
+                rect.y = minY;
+                rect.width = Math.max(1F, maxX - minX);
+                rect.height = Math.max(1F, maxY - minY);
             }
         }
 
