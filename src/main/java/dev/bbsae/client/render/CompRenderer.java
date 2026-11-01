@@ -869,7 +869,19 @@ public final class CompRenderer
             BufferRenderer.resetCurrentVertexBuffer();
         }
 
-        return target;
+        /* The source is straight alpha; drawing it into a transparent target with SRC_ALPHA makes
+         * the result premultiplied. Every consumer (composite, track matte, effects after the
+         * projection) expects straight alpha, so convert exactly once — the same correction
+         * renderBaked3D already does. Without it, a projected 2D layer gets dark fringes and a
+         * projected luma matte reads the darkened RGB. */
+        GlFramebuffer straightened = PassRenderer.unpremultiply(target);
+
+        if (straightened != target)
+        {
+            FboPool.release(target);
+        }
+
+        return straightened;
     }
 
     /**

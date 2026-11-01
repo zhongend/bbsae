@@ -464,12 +464,15 @@ public final class EffectRenderer
             return input;
         }
 
+        /* A geometric warp is a resample: sampling straight alpha at a transparent edge bleeds
+         * black into the falloff. Round-trip through premultiplied alpha, exactly like aeBlur. */
+        GlFramebuffer premultiplied = PassRenderer.premultiply(input);
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
 
         output.begin();
         GlStateManager._disableBlend();
         program.use();
-        PassRenderer.bind(program, "Source", 0, input);
+        PassRenderer.bind(program, "Source", 0, premultiplied);
         program.set("Size", input.width, input.height);
         program.set("Mode", mode);
         program.set("Amount", effect.valueF("amount", 1F));
@@ -484,7 +487,19 @@ public final class EffectRenderer
             effect.valueF("gap", effect.valueF("phase", 0F))));
         program.drawFullscreen();
 
-        return output;
+        if (premultiplied != input)
+        {
+            FboPool.release(premultiplied);
+        }
+
+        GlFramebuffer straightened = PassRenderer.unpremultiply(output);
+
+        if (straightened != output)
+        {
+            FboPool.release(output);
+        }
+
+        return straightened;
     }
 
     private static GlFramebuffer directionalBlur(GlFramebuffer input, float radius, float angle, float mix)

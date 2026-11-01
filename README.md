@@ -81,6 +81,8 @@
   [`docs/ROUND39-AE-DISTORT-FAMILY.zh.md`](docs/ROUND39-AE-DISTORT-FAMILY.zh.md)
 - **Round 40 (mask exclude semantics / visual mask editing / 3D track mattes, v0.21.2):**
   [`docs/ROUND40-MASK-EXCLUDE.zh.md`](docs/ROUND40-MASK-EXCLUDE.zh.md)
+- **Round 41 (projected layer and warp alpha association, v0.21.3):**
+  [`docs/ROUND41-PREMULTIPLY.zh.md`](docs/ROUND41-PREMULTIPLY.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -100,15 +102,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.21.2.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.2/bbsae-0.21.2.jar)
-   from the **v0.21.2** release (the asset is updated with each source push).
+1. Download [`bbsae-0.21.3.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.3/bbsae-0.21.3.jar)
+   from the **v0.21.3** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.21.2.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.21.3.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.21.2.jar` SHA-256: `AEB95FB725DCFF2D7105ECFCFEB0BEF055DB91B8122DD6CCF9F63F58A28292A6`.
+`bbsae-0.21.3.jar` SHA-256: `01BAE733BE7728619EA6676C76B63F0492EDCBD179D5FCE8CF338F29FA4022D2`.
 
 ## Gallery
 
@@ -175,6 +177,16 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.21.3
+
+- **Projected 2D layers no longer darken.** `projectPlane` returns a premultiplied framebuffer
+  after drawing straight-alpha content into a transparent target; it is now un-premultiplied
+  exactly once. This fixes dark fringes on flat layers under a tilted camera and dark luma
+  track mattes projected onto a 3D target.
+- **Geometric warps no longer bleed black at alpha edges.** `AE_DISTORT` now round-trips through
+  premultiplied alpha like the blur family.
+- 250/250 tests pass.
 
 ## What's new in 0.21.2
 
