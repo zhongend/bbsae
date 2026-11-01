@@ -4,7 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * A compositing mask. Points are in composition pixels; in/out handles are relative to the point.
+ * A compositing mask. Points are in <b>layer-local</b> pixels; in/out handles are relative to the
+ * point. The renderer applies the layer's world matrix when it rasterizes the mask.
  * Mask rasterization happens on the CPU into a cached alpha texture, which keeps the GL side
  * simple and works identically in the editor and during export.
  */

@@ -645,7 +645,11 @@ public final class CompRenderer
                     }
                 }
 
-                if (is2D && renderMasks && layer.trackMatteEnabled && layer.trackMatteId != null && !layer.trackMatteId.isEmpty())
+                /* Track mattes are screen-space for both 2D and 3D targets. The matte layer is
+                 * rasterized in composition space; applying it to the projected 3D content is what
+                 * makes "用作蒙版 / 用作排除" do something on a 3D layer instead of being silently
+                 * skipped by the old is2D guard. */
+                if (renderMasks && layer.trackMatteEnabled && layer.trackMatteId != null && !layer.trackMatteId.isEmpty())
                 {
                     CompLayer matte = comp.getLayer(layer.trackMatteId);
 
@@ -657,6 +661,17 @@ public final class CompRenderer
 
                         if (matteFbo != null)
                         {
+                            /* A 2D matte over a 3D target has to be projected too, otherwise the
+                             * matte lives in camera-view space while the target content is already
+                             * in perspective composition space. */
+                            if (!is2D && CompScene.spatial(context) && !CompScene.usePerspective(context, matte))
+                            {
+                                GlFramebuffer projectedMatte = projectPlane(matteFbo, matte, context, batcher);
+
+                                FboPool.release(matteFbo);
+                                matteFbo = projectedMatte;
+                            }
+
                             int channel = layer.trackMatteMode == CompLayer.MATTE_LUMA ? 1 : layer.trackMatteMode == CompLayer.MATTE_ALPHA_INVERTED ? 2 : layer.trackMatteMode == CompLayer.MATTE_LUMA_INVERTED ? 3 : 0;
                             GlFramebuffer matted = PassRenderer.mask(content, matteFbo.color.id, channel);
 

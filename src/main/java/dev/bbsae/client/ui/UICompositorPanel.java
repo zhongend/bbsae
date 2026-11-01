@@ -506,6 +506,27 @@ public class UICompositorPanel extends UIDashboardPanel
             /** Start x/y of every selected layer, for a multi-layer drag. */
             private final java.util.LinkedHashMap<String, float[]> dragStarts = new java.util.LinkedHashMap<>();
 
+            /* Mask point editing. The preview already knows how to project a layer-local point to
+             * the screen (selectionCorners uses the same CompScene.project path), so the mask
+             * overlay and its hit test reuse that coordinate system instead of inventing a second
+             * one. */
+            private static final int MASK_DRAG_NONE = 0;
+            private static final int MASK_DRAG_POINT = 1;
+            private static final int MASK_DRAG_IN = 2;
+            private static final int MASK_DRAG_OUT = 3;
+            private static final int MASK_DRAG_MOVE = 4;
+
+            private int maskDrag = MASK_DRAG_NONE;
+            private int maskEditMask = -1;
+            private int maskEditPoint = -1;
+            private int maskEditHandle = 0;
+            private int maskDragMask = -1;
+            private int maskDragPoint = -1;
+            private int maskDragStartX;
+            private int maskDragStartY;
+            private boolean maskActionStarted;
+            private final java.util.List<float[]> maskStartPoints = new java.util.ArrayList<>();
+
             @Override
             public void render(UIContext context)
             {
@@ -524,6 +545,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     this.renderSafeArea(context);
                     this.renderGuides(context);
                     this.renderSelection(context);
+                    this.renderMaskOverlay(context);
 
                     /* The old bottom-right hint shared the exact line with the preview readout,
                      * producing two overprinted sentences. The 3D sphere button, its tooltip and
@@ -1555,6 +1577,411 @@ public class UICompositorPanel extends UIDashboardPanel
                 return result;
             }
 
+            /* ------------------------------------------------------------------ masks */
+
+            private CompRenderContext maskContext()
+            {
+                return new CompRenderContext(UICompositorPanel.this.project, UICompositorPanel.this.doc,
+                    UICompositorPanel.this.time, null, null, null);
+            }
+
+            private float[] maskProject(CompRenderContext rc, CompLayer layer, float lx, float ly,
+                                        float scale, float ox, float oy)
+            {
+                org.joml.Vector2f p = CompScene.project(rc, layer, lx, ly, 0F);
+
+                if (p == null)
+                {
+                    return null;
+                }
+
+                return new float[] {
+                    this.area.x + ox + p.x * scale,
+                    this.area.y + oy + p.y * scale
+                };
+            }
+
+            /**
+             * Draws every enabled mask of the selected layer and the bezier handles of the point
+             * under the mouse. Points are projected with CompScene.project — the same path the
+             * selection box and the renderer use — so the overlay cannot drift from the pixels.
+             */
+            private void renderMaskOverlay(UIContext context)
+            {
+                CompLayer layer = UICompositorPanel.this.selectedLayer;
+
+                if (!UICompositorPanel.this.previewMasks || layer == null || layer.masks == null
+                    || layer.masks.isEmpty() || UICompositorPanel.this.doc == null
+                    || UICompositorPanel.this.project == null || UICompositorPanel.this.is3DSpace())
+                {
+                    return;
+                }
+
+                float scale = this.fitScale();
+
+                if (scale <= 0F)
+                {
+                    return;
+                }
+
+                float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
+                float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
+                CompRenderContext rc = this.maskContext();
+
+                context.batcher.clip(this.area, context);
+
+                try
+                {
+                    for (int mi = 0; mi < layer.masks.size(); mi++)
+                    {
+                        CompMask mask = layer.masks.get(mi);
+
+                        if (mask == null || !mask.enabled || mask.points.size() < 2)
+                        {
+                            continue;
+                        }
+
+                        int color = mi == this.maskEditMask
+                            ? 0xFFFFD27A
+                            : mask.mode == CompMask.MODE_EXCLUDE ? 0xAAFF8A8A : 0xAA55AAFF;
+
+                        /* Sampled cubic path: the same in/out handles MaskCache evaluates, so the
+                         * outline the user drags is the outline that gets rasterized. */
+                        for (int i = 0; i < mask.points.size(); i++)
+                        {
+                            CompMask.CompMaskPoint a = mask.points.get(i);
+                            CompMask.CompMaskPoint b = mask.points.get((i + 1) % mask.points.size());
+                            float[] previous = null;
+
+                            for (int s = 0; s <= 12; s++)
+                            {
+                                float t = s / 12F;
+                                float mt = 1F - t;
+                                float x = mt * mt * mt * a.x
+                                    + 3F * mt * mt * t * (a.x + a.outX)
+                                    + 3F * mt * t * t * (b.x + b.inX)
+                                    + t * t * t * b.x;
+                                float y = mt * mt * mt * a.y
+                                    + 3F * mt * mt * t * (a.y + a.outY)
+                                    + 3F * mt * t * t * (b.y + b.inY)
+                                    + t * t * t * b.y;
+                                float[] point = this.maskProject(rc, layer, x, y, scale, ox, oy);
+
+                                if (point != null && previous != null)
+                                {
+                                    this.line(context, previous[0], previous[1], point[0], point[1], color);
+                                }
+
+                                previous = point;
+                            }
+                        }
+
+                        for (int pi = 0; pi < mask.points.size(); pi++)
+                        {
+                            CompMask.CompMaskPoint point = mask.points.get(pi);
+                            float[] screen = this.maskProject(rc, layer, point.x, point.y, scale, ox, oy);
+
+                            if (screen == null)
+                            {
+                                continue;
+                            }
+
+                            boolean active = mi == this.maskEditMask && pi == this.maskEditPoint;
+                            float half = active ? 4.5F : 3.5F;
+
+                            context.batcher.box(screen[0] - half, screen[1] - half, screen[0] + half, screen[1] + half, 0xFF101418);
+                            context.batcher.box(screen[0] - half + 1F, screen[1] - half + 1F,
+                                screen[0] + half - 1F, screen[1] + half - 1F, active ? 0xFFFFD27A : 0xFFFFFFFF);
+
+                            if (active)
+                            {
+                                float[] in = this.maskProject(rc, layer, point.x + point.inX, point.y + point.inY, scale, ox, oy);
+                                float[] out = this.maskProject(rc, layer, point.x + point.outX, point.y + point.outY, scale, ox, oy);
+
+                                if (in != null)
+                                {
+                                    this.line(context, screen[0], screen[1], in[0], in[1], 0xAA7AD8FF);
+                                    context.batcher.box(in[0] - 3F, in[1] - 3F, in[0] + 3F, in[1] + 3F, 0xFF7AD8FF);
+                                }
+
+                                if (out != null)
+                                {
+                                    this.line(context, screen[0], screen[1], out[0], out[1], 0xAAFF9BD2);
+                                    context.batcher.box(out[0] - 3F, out[1] - 3F, out[0] + 3F, out[1] + 3F, 0xFFFF9BD2);
+                                }
+                            }
+                        }
+                    }
+                }
+                finally
+                {
+                    context.batcher.unclip(context);
+                }
+            }
+
+            /**
+             * Point/handle hit test. Only 2D layers are draggable: a 3D layer's mask is baked in
+             * layer space and is visible, but mapping a perspective screen ray back onto an
+             * arbitrary plane is a separate unprojection step (the numeric/curve editor still
+             * works for it).
+             */
+            private boolean maskHit(UIContext context, CompLayer layer)
+            {
+                if (!UICompositorPanel.this.previewMasks || layer == null || layer.locked
+                    || layer.masks == null || layer.masks.isEmpty() || UICompositorPanel.this.doc == null
+                    || UICompositorPanel.this.project == null || UICompositorPanel.this.is3DSpace())
+                {
+                    return false;
+                }
+
+                float scale = this.fitScale();
+
+                if (scale <= 0F)
+                {
+                    return false;
+                }
+
+                float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
+                float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
+                CompRenderContext rc = this.maskContext();
+                int bestMask = -1;
+                int bestPoint = -1;
+                int bestHandle = 0;
+                float bestDistance = 9F;
+
+                for (int mi = 0; mi < layer.masks.size(); mi++)
+                {
+                    CompMask mask = layer.masks.get(mi);
+
+                    if (mask == null || !mask.enabled)
+                    {
+                        continue;
+                    }
+
+                    for (int pi = 0; pi < mask.points.size(); pi++)
+                    {
+                        CompMask.CompMaskPoint point = mask.points.get(pi);
+                        float[] screen = this.maskProject(rc, layer, point.x, point.y, scale, ox, oy);
+
+                        if (screen == null)
+                        {
+                            continue;
+                        }
+
+                        float[] in = this.maskProject(rc, layer, point.x + point.inX, point.y + point.inY, scale, ox, oy);
+                        float[] out = this.maskProject(rc, layer, point.x + point.outX, point.y + point.outY, scale, ox, oy);
+                        int[] handles = {2, 3};
+
+                        for (int h = 0; h < 2; h++)
+                        {
+                            float[] handle = h == 0 ? in : out;
+
+                            if (handle == null)
+                            {
+                                continue;
+                            }
+
+                            float distance = (float) Math.hypot(context.mouseX - handle[0], context.mouseY - handle[1]);
+
+                            if (distance <= bestDistance)
+                            {
+                                bestDistance = distance;
+                                bestMask = mi;
+                                bestPoint = pi;
+                                bestHandle = handles[h];
+                            }
+                        }
+
+                        float distance = (float) Math.hypot(context.mouseX - screen[0], context.mouseY - screen[1]);
+
+                        if (distance <= bestDistance)
+                        {
+                            bestDistance = distance;
+                            bestMask = mi;
+                            bestPoint = pi;
+                            bestHandle = 0;
+                        }
+                    }
+                }
+
+                if (bestMask < 0)
+                {
+                    return false;
+                }
+
+                this.maskEditMask = bestMask;
+                this.maskEditPoint = bestPoint;
+                this.maskEditHandle = bestHandle;
+                this.maskDrag = bestHandle == 0 ? MASK_DRAG_POINT : bestHandle == 2 ? MASK_DRAG_IN : MASK_DRAG_OUT;
+                this.maskDragMask = bestMask;
+                this.maskDragPoint = bestPoint;
+                this.maskDragStartX = context.mouseX;
+                this.maskDragStartY = context.mouseY;
+                this.maskActionStarted = false;
+
+                return true;
+            }
+
+            private void applyMaskDrag(UIContext context)
+            {
+                CompLayer layer = UICompositorPanel.this.selectedLayer;
+
+                if (!Window.isMouseButtonPressed(0))
+                {
+                    this.endMaskDrag();
+
+                    return;
+                }
+
+                if (layer == null || layer.masks == null || this.maskDragMask < 0
+                    || this.maskDragMask >= layer.masks.size())
+                {
+                    this.endMaskDrag();
+
+                    return;
+                }
+
+                if (Math.abs(context.mouseX - this.maskDragStartX) < 2 && Math.abs(context.mouseY - this.maskDragStartY) < 2)
+                {
+                    return;
+                }
+
+                if (!this.maskActionStarted)
+                {
+                    UICompositorPanel.this.beginAction("编辑蒙版");
+                    this.maskActionStarted = true;
+                }
+
+                CompMask mask = layer.masks.get(this.maskDragMask);
+
+                if (mask == null || this.maskDragPoint < 0 || this.maskDragPoint >= mask.points.size())
+                {
+                    this.endMaskDrag();
+
+                    return;
+                }
+
+                float[] local = this.screenToLayerLocal(layer, context.mouseX, context.mouseY);
+
+                if (local == null)
+                {
+                    return;
+                }
+
+                CompMask.CompMaskPoint point = mask.points.get(this.maskDragPoint);
+                String base = "mask/" + mask.id + "/p/" + this.maskDragPoint + "/";
+
+                /* Route through setScalar, not point.x = …: when the mask point already has a
+                 * keyframe channel, the renderer reads the channel, so a base-only edit would be
+                 * invisible. setScalar writes the key at the playhead exactly like the inspector. */
+                if (this.maskDrag == MASK_DRAG_POINT)
+                {
+                    UICompositorPanel.this.setScalar(layer, base + "x", local[0]);
+                    UICompositorPanel.this.setScalar(layer, base + "y", local[1]);
+                }
+                else if (this.maskDrag == MASK_DRAG_IN)
+                {
+                    UICompositorPanel.this.setScalar(layer, base + "inX", local[0] - point.x);
+                    UICompositorPanel.this.setScalar(layer, base + "inY", local[1] - point.y);
+                }
+                else if (this.maskDrag == MASK_DRAG_OUT)
+                {
+                    UICompositorPanel.this.setScalar(layer, base + "outX", local[0] - point.x);
+                    UICompositorPanel.this.setScalar(layer, base + "outY", local[1] - point.y);
+                }
+
+                UICompositorPanel.this.setStatus("蒙版 " + (this.maskDragPoint + 1) + " · 拖动编辑");
+            }
+
+            private void endMaskDrag()
+            {
+                if (this.maskDrag == MASK_DRAG_NONE)
+                {
+                    return;
+                }
+
+                if (this.maskActionStarted)
+                {
+                    UICompositorPanel.this.save();
+                    UICompositorPanel.this.refreshInspector();
+                }
+
+                this.maskDrag = MASK_DRAG_NONE;
+                this.maskDragMask = -1;
+                this.maskDragPoint = -1;
+                this.maskActionStarted = false;
+                this.maskStartPoints.clear();
+            }
+
+            /**
+             * Screen pixel → the layer's own mask plane.
+             *
+             * <p>For a 2D layer this is the old inverse-model mapping. For a 3D layer the mouse
+             * ray is intersected with the layer plane (origin + z normal from its world matrix),
+             * which is the only way a perspective mask point can follow the cursor exactly.</p>
+             */
+            private float[] screenToLayerLocal(CompLayer layer, float mouseX, float mouseY)
+            {
+                float scale = this.fitScale();
+
+                if (scale <= 0F || UICompositorPanel.this.doc == null || UICompositorPanel.this.project == null)
+                {
+                    return null;
+                }
+
+                float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
+                float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
+                CompRenderContext rc = this.maskContext();
+                float compX = (mouseX - this.area.x - ox) / scale;
+                float compY = (mouseY - this.area.y - oy) / scale;
+
+                try
+                {
+                    if (!layer.threeD)
+                    {
+                        /* 2D layers are screen-attached: CompScene.project uses view2D, so the
+                         * inverse has to use view2D · world as well (CompScene.model is comp-space
+                         * for a spatial 2D layer). */
+                        CompCamera camera = CompScene.camera(rc);
+                        org.joml.Matrix4f model = new org.joml.Matrix4f(camera.view2D)
+                            .mul(CompScene.world(rc, layer));
+                        org.joml.Vector3f local = new org.joml.Vector3f(compX, compY, 0F);
+
+                        new org.joml.Matrix4f(model).invert().transformPosition(local);
+
+                        return new float[] {local.x, local.y};
+                    }
+
+                    CompCamera camera = CompScene.camera(rc);
+                    org.joml.Vector3f rayA = camera.unproject(compX, compY, UICompositorPanel.this.doc.width,
+                        UICompositorPanel.this.doc.height, 0F);
+                    org.joml.Vector3f rayB = camera.unproject(compX, compY, UICompositorPanel.this.doc.width,
+                        UICompositorPanel.this.doc.height, 1000F);
+                    org.joml.Matrix4f world = CompScene.world(rc, layer);
+                    org.joml.Vector3f origin = world.transformPosition(new org.joml.Vector3f(0F, 0F, 0F));
+                    org.joml.Vector3f normal = world.transformDirection(new org.joml.Vector3f(0F, 0F, 1F)).normalize();
+                    org.joml.Vector3f direction = new org.joml.Vector3f(rayB).sub(rayA);
+                    float denominator = direction.dot(normal);
+
+                    if (Math.abs(denominator) < 0.00001F)
+                    {
+                        return null;
+                    }
+
+                    float t = new org.joml.Vector3f(origin).sub(rayA).dot(normal) / denominator;
+                    org.joml.Vector3f hit = new org.joml.Vector3f(rayA).fma(t, direction);
+                    org.joml.Vector3f local = new org.joml.Vector3f(hit);
+
+                    new org.joml.Matrix4f(world).invert().transformPosition(local);
+
+                    return new float[] {local.x, local.y};
+                }
+                catch (RuntimeException e)
+                {
+                    return null;
+                }
+            }
+
             /** 10 + corner, 20 + edge, 30 = rotate handle. */
             private int handleAt(UIContext context, CompLayer layer)
             {
@@ -1784,6 +2211,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void applyDrag(UIContext context)
             {
+                if (this.maskDrag != MASK_DRAG_NONE)
+                {
+                    this.applyMaskDrag(context);
+
+                    return;
+                }
+
                 if (this.vpMode != VP_NONE)
                 {
                     this.applyViewportDrag(context);
@@ -2775,6 +3209,12 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
 
                 CompLayer selected = UICompositorPanel.this.selectedLayer;
+
+                if (this.maskHit(context, selected))
+                {
+                    return true;
+                }
+
                 int handle = this.handleAt(context, selected);
 
                 if (handle >= 0)
@@ -2990,6 +3430,7 @@ public class UICompositorPanel extends UIDashboardPanel
             protected boolean subMouseReleased(UIContext context)
             {
                 this.endViewportDrag();
+                this.endMaskDrag();
                 this.endDrag();
 
                 return super.subMouseReleased(context);
@@ -13035,10 +13476,10 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (layer.threeD)
         {
-            /* Masks and track mattes are rasterised in composition space; a 3D layer's pixels
-             * only exist after the perspective projection. Saying so is better than offering
-             * controls that the renderer intentionally skips. */
-            section.fields.add(UI.label(IKey.constant("3D 图层暂不支持蒙版/轨道遮罩：蒙版在屏幕空间栅格化，3D 图层在透视投影后才合成。"), 13));
+            /* Masks are baked in layer space since 0.20.4, so they render on the 3D plane. The
+             * on-canvas point drag is currently limited to 2D layers; the numeric/curve fields
+             * still edit a 3D mask exactly. */
+            section.fields.add(UI.label(IKey.constant("3D 图层蒙版在层空间烘焙，会跟随 3D 平面；画布拖点目前用于 2D 图层。"), 13));
         }
 
         section.fields.add(this.smallButton("添加矩形蒙版", () -> this.addMask(layer, false)));
@@ -13081,10 +13522,16 @@ public class UICompositorPanel extends UIDashboardPanel
                 section.fields.add(this.animatedNumberRow("出点" + index + " Y", layer, outYPath, layer.scalarAt(outYPath, point.outY, this.getFrame()), (value) -> point.outY = value.floatValue(), -5000F, 5000F));
             }
 
+            final CompMask modeMask = mask;
             UIButton mode = new UICompButton(IKey.constant(maskModeName(mask.mode)), (button) ->
+                this.setMaskMode(modeMask, (modeMask.mode + 1) % 4));
+
+            mode.context((manager) ->
             {
-                mask.mode = (mask.mode + 1) % 4;
-                button.label = IKey.constant(maskModeName(mask.mode));
+                manager.action(Icons.FADING, IKey.constant("相加"), () -> this.setMaskMode(modeMask, CompMask.MODE_ADD));
+                manager.action(Icons.FADING, IKey.constant("相减"), () -> this.setMaskMode(modeMask, CompMask.MODE_SUBTRACT));
+                manager.action(Icons.FADING, IKey.constant("相交"), () -> this.setMaskMode(modeMask, CompMask.MODE_INTERSECT));
+                manager.action(Icons.FADING, IKey.constant("排除"), () -> this.setMaskMode(modeMask, CompMask.MODE_EXCLUDE));
             });
             section.fields.add(this.fieldRow("模式", mode));
             section.fields.add(new UIToggle(IKey.constant("反转"), mask.inverted, (toggle) -> mask.inverted = toggle.getValue()));
@@ -15778,6 +16225,14 @@ public class UICompositorPanel extends UIDashboardPanel
             case CompLayer.MATTE_LUMA_INVERTED -> "亮度反转";
             default -> "Alpha";
         };
+    }
+
+    private void setMaskMode(CompMask mask, int mode)
+    {
+        this.beginAction("蒙版模式");
+        mask.mode = mode;
+        this.refreshInspector();
+        this.save();
     }
 
     private static String maskModeName(int mode)

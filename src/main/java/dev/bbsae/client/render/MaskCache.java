@@ -46,18 +46,38 @@ public final class MaskCache
 
     public static MaskTexture get(CompLayer layer, int width, int height, Matrix4f world, float frame)
     {
+        return get(layer, width, height, world, frame, 1F);
+    }
+
+    /**
+     * @param scale raster pixels per layer pixel. The point transform already includes it; feather
+     *              and expansion are expressed in layer pixels and are applied in raster space, so
+     *              they have to be converted too — otherwise a 3D mask's feather shrinks with the
+     *              proxy resolution.
+     */
+    public static MaskTexture get(CompLayer layer, int width, int height, Matrix4f world, float frame, float scale)
+    {
         if (layer.masks == null || layer.masks.isEmpty())
         {
             return null;
         }
 
         java.util.List<CompMask> masks = new java.util.ArrayList<>();
+        float safeScale = Math.max(0.0001F, scale);
 
         for (CompMask mask : layer.masks)
         {
             if (mask.enabled && mask.points.size() >= 2)
             {
-                masks.add(layer.maskAt(mask, frame));
+                CompMask resolved = layer.maskAt(mask, frame);
+
+                if (Math.abs(safeScale - 1F) > 0.0001F)
+                {
+                    resolved.feather *= safeScale;
+                    resolved.expansion *= safeScale;
+                }
+
+                masks.add(resolved);
             }
         }
 
@@ -216,26 +236,9 @@ public final class MaskCache
             {
                 float a = alpha[i] * opacity;
 
-                if (!any)
-                {
-                    combined[i] = a;
-                }
-                else if (mask.mode == CompMask.MODE_SUBTRACT)
-                {
-                    combined[i] *= 1F - a;
-                }
-                else if (mask.mode == CompMask.MODE_INTERSECT)
-                {
-                    combined[i] *= a;
-                }
-                else if (mask.mode == CompMask.MODE_EXCLUDE)
-                {
-                    combined[i] = combined[i] + a - 2F * combined[i] * a;
-                }
-                else
-                {
-                    combined[i] = combined[i] + a - combined[i] * a;
-                }
+                combined[i] = any
+                    ? combine(combined[i], a, mask.mode)
+                    : combineFirst(mask.mode, a);
             }
 
             any = true;
@@ -261,6 +264,37 @@ public final class MaskCache
         texture.uploadTopDown(pixels);
 
         return new MaskTexture(texture, width, height);
+    }
+
+    /**
+     * The first mask is applied to the layer's full alpha, not to an empty base.
+     *
+     * <p>AE/Alight Motion semantics: a single "Add"/"Intersect" mask defines the visible area,
+     * a single "Subtract"/"Exclude" mask cuts the layer out and leaves the outside visible. The
+     * old code always used the first mask as {@code combined = a}, so the first Subtract/Exclude
+     * showed the mask instead of the outside — the "排除反了" bug.</p>
+     */
+    static float combineFirst(int mode, float a)
+    {
+        return switch (mode)
+        {
+            case CompMask.MODE_SUBTRACT, CompMask.MODE_EXCLUDE -> 1F - a;
+            default -> a;
+        };
+    }
+
+    /** Subsequent masks combine against the current coverage. */
+    static float combine(float base, float a, int mode)
+    {
+        float result = switch (mode)
+        {
+            case CompMask.MODE_SUBTRACT -> base * (1F - a);
+            case CompMask.MODE_INTERSECT -> base * a;
+            case CompMask.MODE_EXCLUDE -> base + a - 2F * base * a;
+            default -> base + a - base * a;
+        };
+
+        return Math.max(0F, Math.min(1F, result));
     }
 
     private static void boxBlur(float[] data, int width, int height, int radius)

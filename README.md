@@ -79,6 +79,8 @@
   [`docs/ROUND38-AE-BLUR-FAMILY.zh.md`](docs/ROUND38-AE-BLUR-FAMILY.zh.md)
 - **Round 39 (AE effect programme, batch 2: distort family, v0.21.1):**
   [`docs/ROUND39-AE-DISTORT-FAMILY.zh.md`](docs/ROUND39-AE-DISTORT-FAMILY.zh.md)
+- **Round 40 (mask exclude semantics / visual mask editing / 3D track mattes, v0.21.2):**
+  [`docs/ROUND40-MASK-EXCLUDE.zh.md`](docs/ROUND40-MASK-EXCLUDE.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -98,15 +100,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.21.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.1/bbsae-0.21.1.jar)
-   from the **v0.21.1** release (the asset is updated with each source push).
+1. Download [`bbsae-0.21.2.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.2/bbsae-0.21.2.jar)
+   from the **v0.21.2** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.21.1.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.21.2.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.21.1.jar` SHA-256: `F5A49A934C937ECDEF51985FA5FB1D0E7B56D88CB3933F80B9B60E5B74E48F90`.
+`bbsae-0.21.2.jar` SHA-256: `AEB95FB725DCFF2D7105ECFCFEB0BEF055DB91B8122DD6CCF9F63F58A28292A6`.
 
 ## Gallery
 
@@ -173,6 +175,20 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.21.2
+
+- **The first Subtract / Exclude mask now cuts from the full layer.** The first mask used to be
+  treated as an empty canvas, so a single Subtract/Exclude showed the mask instead of the outside.
+  The stack now matches AE/Alight Motion: Add/Intersect define the area, Subtract/Exclude cut out
+  of the layer.
+- **Masks are editable on the canvas.** The 2D/camera preview projects each mask with the same
+  `CompScene.project` path as the selection box, draws points and bezier handles, and lets you drag
+  points/handles. 3D layers use a mouse-ray/plane intersection, so the point follows the cursor on
+  the plane. Drags write keyframes at the playhead when a mask channel already exists.
+- **3D track mattes work.** The "用作蒙版 / 用作排除" buttons used to be ignored on 3D targets; the
+  matte is now applied after projection, and a 2D matte over a 3D target is projected first.
+- 250/250 tests pass, including `MaskCombineTest` for the first-mask and combined modes.
 
 ## What's new in 0.21.1
 

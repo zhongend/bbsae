@@ -414,7 +414,7 @@ public final class CompLayerSourceCache
          * the 2D order. Before this the 3D path simply ignored masks. */
         if (hasMasks)
         {
-            MaskCache.MaskTexture mask = MaskCache.get(layer, current.width, current.height, world, parent.frame);
+            MaskCache.MaskTexture mask = MaskCache.get(layer, current.width, current.height, world, parent.frame, scale);
 
             if (mask != null)
             {
