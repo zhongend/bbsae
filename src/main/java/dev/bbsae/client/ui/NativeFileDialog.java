@@ -121,17 +121,41 @@ public final class NativeFileDialog
 
     private static File show(String title, String[] extensions) throws Exception
     {
-        if (Win32FileDialog.isWindows())
+        long owner = windowHandle();
+
+        /* An unowned GetOpenFileNameW can be placed behind a borderless game exactly like tinyfd;
+         * AWT's always-on-top owner is safer in that case. */
+        if (Win32FileDialog.isWindows() && owner != 0L)
         {
-            /* Owned by the game window: the one thing neither AWT nor tinyfd can promise. */
-            File picked = Win32FileDialog.open(windowHandle(), title, extensions, lastDirectory);
-
-            if (picked != null)
+            try
             {
-                lastDirectory = picked.getParentFile();
-            }
+                long started = System.nanoTime();
 
-            return picked;
+                /* Owned by the game window: the one thing neither AWT nor tinyfd can promise. */
+                File picked = Win32FileDialog.open(owner, title, extensions, lastDirectory);
+
+                if (picked != null)
+                {
+                    lastDirectory = picked.getParentFile();
+
+                    return picked;
+                }
+
+                /* A dialog that returns "cancel" in a few milliseconds almost certainly failed to
+                 * present (a stale HWND, a remote session, a policy block). Treat that as a backend
+                 * failure so the AWT dialog gets a chance instead of the button silently doing
+                 * nothing. A real cancel takes at least a human reaction. */
+                if ((System.nanoTime() - started) / 1_000_000L < 250L)
+                {
+                    throw new IllegalStateException("Win32 dialog returned without presenting");
+                }
+
+                return null;
+            }
+            catch (Throwable t)
+            {
+                BbsAeAddon.LOGGER.warn("The Win32 file dialog failed, falling back to AWT", t);
+            }
         }
 
         return showAwt(title, extensions);

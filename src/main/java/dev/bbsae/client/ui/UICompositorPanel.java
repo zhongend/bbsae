@@ -5316,31 +5316,73 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void importFontFile(CompLayer layer, java.io.File file)
     {
+        if (layer == null || file == null)
+        {
+            return;
+        }
+
         try
         {
+            long length = java.nio.file.Files.size(file.toPath());
+
+            if (length <= 0 || length > FontImport.MAX_BYTES)
+            {
+                this.setStatus(length <= 0 ? "字体导入失败：文件为空" : "字体导入失败：文件超过 64 MB");
+                return;
+            }
+
+            byte[] data = java.nio.file.Files.readAllBytes(file.toPath());
+            String header = FontImport.headerError(data);
+
+            if (header != null)
+            {
+                this.setStatus("字体导入失败：" + header);
+                return;
+            }
+
             java.io.File folder = mchorse.bbs_mod.fonts.FontManager.getFolder();
+
+            if (folder == null)
+            {
+                this.setStatus("字体导入失败：BBS 资源目录尚未初始化");
+                return;
+            }
 
             java.nio.file.Files.createDirectories(folder.toPath());
 
-            String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
-            String lower = name.toLowerCase(java.util.Locale.ROOT);
-
-            if (!lower.endsWith(".ttf") && !lower.endsWith(".otf"))
-            {
-                name = name + ".ttf";
-            }
-
-            java.nio.file.Path target = folder.toPath().resolve(name);
+            /* Keep the real (including Chinese) name and never overwrite a different font that
+             * happens to share it; re-importing the same bytes reuses the existing copy. */
+            java.nio.file.Path target = FontImport.uniqueTarget(folder.toPath(), file.getName(), file.toPath());
 
             if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
             {
                 java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
 
+            String name = target.getFileName().toString();
+            mchorse.bbs_mod.resources.Link link = mchorse.bbs_mod.resources.Link.assets("fonts/" + name);
+
+            /* The same name may have been imported before; drop the cached atlas before probing
+             * so the verification below actually reads the new bytes. */
+            mchorse.bbs_mod.BBSModClient.getFonts().accept(target,
+                mchorse.bbs_mod.utils.watchdog.WatchDogEvent.CREATED);
+
+            /* Verify through BBS' own loader. A TTC/WOFF is rejected earlier by the header check,
+             * but an OTF with CFF outlines can pass the header and still fail stb; reporting that
+             * instead of silently selecting a font that renders as the default is the point. */
+            mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer loaded =
+                mchorse.bbs_mod.BBSModClient.getFonts().get(link, 32, 1F);
+
+            if (loaded == null)
+            {
+                this.setStatus("字体已复制到 " + folder.getName() + "/，但 BBS 无法解析（OTF/CFF 或损坏）；文件已保留");
+                return;
+            }
+
             layer.fontName = name;
             this.refreshInspector();
             this.save();
-            this.setStatus("已导入字体：" + name);
+            this.setStatus("已导入字体：" + name + "（BBS 字体目录）");
         }
         catch (Exception e)
         {
@@ -12576,10 +12618,39 @@ public class UICompositorPanel extends UIDashboardPanel
         fontLabels.add("默认（BBS）");
         fontFiles.put("默认（BBS）", "");
 
+        /* Merge the provider's link list with a direct scan of the fonts folder. The provider is
+         * the authority for loading, but it can lag a file that was just copied in (and a stale
+         * list made a successful import look like it did nothing). The folder scan is what makes
+         * the newly imported font appear in the dropdown immediately. */
+        java.util.TreeSet<String> fontNames = new java.util.TreeSet<>();
+
         for (mchorse.bbs_mod.resources.Link link : mchorse.bbs_mod.fonts.FontManager.getFontLinks())
         {
-            String name = link.path.substring(link.path.lastIndexOf('/') + 1);
+            fontNames.add(link.path.substring(link.path.lastIndexOf('/') + 1));
+        }
 
+        java.io.File fontFolder = mchorse.bbs_mod.fonts.FontManager.getFolder();
+
+        if (fontFolder != null && fontFolder.isDirectory())
+        {
+            java.io.File[] files = fontFolder.listFiles();
+
+            if (files != null)
+            {
+                for (java.io.File fontFile : files)
+                {
+                    String name = fontFile.getName().toLowerCase(java.util.Locale.ROOT);
+
+                    if (fontFile.isFile() && (name.endsWith(".ttf") || name.endsWith(".otf")))
+                    {
+                        fontNames.add(fontFile.getName());
+                    }
+                }
+            }
+        }
+
+        for (String name : fontNames)
+        {
             fontLabels.add(name);
             fontFiles.put(name, name);
         }
@@ -14176,19 +14247,12 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void openExportFolder()
     {
-        try
+        java.nio.file.Path path = CompStore.exportRoot(this.project == null ? CompStore.DEFAULT_PROJECT : this.project.id);
+
+        if (!OsOpen.openFolder(path))
         {
-            java.nio.file.Path path = CompStore.exportRoot(this.project == null ? CompStore.DEFAULT_PROJECT : this.project.id);
-
-            java.nio.file.Files.createDirectories(path);
-
-            if (java.awt.Desktop.isDesktopSupported())
-            {
-                java.awt.Desktop.getDesktop().open(path.toFile());
-            }
+            this.setStatus("无法打开导出文件夹：" + path + "（可手动复制这个路径）");
         }
-        catch (Exception ignored)
-        {}
     }
 
     /* Host lifecycle */

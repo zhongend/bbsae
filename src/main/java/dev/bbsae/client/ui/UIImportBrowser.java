@@ -128,7 +128,7 @@ public class UIImportBrowser extends UIElement
 
         this.add(this.box);
 
-        this.current = defaultFolder();
+        this.current = this.defaultFolder();
         this.reload();
     }
 
@@ -155,11 +155,25 @@ public class UIImportBrowser extends UIElement
             () -> this.title.label = IKey.constant("系统对话框不可用 · 用下面的列表选择"));
     }
 
-    private static Path defaultFolder()
+    private Path defaultFolder()
     {
-        if (lastFolder != null && Files.isDirectory(lastFolder))
+        boolean fonts = this.importsFonts();
+
+        /* A previous browse is the best hint when it is the same kind of import. A folder full of
+         * videos is not a useful starting point for the font picker. */
+        if (lastFolder != null && Files.isDirectory(lastFolder) && (!fonts || hasFont(lastFolder)))
         {
             return lastFolder;
+        }
+
+        if (fonts)
+        {
+            Path systemFonts = systemFontsFolder();
+
+            if (systemFonts != null)
+            {
+                return systemFonts;
+            }
         }
 
         String home = System.getProperty("user.home");
@@ -181,6 +195,64 @@ public class UIImportBrowser extends UIElement
         }
 
         return Path.of(".");
+    }
+
+    private boolean importsFonts()
+    {
+        for (String extension : this.extensions)
+        {
+            if ("ttf".equalsIgnoreCase(extension) || "otf".equalsIgnoreCase(extension))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean hasFont(Path folder)
+    {
+        try (var stream = Files.list(folder))
+        {
+            return stream.anyMatch((path) ->
+            {
+                String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+
+                return name.endsWith(".ttf") || name.endsWith(".otf");
+            });
+        }
+        catch (Exception ignored)
+        {
+            return false;
+        }
+    }
+
+    /** The per-user and machine-wide font folders on Windows, or null elsewhere. */
+    private static Path systemFontsFolder()
+    {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+
+        if (!os.contains("win"))
+        {
+            return null;
+        }
+
+        String windir = System.getenv("WINDIR");
+        String localAppData = System.getenv("LOCALAPPDATA");
+        Path[] candidates = {
+            windir == null ? null : Path.of(windir, "Fonts"),
+            localAppData == null ? null : Path.of(localAppData, "Microsoft", "Windows", "Fonts")
+        };
+
+        for (Path candidate : candidates)
+        {
+            if (candidate != null && Files.isDirectory(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     @Override

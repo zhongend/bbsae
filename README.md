@@ -69,6 +69,8 @@
   [`docs/ROUND33-ENTITY-MATTE-UI.zh.md`](docs/ROUND33-ENTITY-MATTE-UI.zh.md)
 - **Round 34 (3D matte transparency / 3D effects / effect strength / 3D adjustment layers, v0.20.0):**
   [`docs/ROUND34-3D-MATTE-EFFECTS.zh.md`](docs/ROUND34-3D-MATTE-EFFECTS.zh.md)
+- **Round 35 (custom font import / working folder buttons / native dialog fallback, v0.20.1):**
+  [`docs/ROUND35-FONT-IMPORT-OS-OPEN.zh.md`](docs/ROUND35-FONT-IMPORT-OS-OPEN.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -88,15 +90,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.20.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.0/bbsae-0.20.0.jar)
-   from the **v0.20.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.20.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.1/bbsae-0.20.1.jar)
+   from the **v0.20.1** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.20.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.20.1.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.20.0.jar` SHA-256: `870DE71CC646ADC4818BAE01FA1702D2A91936EF4BBE9A48B10FE4951C97C620`.
+`bbsae-0.20.1.jar` SHA-256: `B58948A3E5A40AE0E971EA2637ADBCC2CF2A538139D0351F68C65851791F275F`.
 
 ## Gallery
 
@@ -163,6 +165,22 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.20.1
+
+- **Custom fonts import for real.** The importer keeps the font's actual (including Chinese) name,
+  never overwrites a different font with the same name, rejects TTC/WOFF with a clear message, and
+  verifies the copy through BBS' own stb loader before claiming success. The font picker also scans
+  the fonts folder directly, so the new font appears immediately.
+- **Folder buttons work without AWT.** "Open folder" used `Desktop` and swallowed every exception;
+  on a headless JRE or a launcher with a restricted desktop it did nothing. It now uses Minecraft's
+  own OS integration, then AWT, then a direct `explorer`/`open`/`xdg-open` launch, and reports the
+  path when all three fail.
+- **Native file dialogs no longer fail silently.** On Windows, a dialog that returns "cancel" in a
+  few milliseconds (stale HWND, remote session) is treated as a backend failure and falls back to
+  AWT; an unowned Win32 dialog is skipped in favour of AWT's always-on-top owner.
+- **Font browser starts in the system font folder.** Importing a font from the in-game browser opens
+  `Windows\Fonts` first, and remembers a previously browsed font folder.
 
 ## What's new in 0.20.0
 

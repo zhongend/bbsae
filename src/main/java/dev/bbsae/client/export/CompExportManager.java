@@ -915,15 +915,7 @@ public final class CompExportManager
                 return;
             }
 
-            try
-            {
-                if (java.awt.Desktop.isDesktopSupported())
-                {
-                    java.awt.Desktop.getDesktop().open(this.folder.toFile());
-                }
-            }
-            catch (Exception ignored)
-            {}
+            dev.bbsae.client.ui.OsOpen.openFolder(this.folder);
         }
 
         private float progress()
