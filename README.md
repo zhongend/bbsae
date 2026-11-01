@@ -71,6 +71,8 @@
   [`docs/ROUND34-3D-MATTE-EFFECTS.zh.md`](docs/ROUND34-3D-MATTE-EFFECTS.zh.md)
 - **Round 35 (custom font import / working folder buttons / native dialog fallback, v0.20.1):**
   [`docs/ROUND35-FONT-IMPORT-OS-OPEN.zh.md`](docs/ROUND35-FONT-IMPORT-OS-OPEN.zh.md)
+- **Round 36 (single layer/effect application / keyframed strength / precomp pass inheritance, v0.20.3):**
+  [`docs/ROUND36-LAYER-EFFECT-APPLICATION.zh.md`](docs/ROUND36-LAYER-EFFECT-APPLICATION.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -90,15 +92,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.20.2.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.2/bbsae-0.20.2.jar)
-   from the **v0.20.2** release (the asset is updated with each source push).
+1. Download [`bbsae-0.20.3.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.3/bbsae-0.20.3.jar)
+   from the **v0.20.3** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.20.2.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.20.3.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.20.2.jar` SHA-256: `CD72B1C9F62491212043448966557FC3C45F013AD8D24A0F48331165583E1454`.
+`bbsae-0.20.3.jar` SHA-256: `87533104DF02D3662E5CB3CB8FECC5D93DD8D0AC7CC20408207AE2DD24026E75`.
 
 ## Gallery
 
@@ -165,6 +167,18 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.20.3
+
+- **3D-layer effects are applied exactly once.** The layer-space raster already bakes the
+  non-depth stack; 0.20.0 then ran the same effects again after projection, doubling every blur,
+  brightness and generator and replacing a layer-anchored gradient with a composition-space one.
+- **Keyframed effect strength now animates.** `global_strength` is part of every new effect's
+  parameter map, and `resolveEffect` also resolves `fx/<id>/...` channels that have no stored
+  base value, so a strength keyframe on an older effect is no longer ignored.
+- **Precomps inherit the parent pass.** A depth/guide pass with effects disabled no longer brings
+  the precomp's effects back through a hardcoded `true`.
+- 238/238 tests pass.
 
 ## What's new in 0.20.2
 

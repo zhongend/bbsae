@@ -391,7 +391,10 @@ final class LayerContentRenderer
          * queued quad would otherwise be flushed into the nested target instead of this layer. */
         batcher.flush();
 
-        GlFramebuffer framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth, context.projection, context.camera, context.stack, batcher, 0, true, true, context.preview, context.scale);
+        /* The child inherits the parent pass: a depth/guide pass that disabled effects must not
+         * get them back just because the layer happens to be a precomp. */
+        GlFramebuffer framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth, context.projection, context.camera, context.stack, batcher, 0,
+            context.renderEffects, context.renderMasks, context.preview, context.scale);
 
         if (framebuffer == null)
         {

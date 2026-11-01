@@ -400,6 +400,10 @@ public final class CompEffectRegistry
         Definition definition = get(type);
         CompEffect effect = new CompEffect("fx" + serial, type);
 
+        /* Every effect starts at full strength, and the value is present in the map so the
+         * generic fx/<id>/global_strength animation channel is resolved by resolveEffect(). */
+        effect.put(CompEffect.STRENGTH, 1D);
+
         if (definition != null)
         {
             for (Param param : definition.params)

@@ -1337,6 +1337,36 @@ public class CompLayer
             entry.setValue((double) this.scalarAt(effectPath(effect.id, entry.getKey()), fallback, frame));
         }
 
+        /* A channel can exist for a parameter that is not in the stored map. That is how an
+         * effect saved before global_strength existed gets a keyed strength, and how a parameter
+         * whose base value was never written still animates. Resolving only stored params made
+         * those channels silently dead. */
+        String prefix = effectPath(effect.id, "");
+
+        if (this.animatedPaths() != null)
+        {
+            for (String path : this.animatedPaths())
+            {
+                if (path == null || !path.startsWith(prefix))
+                {
+                    continue;
+                }
+
+                String key = path.substring(prefix.length());
+
+                if (key.isEmpty() || resolved.params.containsKey(key))
+                {
+                    continue;
+                }
+
+                /* Full strength is the neutral default; an unknown parameter defaults to zero,
+                 * which matches how EffectRenderer reads a missing value. */
+                float fallback = CompEffect.STRENGTH.equals(key) ? 1F : 0F;
+
+                resolved.put(key, this.scalarAt(path, fallback, frame));
+            }
+        }
+
         return resolved;
     }
 

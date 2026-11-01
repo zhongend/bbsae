@@ -564,6 +564,10 @@ public final class CompRenderer
 
         CompRenderContext context = new CompRenderContext(project, comp, time, projection, camera, depth);
 
+        /* Nested comps (precomps) read these back when they recurse. */
+        context.renderEffects = renderEffects;
+        context.renderMasks = renderMasks;
+
         context.preview = preview;
         context.scale = Math.max(0.05F, Math.min(1F, scale));
 
@@ -616,12 +620,15 @@ public final class CompRenderer
 
                 Matrix4f model = CompScene.model(context, layer);
                 Matrix4f layerProjection = CompScene.projection(context, layer);
-                GlFramebuffer content = renderLayerContent(layer, context, model, layerProjection, stack, batcher);
+                LayerRender rendered = renderLayerContent(layer, context, model, layerProjection, stack, batcher, renderEffects);
+                GlFramebuffer content = rendered == null ? null : rendered.framebuffer;
 
                 if (content == null)
                 {
                     continue;
                 }
+
+                boolean effectsBaked = rendered.effectsBaked;
 
                 boolean is2D = !CompScene.usePerspective(context, layer);
 
@@ -645,7 +652,8 @@ public final class CompRenderer
                     if (matte != null && matte != layer)
                     {
                         Matrix4f matteModel = CompScene.model(context, matte);
-                        GlFramebuffer matteFbo = renderLayerContent(matte, context, matteModel, CompScene.projection(context, matte), stack, batcher);
+                        LayerRender matteRender = renderLayerContent(matte, context, matteModel, CompScene.projection(context, matte), stack, batcher, renderEffects);
+                        GlFramebuffer matteFbo = matteRender == null ? null : matteRender.framebuffer;
 
                         if (matteFbo != null)
                         {
@@ -661,14 +669,17 @@ public final class CompRenderer
 
                 Matrix4f effectSpace = effectSpace(context, layer, model);
 
-                /* Nothing bakes the effect stack for a 3D layer. This used to skip every
-                 * non-depth effect under the belief that renderBaked3D had already applied them,
-                 * but that method only projects the source raster — so every effect on a 3D layer
-                 * was silently dropped. Effects now run once, after the projection, in composition
-                 * space (EffectSpace.identity for a 3D layer). */
-                boolean effectsBaked = false;
+                /* The layer-space raster already contains the non-depth effect stack:
+                 * CompLayerSourceCache.applyEffects runs it in the layer's own space before the
+                 * raster is projected. That is what keeps a gradient glued to a 3D plane. Running
+                 * the loop for those effects again (0.20.0 did) applied every effect twice and
+                 * overwrote the layer-space gradient with a composition-space one. Only depth
+                 * effects still need the projected image and the world depth buffer. */
+                java.util.List<CompEffect> effects = layer.effects == null
+                    ? java.util.Collections.emptyList()
+                    : layer.effects;
 
-                for (CompEffect effect : layer.effects)
+                for (CompEffect effect : effects)
                 {
                     if (!renderEffects || effect == null || !effect.enabled)
                     {
@@ -682,7 +693,7 @@ public final class CompRenderer
                      * depth_dof silently did nothing on 3D layers. */
                     boolean depthEffect = effect.type != null && effect.type.startsWith("depth_");
 
-                    if (effectsBaked && !depthEffect)
+                    if (!needsCompositionEffect(effectsBaked, effect))
                     {
                         continue;
                     }
@@ -919,12 +930,27 @@ public final class CompRenderer
         }
     }
 
-    private static GlFramebuffer renderLayerContent(CompLayer layer, CompRenderContext context, Matrix4f model, Set<String> stack, Batcher2D batcher)
+    /**
+     * A layer's content for one pass, plus whether its non-depth effect stack is already in it.
+     *
+     * <p>The "baked" bit cannot be recomputed by the caller from {@code layer.threeD}: a 3D layer
+     * whose source raster could not be built falls back to the direct path, and then its effects
+     * still have to run after projection. Returning the fact with the pixels keeps the two paths
+     * from disagreeing.</p>
+     */
+    private static final class LayerRender
     {
-        return renderLayerContent(layer, context, model, CompScene.projection(context, layer), stack, batcher);
+        final GlFramebuffer framebuffer;
+        final boolean effectsBaked;
+
+        LayerRender(GlFramebuffer framebuffer, boolean effectsBaked)
+        {
+            this.framebuffer = framebuffer;
+            this.effectsBaked = effectsBaked;
+        }
     }
 
-    private static GlFramebuffer renderLayerContent(CompLayer layer, CompRenderContext context, Matrix4f model, Matrix4f layerProjection, Set<String> stack, Batcher2D batcher)
+    private static LayerRender renderLayerContent(CompLayer layer, CompRenderContext context, Matrix4f model, Matrix4f layerProjection, Set<String> stack, Batcher2D batcher, boolean renderEffects)
     {
         /* A 3D layer with effects is drawn from its layer-space raster.
          *
@@ -934,11 +960,12 @@ public final class CompRenderer
          * gradient slide across the plane while the shot moved. The viewport already bakes them in
          * layer space; this path makes the exported frame agree with it.</p>
          */
-        GlFramebuffer baked = renderBaked3D(layer, context, model, layerProjection, batcher);
+        GlFramebuffer baked = renderEffects ? renderBaked3D(layer, context, model, layerProjection, batcher) : null;
 
         if (baked != null)
         {
-            return baked;
+            /* The source cache already ran the non-depth effects in layer space. */
+            return new LayerRender(baked, true);
         }
 
         GlFramebuffer target = FboPool.acquire(context.renderWidth(), context.renderHeight());
@@ -969,7 +996,7 @@ public final class CompRenderer
             return null;
         }
 
-        return target;
+        return new LayerRender(target, false);
     }
 
     /** Cells per axis when a baked 3D layer is drawn as a projected quad. */
@@ -1083,6 +1110,11 @@ public final class CompRenderer
 
     private static GlFramebuffer applyAdjustment(CompLayer layer, GlFramebuffer original, CompRenderContext context, Set<String> stack, Batcher2D batcher)
     {
+        if (layer.effects == null || layer.effects.isEmpty())
+        {
+            return original;
+        }
+
         GlFramebuffer processed = original;
         boolean changed = false;
         Matrix4f space = new Matrix4f();
@@ -1169,6 +1201,30 @@ public final class CompRenderer
         }
 
         return content;
+    }
+
+    /**
+     * Whether an effect still has to run on the projected content.
+     *
+     * <p>3D layers with effects are rasterized by {@link CompLayerSourceCache}, which runs the
+     * non-depth stack in <b>layer</b> space; the projected image already contains it. Running the
+     * same effect again here applied every 3D effect twice (2x blur, 2x brightness, a composition
+     * gradient overwriting the layer-anchored one). Depth effects cannot be baked (they need the
+     * world depth attachment), so those still run after projection.</p>
+     *
+     * <p>A 3D layer whose raster could not be built reports {@code effectsBaked == false}; its
+     * effects then run here as the fallback, exactly once.</p>
+     */
+    static boolean needsCompositionEffect(boolean effectsBaked, CompEffect effect)
+    {
+        if (effect == null)
+        {
+            return false;
+        }
+
+        boolean depth = effect.type != null && effect.type.startsWith("depth_");
+
+        return !effectsBaked || depth;
     }
 
     private static boolean hasEnabledEffects(CompLayer layer)

@@ -11589,6 +11589,9 @@ public class UICompositorPanel extends UIDashboardPanel
         float strength = layer.scalarAt(firstPath,
             (float) effect.value(dev.bbsae.client.render.EffectRenderer.STRENGTH, 1D), frame);
 
+        /* Make sure the parameter also has a base value, so resolveEffect has a fallback even
+         * before the first keyframe (and for projects saved before the strength existed). */
+        effect.put(dev.bbsae.client.render.EffectRenderer.STRENGTH, (double) strength);
         layer.scalarChannel(firstPath).insertInheriting(frame, strength);
 
         for (CompEffectRegistry.Param param : definition.params)

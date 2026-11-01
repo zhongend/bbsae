@@ -10,6 +10,14 @@ import java.util.Map;
  */
 public class CompEffect
 {
+    /**
+     * Universal effect strength: 0 = the original layer, 1 = the raw effect.
+     *
+     * <p>Lives in {@code params} like any other value, so the normal {@code fx/<id>/...}
+     * animation channels and project serialisation apply without a special case.</p>
+     */
+    public static final String STRENGTH = "global_strength";
+
     public String id = "";
     public String type = "brightness_contrast";
     public boolean enabled = true;

@@ -30,6 +30,16 @@ public final class CompRenderContext
     public boolean preview = true;
 
     /**
+     * Whether this pass applies the effect stack and masks.
+     *
+     * <p>A sub-composition must inherit the parent's answer: a depth or guide pass renders the
+     * same graph with effects off, and a precomp used to hardcode {@code true} when it recursed,
+     * quietly bringing effects (and their GPU cost) back into a pass that asked for none.</p>
+     */
+    public boolean renderEffects = true;
+    public boolean renderMasks = true;
+
+    /**
      * Resolution factor of the render targets. 1 = composition resolution.
      *
      * <p>The composition coordinate space is always {@link #width}×{@link #height} comp pixels;

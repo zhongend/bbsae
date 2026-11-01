@@ -64,7 +64,7 @@ public final class EffectRenderer
      * belongs to that raster directly.</p>
      */
     /** Parameter key shared by every effect: 0 = original layer, 1 = full effect. */
-    public static final String STRENGTH = "global_strength";
+    public static final String STRENGTH = CompEffect.STRENGTH;
 
     /**
      * Applies one effect and blends the result back towards the input by the effect's
