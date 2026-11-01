@@ -88,6 +88,17 @@ loom {
             vmArg "-Dbbsae.debugShotTicks=" + (project.findProperty("bbsaeShotTicks") ?: "260")
             vmArg "-Dbbsae.debugShotEachView=" + (project.findProperty("bbsaeShotEachView") ?: "false")
             vmArg "-Dbbsae.debugShotPrefix=" + (project.findProperty("bbsaeShotPrefix") ?: "round31-")
+            /* Font verification sheet (see BbsAeClient.saveFontSheet):
+             *   ./gradlew runClientView -PbbsaeFontShot=fontsheet -PbbsaeFontShotFont=timesbd.ttf
+             * It renders the text through the real composition renderer, which is the only way to
+             * see whether the glyphs of an imported font are actually drawn. */
+            vmArg "-Dbbsae.debugFontShot=" + (project.findProperty("bbsaeFontShot") ?: "")
+            vmArg "-Dbbsae.debugFontShotTicks=" + (project.findProperty("bbsaeFontShotTicks") ?: "140")
+            vmArg "-Dbbsae.debugFontShotFont=" + (project.findProperty("bbsaeFontShotFont") ?: "timesbd.ttf")
+            vmArg "-Dbbsae.debugFontImportSrc=" + (project.findProperty("bbsaeFontImportSrc") ?: "")
+            vmArg "-Dbbsae.debugFontShotSize=" + (project.findProperty("bbsaeFontShotSize") ?: "54")
+            vmArg "-Dbbsae.debugFonts=" + (project.findProperty("bbsaeDebugFonts") ?: "false")
+            vmArg "-Dbbsae.debugQuitAfterShot=" + (project.findProperty("bbsaeQuitAfterShot") ?: "false")
             programArgs "--quickPlaySingleplayer", "TestWorld"
             /* The panel is laid out for a 1920x1080 editor canvas. The default tiny dev window
              * (854x480) clips the timeline and the quick panel, which makes verification

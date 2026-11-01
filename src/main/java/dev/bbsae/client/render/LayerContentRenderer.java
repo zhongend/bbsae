@@ -17,6 +17,7 @@ import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -457,24 +458,49 @@ final class LayerContentRenderer
         }
 
         float fontSize = layer.fontSizeAt(context.frame);
-        FontRenderer font = fontFor(layer, batcher, fontSize);
-        int fontHeight = Math.max(1, font.getHeight());
-        float tracking = layer.trackingAt(context.frame);
+        FontRenderer fallback = batcher.getFont() == null
+            ? Batcher2D.getDefaultTextRenderer()
+            : batcher.getFont();
+        LayerFont chosen = fontFor(layer, batcher, fontSize);
+        FontRenderer font = chosen.renderer;
+        int fontHeight = Math.max(1, font.getHeight());        float tracking = layer.trackingAt(context.frame);
         float lineHeightFactor = layer.lineHeightAt(context.frame);
         float textStroke = layer.textStrokeAt(context.frame);
         float scale = Math.max(0.001F, fontSize / fontHeight);
-        List<String> lines = layout(text, font, layer, tracking, layer.textBoxWidth / scale);
+        List<String> lines = layout(text, chosen, fallback, layer, tracking, layer.textBoxWidth / scale);
         float lineHeight = Math.max(1F, fontHeight * lineHeightFactor);
         float width = 0F;
 
         for (String line : lines)
         {
-            width = Math.max(width, lineWidth(font, line, tracking));
+            width = Math.max(width, lineWidth(chosen, fallback, line, tracking));
         }
 
         float totalHeight = lines.size() * lineHeight;
         float baseX = -width * layer.anchorX;
         float baseY = -totalHeight * layer.anchorY;
+
+        if (Boolean.getBoolean("bbsae.debugFonts") && FONT_WARNINGS.add("glyphs:" + layer.id + ":" + text.hashCode()))
+        {
+            StringBuilder detail = new StringBuilder();
+
+            for (int i = 0; i < text.length() && detail.length() < 400; )
+            {
+                int codePoint = text.codePointAt(i);
+                String glyph = new String(Character.toChars(codePoint));
+                FontRenderer glyphFont = glyphFont(chosen, fallback, codePoint);
+
+                detail.append(String.format(java.util.Locale.ROOT, " U+%04X[%s w=%.1f x%.1f]",
+                    codePoint,
+                    chosen.custom() && glyphFont == chosen.renderer ? "custom" : "default",
+                    glyphFont.getWidth(glyph) * glyphScale(chosen, fallback, glyphFont),
+                    glyphScale(chosen, fallback, glyphFont)));
+
+                i += Character.charCount(codePoint);
+            }
+
+            dev.bbsae.BbsAeAddon.LOGGER.info("glyphs {} '{}'{}", layer.id, text, detail);
+        }
 
         MatrixStack stack = batcher.getContext().getMatrices();
 
@@ -486,31 +512,42 @@ final class LayerContentRenderer
 
         for (String line : lines)
         {
-            for (int i = 0; i < line.length(); i++)
+            for (int i = 0; i < line.length(); )
             {
-                if (!Character.isWhitespace(line.charAt(i)))
+                int codePoint = line.codePointAt(i);
+
+                if (!Character.isWhitespace(codePoint))
                 {
                     total += 1;
                 }
+
+                i += Character.charCount(codePoint);
             }
         }
 
         for (int lineIndex = 0; lineIndex < lines.size(); lineIndex++)
         {
             String line = lines.get(lineIndex);
-            float currentLineWidth = lineWidth(font, line, tracking);
+            float currentLineWidth = lineWidth(chosen, fallback, line, tracking);
             float x = layer.align == 0 ? baseX : layer.align == 2 ? baseX + width - currentLineWidth : baseX + (width - currentLineWidth) / 2F;
             float y = baseY + lineIndex * lineHeight;
             float cursor = 0F;
 
-            for (int i = 0; i < line.length(); i++)
+            /* Iterate code points, not UTF-16 units: an emoji is two chars and splitting it drew
+             * two replacement boxes instead of one glyph. */
+            for (int i = 0; i < line.length(); )
             {
-                char c = line.charAt(i);
-                String glyph = String.valueOf(c);
-                float advance = font.getWidth(glyph) + tracking;
+                int codePoint = line.codePointAt(i);
+                String glyph = new String(Character.toChars(codePoint));
+
+                /* The whole point of this pass: a character the chosen font cannot draw is drawn by
+                 * BBS's default font instead of vanishing (or becoming a 1 px missing-glyph sliver). */
+                FontRenderer glyphFont = glyphFont(chosen, fallback, codePoint);
+                float glyphScale = glyphScale(chosen, fallback, glyphFont);
+                float advance = glyphFont.getWidth(glyph) * glyphScale + tracking;
                 float charX = x + cursor;
 
-                if (!Character.isWhitespace(c))
+                if (!Character.isWhitespace(codePoint))
                 {
                     float progress = total <= 1 ? 0F : visible / (float) (total - 1);
                     CompTextAnimator animator = selectAnimator(layer, progress, visible);
@@ -541,11 +578,11 @@ final class LayerContentRenderer
                         int color = animator.useColor ? animator.color : layer.color;
 
                         color = withAlpha(color, Colors.getA(color) * animator.opacity);
-                        drawGlyph(batcher, font, glyph, charX, y, color, layer.strokeColor, textStroke);
+                        drawGlyph(batcher, glyphFont, glyphScale, glyph, charX, y, color, layer.strokeColor, textStroke);
                     }
                     else
                     {
-                        drawGlyph(batcher, font, glyph, charX, y, layer.color, layer.strokeColor, textStroke);
+                        drawGlyph(batcher, glyphFont, glyphScale, glyph, charX, y, layer.color, layer.strokeColor, textStroke);
                     }
 
                     stack.pop();
@@ -553,32 +590,201 @@ final class LayerContentRenderer
                 }
 
                 cursor += advance;
+                i += Character.charCount(codePoint);
             }
         }
 
         stack.pop();
     }
 
-    /** Custom fonts come from BBS's own TTF loader; an empty name keeps the default font. */
-    private static FontRenderer fontFor(CompLayer layer, Batcher2D batcher, float fontSize)
+    /**
+     * The layer's font file plus BBS's renderer for it.
+     *
+     * <p>{@code renderer} is never null: when the project names a font that is missing, unreadable
+     * or that BBS cannot parse, it is the default renderer and {@code file} is null. The renderer
+     * still chooses per character (see {@link #glyphFont}) because a font is a partial map.</p>
+     */
+    private static final class LayerFont
     {
-        if (layer.fontName == null || layer.fontName.isBlank())
+        final FontRenderer renderer;
+        final File file;
+        final String name;
+
+        LayerFont(FontRenderer renderer, File file, String name)
         {
-            return batcher.getFont();
+            this.renderer = renderer;
+            this.file = file;
+            this.name = name;
+        }
+
+        boolean custom()
+        {
+            return this.file != null;
+        }
+    }
+
+    private static final class ResolvedFont
+    {
+        final Link link;
+        final File file;
+
+        ResolvedFont(Link link, File file)
+        {
+            this.link = link;
+            this.file = file;
+        }
+    }
+
+    /** fontName → link/file, so the per-frame path does not rescan the folder. */
+    private static final java.util.Map<String, ResolvedFont> FONT_FILES = new java.util.HashMap<>();
+    private static final java.util.Set<String> FONT_WARNINGS = new java.util.HashSet<>();
+
+    /** Drops the resolved names (after an import or a font folder change). */
+    static void clearFonts()
+    {
+        FONT_FILES.clear();
+        FONT_WARNINGS.clear();
+        FontCoverage.clear();
+    }
+
+    /** Custom fonts come from BBS's own TTF loader; an empty name keeps the default font. */
+    private static LayerFont fontFor(CompLayer layer, Batcher2D batcher, float fontSize)
+    {
+        FontRenderer fallback = batcher.getFont() == null
+            ? Batcher2D.getDefaultTextRenderer()
+            : batcher.getFont();
+        String name = layer.fontName == null ? "" : layer.fontName.trim();
+
+        if (name.isEmpty())
+        {
+            return new LayerFont(fallback, null, "");
         }
 
         int size = Math.max(4, Math.min(96, Math.round(fontSize)));
 
+        /* The atlas is rasterized at `size`; a 200 px text layer must not be a 96 px atlas blown
+         * up 2x. BBS' FontManager turns this ratio into its oversampling factor. */
+        float rasterScale = Math.max(1F, fontSize / Math.max(1, size));
+        ResolvedFont resolved = resolve(name);
+
+        if (resolved == null)
+        {
+            warn(name, "the font file is not in BBS' fonts folder: " + name);
+            return new LayerFont(fallback, null, name);
+        }
+
+        FontRenderer custom;
+
         try
         {
-            FontRenderer custom = BBSModClient.getFonts().get(Link.assets("fonts/" + layer.fontName), size, 1F);
-
-            return custom == null ? batcher.getFont() : custom;
+            custom = BBSModClient.getFonts().get(resolved.link, size, rasterScale);
         }
         catch (RuntimeException e)
         {
-            return batcher.getFont();
+            warn(name, "BBS could not load the font: " + e);
+            custom = null;
         }
+
+        if (custom == null || custom.getRenderer() == null)
+        {
+            warn(name, "BBS could not parse the font (OTF/CFF or corrupt): " + resolved.file);
+            return new LayerFont(fallback, null, name);
+        }
+
+        if (Boolean.getBoolean("bbsae.debugFonts") && FONT_WARNINGS.add("debug:" + name + ":" + size))
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.info(
+                "font: name={} file={} size={} oversample={} height={} width(H)={} width(新)={} coversH={} coversHan={}",
+                name, resolved.file, size, rasterScale, custom.getHeight(),
+                custom.getWidth("H"), custom.getWidth("新"),
+                FontCoverage.covers(resolved.file, 'H'), FontCoverage.covers(resolved.file, '新'));
+        }
+
+        return new LayerFont(custom, resolved.file, name);
+    }
+
+    /**
+     * Resolves a stored {@code fontName} to a link and a file.
+     *
+     * <p>Accepts what older projects and the picker actually store: a plain file name
+     * ({@code timesbd.ttf}), a name without an extension, a sub-folder path under {@code fonts/},
+     * and a name whose case differs from the file on disk.</p>
+     */
+    private static ResolvedFont resolve(String name)
+    {
+        ResolvedFont cached = FONT_FILES.get(name);
+
+        if (cached != null && cached.file != null && cached.file.isFile())
+        {
+            return cached;
+        }
+
+        File file = FontCoverage.resolve(name);
+
+        if (file == null)
+        {
+            return null;
+        }
+
+        ResolvedFont resolved = new ResolvedFont(
+            Link.assets("fonts/" + FontCoverage.relativeName(file)), file);
+
+        FONT_FILES.put(name, resolved);
+
+        return resolved;
+    }
+
+    /** Logs one line per unloadable font instead of spamming the console every frame. */
+    private static void warn(String name, String message)
+    {
+        if (FONT_WARNINGS.add(name))
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.warn("Text layer font '{}': {}", name, message);
+        }
+    }
+
+    /**
+     * The renderer for one character.
+     *
+     * <p>This is the fix for "the imported font shows nothing": the chosen font is used where its
+     * cmap has a glyph and BBS's default font everywhere else, instead of letting Minecraft answer
+     * with a missing glyph (no renderer, 1 px advance) for every character it cannot draw.</p>
+     */
+    private static FontRenderer glyphFont(LayerFont font, FontRenderer fallback, int codePoint)
+    {
+        if (font == null || !font.custom())
+        {
+            return fallback;
+        }
+
+        if (FontCoverage.covers(font.file, codePoint))
+        {
+            return font.renderer;
+        }
+
+        return fallback;
+    }
+
+    /**
+     * Scale that makes a fallback glyph match the size of the chosen font's glyphs.
+     *
+     * <p>The two renderers have different native metrics: BBS's default font is ~9 px tall while a
+     * custom font is laid out at {@code size} (72 px text is ~54 px of ascent). Drawing the fallback
+     * at scale 1 next to the custom glyphs produced tiny 汉字 next to full-size Latin letters, so the
+     * fallback is drawn in the custom font's own scale.</p>
+     */
+    private static float glyphScale(LayerFont font, FontRenderer fallback, FontRenderer glyphFont)
+    {
+        if (font == null || !font.custom() || glyphFont != fallback)
+        {
+            return 1F;
+        }
+
+        int fallbackHeight = Math.max(1, fallback.getHeight());
+        float scale = font.renderer.getHeight() / (float) fallbackHeight;
+
+        /* A default font 1 px taller than the custom one is not a reason to shrink text. */
+        return Math.max(0.05F, scale);
     }
 
     /**
@@ -589,12 +795,23 @@ final class LayerContentRenderer
      * default font — the classic "font metrics change but the letters do not" bug. Setting the
      * batcher font around the draw makes the renderer and the measurement agree.</p>
      */
-    private static void drawGlyph(Batcher2D batcher, FontRenderer font, String glyph, float x, float y,
-                                  int color, int strokeColor, float strokeWidth)
+    private static void drawGlyph(Batcher2D batcher, FontRenderer font, float glyphScale, String glyph,
+                                  float x, float y, int color, int strokeColor, float strokeWidth)
     {
         if (Colors.getA(color) <= 0F)
         {
             return;
+        }
+
+        MatrixStack stack = glyphScale == 1F ? null : batcher.getContext().getMatrices();
+
+        if (stack != null)
+        {
+            /* Scale about the glyph origin so the baseline stays where the layout put it. */
+            stack.push();
+            stack.translate(x, y, 0F);
+            stack.scale(glyphScale, glyphScale, 1F);
+            stack.translate(-x, -y, 0F);
         }
 
         FontRenderer previous = batcher.setFont(font);
@@ -616,20 +833,46 @@ final class LayerContentRenderer
         finally
         {
             batcher.setFont(previous);
+
+            if (stack != null)
+            {
+                stack.pop();
+            }
         }
     }
 
-    private static float lineWidth(FontRenderer font, String line, float tracking)
+    /**
+     * Width of a string in the font that will actually draw each character.
+     *
+     * <p>Measuring with one font and drawing with another is how a centred line drifts; the
+     * per-character fallback has to be applied to both sides.</p>
+     */
+    private static float lineWidth(LayerFont font, FontRenderer fallback, String line, float tracking)
     {
         if (line.isEmpty())
         {
             return 0F;
         }
 
-        return font.getWidth(line) + tracking * Math.max(0, line.length() - 1);
+        float width = 0F;
+        int count = 0;
+
+        for (int i = 0; i < line.length(); )
+        {
+            int codePoint = line.codePointAt(i);
+            String glyph = new String(Character.toChars(codePoint));
+            FontRenderer glyphFont = glyphFont(font, fallback, codePoint);
+
+            width += glyphFont.getWidth(glyph) * glyphScale(font, fallback, glyphFont);
+            count += 1;
+            i += Character.charCount(codePoint);
+        }
+
+        return width + tracking * Math.max(0, count - 1);
     }
 
-    private static List<String> layout(String text, FontRenderer font, CompLayer layer, float tracking, float maxWidth)
+    private static List<String> layout(String text, LayerFont font, FontRenderer fallback, CompLayer layer,
+                                       float tracking, float maxWidth)
     {
         List<String> lines = new ArrayList<>();
 
@@ -648,7 +891,7 @@ final class LayerContentRenderer
             {
                 String candidate = line.isEmpty() ? word : line + " " + word;
 
-                if (!line.isEmpty() && lineWidth(font, candidate, tracking) > maxWidth)
+                if (!line.isEmpty() && lineWidth(font, fallback, candidate, tracking) > maxWidth)
                 {
                     lines.add(line.toString());
                     line.setLength(0);
@@ -662,7 +905,7 @@ final class LayerContentRenderer
 
                 /* CJK has no spaces and a long word can exceed the box on its own. Break it by
                  * characters instead of letting it overflow. */
-                if (lineWidth(font, line.toString(), tracking) > maxWidth)
+                if (lineWidth(font, fallback, line.toString(), tracking) > maxWidth)
                 {
                     String overflow = line.toString();
                     StringBuilder chunk = new StringBuilder();
@@ -673,7 +916,7 @@ final class LayerContentRenderer
                     {
                         char c = overflow.charAt(i);
 
-                        if (chunk.length() > 0 && lineWidth(font, chunk.toString() + c, tracking) > maxWidth)
+                        if (chunk.length() > 0 && lineWidth(font, fallback, chunk.toString() + c, tracking) > maxWidth)
                         {
                             lines.add(chunk.toString());
                             chunk.setLength(0);

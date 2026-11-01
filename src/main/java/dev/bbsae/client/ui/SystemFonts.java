@@ -24,8 +24,9 @@ import java.util.Set;
  * {@link FontImport}.</p>
  *
  * <p>Names come from the OpenType {@code name} table (full name, then family), not the filename,
- * so "msyhbd.ttc" would be "Microsoft YaHei Bold". TTC collections are not listed because BBS'
- * stb loader cannot address an individual face inside a collection; TTF/OTF are.</p>
+ * so "msyhbd.ttc" would be "Microsoft YaHei Bold". Collections ({@code .ttc}) are listed and named
+ * by their first face, because that is the face the importer extracts before handing the font to
+ * BBS' stb loader.</p>
  */
 public final class SystemFonts
 {
@@ -75,7 +76,7 @@ public final class SystemFonts
 
         String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
 
-        return name.endsWith(".ttf") || name.endsWith(".otf");
+        return name.endsWith(".ttf") || name.endsWith(".otf") || name.endsWith(".ttc");
     }
 
     private static List<Entry> scan()
@@ -212,14 +213,47 @@ public final class SystemFonts
 
             header.order(ByteOrder.BIG_ENDIAN);
 
+            long fontOffset = 0L;
+
             if (header.getInt(0) == 0x74746366)
             {
-                /* ttcf: a collection has no single face name. */
-                return null;
+                /* ttcf: a collection. Face 0's table directory lives at the offset in its header,
+                 * and its table offsets are absolute from the file start, so parsing continues
+                 * exactly like a standalone font once the directory position is known. */
+                long faces = header.getInt(8) & 0xFFFFFFFFL;
+
+                if (faces <= 0L)
+                {
+                    return null;
+                }
+
+                ByteBuffer offsets = read(channel, 12L, 4);
+
+                if (offsets == null)
+                {
+                    return null;
+                }
+
+                offsets.order(ByteOrder.BIG_ENDIAN);
+                fontOffset = offsets.getInt(0) & 0xFFFFFFFFL;
+
+                if (fontOffset <= 0L || fontOffset + 12L > Files.size(file))
+                {
+                    return null;
+                }
+
+                header = read(channel, fontOffset, 12);
+
+                if (header == null)
+                {
+                    return null;
+                }
+
+                header.order(ByteOrder.BIG_ENDIAN);
             }
 
             int tables = header.getShort(4) & 0xFFFF;
-            ByteBuffer directory = read(channel, 12L, Math.min(tables, 256) * 16);
+            ByteBuffer directory = read(channel, fontOffset + 12L, Math.min(tables, 256) * 16);
 
             if (directory == null)
             {

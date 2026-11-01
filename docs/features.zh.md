@@ -18,7 +18,7 @@
 | 效果 | 58 个精选效果：Gaussian/Box/Directional/Radial Blur、Sharpen、Brightness/Contrast、Hue/Saturation、Exposure、Tint、Levels、Curves、Invert、Vignette、Noise/Grain、Gradient Ramp、Fractal Noise、Checkerboard、Grid、Circle、Displacement、Bulge、Pinch、Twist、Wave、Chroma Key、Luma Key、Glow、Drop Shadow、Stroke、Outer Glow、Mosaic、Posterize、Threshold、Find Edges、Linear/Radial Wipe、Dissolve、Depth Matte/Fog/DOF、Scanlines、Glitch、VHS、Halftone、Emboss、Mirror、Kaleidoscope、**网格重复、随机重复、湍流置换、色彩映射、扫光** |
 | 效果 · 3D | 3D 图层效果烘焙进 layer-local 源纹理；效果栈的类型/顺序/启用/解析后参数进入内容指纹，调参、增删、关键帧动画都会刷新；深度类效果在透视投影后执行，深度缺失时精确 no-op |
 | 图层样式 | Drop Shadow、Inner Shadow、Outer Glow、Inner Glow、Bevel、Color Overlay、Gradient Overlay、Satin、Stroke（Bevel/Satin 为近似实现） |
-| 文字 | 字号、颜色、描边、字距、行距、对齐、换行、逐字 animator、range selector、wiggle、随机顺序 |
+| 文字 | 字号、颜色、描边、字距、行距、对齐、换行、逐字 animator、range selector、wiggle、随机顺序；**导入 TTF/OTF/系统字体（含 .ttc 集合，自动提取第一个字体）；逐字符字形回退（字体缺字时自动用默认字体，并按比例对齐字号）** |
 | 形状 | 矩形、椭圆、**三角形**、多边形、星形、贝塞尔路径、合并/减去/交集/排除、trim、repeater、**逐角半径（矩形 4 角 / 三角与多边形按顶点，可单独关键帧、圆角或切角）**、**逐形状填充与描边颜色**、局部空间两段填充渐变（可关键帧角度）、路径点编辑与逐点动画 |
 | 效果参数动画 | 每个标量效果参数都能用 BBS float channel 打关键帧 |
 | 表达式 | 安全子集：`+ - * / % ^`、括号、`time/frame/fps/value`、`comp.<参数>`、`layer.<id>.<属性>`、sin/cos/abs/min/max/clamp/noise/wiggle 等 |

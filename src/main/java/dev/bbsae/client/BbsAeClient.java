@@ -202,6 +202,29 @@ public class BbsAeClient implements BBSAddonMod
             });
         }
 
+        /* Font verification: renders a text sheet through the composition renderer, so the
+         * "imported font does not show" report can be checked by looking at pixels. */
+        String fontShot = System.getProperty("bbsae.debugFontShot", "");
+
+        if (!fontShot.isBlank())
+        {
+            int fontShotAt = Integer.getInteger("bbsae.debugFontShotTicks", 120);
+            final int[] fontTicks = {0};
+
+            ClientTickEvents.END_CLIENT_TICK.register((client) ->
+            {
+                if (client.world == null || client.player == null)
+                {
+                    return;
+                }
+
+                if (++fontTicks[0] == fontShotAt)
+                {
+                    saveFontSheet(client, fontShot);
+                }
+            });
+        }
+
         /* OS drag & drop: one GLFW callback, routed to the compositor when it is the open screen. */
         dev.bbsae.client.ui.CompFileDrop.install((files) ->
         {
@@ -281,6 +304,158 @@ public class BbsAeClient implements BBSAddonMod
                 }
             }
         );
+    }
+
+    /**
+     * Renders a font test sheet through the real composition renderer and writes it as a PNG.
+     *
+     * <p>Verification only ({@code -Dbbsae.debugFontShot=<name>}). It exists because the font path
+     * cannot be exercised without a client: BBS' FontManager needs Minecraft's texture manager, and
+     * "the imported font does not show" is a pixel-level question. The sheet draws the same text
+     * with a Latin-only font (Times Bold) and with the default font, in Latin and in Chinese, so
+     * the per-character fallback is visible in one image.</p>
+     */
+    private static void saveFontSheet(net.minecraft.client.MinecraftClient client, String name)
+    {
+        dev.bbsae.comp.CompProject project = new dev.bbsae.comp.CompProject();
+        dev.bbsae.comp.CompDocument comp = new dev.bbsae.comp.CompDocument();
+
+        comp.id = "fonttest";
+        comp.width = 1280;
+        comp.height = 720;
+        comp.fps = 30F;
+        comp.duration = 2F;
+        comp.background = 0xFF10141C;
+        project.comps.add(comp);
+
+        String font = System.getProperty("bbsae.debugFontShotFont", "timesbd.ttf");
+
+        /* Optional end-to-end import: run the same extraction/copy the editor runs, then render
+         * with the resulting file. A .ttc here proves the collection path, which is the one that
+         * matters for Chinese fonts. */
+        String importSource = System.getProperty("bbsae.debugFontImportSrc", "");
+
+        if (!importSource.isBlank())
+        {
+            String imported = importFontForSheet(new java.io.File(importSource));
+
+            if (imported != null)
+            {
+                font = imported;
+            }
+        }
+
+        float sheetSize = Float.parseFloat(System.getProperty("bbsae.debugFontShotSize", "54"));
+
+        fontSheetLayer(comp, "latin_custom", 80F, 100F, "ABC abc 123 — " + font, font, sheetSize);
+        fontSheetLayer(comp, "han_custom", 80F, 240F, "中文：新建文字（使用导入的字体）", font, sheetSize);
+        fontSheetLayer(comp, "punct_custom", 80F, 380F, "标点：（），。；：！？“”《》、", font, sheetSize);
+        fontSheetLayer(comp, "latin_default", 80F, 520F, "ABC abc 123 — Default font", "", sheetSize);
+        fontSheetLayer(comp, "han_default", 80F, 640F, "中文：新建文字（默认字体）", "", sheetSize);
+
+        dev.bbsae.client.render.GlFramebuffer framebuffer =
+            dev.bbsae.client.render.CompRenderer.renderFrame(project, comp, 0, false, 1F);
+
+        if (framebuffer == null)
+        {
+            BbsAeAddon.LOGGER.warn("font shot: the composition renderer returned no frame");
+
+            return;
+        }
+
+        try
+        {
+            int[] pixels = framebuffer.readTopDown();
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+                comp.width, comp.height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+
+            image.setRGB(0, 0, comp.width, comp.height, pixels, 0, comp.width);
+
+            java.io.File output = new java.io.File(client.runDirectory, "screenshots/" + name + ".png");
+
+            output.getParentFile().mkdirs();
+            javax.imageio.ImageIO.write(image, "png", output);
+            BbsAeAddon.LOGGER.info("font shot: {}", output.getAbsolutePath());
+        }
+        catch (Exception e)
+        {
+            BbsAeAddon.LOGGER.error("font shot failed", e);
+        }
+        finally
+        {
+            dev.bbsae.client.render.FboPool.release(framebuffer);
+
+            if (Boolean.getBoolean("bbsae.debugQuitAfterShot"))
+            {
+                client.execute(client::scheduleStop);
+            }
+        }
+    }
+
+    /**
+     * Copies (and, for a {@code .ttc}, extracts) a font into BBS' fonts folder exactly like the
+     * editor's importer does. Returns the stored file name, or null when it failed.
+     */
+    private static String importFontForSheet(java.io.File file)
+    {
+        try
+        {
+            byte[] data = java.nio.file.Files.readAllBytes(file.toPath());
+            String name = file.getName();
+
+            if (dev.bbsae.client.ui.FontImport.isCollection(data))
+            {
+                data = dev.bbsae.client.ui.FontImport.extractFace(data, 0);
+
+                int dot = name.lastIndexOf('.');
+
+                name = (dot > 0 ? name.substring(0, dot) : name) + "-face0.ttf";
+            }
+
+            java.io.File folder = mchorse.bbs_mod.fonts.FontManager.getFolder();
+
+            if (folder == null)
+            {
+                return null;
+            }
+
+            java.nio.file.Files.createDirectories(folder.toPath());
+
+            java.nio.file.Path target = dev.bbsae.client.ui.FontImport.uniqueTarget(folder.toPath(), name, data);
+
+            java.nio.file.Files.write(target, data);
+            mchorse.bbs_mod.BBSModClient.getFonts().accept(target,
+                mchorse.bbs_mod.utils.watchdog.WatchDogEvent.CREATED);
+            BbsAeAddon.LOGGER.info("font sheet: imported {} as {}", file, target.getFileName());
+
+            return target.getFileName().toString();
+        }
+        catch (Exception e)
+        {
+            BbsAeAddon.LOGGER.error("font sheet: could not import {}", file, e);
+
+            return null;
+        }
+    }
+
+    private static void fontSheetLayer(dev.bbsae.comp.CompDocument comp, String id, float x, float y,
+                                       String text, String fontName, float fontSize)
+    {
+        dev.bbsae.comp.CompLayer layer = new dev.bbsae.comp.CompLayer(id, id, "text");
+
+        layer.x = x;
+        layer.y = y;
+        layer.width = 1120F;
+        layer.height = 120F;
+        layer.anchorX = 0F;
+        layer.anchorY = 0F;
+        layer.align = 0;
+        layer.text = text;
+        layer.fontName = fontName == null ? "" : fontName;
+        layer.fontSize = fontSize;
+        layer.color = 0xFFFFFFFF;
+        layer.out = 2F;
+        comp.layers.add(layer);
     }
 
     /**

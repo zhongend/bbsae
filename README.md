@@ -109,15 +109,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.22.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.22.0/bbsae-0.22.0.jar)
-   from the **v0.22.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.22.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.22.1/bbsae-0.22.1.jar)
+   from the **v0.22.1** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.22.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.22.1.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.22.0.jar` SHA-256: `11AB176B691B2A54F86B5C326A55EE718D97DC562F822BFA78C7262BF31C90A9`.
+`bbsae-0.22.1.jar` SHA-256: `64C109DDEA1710F3CCCEC021A9B6CAE2EA63208D8E4643471029C8A3F0F8ADB2`.
 
 ## Gallery
 
@@ -184,6 +184,34 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.22.1 — imported fonts actually display
+
+The font path is fixed from first principles: a font file is a **partial map** from code points to
+glyphs, so "the imported font does not show" turned out to be three separate facts stacked on top
+of each other.
+
+- **Per-character fallback.** Minecraft answers a code point the font has no glyph for with a
+  missing glyph that has *no renderer and a 1 px advance*; a Latin font with Chinese text therefore
+  rendered **nothing at all**. The compositor now asks the font file itself
+  (`stbtt_FindGlyphIndex`, cached per file) and draws each character with the chosen font where it
+  has the glyph, and with BBS' default font where it does not — measured and drawn with the same
+  choice, and the fallback glyph is scaled to the custom font's size so mixed text lines up.
+- **`.ttc` collections are supported.** 微软雅黑/宋体/黑体 ship as TrueType collections, and BBS'
+  stb loader only reads a single font at offset 0 — "imported but BBS cannot parse". The importer
+  now extracts face 0 into a standalone sfnt (`msyh-face0.ttf`), which every loader understands.
+  The system-font picker lists `.ttc` files and names them from their first face.
+- **Layout size vs glyph atlas size.** A 200 px text layer used to be a 96 px atlas blown up 2×;
+  the importer now passes the oversampling factor so the atlas matches the drawn size.
+- **The UI explains the rest.** The text inspector reports when the font file is missing and how
+  many characters of the current text the font cannot draw (with a sample), instead of silently
+  falling back. Importing reports the same.
+- Verification harness: `-Dbbsae.debugFonts=true` logs font resolution and per-glyph advances;
+  `runClientView -PbbsaeFontShot=fontsheet [-PbbsaeFontImportSrc=<font>]` renders a real
+  composition sheet with a custom font, a system `.ttc`, and the default font. Screenshots:
+  [`round45-font-timesbd-fallback.png`](docs/verify/round45-font-timesbd-fallback.png),
+  [`round45-font-msyh-ttc.png`](docs/verify/round45-font-msyh-ttc.png).
+- New tests: `FontCoverageTest`, `FontImportTtcTest` (real `msyh.ttc` extraction + stb coverage).
 
 ## What's new in 0.22.0 — effect & layer bug-fix release
 
@@ -1280,3 +1308,4 @@ sheet. An older exported MP4 frame is still available at
 ## License
 
 MIT.
+- **Round 45 (imported fonts display, .ttc extraction, v0.22.1):** [`docs/ROUND45-FONT-DISPLAY.zh.md`](docs/ROUND45-FONT-DISPLAY.zh.md)

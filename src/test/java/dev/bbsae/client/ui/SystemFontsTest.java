@@ -16,12 +16,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * System font discovery: extension filtering, a real TTF name table, and graceful fallbacks for
- * junk/TTC files. The real-font assertions are skipped on machines without that font.
+ * junk files. Collections are supported (the importer extracts face 0), which matters because most
+ * Chinese fonts on Windows are .ttc.
  */
 public class SystemFontsTest
 {
     @Test
-    public void onlyTtfAndOtfAreSupported(@TempDir Path folder) throws IOException
+    public void ttfOtfAndCollectionsAreSupported(@TempDir Path folder) throws IOException
     {
         Path ttf = Files.createFile(folder.resolve("a.ttf"));
         Path otf = Files.createFile(folder.resolve("b.otf"));
@@ -30,7 +31,7 @@ public class SystemFontsTest
 
         assertTrue(SystemFonts.isSupported(ttf));
         assertTrue(SystemFonts.isSupported(otf));
-        assertFalse(SystemFonts.isSupported(ttc));
+        assertTrue(SystemFonts.isSupported(ttc), "collections are listed; the importer extracts a face");
         assertFalse(SystemFonts.isSupported(woff));
         assertFalse(SystemFonts.isSupported(folder.resolve("missing.ttf")));
     }
@@ -49,16 +50,34 @@ public class SystemFontsTest
     }
 
     @Test
-    public void junkAndCollectionsFallBackInsteadOfThrowing(@TempDir Path folder) throws IOException
+    public void junkFallsBackInsteadOfThrowing(@TempDir Path folder) throws IOException
     {
         Path junk = folder.resolve("junk.ttf");
-        Path ttc = folder.resolve("collection.ttf");
+        Path emptyCollection = folder.resolve("collection.ttf");
 
         Files.write(junk, new byte[] {1, 2, 3, 4});
-        Files.write(ttc, new byte[] {'t', 't', 'c', 'f', 0, 1, 0, 0, 0, 0, 0, 0});
+        /* ttcf header that claims zero faces: nothing to name, so the picker uses the file stem. */
+        Files.write(emptyCollection, new byte[] {'t', 't', 'c', 'f', 0, 1, 0, 0, 0, 0, 0, 0});
 
         assertNull(SystemFonts.fullName(junk));
-        assertNull(SystemFonts.fullName(ttc));
+        assertNull(SystemFonts.fullName(emptyCollection));
+    }
+
+    @Test
+    public void collectionFaceNameIsReadFromTheFirstFace()
+    {
+        String windir = System.getenv("WINDIR");
+
+        Assumptions.assumeTrue(windir != null);
+
+        Path collected = Path.of(windir, "Fonts", "msyh.ttc");
+
+        Assumptions.assumeTrue(Files.isRegularFile(collected));
+
+        String name = SystemFonts.fullName(collected);
+
+        assertNotNull(name, "the first face of msyh.ttc must have a name table");
+        assertFalse(name.isBlank());
     }
 
     @Test

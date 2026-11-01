@@ -5718,7 +5718,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         NativeFileDialog.pickFile(
             "导入字体",
-            new String[] {"ttf", "otf"},
+            FontImport.EXTENSIONS,
             (file) ->
             {
                 if (file != null && file.isFile())
@@ -5745,7 +5745,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.importBrowser = new UIImportBrowser(
             "导入字体",
-            new String[] {"ttf", "otf"},
+            FontImport.EXTENSIONS,
             (file) ->
             {
                 if (file != null && file.isFile())
@@ -5781,7 +5781,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (fonts.isEmpty())
         {
-            this.setStatus("没有找到系统 TTF/OTF 字体（TTC 字体集合暂不支持）");
+            this.setStatus("没有找到系统 TTF/OTF/TTC 字体");
             return;
         }
 
@@ -5839,6 +5839,36 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             byte[] data = java.nio.file.Files.readAllBytes(file.toPath());
+
+            /* A .ttc is a container of faces, and BBS' loader only reads a single font at offset 0:
+             * most Chinese fonts (微软雅黑, 宋体, 黑体…) ship that way, so "the imported font does not
+             * display" was mostly this. Extract face 0 into a standalone .ttf first. */
+            String requestedName = file.getName();
+            boolean collection = FontImport.isCollection(data);
+
+            if (collection)
+            {
+                try
+                {
+                    data = FontImport.extractFace(data, 0);
+                }
+                catch (java.io.IOException e)
+                {
+                    this.setStatus("字体导入失败：无法从字体集合中提取字体（" + e.getMessage() + "）");
+                    return;
+                }
+
+                String stem = requestedName;
+                int dot = stem.lastIndexOf('.');
+
+                if (dot > 0)
+                {
+                    stem = stem.substring(0, dot);
+                }
+
+                requestedName = stem + "-face0.ttf";
+            }
+
             String header = FontImport.headerError(data);
 
             if (header != null)
@@ -5859,9 +5889,15 @@ public class UICompositorPanel extends UIDashboardPanel
 
             /* Keep the real (including Chinese) name and never overwrite a different font that
              * happens to share it; re-importing the same bytes reuses the existing copy. */
-            java.nio.file.Path target = FontImport.uniqueTarget(folder.toPath(), file.getName(), file.toPath());
+            java.nio.file.Path target = collection
+                ? FontImport.uniqueTarget(folder.toPath(), requestedName, data)
+                : FontImport.uniqueTarget(folder.toPath(), requestedName, file.toPath());
 
-            if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
+            if (collection)
+            {
+                java.nio.file.Files.write(target, data);
+            }
+            else if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
             {
                 java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
@@ -5874,9 +5910,9 @@ public class UICompositorPanel extends UIDashboardPanel
             mchorse.bbs_mod.BBSModClient.getFonts().accept(target,
                 mchorse.bbs_mod.utils.watchdog.WatchDogEvent.CREATED);
 
-            /* Verify through BBS' own loader. A TTC/WOFF is rejected earlier by the header check,
-             * but an OTF with CFF outlines can pass the header and still fail stb; reporting that
-             * instead of silently selecting a font that renders as the default is the point. */
+            /* Verify through BBS' own loader. An OTF with CFF outlines can pass the header check and
+             * still fail stb; reporting that instead of silently selecting a font that renders as
+             * the default is the point. */
             mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer loaded =
                 mchorse.bbs_mod.BBSModClient.getFonts().get(link, 32, 1F);
 
@@ -5889,7 +5925,21 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.fontName = name;
             this.refreshInspector();
             this.save();
-            this.setStatus("已导入字体：" + name + "（BBS 字体目录）");
+
+            /* Tell the user up front when the font cannot draw the layer's own text — otherwise the
+             * import "does nothing" as far as they can see (the default font draws those chars). */
+            java.util.List<Integer> missing = dev.bbsae.client.render.FontCoverage.missingGlyphs(
+                target.toFile(), layer.text == null ? "" : layer.text);
+
+            if (!missing.isEmpty())
+            {
+                this.setStatus("已导入字体：" + name + "；但该字体缺少当前文字里的 " + missing.size()
+                    + " 个字符（例如汉字），这些字符会自动用默认字体显示。若要整体使用该字体，请导入包含这些字符的字体。");
+            }
+            else
+            {
+                this.setStatus("已导入字体：" + name + "（BBS 字体目录）");
+            }
         }
         catch (Exception e)
         {
@@ -13311,15 +13361,59 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         String currentFont = layer.fontName == null || layer.fontName.isBlank() ? "默认（BBS）" : layer.fontName;
+        String currentLabel = "默认（BBS）";
+
+        /* Match case-insensitively: a project written on Windows can carry "Timesbd.TTF" while the
+         * folder lists "timesbd.ttf", and an exact match would show 默认 while the text actually
+         * uses the custom font. */
+        for (String label : fontLabels)
+        {
+            if (label.equalsIgnoreCase(currentFont))
+            {
+                currentLabel = label;
+
+                break;
+            }
+        }
+
         UIChoiceButton<String> fontChoice = new UIChoiceButton<>(fontLabels, (value) -> Icons.FONT, IKey::constant);
 
-        fontChoice.setValue(fontLabels.contains(currentFont) ? currentFont : "默认（BBS）");
+        fontChoice.setValue(currentLabel);
         fontChoice.callback((value) ->
         {
             layer.fontName = fontFiles.getOrDefault(value, "");
             this.save();
         });
         section.fields.add(this.fieldRow("字体", fontChoice));
+
+        /* A font is a partial map: say so instead of letting the user wonder why half the line is
+         * missing (or why the whole line renders in the default font). */
+        if (!layer.fontName.isBlank() && layer.text != null && !layer.text.isBlank())
+        {
+            java.io.File fontFile = dev.bbsae.client.render.FontCoverage.resolve(layer.fontName);
+
+            if (fontFile == null)
+            {
+                section.fields.add(UI.label(IKey.constant("找不到字体文件 " + layer.fontName + "：已回退默认字体。用下面的“打开 BBS 字体文件夹”确认文件还在。"), 13));
+            }
+            else
+            {
+                java.util.List<Integer> missing = dev.bbsae.client.render.FontCoverage.missingGlyphs(fontFile, layer.text);
+
+                if (!missing.isEmpty())
+                {
+                    StringBuilder sample = new StringBuilder();
+
+                    for (int i = 0; i < missing.size() && i < 8; i++)
+                    {
+                        sample.appendCodePoint(missing.get(i));
+                    }
+
+                    section.fields.add(UI.label(IKey.constant("该字体缺少 " + missing.size() + " 个字符（" + sample
+                        + (missing.size() > 8 ? "…" : "") + "），这些字符已自动使用默认字体。要全部用该字体，请选择包含这些字符的字体文件。"), 13));
+                }
+            }
+        }
         section.fields.add(UI.row(
             this.smallButton("导入字体（ttf / otf）…", () -> this.importFont(layer)),
             this.smallButton("系统字体…", () -> this.openSystemFontPicker(layer))

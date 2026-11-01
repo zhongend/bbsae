@@ -1453,6 +1453,8 @@ public final class CompRenderer
     /** Called from BBS resource reload / client shutdown. */
     public static void clearCaches()
     {
+        LayerContentRenderer.clearFonts();
+        FontCoverage.clear();
         /* The viewport's source textures own FBOs from the pool; return them before the pool is
          * wiped, otherwise a later acquire can hand out a deleted texture. */
         CompLayerSourceCache.clear();

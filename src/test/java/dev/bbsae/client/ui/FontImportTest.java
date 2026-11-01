@@ -29,7 +29,14 @@ public class FontImportTest
         assertNull(FontImport.headerError("typ1".getBytes()));
         assertNull(FontImport.headerError("OTTO".getBytes()));
 
-        assertTrue(FontImport.headerError("ttcf".getBytes()).contains("TTC"));
+        /* A collection is a container, not an unsupported file: the importer extracts face 0, so
+         * the header check accepts it (and isCollection() tells the caller to extract). */
+        byte[] ttc = {'t', 't', 'c', 'f', 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 16};
+
+        assertTrue(FontImport.isCollection(ttc));
+        assertEquals(1, FontImport.faceCount(ttc));
+        assertNull(FontImport.headerError(ttc));
+
         assertTrue(FontImport.headerError("wOFF".getBytes()).contains("WOFF"));
         assertTrue(FontImport.headerError("wOF2".getBytes()).contains("WOFF"));
         assertTrue(FontImport.headerError("junk".getBytes()).contains("不是"));
