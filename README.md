@@ -67,6 +67,8 @@
   [`docs/ROUND32-IRIS-SHADERS.zh.md`](docs/ROUND32-IRIS-SHADERS.zh.md)
 - **Round 33 (replay matte persistence / header geometry / collapsible filter, v0.19.3):**
   [`docs/ROUND33-ENTITY-MATTE-UI.zh.md`](docs/ROUND33-ENTITY-MATTE-UI.zh.md)
+- **Round 34 (3D matte transparency / 3D effects / effect strength / 3D adjustment layers, v0.20.0):**
+  [`docs/ROUND34-3D-MATTE-EFFECTS.zh.md`](docs/ROUND34-3D-MATTE-EFFECTS.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -86,15 +88,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.19.3.jar`](https://github.com/zhongend/bbsae/releases/download/v0.19.3/bbsae-0.19.3.jar)
-   from the **v0.19.3** release (the asset is updated with each source push).
+1. Download [`bbsae-0.20.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.20.0/bbsae-0.20.0.jar)
+   from the **v0.20.0** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.19.3.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.20.0.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.19.3.jar` SHA-256: `6089C0CFCF2F46DAAD77C578D9091C423C16B2CE7D3DC9DDD7BC0699DA68C9D6`.
+`bbsae-0.20.0.jar` SHA-256: `870DE71CC646ADC4818BAE01FA1702D2A91936EF4BBE9A48B10FE4951C97C620`.
 
 ## Gallery
 
@@ -161,6 +163,25 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.20.0
+
+- **3D entity layers are transparent again.** A 3D replay-entity layer used to fall back to the
+  un-keyed world plate, so its background was the whole frame. The screen-space matte now runs for
+  2D and 3D entity layers alike; the 3D transform no longer re-projects the key away from the actor.
+- **The matte no longer lags the preview.** The matte used Minecraft's tick delta while the world
+  actor used the film runner's own fractional cursor. Both passes now use the actor pass's exact
+  sub-tick, so the matte and the plate overlap frame for frame.
+- **3D layer effects actually run.** `renderBaked3D` only projected the source raster, but the
+  effect loop skipped every non-depth effect believing it had been baked. Effects now run once,
+  after the projection (depth effects still run last).
+- **3D layers keep their edges.** Flat layers are projected as a 16x16 cell grid instead of one
+  giant quad, so a corner behind the camera no longer clips the whole layer.
+- **Adjustment layers work in the 3D workspace.** A visible adjustment layer is applied as a
+  full-screen post-process over the finished viewport image, so it grades the whole camera view.
+- **Every effect has a keyframeable strength.** `global_strength` 0 is exactly the original layer,
+  1 is the raw effect; generative effects (gradient, checkerboard, kaleidoscope) finally cross-fade.
+  A neutral table also makes zero blur/glow/distortion/stroke/wipe values true no-ops.
 
 ## What's new in 0.19.3
 

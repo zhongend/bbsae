@@ -287,40 +287,40 @@ final class LayerContentRenderer
             return;
         }
 
-        if (!layer.threeD)
+        /* Flush first: the matte is drawn with its own program into the target, and any quad
+         * still queued in the batcher would be flushed after it and paint over the result. */
+        batcher.flush();
+
+        /* The matte is a screen-space key of the world camera. A 3D entity layer used to fall
+         * back to the un-keyed world plate here, which is exactly why its background was the
+         * whole frame instead of transparent. Keep the key for 3D too, but project it with the
+         * composition's 2D ortho matrix: the actor's screen position already comes from the world
+         * camera, so baking the layer's z/rotationX/Y on top of it would move the matte away from
+         * the actor it was extracted from. */
+        Matrix4f matteWorld = layer.threeD ? CompScene.world(context, layer) : world;
+        Matrix4f matteProjection = layer.threeD ? GlStateGuard.ortho(context.width, context.height) : projection;
+
+        /* Production path: the full-screen coverage shader. The batcher variant is kept
+         * behind a flag for A/B verification of sampler/state issues. */
+        boolean keyed = Boolean.getBoolean("bbsae.entityKeyTextured")
+            ? dev.bbsae.client.render.ReplayEntityKey.drawTextured(layer, context, batcher)
+            : dev.bbsae.client.render.ReplayEntityKey.draw(layer, context, matteWorld, matteProjection);
+
+        if (keyed)
         {
-            /* Flush first: the matte is drawn with its own program into the target, and any quad
-             * still queued in the batcher would be flushed after it and paint over the result. */
-            batcher.flush();
-
-            /* Production path: the full-screen coverage shader. The batcher variant is kept
-             * behind a flag for A/B verification of sampler/state issues. */
-            boolean keyed = Boolean.getBoolean("bbsae.entityKeyTextured")
-                ? dev.bbsae.client.render.ReplayEntityKey.drawTextured(layer, context, batcher)
-                : dev.bbsae.client.render.ReplayEntityKey.draw(layer, context, world, projection);
-
-            if (keyed)
-            {
-                return;
-            }
-
-            /* No mask yet: stay transparent. Falling back to the un-keyed world plate here would
-             * silently turn "nothing is keyed" into "the whole background is keyed", which is the
-             * one result a keying layer must never produce. */
-            if (context.preview)
-            {
-                float x = -layer.width * layer.anchorX;
-                float y = -layer.height * layer.anchorY;
-
-                batcher.outline(x, y, x + layer.width, y + layer.height, 0x4455AAFF);
-            }
-
             return;
         }
 
-        /* A 3D entity layer cannot be keyed (the matte is screen space), so it degrades to the
-         * plain world plate instead of showing a wrong matte. */
-        drawWorldPlate(layer, batcher, texture);
+        /* No mask yet: stay transparent. Falling back to the un-keyed world plate here would
+         * silently turn "nothing is keyed" into "the whole background is keyed", which is the
+         * one result a keying layer must never produce. */
+        if (context.preview)
+        {
+            float x = -layer.width * layer.anchorX;
+            float y = -layer.height * layer.anchorY;
+
+            batcher.outline(x, y, x + layer.width, y + layer.height, 0x4455AAFF);
+        }
     }
 
     /** Draws the world frame as an opaque picture, honouring the layer's fit and anchor. */

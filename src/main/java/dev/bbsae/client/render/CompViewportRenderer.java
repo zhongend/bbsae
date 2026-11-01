@@ -3,6 +3,7 @@ package dev.bbsae.client.render;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.systems.VertexSorter;
 import dev.bbsae.comp.CompDocument;
+import dev.bbsae.comp.CompEffect;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompProject;
 import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
@@ -197,6 +198,12 @@ public final class CompViewportRenderer
             debugStats(doc, camera, layers, context, 0F, 0F);
 
             sceneBatcher.flush();
+
+            /* The 3D workspace used to ignore adjustment layers entirely: the draft path draws
+             * each layer directly and never runs the composite graph, so a global grade had no
+             * effect. Apply every visible adjustment layer to the finished viewport image — the
+             * 3D equivalent of "an adjustment layer covers the camera". */
+            applyAdjustments(doc, context, target);
         }
         finally
         {
@@ -212,6 +219,57 @@ public final class CompViewportRenderer
         }
 
         return target;
+    }
+
+    /**
+     * Runs every visible adjustment layer's effects over the finished viewport image.
+     *
+     * <p>The normal composition graph handles adjustment layers by intercepting the accumulation
+     * buffer. The 3D workspace deliberately does not build that graph (it would cost a full
+     * composition render per orbit frame), so the adjustment had no effect at all. A post-process
+     * on the finished scene is the 3D equivalent: one full-screen pass per effect, and the same
+     * effect shaders and parameters as the final render.</p>
+     */
+    private static void applyAdjustments(CompDocument doc, CompRenderContext context, GlFramebuffer target)
+    {
+        GlFramebuffer current = target;
+
+        for (CompLayer layer : doc.layers)
+        {
+            if (layer == null || !layer.visible || !"adjustment".equals(layer.type) || !layer.activeAt(context.time))
+            {
+                continue;
+            }
+
+            for (CompEffect effect : layer.effects)
+            {
+                if (effect == null || !effect.enabled)
+                {
+                    continue;
+                }
+
+                CompEffect resolved = layer.resolveEffect(effect, context.frame);
+                GlFramebuffer output = EffectRenderer.apply(layer, resolved, current, context);
+
+                if (output != current)
+                {
+                    if (current != target)
+                    {
+                        FboPool.release(current);
+                    }
+
+                    current = output;
+                }
+            }
+        }
+
+        if (current != target)
+        {
+            /* The caller blits the persistent scene target, so the graded copy goes back into it. */
+            target.begin(0);
+            PassRenderer.drawInto(target, current, null, null, CompLayer.BLEND_NORMAL, 1F, 0F, 0F, 0xFFFFFF, 0);
+            FboPool.release(current);
+        }
     }
 
     /* ---------------------------------------------------------------- passes */

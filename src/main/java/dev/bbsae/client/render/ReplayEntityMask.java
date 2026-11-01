@@ -170,6 +170,7 @@ public final class ReplayEntityMask
         lastStack.peek().getPositionMatrix().set(context.stack.peek().getPositionMatrix());
         lastModelView.set(RenderSystem.getModelViewMatrix());
         lastProjection.set(RenderSystem.getProjectionMatrix());
+        lastActorTransition = context.transition;
         capturedSerial = serial;
         hasCamera = true;
         updateClipPlanes(lastProjection);
@@ -185,6 +186,17 @@ public final class ReplayEntityMask
     private static boolean loggedCapture;
     private static boolean loggedLiveFallback;
     private static boolean inMaskRender;
+
+    /**
+     * The fractional tick the world actor was actually drawn with.
+     *
+     * <p>This is not Minecraft's {@code tickDelta}: the compositor drives the film with a
+     * seconds*20 cursor, and BBS' editor controller derives its own fraction from that cursor.
+     * The mask used to pass MC's tick delta, which has a different phase, so the matte actor was
+     * up to one tick away from the actor in the world frame — the "matte lags the preview" ghost.
+     * Capturing the actor's own transition makes both passes use the same sub-tick.</p>
+     */
+    private static float lastActorTransition;
 
     /**
      * Records what the current composition needs. Cheap: it walks the layers of one document and
@@ -640,6 +652,9 @@ public final class ReplayEntityMask
             RenderSystem.setProjectionMatrix(lastProjection, VertexSorter.BY_Z);
             inMaskRender = true;
 
+            /* The exact sub-tick the world actor used, not Minecraft's tick delta. */
+            float actorTransition = hasCamera ? lastActorTransition : transition;
+
             try
             {
                 for (Replay replay : controller.film.replays.getList())
@@ -667,7 +682,7 @@ public final class ReplayEntityMask
                          * the real one). Playback does not do onion skins, which is exactly why
                          * the matte "worked" when the compositor was opened from film playback.
                          * Re-apply the replay at the current tick before the coverage render. */
-                        float tick = replay.getTick(controller.getTick()) + transition;
+                        float tick = replay.getTick(controller.getTick()) + actorTransition;
 
                         replay.keyframes.apply(tick, entity);
 
@@ -679,7 +694,7 @@ public final class ReplayEntityMask
                         mchorse.bbs_mod.forms.renderers.utils.RenderFrame.invalidate();
 
                         FilmControllerContext filmContext = FilmControllerContext.instance
-                            .setup(controller.entities, entity, replay, camera, stack, consumers, transition)
+                            .setup(controller.entities, entity, replay, camera, stack, consumers, actorTransition)
                             .shadow(false, 0F)
                             .nameTag("")
                             .relative(false);

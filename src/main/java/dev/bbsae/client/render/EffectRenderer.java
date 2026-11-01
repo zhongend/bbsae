@@ -63,6 +63,24 @@ public final class EffectRenderer
      * source texture, where composition space does not exist yet — it passes the mapping that
      * belongs to that raster directly.</p>
      */
+    /** Parameter key shared by every effect: 0 = original layer, 1 = full effect. */
+    public static final String STRENGTH = "global_strength";
+
+    /**
+     * Applies one effect and blends the result back towards the input by the effect's
+     * <b>strength</b> parameter.
+     *
+     * <p>This is the first-principles fix for "the layer must fade in and out". Every effect —
+     * including the generative ones (gradient, checkerboard, kaleidoscope) that have no natural
+     * zero value — is a function {@code f(input)}. A compositor needs the interpolation
+     * {@code mix(input, f(input), strength)}, not a second interpretation of whatever the
+     * effect's own parameters happen to mean. At strength 0 the layer is bit-for-bit the input,
+     * at 1 it is the raw effect, and every keyframe in between is a real cross-fade.</p>
+     *
+     * <p>The parameter is stored in the same {@code params} map as the effect's own values, so
+     * existing animation channels ({@code fx/<id>/strength}) and project serialisation work
+     * without a format change.</p>
+     */
     public static GlFramebuffer apply(CompLayer layer, CompEffect effect, GlFramebuffer input, CompRenderContext context, EffectSpace space)
     {
         if (effect == null || !effect.enabled || input == null)
@@ -70,6 +88,95 @@ public final class EffectRenderer
             return input;
         }
 
+        float strength = effect.valueF(STRENGTH, 1F);
+
+        if (strength <= 0.0001F)
+        {
+            return input;
+        }
+
+        String type = effect.type == null ? "" : effect.type;
+
+        /* A zero main parameter must be the original image, not "the effect running with zero
+         * intensity". Some shaders clamp (a 0 px blur, a 0 px glow) and some had no zero path at
+         * all; this table is the single place that answers "is this effect a no-op right now?". */
+        if (isNeutral(effect, type))
+        {
+            return input;
+        }
+
+        GlFramebuffer result = applyRaw(layer, effect, input, context, space);
+
+        if (result == input || strength >= 0.999F)
+        {
+            return result;
+        }
+
+        GlFramebuffer blended = PassRenderer.draw(result, input, null, CompLayer.BLEND_NORMAL,
+            Math.min(1F, strength), 0F, 0F, 0xFFFFFF);
+
+        FboPool.release(result);
+
+        return blended;
+    }
+
+    /**
+     * True when this effect would return its input unchanged at the current parameter values.
+     *
+     * <p>Deliberately per-effect: "zero" is not the same number for a blur radius, a glow opacity
+     * and a saturation. Only the cases where zero is unambiguously the identity are listed; the
+     * generic {@link #STRENGTH} covers everything else (generators, kaleidoscope, colour grades).</p>
+     */
+    public static boolean isNeutral(CompEffect effect, String type)
+    {
+        if (effect == null)
+        {
+            return true;
+        }
+
+        if (effect.valueF(STRENGTH, 1F) <= 0.0001F)
+        {
+            return true;
+        }
+
+        float eps = 0.0001F;
+
+        return switch (type == null ? "" : type)
+        {
+            case "blur" -> effect.valueF("radius", 10F) <= 0.5F;
+            case "box_blur" -> effect.valueF("radius", 8F) <= 0.5F;
+            case "directional_blur" -> effect.valueF("radius", 20F) <= 0.5F;
+            case "radial_blur" -> effect.valueF("radius", 0.15F) <= eps;
+            case "sharpen" -> effect.valueF("amount", 1F) <= eps;
+            case "displacement", "bulge", "pinch", "twist", "turbulent_displace" ->
+                effect.valueF("amount", 48F) <= eps;
+            case "wave" -> effect.valueF("amplitude", effect.valueF("amount", 24F)) <= eps;
+            case "glow" -> effect.valueF("radius", 40F) <= 0.5F
+                || effect.valueF("opacity", 1F) <= eps || effect.valueF("intensity", 1F) <= eps;
+            case "outer_glow" -> effect.valueF("radius", 24F) <= 0.5F
+                || effect.valueF("opacity", 1F) <= eps || effect.valueF("intensity", 1F) <= eps;
+            case "drop_shadow" -> effect.valueF("opacity", 0.65F) <= eps;
+            case "stroke" -> effect.valueF("width", 3F) <= eps || effect.valueF("opacity", 1F) <= eps;
+            case "rgb_split" -> effect.valueF("amount", 14F) <= eps;
+            case "linear_wipe", "radial_wipe", "dissolve" -> effect.valueF("progress", 0.5F) <= eps;
+            case "grid_repeat", "random_repeat" -> effect.valueF("opacity", 1F) <= eps;
+            case "depth_fog", "depth_dof" -> effect.valueF("amount", 0.5F) <= eps;
+            case "light_sweep" -> effect.valueF("opacity", 0.8F) <= eps;
+            case "vhs" -> effect.valueF("amount", 0.5F) <= eps;
+            case "block_shatter" -> effect.valueF("progress", 0.35F) <= eps;
+            case "mosaic" -> effect.valueF("size", 16F) <= 1F;
+            case "find_edges" -> effect.valueF("amount", 1F) <= eps;
+            case "scanlines" -> effect.valueF("opacity", 0.55F) <= eps;
+            case "glitch" -> effect.valueF("amount", 18F) <= eps;
+            case "halftone" -> effect.valueF("strength", 0.5F) <= eps;
+            case "emboss" -> effect.valueF("amount", 1F) <= eps;
+            case "mirror" -> effect.valueF("opacity", 1F) <= eps;
+            default -> false;
+        };
+    }
+
+    private static GlFramebuffer applyRaw(CompLayer layer, CompEffect effect, GlFramebuffer input, CompRenderContext context, EffectSpace space)
+    {
         String type = effect.type == null ? "" : effect.type;
         float frame = context.frame;
 

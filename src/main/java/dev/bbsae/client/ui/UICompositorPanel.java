@@ -11468,9 +11468,19 @@ public class UICompositorPanel extends UIDashboardPanel
             return section;
         }
 
+        /* Every effect gets a strength row: 0 is exactly the original layer, 1 is the raw effect,
+         * and the value is keyframeable like any other parameter. This is what makes a gradual
+         * "effect fades in" possible even for generative effects that have no natural zero. */
+        String strengthPath = CompLayer.effectPath(effect.id, dev.bbsae.client.render.EffectRenderer.STRENGTH);
+        float strength = layer.scalarAt(strengthPath,
+            (float) effect.value(dev.bbsae.client.render.EffectRenderer.STRENGTH, 1D), this.getFrame());
+
+        section.fields.add(this.animatedNumberRow("效果强度（0 = 原图层）", layer, strengthPath, strength,
+            (value) -> effect.put(dev.bbsae.client.render.EffectRenderer.STRENGTH, value), 0F, 1F));
+
         if (definition.params.isEmpty() && definition.colorParams.isEmpty())
         {
-            section.fields.add(UI.label(IKey.constant("这个效果没有可调参数。"), 16));
+            section.fields.add(UI.label(IKey.constant("这个效果没有其他可调参数；用上面的强度做淡入淡出。"), 16));
         }
 
         if (!definition.params.isEmpty())
@@ -11525,7 +11535,7 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     private void keyEffectAtPlayhead(CompLayer layer, CompEffect effect, CompEffectRegistry.Definition definition)
     {
-        if (layer == null || effect == null || definition == null || definition.params.isEmpty())
+        if (layer == null || effect == null || definition == null)
         {
             return;
         }
@@ -11533,17 +11543,15 @@ public class UICompositorPanel extends UIDashboardPanel
         this.beginAction("添加效果 AE 关键帧");
 
         float frame = this.getFrame();
-        String firstPath = null;
+        String firstPath = CompLayer.effectPath(effect.id, dev.bbsae.client.render.EffectRenderer.STRENGTH);
+        float strength = layer.scalarAt(firstPath,
+            (float) effect.value(dev.bbsae.client.render.EffectRenderer.STRENGTH, 1D), frame);
+
+        layer.scalarChannel(firstPath).insertInheriting(frame, strength);
 
         for (CompEffectRegistry.Param param : definition.params)
         {
             String path = CompLayer.effectPath(effect.id, param.key);
-
-            if (firstPath == null)
-            {
-                firstPath = path;
-            }
-
             float value = layer.scalarAt(path, (float) effect.value(param.key, param.defaultValue), frame);
 
             layer.scalarChannel(path).insertInheriting(frame, value);
@@ -11551,14 +11559,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.refreshSheets();
         this.refreshInspector();
-
-        if (firstPath != null)
-        {
-            this.showCurveFor(firstPath);
-        }
-
+        this.showCurveFor(firstPath);
         this.setStatus("已为「" + CompEffectRegistry.displayName(effect.type) + "」添加 "
-            + definition.params.size() + " 个 AE 关键帧");
+            + (definition.params.size() + 1) + " 个 AE 关键帧（含效果强度）");
         this.save();
     }
 

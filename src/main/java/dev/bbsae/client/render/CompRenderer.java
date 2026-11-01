@@ -661,10 +661,12 @@ public final class CompRenderer
 
                 Matrix4f effectSpace = effectSpace(context, layer, model);
 
-                /* 3D layers with effects were drawn from the layer-space raster above, which
-                 * already contains them; applying them again in composition space would double the
-                 * effect and re-introduce the sliding gradient. */
-                boolean effectsBaked = layer.threeD && hasEnabledEffects(layer);
+                /* Nothing bakes the effect stack for a 3D layer. This used to skip every
+                 * non-depth effect under the belief that renderBaked3D had already applied them,
+                 * but that method only projects the source raster — so every effect on a 3D layer
+                 * was silently dropped. Effects now run once, after the projection, in composition
+                 * space (EffectSpace.identity for a 3D layer). */
+                boolean effectsBaked = false;
 
                 for (CompEffect effect : layer.effects)
                 {
@@ -799,12 +801,35 @@ public final class CompRenderer
 
         try
         {
-            /* Framebuffer textures are bottom-up, so V is swapped exactly like the composition
-             * blit does; without the swap every flat layer would render upside down. */
-            batcher.texturedBox(source.color.id, 0xFFFFFFFF,
-                0F, 0F, context.width, context.height,
-                0F, source.height, source.width, 0F,
-                source.width, source.height);
+            /* Subdivide the plane instead of drawing one giant quad. A single quad whose corner
+             * falls behind the camera is clipped as a whole — the layer vanished when the camera
+             * tilted near its edge. Small cells clip independently, so the visible part survives.
+             * The UVs are the same bottom-up mapping the old single quad used. */
+            int cells = 16;
+            float cw = context.width / (float) cells;
+            float ch = context.height / (float) cells;
+
+            for (int j = 0; j < cells; j++)
+            {
+                for (int i = 0; i < cells; i++)
+                {
+                    float x0 = i * cw;
+                    float y0 = j * ch;
+                    float x1 = x0 + cw;
+                    float y1 = y0 + ch;
+                    /* The quad lives in composition pixels; the source texture may be smaller
+                     * (proxy scale), so the UVs are normalised through the comp size. */
+                    float u0 = x0 / context.width * source.width;
+                    float u1 = x1 / context.width * source.width;
+                    float vTop = (1F - y0 / context.height) * source.height;
+                    float vBottom = (1F - y1 / context.height) * source.height;
+
+                    batcher.texturedBox(source.color.id, 0xFFFFFFFF,
+                        x0, y0, cw, ch,
+                        u0, vTop, u1, vBottom,
+                        source.width, source.height);
+                }
+            }
 
             batcher.flush();
         }
@@ -948,7 +973,7 @@ public final class CompRenderer
     }
 
     /** Cells per axis when a baked 3D layer is drawn as a projected quad. */
-    private static final int BAKED_CELLS = 8;
+    private static final int BAKED_CELLS = 16;
 
     /**
      * Draws a 3D layer from its layer-space raster (content + effects), or returns null when the
