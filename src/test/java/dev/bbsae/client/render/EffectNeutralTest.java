@@ -48,6 +48,17 @@ public class EffectNeutralTest
     }
 
     @Test
+    public void distortionNeutralValues()
+    {
+        assertTrue(EffectRenderer.isNeutral(effect("offset"), "offset"));
+        assertFalse(EffectRenderer.isNeutral(effect("offset").put("offset_x", 40D), "offset"));
+        assertTrue(EffectRenderer.isNeutral(effect("transform"), "transform"));
+        assertFalse(EffectRenderer.isNeutral(effect("transform").put("angle", 20D), "transform"));
+        assertTrue(EffectRenderer.isNeutral(effect("polar_coordinates").put("amount", 0D), "polar_coordinates"));
+        assertFalse(EffectRenderer.isNeutral(effect("magnify"), "magnify"));
+    }
+
+    @Test
     public void defaultsAreNotNeutral()
     {
         assertFalse(EffectRenderer.isNeutral(effect("blur"), "blur"));

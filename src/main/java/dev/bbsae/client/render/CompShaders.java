@@ -19,6 +19,7 @@ public final class CompShaders
     public static GlslProgram key;
     public static GlslProgram generate;
     public static GlslProgram distort;
+    public static GlslProgram aeDistort;
     public static GlslProgram pixel;
     public static GlslProgram stroke;
     public static GlslProgram transition;
@@ -54,6 +55,7 @@ public final class CompShaders
         key = make("key", ShaderSources.KEY);
         generate = make("generate", ShaderSources.GENERATE);
         distort = make("distort", ShaderSources.DISTORT);
+        aeDistort = make("ae_distort", ShaderSources.AE_DISTORT);
         pixel = make("pixel", ShaderSources.PIXEL);
         stroke = make("stroke", ShaderSources.STROKE);
         transition = make("transition", ShaderSources.TRANSITION);
@@ -101,6 +103,7 @@ public final class CompShaders
         delete(key);
         delete(generate);
         delete(distort);
+        delete(aeDistort);
         delete(pixel);
         delete(stroke);
         delete(transition);
@@ -111,7 +114,7 @@ public final class CompShaders
         delete(repeat);
         delete(entityKey);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = null;
         initialized = false;
     }
 

@@ -226,6 +226,59 @@ public final class CompEffectRegistry
             .p("phase", "相位", -100, 100, 0, 0.01F)
             .p("vertical", "垂直", 0, 1, 0, 1));
 
+        add(new Definition("offset", "偏移", "扭曲")
+            .p("offset_x", "X（像素）", -2000, 2000, 60, 1)
+            .p("offset_y", "Y（像素）", -2000, 2000, 0, 1)
+            .p("edge", "边缘 (0 裁切 / 1 平铺 / 2 镜像)", 0, 2, 0, 1)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("polar_coordinates", "极坐标", "扭曲")
+            .p("direction", "方向 (0 矩形→极坐标 / 1 极坐标→矩形)", 0, 1, 0, 1)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("spherize", "球面化", "扭曲")
+            .p("amount", "强度", -1, 1, 0.5F, 0.01F)
+            .p("radius", "半径（像素）", 1, 2000, 300, 1)
+            .p("center_x", "中心 X", 0, 1, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F));
+        add(new Definition("optics_compensation", "光学补偿", "扭曲")
+            .p("amount", "强度", -1, 1, 0.3F, 0.01F)
+            .p("center_x", "中心 X", 0, 1, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F));
+        add(new Definition("cc_lens", "CC 镜头", "扭曲")
+            .p("amount", "强度", -1, 1, 0.3F, 0.01F)
+            .p("center_x", "中心 X", 0, 1, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F));
+        add(new Definition("cc_slant", "CC 倾斜", "扭曲")
+            .p("amount", "强度", -1, 1, 0.3F, 0.01F)
+            .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F));
+        add(new Definition("magnify", "放大", "扭曲")
+            .p("amount", "强度", 0, 4, 1, 0.01F)
+            .p("radius", "半径（像素）", 1, 2000, 300, 1)
+            .p("center_x", "中心 X", 0, 1, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F));
+        add(new Definition("cc_ripple_pulse", "CC 波纹脉冲", "扭曲")
+            .p("amount", "强度", -1, 1, 0.5F, 0.01F)
+            .p("radius", "波长（像素）", 1, 500, 80, 1)
+            .p("phase", "相位", -100, 100, 0, 0.01F)
+            .p("center_x", "中心 X", 0, 1, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F));
+        add(new Definition("cc_bend", "CC 弯曲", "扭曲")
+            .p("amount", "强度", -4, 4, 1, 0.01F));
+        add(new Definition("cc_split", "CC 分裂", "扭曲")
+            .p("gap", "间距", 0, 1, 0.1F, 0.01F)
+            .p("offset_x", "X（像素）", -2000, 2000, 0, 1)
+            .p("offset_y", "Y（像素）", -2000, 2000, 0, 1)
+            .p("amount", "混合", 0, 1, 1, 0.01F));
+        add(new Definition("rolling_shutter_repair", "滚动快门修复", "扭曲")
+            .p("amount", "强度", -4, 4, 1, 0.01F));
+        add(new Definition("transform", "变换", "扭曲")
+            .p("offset_x", "X（像素）", -2000, 2000, 0, 1)
+            .p("offset_y", "Y（像素）", -2000, 2000, 0, 1)
+            .p("scale_x", "缩放 X", 0.01F, 4, 1, 0.01F)
+            .p("scale_y", "缩放 Y", 0.01F, 4, 1, 0.01F)
+            .p("angle", "旋转", -180, 180, 0, 1)
+            .p("center_x", "中心 X", 0, 1, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F));
+
         add(new Definition("chroma_key", "色度抠像", "抠像")
             .p("tolerance", "容差", 0, 1, 0.18F, 0.01F)
             .p("softness", "柔和度", 0.001F, 0.5F, 0.08F, 0.001F)

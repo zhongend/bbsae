@@ -524,6 +524,13 @@ public final class CompLayerSourceCache
                 scaleParam(scaled, "radius_g", scale);
                 scaleParam(scaled, "radius_b", scale);
             }
+            case "offset", "transform", "cc_split" ->
+            {
+                scaleParam(scaled, "offset_x", scale);
+                scaleParam(scaled, "offset_y", scale);
+            }
+            case "spherize", "magnify", "cc_ripple_pulse" ->
+                scaleParam(scaled, "radius", scale);
             case "drop_shadow" ->
             {
                 scaleParam(scaled, "distance", scale);

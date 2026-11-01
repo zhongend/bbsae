@@ -77,6 +77,8 @@
   [`docs/ROUND37-3D-EFFECT-SUPPORT.zh.md`](docs/ROUND37-3D-EFFECT-SUPPORT.zh.md)
 - **Round 38 (AE effect programme / blur and sharpen family complete, v0.21.0):**
   [`docs/ROUND38-AE-BLUR-FAMILY.zh.md`](docs/ROUND38-AE-BLUR-FAMILY.zh.md)
+- **Round 39 (AE effect programme, batch 2: distort family, v0.21.1):**
+  [`docs/ROUND39-AE-DISTORT-FAMILY.zh.md`](docs/ROUND39-AE-DISTORT-FAMILY.zh.md)
 - **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
@@ -96,15 +98,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.21.0.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.0/bbsae-0.21.0.jar)
-   from the **v0.21.0** release (the asset is updated with each source push).
+1. Download [`bbsae-0.21.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.21.1/bbsae-0.21.1.jar)
+   from the **v0.21.1** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.21.0.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.21.1.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.21.0.jar` SHA-256: `344D927BE4DBD8F71AD0F2C3725A75C54573C41ED51DA6F077822AB3336E11FF`.
+`bbsae-0.21.1.jar` SHA-256: `F5A49A934C937ECDEF51985FA5FB1D0E7B56D88CB3933F80B9B60E5B74E48F90`.
 
 ## Gallery
 
@@ -171,6 +173,19 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.21.1
+
+- **AE effect programme, batch 2: 12 new distort effects** — offset, polar coordinates,
+  spherize, optics compensation, CC lens, CC slant, magnify, CC ripple pulse, CC bend, CC split,
+  rolling-shutter repair and a 2D transform. They join displacement, bulge, pinch, twist, wave,
+  turbulent displace and mirror.
+- One `AE_DISTORT` shader family supplies the modes. Each is a single-input resample, so it is
+  baked into the layer raster before projection and follows the 3D plane; `EffectPadding` and the
+  proxy-radius conversion are wired in, and the composition does not apply them twice.
+- Neutral values and `global_strength` are covered: zero amount/offset/identity transform returns
+  the original layer.
+- 248/248 tests pass, including the headless GLSL compile test for `AE_DISTORT`.
 
 ## What's new in 0.21.0
 

@@ -92,6 +92,19 @@ public final class EffectPadding
             case "channel_blur" -> Math.max(effect.valueF("radius", 12F),
                 Math.max(effect.valueF("radius_g", 12F), effect.valueF("radius_b", 12F))) + 2F;
             case "unsharp_mask", "camera_shake_deblur" -> 2F;
+            case "offset" -> Math.max(Math.abs(effect.valueF("offset_x", 0F)),
+                Math.abs(effect.valueF("offset_y", 0F))) + 2F;
+            case "spherize", "magnify", "cc_ripple_pulse" -> effect.valueF("radius", 300F) + 2F;
+            case "optics_compensation", "cc_lens" ->
+                Math.abs(effect.valueF("amount", 0.3F)) * Math.max(layer.width, layer.height) * 0.5F + 2F;
+            case "cc_slant" -> Math.abs(effect.valueF("amount", 0.3F)) * layer.height * 0.5F + 2F;
+            case "cc_bend", "rolling_shutter_repair" ->
+                Math.abs(effect.valueF("amount", 1F)) * layer.height * 0.02F + 2F;
+            case "cc_split" -> Math.max(Math.abs(effect.valueF("gap", 0.1F)) * layer.width * 0.5F,
+                Math.max(Math.abs(effect.valueF("offset_x", 0F)),
+                    Math.abs(effect.valueF("offset_y", 0F)))) + 2F;
+            case "transform" -> Math.max(Math.abs(effect.valueF("offset_x", 0F)),
+                Math.abs(effect.valueF("offset_y", 0F))) + 2F;
             default -> 0F;
         };
     }

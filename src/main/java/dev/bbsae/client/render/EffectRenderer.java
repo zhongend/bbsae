@@ -38,6 +38,9 @@ public final class EffectRenderer
         "rgb_split", "shake", "block_shatter", "gradient_ramp", "noise_gradient",
         "checkerboard", "grid", "circle", "displacement", "bulge", "pinch", "twist",
         "wave", "linear_wipe", "radial_wipe", "dissolve", "glow", "outer_glow",
+        "offset", "polar_coordinates", "spherize", "optics_compensation", "cc_lens",
+        "cc_slant", "magnify", "cc_ripple_pulse", "cc_bend", "cc_split",
+        "rolling_shutter_repair", "transform",
         "drop_shadow", "stroke", "depth_matte", "depth_fog", "depth_dof",
         "grid_repeat", "random_repeat", "turbulent_displace", "colorama", "light_sweep"
     );
@@ -160,6 +163,22 @@ public final class EffectRenderer
             case "displacement", "bulge", "pinch", "twist", "turbulent_displace" ->
                 effect.valueF("amount", 48F) <= eps;
             case "wave" -> effect.valueF("amplitude", effect.valueF("amount", 24F)) <= eps;
+            case "offset" -> effect.valueF("amount", 1F) <= eps
+                || (Math.abs(effect.valueF("offset_x", 0F)) <= eps && Math.abs(effect.valueF("offset_y", 0F)) <= eps);
+            case "polar_coordinates" -> effect.valueF("amount", 1F) <= eps;
+            case "spherize", "optics_compensation", "cc_lens", "cc_slant", "magnify",
+                 "cc_ripple_pulse", "cc_bend", "rolling_shutter_repair" ->
+                Math.abs(effect.valueF("amount", 1F)) <= eps;
+            case "cc_split" ->
+                Math.abs(effect.valueF("gap", 0.1F)) <= eps
+                    && Math.abs(effect.valueF("offset_x", 0F)) <= eps
+                    && Math.abs(effect.valueF("offset_y", 0F)) <= eps;
+            case "transform" ->
+                Math.abs(effect.valueF("offset_x", 0F)) <= eps
+                    && Math.abs(effect.valueF("offset_y", 0F)) <= eps
+                    && Math.abs(effect.valueF("scale_x", 1F) - 1F) <= eps
+                    && Math.abs(effect.valueF("scale_y", 1F) - 1F) <= eps
+                    && Math.abs(effect.valueF("angle", 0F)) <= eps;
             case "glow" -> effect.valueF("radius", 40F) <= 0.5F
                 || effect.valueF("opacity", 1F) <= eps || effect.valueF("intensity", 1F) <= eps;
             case "outer_glow" -> effect.valueF("radius", 24F) <= 0.5F
@@ -269,6 +288,30 @@ public final class EffectRenderer
             case "wave":
             case "turbulent_displace":
                 return distort(input, effect, context, type, space);
+            case "offset":
+                return aeDistort(input, effect, 0);
+            case "polar_coordinates":
+                return aeDistort(input, effect, 1);
+            case "spherize":
+                return aeDistort(input, effect, 2);
+            case "optics_compensation":
+                return aeDistort(input, effect, 3);
+            case "cc_lens":
+                return aeDistort(input, effect, 4);
+            case "cc_slant":
+                return aeDistort(input, effect, 5);
+            case "magnify":
+                return aeDistort(input, effect, 6);
+            case "cc_ripple_pulse":
+                return aeDistort(input, effect, 7);
+            case "cc_bend":
+                return aeDistort(input, effect, 8);
+            case "cc_split":
+                return aeDistort(input, effect, 9);
+            case "rolling_shutter_repair":
+                return aeDistort(input, effect, 10);
+            case "transform":
+                return aeDistort(input, effect, 11);
             case "light_sweep":
                 return pixel(input, effect, context, space);
             case "grid_repeat":
@@ -406,6 +449,42 @@ public final class EffectRenderer
         }
 
         return straightened;
+    }
+
+    /**
+     * The AE geometric distortion family. Every mode is a single-input resample; the composition
+     * bakes it into the layer raster exactly like the existing distort shader.
+     */
+    private static GlFramebuffer aeDistort(GlFramebuffer input, CompEffect effect, int mode)
+    {
+        GlslProgram program = CompShaders.aeDistort;
+
+        if (program == null)
+        {
+            return input;
+        }
+
+        GlFramebuffer output = FboPool.acquire(input.width, input.height);
+
+        output.begin();
+        GlStateManager._disableBlend();
+        program.use();
+        PassRenderer.bind(program, "Source", 0, input);
+        program.set("Size", input.width, input.height);
+        program.set("Mode", mode);
+        program.set("Amount", effect.valueF("amount", 1F));
+        program.set("Center", effect.valueF("center_x", 0.5F), effect.valueF("center_y", 0.5F));
+        program.set("Radius", Math.max(0F, effect.valueF("radius", 300F)));
+        program.set("Angle", effect.valueF("angle", 0F));
+        program.set("Offset", effect.valueF("offset_x", 0F), effect.valueF("offset_y", 0F));
+        program.set("Scale", Math.max(0.0001F, effect.valueF("scale_x", 1F)),
+            Math.max(0.0001F, effect.valueF("scale_y", 1F)));
+        program.set("Edge", effect.valueI("edge", 0));
+        program.set("Param", effect.valueF("direction",
+            effect.valueF("gap", effect.valueF("phase", 0F))));
+        program.drawFullscreen();
+
+        return output;
     }
 
     private static GlFramebuffer directionalBlur(GlFramebuffer input, float radius, float angle, float mix)

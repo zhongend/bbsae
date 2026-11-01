@@ -44,7 +44,7 @@ public class ShaderCompileTest
 
             String[] names = {
                 "composite", "premultiply", "unpremultiply", "inner", "gradient", "blur",
-                "ae_blur", "sharpen", "radial", "color", "key", "generate", "distort", "pixel",
+                "ae_blur", "sharpen", "radial", "color", "key", "generate", "distort", "ae_distort", "pixel",
                 "stroke", "transition", "depth", "shatter", "grade", "rgb_split"
             };
             String[] fragments = {
@@ -61,6 +61,7 @@ public class ShaderCompileTest
                 ShaderSources.KEY,
                 ShaderSources.GENERATE,
                 ShaderSources.DISTORT,
+                ShaderSources.AE_DISTORT,
                 ShaderSources.PIXEL,
                 ShaderSources.STROKE,
                 ShaderSources.TRANSITION,

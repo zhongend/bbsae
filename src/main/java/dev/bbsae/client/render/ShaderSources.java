@@ -320,6 +320,147 @@ public final class ShaderSources
         }
         """;
 
+    /**
+     * AE-style geometric distortion family: offset, polar coordinates, spherize, optics
+     * compensation, CC lens, slant, magnify, ripple pulse, bend, split, rolling-shutter repair
+     * and a 2D transform. All modes are single-input resamples, so they can be baked into the
+     * layer raster exactly like the existing distort shader.
+     */
+    public static final String AE_DISTORT = """
+        #version 150 core
+
+        uniform sampler2D Source;
+        uniform vec2 Size;
+        uniform int Mode;
+        uniform float Amount;
+        uniform vec2 Center;
+        uniform float Radius;
+        uniform float Angle;
+        uniform vec2 Offset;
+        uniform vec2 Scale;
+        uniform int Edge;
+        uniform float Param;
+
+        in vec2 vUv;
+        out vec4 fragColor;
+
+        vec4 sourceAt(vec2 uv)
+        {
+            if (Edge == 0)
+            {
+                return texture(Source, clamp(uv, vec2(0.0), vec2(1.0)));
+            }
+
+            if (Edge == 1)
+            {
+                return texture(Source, fract(uv));
+            }
+
+            vec2 mirrored = abs(mod(uv, vec2(2.0)) - vec2(1.0));
+
+            return texture(Source, mirrored);
+        }
+
+        void main()
+        {
+            vec2 uv = vUv;
+            vec2 size = max(Size, vec2(1.0));
+
+            if (Mode == 0)
+            {
+                uv = vUv + Offset / size;
+            }
+            else if (Mode == 1)
+            {
+                if (Param > 0.5)
+                {
+                    float a = (vUv.x - 0.5) * 6.2831853;
+                    float r = vUv.y * 0.5;
+                    uv = vec2(cos(a), sin(a)) * r + 0.5;
+                }
+                else
+                {
+                    vec2 p = vUv - 0.5;
+                    float a = atan(p.y, p.x) / 6.2831853 + 0.5;
+                    float r = length(p) * 2.0;
+                    uv = vec2(a, r);
+                }
+            }
+            else if (Mode == 2)
+            {
+                vec2 p = vUv - Center;
+                float r = max(Radius / size.y, 0.001);
+                float t = smoothstep(r, 0.0, length(p));
+                uv = Center + p * (1.0 - clamp(Amount, -1.0, 1.0) * 0.75 * t);
+            }
+            else if (Mode == 3)
+            {
+                vec2 p = vUv - Center;
+                float r2 = dot(p, p);
+                uv = Center + p * (1.0 + Amount * r2 * 2.0);
+            }
+            else if (Mode == 4)
+            {
+                vec2 p = vUv - Center;
+                float r2 = dot(p, p);
+                uv = Center + p * (1.0 - clamp(Amount, -1.0, 1.0) * r2 * 1.5);
+            }
+            else if (Mode == 5)
+            {
+                uv = vUv + vec2((vUv.y - Center.y) * Amount * 0.5, 0.0);
+            }
+            else if (Mode == 6)
+            {
+                vec2 p = vUv - Center;
+                float r = max(Radius / size.y, 0.001);
+                float k = smoothstep(1.0, 0.0, length(p) / r);
+                uv = Center + p / (1.0 + max(Amount, 0.0) * k);
+            }
+            else if (Mode == 7)
+            {
+                vec2 p = vUv - Center;
+                float d = length(p);
+                float wave = sin(d * Radius * 0.15 - Param * 6.2831853) * Amount * 0.01;
+                uv = vUv + normalize(p + vec2(0.00001)) * wave;
+            }
+            else if (Mode == 8)
+            {
+                uv = vUv + vec2(sin((vUv.y - 0.5) * 3.1415926) * Amount * 0.02, 0.0);
+            }
+            else if (Mode == 9)
+            {
+                float gap = max(Param, 0.0) * 0.5;
+                uv.x = vUv.x + (vUv.x < 0.5 ? -gap : gap) + Offset.x / size.x;
+                uv.y = vUv.y + Offset.y / size.y;
+            }
+            else if (Mode == 10)
+            {
+                uv = vUv + vec2((vUv.y - 0.5) * Amount * 0.02, 0.0);
+            }
+            else
+            {
+                vec2 p = vUv - Center;
+                float a = radians(Angle);
+                float c = cos(a);
+                float s = sin(a);
+                vec2 rotated = vec2(c * p.x - s * p.y, s * p.x + c * p.y);
+                rotated /= max(Scale, vec2(0.0001));
+                uv = Center + rotated + Offset / size;
+            }
+
+            vec4 warped = sourceAt(uv);
+
+            /* Offset and polar coordinates keep the warp fixed and use Amount as a cross-fade;
+             * the other modes already use Amount as the warp strength. */
+            if (Mode == 0 || Mode == 1 || Mode == 9)
+            {
+                warped = mix(sourceAt(vUv), warped, clamp(Amount, 0.0, 1.0));
+            }
+
+            fragColor = warped;
+        }
+        """;
+
     public static final String PREMULTIPLY = """
         #version 150 core
 

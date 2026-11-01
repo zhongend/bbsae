@@ -81,6 +81,29 @@ public class EffectPaddingTest
     }
 
     @Test
+    public void distortionModesReserveTheirRadiusOrOffset()
+    {
+        CompLayer layer = layer();
+        CompEffect offset = new CompEffect("fx1", "offset");
+
+        offset.put("offset_x", 60D);
+        offset.put("offset_y", 10D);
+        layer.effects.add(offset);
+
+        assertEquals(62F, EffectPadding.of(layer, 0F), 0.01F);
+
+        layer.effects.clear();
+
+        CompEffect magnify = new CompEffect("fx2", "magnify");
+
+        magnify.put("amount", 1D);
+        magnify.put("radius", 300D);
+        layer.effects.add(magnify);
+
+        assertEquals(302F, EffectPadding.of(layer, 0F), 0.01F);
+    }
+
+    @Test
     public void paddingIsCapped()
     {
         CompLayer layer = layer();
