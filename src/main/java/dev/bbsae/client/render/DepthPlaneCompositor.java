@@ -16,6 +16,13 @@ import org.joml.Vector3f;
  */
 final class DepthPlaneCompositor
 {
+    /* Reused across frames: allocating a colour+depth target every composition render churned GPU
+     * memory while scrubbing/playing. Nested comps can hold several, so this is a small free list
+     * per size. */
+    private static final java.util.Map<Long, java.util.ArrayDeque<DepthPlaneCompositor>> POOL =
+        new java.util.HashMap<>();
+    private static final int MAX_PER_SIZE = 4;
+
     private final GlFramebuffer target;
     private final int width;
     private final int height;
@@ -107,5 +114,66 @@ final class DepthPlaneCompositor
     void delete()
     {
         this.target.delete();
+    }
+
+    static synchronized DepthPlaneCompositor acquire(int width, int height)
+    {
+        long key = ((long) Math.max(1, width) << 32) | (Math.max(1, height) & 0xFFFFFFFFL);
+        java.util.ArrayDeque<DepthPlaneCompositor> free = POOL.get(key);
+
+        if (free == null)
+        {
+            free = new java.util.ArrayDeque<>();
+            POOL.put(key, free);
+        }
+
+        DepthPlaneCompositor compositor = free.pollFirst();
+
+        if (compositor == null)
+        {
+            compositor = new DepthPlaneCompositor(width, height);
+        }
+        else
+        {
+            compositor.clearDepth();
+        }
+
+        return compositor;
+    }
+
+    static synchronized void release(DepthPlaneCompositor compositor)
+    {
+        if (compositor == null)
+        {
+            return;
+        }
+
+        long key = ((long) compositor.width << 32) | (compositor.height & 0xFFFFFFFFL);
+        java.util.ArrayDeque<DepthPlaneCompositor> free = POOL.computeIfAbsent(key,
+            k -> new java.util.ArrayDeque<>());
+
+        if (free.size() >= MAX_PER_SIZE)
+        {
+            compositor.delete();
+
+            return;
+        }
+
+        compositor.clearDepth();
+        free.addFirst(compositor);
+    }
+
+    /** Frees every pooled target; call with the rest of the render caches. */
+    public static synchronized void deleteAll()
+    {
+        for (java.util.ArrayDeque<DepthPlaneCompositor> free : POOL.values())
+        {
+            for (DepthPlaneCompositor compositor : free)
+            {
+                compositor.delete();
+            }
+        }
+
+        POOL.clear();
     }
 }

@@ -160,6 +160,27 @@ public class DepthPlaneCompositorTest
     }
 
     @Test
+    public void pooledTargetsAreReusedBySize()
+    {
+        Assumptions.assumeTrue(CompShaders.depthPlane != null && CompShaders.depthPlane.isValid(),
+            "depth plane program unavailable");
+
+        DepthPlaneCompositor first = DepthPlaneCompositor.acquire(SIZE, SIZE);
+
+        DepthPlaneCompositor.release(first);
+
+        DepthPlaneCompositor second = DepthPlaneCompositor.acquire(SIZE, SIZE);
+        DepthPlaneCompositor other = DepthPlaneCompositor.acquire(SIZE / 2, SIZE / 2);
+
+        assertTrue(first == second, "same-size targets must be reused");
+        assertTrue(first != other, "different sizes must not share a target");
+
+        DepthPlaneCompositor.release(second);
+        DepthPlaneCompositor.release(other);
+        DepthPlaneCompositor.deleteAll();
+    }
+
+    @Test
     public void aTranslucentNearLayerBlendsInsteadOfOccluding()
     {
         Assumptions.assumeTrue(CompShaders.depthPlane != null && CompShaders.depthPlane.isValid(),

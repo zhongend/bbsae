@@ -602,7 +602,7 @@ public final class CompRenderer
 
         if (CompScene.spatial(context))
         {
-            context.spatialDepth = new DepthPlaneCompositor(context.renderWidth(), context.renderHeight());
+            context.spatialDepth = DepthPlaneCompositor.acquire(context.renderWidth(), context.renderHeight());
         }
 
         GlFramebuffer accumulation = FboPool.acquire(context.renderWidth(), context.renderHeight());
@@ -864,7 +864,7 @@ public final class CompRenderer
              * the exception propagates and nobody else knows this framebuffer exists. */
             if (context.spatialDepth != null)
             {
-                context.spatialDepth.delete();
+                DepthPlaneCompositor.release(context.spatialDepth);
                 context.spatialDepth = null;
             }
 
@@ -1575,6 +1575,7 @@ public final class CompRenderer
         CompViewportRenderer.clearCaches();
         AmEffectRenderer.delete();
         MeshRenderer.delete();
+        DepthPlaneCompositor.deleteAll();
         FboPool.clear();
         CompRenderCache.clear();
         CompPrecache.clearAll();

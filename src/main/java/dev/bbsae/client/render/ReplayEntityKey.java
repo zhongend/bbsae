@@ -172,6 +172,22 @@ public final class ReplayEntityKey
         program.set("Tint", ((layer.color >> 16) & 0xFF) / 255F, ((layer.color >> 8) & 0xFF) / 255F, (layer.color & 0xFF) / 255F, 1F);
         program.set("DebugView", debugView());
 
+        /* The coverage target must have the world frame's size: a different size stretches the
+         * 0..1 mask over the plate and shows up as an offset key. Log it once a second instead of
+         * failing silently, so a future regression in that sizing is visible in the client log. */
+        long now = System.currentTimeMillis();
+        int maskWidth = ReplayEntityMask.width();
+        int maskHeight = ReplayEntityMask.height();
+
+        if ((Math.abs(maskWidth - world.width) > 1 || Math.abs(maskHeight - world.height) > 1)
+            && now - lastSizeWarning > 2000L)
+        {
+            lastSizeWarning = now;
+            dev.bbsae.BbsAeAddon.LOGGER.warn(
+                "Entity key target {}x{} does not match the world frame {}x{}; the matte may be offset",
+                maskWidth, maskHeight, world.width, world.height);
+        }
+
         if (Boolean.getBoolean("bbsae.debugEntityKeyLog"))
         {
             logDraw(world, mask, layer, inverse, width, height);
@@ -211,6 +227,7 @@ public final class ReplayEntityKey
     }
 
     private static long lastLog;
+    private static long lastSizeWarning;
 
     /**
      * Reads back what GL actually has bound after the draw. The unit-1 result is the decisive

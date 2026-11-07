@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.71.jar`](https://github.com/zhongend/bbsae/releases/download/v0.71/bbsae-0.71.jar)
-   from the **v0.71** release (the asset is updated with each source push).
+1. Download [`bbsae-0.72.jar`](https://github.com/zhongend/bbsae/releases/download/v0.72/bbsae-0.72.jar)
+   from the **v0.72** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.71.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.72.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.71.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.72.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,17 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.72 — pooled depth targets and a matte-size guard
+
+- `DepthPlaneCompositor` now pools its colour+depth targets per size (max four each) instead of
+  allocating one per composition render, which removes GPU allocation churn while scrubbing and
+  playing. The pool is freed with the rest of the render caches.
+- `ReplayEntityKey` warns once per second when the coverage target size does not match the world
+  frame — the exact condition that produced the offset entity key. A future regression now shows up
+  in the client log instead of silently shifting the matte.
+- `DepthPlaneCompositorTest` asserts pool reuse (same size reused, different sizes separate).
+- 357 tests green; 137 effects.
 
 ## What's new in 0.71 — translucent 3D layers no longer occlude
 
