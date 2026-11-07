@@ -13,6 +13,9 @@ public final class CompGizmo3D
     public static final int AXIS_Y = 1;
     public static final int AXIS_Z = 2;
 
+    /** Pixels of drag along an axis that double/halve its scale. */
+    public static final float SCALE_DRAG_PIXELS = 200F;
+
     /** Screen length of the drawn arrows, in pixels. */
     public static final float ARM_PIXELS = 74F;
     /** Distance used to measure pixels-per-composition-unit along an axis. */
@@ -88,6 +91,36 @@ public final class CompGizmo3D
         float cy = ay + dy * t;
 
         return (float) Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+    }
+
+    /** Scale factor for a drag along an axis: 1 is unchanged, 2 doubles, 0.5 halves. */
+    public static float scaleFactor(float deltaPixels)
+    {
+        return Math.max(0.01F, 1F + deltaPixels / SCALE_DRAG_PIXELS);
+    }
+
+    /** Screen angle in degrees, measured like the 2D rotate handle (y down). */
+    public static float angleDegrees(float dx, float dy)
+    {
+        return (float) Math.toDegrees(Math.atan2(dy, dx));
+    }
+
+    /** Shortest signed difference between two screen angles. */
+    public static float angleDelta(float startDegrees, float currentDegrees)
+    {
+        float delta = currentDegrees - startDegrees;
+
+        while (delta > 180F)
+        {
+            delta -= 360F;
+        }
+
+        while (delta < -180F)
+        {
+            delta += 360F;
+        }
+
+        return delta;
     }
 
     /** Snap a drag to whole composition units; Shift-drag is exact. */

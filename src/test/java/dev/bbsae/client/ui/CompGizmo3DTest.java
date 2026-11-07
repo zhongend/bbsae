@@ -51,6 +51,24 @@ public class CompGizmo3DTest
     }
 
     @Test
+    public void scaleDragIsRelativeAroundOne()
+    {
+        assertEquals(1F, CompGizmo3D.scaleFactor(0F), 0.0001F);
+        assertEquals(2F, CompGizmo3D.scaleFactor(CompGizmo3D.SCALE_DRAG_PIXELS), 0.0001F);
+        assertEquals(0.5F, CompGizmo3D.scaleFactor(-CompGizmo3D.SCALE_DRAG_PIXELS * 0.5F), 0.0001F);
+        assertEquals(0.01F, CompGizmo3D.scaleFactor(-10000F), 0.0001F);
+    }
+
+    @Test
+    public void screenAnglesAreShortestPath()
+    {
+        assertEquals(0F, CompGizmo3D.angleDegrees(10F, 0F), 0.0001F);
+        assertEquals(90F, CompGizmo3D.angleDegrees(0F, 10F), 0.0001F);
+        assertEquals(10F, CompGizmo3D.angleDelta(350F, 0F), 0.0001F);
+        assertEquals(-10F, CompGizmo3D.angleDelta(0F, 350F), 0.0001F);
+    }
+
+    @Test
     public void shiftSnapsToWholeUnits()
     {
         assertEquals(123F, CompGizmo3D.snap(122.6F, true), 0.0001F);

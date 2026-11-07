@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.75.jar`](https://github.com/zhongend/bbsae/releases/download/v0.75/bbsae-0.75.jar)
-   from the **v0.75** release (the asset is updated with each source push).
+1. Download [`bbsae-0.76.jar`](https://github.com/zhongend/bbsae/releases/download/v0.76/bbsae-0.76.jar)
+   from the **v0.76** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.75.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.76.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.75.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.76.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,19 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.76 — move / scale / rotate gizmos in 3D
+
+- The 3D workspace now has three AE-style gizmo modes: **W = move** (arrows), **E = scale** (axis-end
+  squares plus a centre square for uniform scale), **R = rotate** (three projected X/Y/Z rings). A
+  clickable mode bar sits above the bottom HUD and highlights the active mode; the W/E/R keys switch
+  modes while the preview is focused.
+- Each drag is computed from the screen axis or angle captured at press time, so it follows the
+  pointer; Shift snaps moves to whole units and rotation to 15°. Axes pointing at the camera are drawn
+  dimmed and are not hit-tested.
+- `CompGizmo3DTest` covers the scale factor around 1 and shortest-path screen angle deltas.
+- Client screenshots: `docs/verify/round51-gizmo-rotate.png`, `docs/verify/round51-gizmo-scale.png`.
+- 373 tests green.
 
 ## What's new in 0.75 — AE-style 3D move gizmo and 2D scale fixes
 
