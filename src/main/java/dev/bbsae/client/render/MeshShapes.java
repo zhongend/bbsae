@@ -107,7 +107,7 @@ final class MeshShapes
         return builder.build();
     }
 
-    private static void box(Builder builder, float cx, float cy, float w, float h, float d)
+    private static void box(Builder builder, float cx, float cy, float cz, float w, float h, float d)
     {
         float[] signs = {-1, -1, 1, -1, 1, 1, -1, 1};
         int[][] faces = {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}};
@@ -143,7 +143,7 @@ final class MeshShapes
                     pz = -sv;
                 }
 
-                ids[i] = builder.vertex(cx + px * w, cy + py * h, pz * d, su + 0.5F, 0.5F - sv,
+                ids[i] = builder.vertex(cx + px * w, cy + py * h, cz + pz * d, su + 0.5F, 0.5F - sv,
                     normal[0], normal[1], normal[2]);
             }
 
@@ -160,8 +160,8 @@ final class MeshShapes
     {
         Builder builder = new Builder();
 
-        box(builder, 0F, 0F, 1F, 0.34F, 0.5F);
-        box(builder, 0F, 0F, 0.34F, 1F, 0.5F);
+        box(builder, 0F, 0F, 0F, 1F, 0.34F, 0.5F);
+        box(builder, 0F, 0F, 0F, 0.34F, 1F, 0.5F);
 
         return builder.build();
     }
@@ -413,6 +413,57 @@ final class MeshShapes
             int backA = builder.vertex(x0, z0, -0.5F, x0 + 0.5F, z0 + 0.5F, 0F, 0F, -1F);
             int backB = builder.vertex(x1, z1, -0.5F, x1 + 0.5F, z1 + 0.5F, 0F, 0F, -1F);
             builder.tri(backCentre, backB, backA);
+        }
+
+        return builder.build();
+    }
+
+    static Mesh hollowBox(float thickness)
+    {
+        Builder builder = new Builder();
+        float t = Math.max(0.02F, Math.min(0.3F, thickness));
+        float half = 0.5F;
+
+        box(builder, 0F, 0F, half - t * 0.5F, 1F, 1F, t);
+        box(builder, 0F, 0F, -half + t * 0.5F, 1F, 1F, t);
+        box(builder, -half + t * 0.5F, 0F, 0F, t, 1F, 1F);
+        box(builder, half - t * 0.5F, 0F, 0F, t, 1F, 1F);
+        box(builder, 0F, half - t * 0.5F, 0F, 1F, t, 1F);
+        box(builder, 0F, -half + t * 0.5F, 0F, 1F, t, 1F);
+
+        return builder.build();
+    }
+
+    static Mesh starPoly(int points)
+    {
+        Builder builder = new Builder();
+        int n = Math.max(3, points);
+        int corners = n * 2;
+        float outer = 0.5F;
+        float inner = 0.22F;
+
+        for (int i = 0; i < corners; i++)
+        {
+            float a0 = (float) (Math.PI * 2 * i / corners - Math.PI * 0.5);
+            float a1 = (float) (Math.PI * 2 * (i + 1) / corners - Math.PI * 0.5);
+            float r0 = i % 2 == 0 ? outer : inner;
+            float r1 = (i + 1) % 2 == 0 ? outer : inner;
+            float x0 = (float) Math.cos(a0) * r0;
+            float y0 = (float) Math.sin(a0) * r0;
+            float x1 = (float) Math.cos(a1) * r1;
+            float y1 = (float) Math.sin(a1) * r1;
+            float nx = (float) Math.cos((a0 + a1) * 0.5F);
+            float ny = (float) Math.sin((a0 + a1) * 0.5F);
+
+            int apexFront = builder.vertex(0F, 0F, 0.5F, 0.5F, 0.5F, nx, ny, 0.6F);
+            int frontA = builder.vertex(x0, y0, 0F, x0 + 0.5F, 0.5F - y0, nx, ny, 0F);
+            int frontB = builder.vertex(x1, y1, 0F, x1 + 0.5F, 0.5F - y1, nx, ny, 0F);
+            builder.tri(apexFront, frontA, frontB);
+
+            int apexBack = builder.vertex(0F, 0F, -0.5F, 0.5F, 0.5F, nx, ny, -0.6F);
+            int backA = builder.vertex(x0, y0, 0F, x0 + 0.5F, 0.5F - y0, nx, ny, 0F);
+            int backB = builder.vertex(x1, y1, 0F, x1 + 0.5F, 0.5F - y1, nx, ny, 0F);
+            builder.tri(apexBack, backB, backA);
         }
 
         return builder.build();

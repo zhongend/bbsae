@@ -629,6 +629,64 @@ public final class AmEffectLibrary
             .p("blocks", "方块数", 2F, 120F, 20F, 1F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_reflection", "倒影", "AM · 合成", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float offset = u_distance / max(LayerSize.y, 1.0);
+                vec2 mirrored = vec2(luv.x, 2.0 - luv.y + offset);
+                vec4 m = sampleLayer(mirrored);
+                float fade = 1.0 - clamp((mirrored.y - 1.0) / max(u_fade, 0.001), 0.0, 1.0);
+                float amount = m.a * fade * clamp(u_strength, 0.0, 1.0) * (1.0 - c.a);
+                vec3 rgb = c.rgb + m.rgb * amount;
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), clamp(c.a + amount, 0.0, 1.0));
+            }
+            """, 0F, "strength")
+            .p("distance", "距离（像素）", 0F, 200F, 0F, 1F)
+            .p("fade", "渐隐长度", 0.01F, 1F, 0.4F, 0.01F)
+            .p("strength", "强度", 0F, 1F, 0.6F, 0.01F));
+
+        add(new AmEffectDef("am_inner_shadow", "内阴影", "AM · 合成", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle))) * (u_distance / max(LayerSize, vec2(1.0)));
+                float shadow = 0.0;
+
+                for (int i = 0; i < 8; i++)
+                {
+                    float t = float(i) / 7.0;
+                    float a = sampleLayer(luv + dir * t).a;
+                    shadow = max(shadow, clamp(c.a - a, 0.0, 1.0));
+                }
+
+                fragColor = vec4(mix(c.rgb, u_color.rgb, shadow * clamp(u_opacity, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "opacity")
+            .p("distance", "距离（像素）", 0F, 60F, 8F, 0.5F)
+            .p("angle", "角度", -180F, 180F, 135F, 1F)
+            .p("opacity", "不透明度", 0F, 1F, 0.6F, 0.01F)
+            .c("color", "阴影颜色", 0xFF000000));
+
+        add(new AmEffectDef("am_gloss", "高光", "AM · 风格化", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float band = exp(-pow((luv.y - u_position) / max(u_width, 0.001), 2.0));
+                float sheen = band * (0.6 + 0.4 * sin(luv.x * 6.2831853 + u_phase));
+                vec3 rgb = clamp(c.rgb + u_color.rgb * sheen * clamp(u_intensity, 0.0, 3.0), 0.0, 1.0);
+                fragColor = vec4(rgb, c.a);
+            }
+            """, 0F, "intensity")
+            .p("position", "位置", 0F, 1F, 0.3F, 0.01F)
+            .p("width", "宽度", 0.001F, 0.5F, 0.12F, 0.001F)
+            .p("phase", "相位", 0F, 6.2831853F, 0F, 0.01F)
+            .p("intensity", "强度", 0F, 3F, 0.8F, 0.01F)
+            .c("color", "高光颜色", 0xFFFFFFFF));
+
         add(new AmEffectDef("am_feather", "羽化", "AM · 绘制", """
             void main()
             {

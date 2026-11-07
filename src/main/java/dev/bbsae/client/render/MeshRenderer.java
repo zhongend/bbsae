@@ -23,7 +23,7 @@ public final class MeshRenderer
     private static final Map<String, Mesh> MESHES = new HashMap<>();
     private static final String[] SHAPES =
         {"cube", "cylinder", "sphere", "pyramid", "cone", "torus", "ring", "plus", "octahedron",
-            "hexprism", "triprism", "starprism", "heart"};
+            "hexprism", "triprism", "starprism", "heart", "hollowbox", "starpoly"};
 
     private MeshRenderer()
     {}
@@ -128,6 +128,8 @@ public final class MeshRenderer
             case "triprism" -> MeshShapes.prism(3);
             case "starprism" -> MeshShapes.starPrism(5);
             case "heart" -> MeshShapes.heart(64);
+            case "hollowbox" -> MeshShapes.hollowBox(0.08F);
+            case "starpoly" -> MeshShapes.starPoly(5);
             default -> MeshShapes.cube();
         });
     }
