@@ -1,0 +1,216 @@
+package dev.bbsae.client.render;
+
+import com.mojang.blaze3d.platform.GlStateManager;
+import dev.bbsae.BbsAeAddon;
+import dev.bbsae.comp.AmEffectDef;
+import dev.bbsae.comp.AmEffectLibrary;
+import dev.bbsae.comp.CompEffect;
+import dev.bbsae.comp.CompLayer;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Executes the reference-compatible catalogue from {@link AmEffectLibrary}.
+ *
+ * <p>One program per definition, compiled on first use and cached until the caches are cleared.
+ * The wrapper injects the standard uniform set ({@code Size/Texel/Layer*}) and one uniform per
+ * declared parameter, so a definition only supplies its {@code main()} body.</p>
+ */
+public final class AmEffectRenderer
+{
+    private static final Map<String, GlslProgram> PROGRAMS = new HashMap<>();
+
+    private AmEffectRenderer()
+    {}
+
+    public static GlFramebuffer apply(CompLayer layer, CompEffect effect, GlFramebuffer input,
+                                      CompRenderContext context, EffectSpace space)
+    {
+        AmEffectDef definition = effect == null ? null : AmEffectLibrary.get(effect.type);
+
+        if (definition == null || input == null)
+        {
+            return input;
+        }
+
+        if (AmEffectLibrary.isNeutral(effect))
+        {
+            return input;
+        }
+
+        GlslProgram program = program(definition);
+
+        if (program == null)
+        {
+            return input;
+        }
+
+        GlFramebuffer output = FboPool.acquire(input.width, input.height);
+
+        output.begin();
+        GlStateManager._disableBlend();
+        program.use();
+        PassRenderer.bind(program, "Source", 0, input);
+
+        space.bind(program);
+        program.set("Size", input.width, input.height);
+        program.set("Texel", 1F / Math.max(1, input.width), 1F / Math.max(1, input.height));
+        program.set("Time", context == null ? 0F : context.time);
+
+        for (AmEffectDef.Param param : definition.params)
+        {
+            program.set("u_" + param.key, effect.valueF(param.key, param.defaultValue));
+        }
+
+        for (AmEffectDef.ColorParam color : definition.colors)
+        {
+            setColor(program, "u_" + color.key, effect.color(color.key, color.defaultValue));
+        }
+
+        program.drawFullscreen();
+
+        return output;
+    }
+
+    static GlslProgram program(AmEffectDef definition)
+    {
+        GlslProgram cached = PROGRAMS.get(definition.id);
+
+        if (cached != null)
+        {
+            return cached;
+        }
+
+        String name = "am_" + definition.id;
+
+        try
+        {
+            GlslProgram program = new GlslProgram(name, ShaderSources.VERTEX, source(definition));
+
+            if (!program.isValid())
+            {
+                BbsAeAddon.LOGGER.error("Reference effect {} could not be compiled", definition.id);
+
+                return null;
+            }
+
+            PROGRAMS.put(definition.id, program);
+
+            return program;
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.error("Reference effect {} failed to build", definition.id, e);
+
+            return null;
+        }
+    }
+
+    /** Fragment source for one definition, with the shared helpers and uniforms prepended. */
+    static String source(AmEffectDef definition)
+    {
+        StringBuilder code = new StringBuilder(4096);
+
+        code.append("""
+            #version 150 core
+
+            uniform sampler2D Source;
+            uniform vec2 Size;
+            uniform vec2 Texel;
+            uniform vec2 LayerSize;
+            uniform vec3 LayerU;
+            uniform vec3 LayerV;
+            uniform vec2 LayerX;
+            uniform vec2 LayerY;
+            uniform vec2 LayerOrigin;
+            uniform float Time;
+
+            in vec2 vUv;
+            out vec4 fragColor;
+
+            float luma(vec3 c)
+            {
+                return dot(c, vec3(0.2126, 0.7152, 0.0722));
+            }
+
+            vec3 rgb2hsv(vec3 c)
+            {
+                vec4 k = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+                vec4 p = mix(vec4(c.bg, k.wz), vec4(c.gb, k.xy), step(c.b, c.g));
+                vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+                float d = q.x - min(q.w, q.y);
+                float e = 1.0e-10;
+
+                return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+            }
+
+            vec3 hsv2rgb(vec3 c)
+            {
+                vec4 k = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+                vec3 p = abs(fract(c.xxx + k.xyz) * 6.0 - k.www);
+
+                return c.z * mix(k.xxx, clamp(p - k.xxx, 0.0, 1.0), c.y);
+            }
+
+            float hash(vec2 p)
+            {
+                return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+            }
+
+            vec2 layerUv(vec2 uv)
+            {
+                return vec2(dot(LayerU.xy, uv) + LayerU.z, dot(LayerV.xy, uv) + LayerV.z);
+            }
+
+            """);
+
+        for (AmEffectDef.Param param : definition.params)
+        {
+            code.append("uniform float u_").append(param.key).append(";\n");
+        }
+
+        for (AmEffectDef.ColorParam color : definition.colors)
+        {
+            code.append("uniform vec4 u_").append(color.key).append(";\n");
+        }
+
+        code.append('\n').append(definition.body);
+
+        return code.toString();
+    }
+
+    /** Name/source pairs for the headless compile test. */
+    public static List<String[]> sources()
+    {
+        List<String[]> list = new ArrayList<>();
+
+        for (AmEffectDef definition : AmEffectLibrary.all())
+        {
+            list.add(new String[] {"am_" + definition.id, source(definition)});
+        }
+
+        return list;
+    }
+
+    public static void delete()
+    {
+        for (GlslProgram program : PROGRAMS.values())
+        {
+            program.delete();
+        }
+
+        PROGRAMS.clear();
+    }
+
+    private static void setColor(GlslProgram program, String uniform, int argb)
+    {
+        program.set(uniform,
+            ((argb >> 16) & 0xFF) / 255F,
+            ((argb >> 8) & 0xFF) / 255F,
+            (argb & 0xFF) / 255F,
+            ((argb >> 24) & 0xFF) / 255F);
+    }
+}

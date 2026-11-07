@@ -40,13 +40,33 @@
 - 着色器 `ShaderSources.COMPOSITE` 新增 HSV 与 YUV 双向转换；所有分支统一 clamp 到 0..1。
 - 新增 `BlendModesTest`：真实 GL 下逐模式合成 1×1 像素并与公式对照（含蒙版/排除的 alpha 语义）。
 
-### 2.2 检查器分组分割线
+### 2.2 数据驱动的效果运行时（第 2 批的基础）
+
+新增三层，效果不再需要写进 `EffectRenderer` 的巨型 switch：
+
+- `comp/AmEffectDef`：id、显示名、分类、参数表（float/color）、`main()` 片段、零点参数。
+- `comp/AmEffectLibrary`：首批 7 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
+  弯曲、描边），参数名/范围/默认值与参考应用一致。
+- `client/render/AmEffectRenderer`：按定义拼装完整 fragment（标准 uniform + 参数 uniform +
+  共享 `luma/rgb2hsv/hsv2rgb/hash`），懒编译并缓存；`sources()` 供无头编译测试逐条验证。
+- `CompEffectRegistry` 在启动时把定义复制成普通条目，因此效果库、参数滑杆、颜色选择器、
+  关键帧通道全部自动获得，无需改 UI 代码。
+
+零点契约由 `AmEffectLibrary.isNeutral` 实现：`zeroKey` / `z(...)` 声明的参数全为 0 时
+直接跳过该效果（返回输入 FBO）。首批效果中 色温/卡通/长阴影/弯曲/描边 都有明确零点，
+色彩平衡与高光阴影在多参数全 0 时同样判定为原图。
+
+验证：`ShaderCompileTest` 现在会编译全部 AM 片段（含真实 GLSL 链接），
+`AmEffectLibraryTest` 校验注册/渲染器/参数表/零点语义，`EffectPipelineTest` 的对照表
+最后一行已经能看到这 7 个效果的真实渲染结果（`docs/verify/effect-pipeline.png`）。
+
+### 2.3 检查器分组分割线
 
 新增 `UIInspectorDivider`：每个 `UISection` 之前插入一条「亮边 + 暗边」的两像素凹槽，
 在 `refreshInspector()` 组装完成后统一注入，不侵入十几个 section 构建方法。
 段标题因此成为右侧面板最醒目的层级，板块边界一眼可见。
 
-## 3. 效果库对齐（第 2 批起）
+## 3. 效果库对齐（后续批次）
 
 ### 3.1 参考清单的规模
 
@@ -91,8 +111,8 @@ switch 中拆出来：
 
 ### 3.4 分批落地顺序
 
-1. **混合与透明度**：24 种混合 + 蒙版/排除（本次已完成其中 17 种新公式）
-2. **变形核心**：bend、pinch/bulge、circular ripple、kaleidoscope、hex shift、polar、mirror、
+1. **混合与透明度**：24 种混合 + 蒙版/排除（已完成；见 2.1）
+2. **变形核心**（弯曲已完成；其余待做）：bend、pinch/bulge、circular ripple、kaleidoscope、hex shift、polar、mirror、
    displace map、curl、glass、fractal warp
 3. **模糊**：box/gaussian/directional/lens/radial/motion/chromatic/mask blur（复用已有两次
    ping-pong 模糊骨架，按 AM 的半径/质量参数暴露）

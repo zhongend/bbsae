@@ -7,8 +7,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The small, curated effect catalogue. The goal is not AE's 239 effects: it is a useful set for
- * screen-space motion graphics, each of which maps to one of the renderer's shader families.
+ * The effect catalogue. Hand-written entries cover the classic families (blur, colour, distort,
+ * generate, key, style); entries from {@link AmEffectLibrary} are appended from data so a new
+ * reference-compatible effect is a definition, not a switch branch and a UI change.
  */
 public final class CompEffectRegistry
 {
@@ -479,6 +480,28 @@ public final class CompEffectRegistry
 
     private CompEffectRegistry()
     {}
+
+    /* Reference-compatible catalogue: definitions are data, so the library and the controls are
+     * generated instead of hand-written. Appended after the curated entries. */
+    static
+    {
+        for (AmEffectDef definition : AmEffectLibrary.all())
+        {
+            Definition entry = new Definition(definition.id, definition.name, definition.category);
+
+            for (AmEffectDef.Param param : definition.params)
+            {
+                entry.p(param.key, param.label, param.min, param.max, param.defaultValue, param.step);
+            }
+
+            for (AmEffectDef.ColorParam color : definition.colors)
+            {
+                entry.c(color.key, color.label, color.defaultValue);
+            }
+
+            add(entry);
+        }
+    }
 
     private static void add(Definition definition)
     {

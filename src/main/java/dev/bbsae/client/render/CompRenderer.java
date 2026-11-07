@@ -1478,6 +1478,7 @@ public final class CompRenderer
          * wiped, otherwise a later acquire can hand out a deleted texture. */
         CompLayerSourceCache.clear();
         CompViewportRenderer.clearCaches();
+        AmEffectRenderer.delete();
         FboPool.clear();
         CompRenderCache.clear();
         CompPrecache.clearAll();

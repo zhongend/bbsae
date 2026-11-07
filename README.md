@@ -118,7 +118,7 @@ export** without touching the `.dat` film format.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.25.jar` SHA-256: `9BFB6141B07C962B0FF975112F3B8C748331BFE1DE24A9D987FB0D2DA2D0A929`.
+`bbsae-0.25.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -196,6 +196,11 @@ encoding.
   the real GLSL and compares them with the documented formula, including the two mask modes.
 - **Inspector dividers.** Each collapsible section is preceded by a two-pixel hairline groove, so
   the right-hand panel reads as groups instead of one long run of headers.
+- **Data-driven effect runtime + first reference batch.** Effects are now definitions (parameter
+  schema + one fragment body) compiled lazily: 色彩平衡、色温、高光与阴影、卡通、长阴影、弯曲、
+  描边 ship in the new `AM · 调色` / `AM · 风格化` / `AM · 变形` groups. The library, sliders,
+  colour pickers and keyframe channels are generated from the definition, and the zero-value
+  contract skips the pass so those effects return the original layer at 0.
 - Research and roadmap for the effect-library parity work: [`docs/EFFECT-LIBRARY-PLAN.zh.md`](docs/EFFECT-LIBRARY-PLAN.zh.md).
 
 ## What's new in 0.24 — wave/chroma/itrp/蒙版 fix round + 点跟踪器

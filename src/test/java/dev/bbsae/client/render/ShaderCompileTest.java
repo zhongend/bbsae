@@ -80,6 +80,17 @@ public class ShaderCompileTest
                 GL20.glDeleteProgram(program);
                 assertEquals(GL11.GL_NO_ERROR, GL11.glGetError(), "GL error after shader compile: " + names[i]);
             }
+
+            /* The data-driven catalogue is compiled through the same path, so a body with a typo
+             * fails the build instead of the first time a user adds that effect. */
+            for (String[] source : AmEffectRenderer.sources())
+            {
+                int program = link(source[0], ShaderSources.VERTEX, source[1]);
+
+                assertTrue(program != 0, "reference effect " + source[0] + " failed to link");
+                GL20.glDeleteProgram(program);
+                assertEquals(GL11.GL_NO_ERROR, GL11.glGetError(), "GL error after reference effect: " + source[0]);
+            }
         }
         finally
         {

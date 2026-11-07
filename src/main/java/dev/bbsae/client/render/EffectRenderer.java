@@ -1,6 +1,7 @@
 package dev.bbsae.client.render;
 
 import com.mojang.blaze3d.platform.GlStateManager;
+import dev.bbsae.comp.AmEffectLibrary;
 import dev.bbsae.comp.CompEffect;
 import dev.bbsae.comp.CompLayer;
 import mchorse.bbs_mod.utils.colors.Colors;
@@ -47,12 +48,19 @@ public final class EffectRenderer
 
     public static boolean supports(String type)
     {
-        return type != null && SUPPORTED.contains(type);
+        return type != null && (SUPPORTED.contains(type) || AmEffectLibrary.supports(type));
     }
 
     public static java.util.Set<String> supportedTypes()
     {
-        return SUPPORTED;
+        java.util.Set<String> types = new java.util.LinkedHashSet<>(SUPPORTED);
+
+        for (dev.bbsae.comp.AmEffectDef definition : AmEffectLibrary.all())
+        {
+            types.add(definition.id);
+        }
+
+        return types;
     }
 
     public static GlFramebuffer apply(CompLayer layer, CompEffect effect, GlFramebuffer input, CompRenderContext context, org.joml.Matrix4f world)
@@ -202,7 +210,7 @@ public final class EffectRenderer
             case "halftone" -> effect.valueF("strength", 0.5F) <= eps;
             case "emboss" -> effect.valueF("amount", 1F) <= eps;
             case "mirror" -> effect.valueF("opacity", 1F) <= eps;
-            default -> false;
+            default -> AmEffectLibrary.isNeutral(effect);
         };
     }
 
@@ -337,7 +345,9 @@ public final class EffectRenderer
             case "depth_dof":
                 return depth(input, effect, context, type, space);
             default:
-                return input;
+                return AmEffectLibrary.supports(type)
+                    ? AmEffectRenderer.apply(layer, effect, input, context, space)
+                    : input;
         }
     }
 
