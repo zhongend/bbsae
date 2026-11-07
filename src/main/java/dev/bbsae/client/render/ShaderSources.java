@@ -50,13 +50,14 @@ public final class ShaderSources
         uniform vec2 TexOffset;
         uniform float TexAngle;
 
+
         in vec2 vUv;
         in vec3 vNormal;
         out vec4 fragColor;
 
         void main()
         {
-            vec2 uv = vUv - 0.5;
+            vec2 uv = vUv;
             float ca = cos(radians(TexAngle));
             float sa = sin(radians(TexAngle));
             uv = vec2(ca * uv.x - sa * uv.y, sa * uv.x + ca * uv.y);

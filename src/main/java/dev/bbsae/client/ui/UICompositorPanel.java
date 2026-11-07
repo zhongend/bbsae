@@ -7916,8 +7916,80 @@ public class UICompositorPanel extends UIDashboardPanel
         CompLayer card = new CompLayer("cube_card", "Cube Card", "shape");
         card.x = this.doc.width / 2F;
         card.y = this.doc.height / 2F;
-        card.width = 480F;
-        card.height = 320F;
+        if (Boolean.getBoolean("bbsae.debugAllShapes"))
+        {
+            String[] names =
+            {
+                "cube", "cylinder", "sphere", "pyramid", "cone", "torus", "ring", "plus",
+                "octahedron", "hexprism", "triprism", "starprism", "heart", "hollowbox",
+                "starpoly", "quad",
+            };
+
+            this.doc.layers.clear();
+            this.doc.width = 1280;
+            this.doc.height = 720;
+            this.doc.background = 0xFF101014;
+
+            for (int i = 0; i < names.length; i++)
+            {
+                int column = i % 4;
+                int row = i / 4;
+                CompLayer tile = new CompLayer("shape_" + names[i], names[i], "shape");
+
+                tile.x = 160F + column * 320F;
+                tile.y = 120F + row * 175F;
+                tile.width = 220F;
+                tile.height = 130F;
+                tile.shapes.add(CompShape.rect("tile_shape", 0F, 0F, 220F, 130F, 0xFFFFFFFF));
+
+                CompEffect gradient = CompEffectRegistry.create("gradient_ramp", 1);
+
+                gradient.putColor("start", 0xFF7C3AED);
+                gradient.putColor("end", 0xFF06B6D4);
+                gradient.put("angle", 45D);
+                tile.effects.add(gradient);
+                tile.effects.add(CompEffectRegistry.create("s3d_" + names[i], 1));
+                tile.out = this.doc.duration;
+                this.doc.layers.add(tile);
+            }
+
+            CompLayer camera = new CompLayer("camera_3d", "3D Camera", "camera");
+
+            camera.width = 100F;
+            camera.height = 100F;
+            camera.threeD = true;
+            camera.camera3D = true;
+            camera.z = this.defaultCameraZ();
+            camera.cameraZ = camera.z;
+            camera.cameraTargetX = this.doc.width / 2F;
+            camera.cameraTargetY = this.doc.height / 2F;
+            camera.cameraTargetZ = 0F;
+            this.doc.layers.add(camera);
+            this.doc.activeCameraId = camera.id;
+            this.selectedLayer = this.doc.layers.get(0);
+            this.selectedIds.clear();
+            this.selectedIds.add(this.selectedLayer.id);
+            this.time = 2F;
+            this.startScreenOpen = false;
+
+            if (this.startScreen != null)
+            {
+                this.startScreen.setVisible(false);
+            }
+
+            this.inspectorPage = PAGE_EFFECTS;
+            dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+            this.refreshLayers();
+            this.refreshInspector();
+            this.refreshSheets();
+            this.trackTimeline.fit();
+            this.updatePlayLabel();
+
+            return;
+        }
+
+        card.width = 420F;
+        card.height = 260F;
         card.threeD = !Boolean.getBoolean("bbsae.debugCube2D");
         card.z = 120F;
         card.rotationY = card.threeD ? 24F : 0F;

@@ -116,6 +116,15 @@ public final class MeshRenderer
             .scale(width * scale, height * scale, depth * scale);
         Matrix4f mvp = new Matrix4f(projection).mul(localMatrix);
 
+        if (Boolean.getBoolean("bbsae.debugMeshLog"))
+        {
+            org.slf4j.LoggerFactory.getLogger("bbsae").info(
+                "mesh {} local={} layer {}x{} output {}x{} mvp m00={} m11={} m22={} m33={} m30={} m31={} verts={} idx={}",
+                shape, local, layer.width, layer.height, output.width, output.height,
+                mvp.m00(), mvp.m11(), mvp.m22(), mvp.m33(), mvp.m30(), mvp.m31(),
+                mesh.data.length / Mesh.STRIDE, mesh.indices.length);
+        }
+
         output.begin();
         GlStateManager._disableBlend();
         GlStateManager._disableDepthTest();
@@ -140,6 +149,7 @@ public final class MeshRenderer
             Math.max(0.01F, effect.valueF("tex_repeat", 1F)));
         program.set("TexOffset", effect.valueF("tex_offset_x", 0F), effect.valueF("tex_offset_y", 0F));
         program.set("TexAngle", effect.valueF("tex_angle", 0F));
+
         mesh.draw();
         GL11.glFrontFace(GL11.GL_CCW);
         GlStateManager._disableCull();

@@ -107,6 +107,7 @@ loom {
             vmArg "-Dbbsae.debugCompShot=" + (project.findProperty("bbsaeCompShot") ?: "")
             vmArg "-Dbbsae.debugShape=" + (project.findProperty("bbsaeShape") ?: "s3d_cube")
             vmArg "-Dbbsae.debugMeshLog=" + (project.findProperty("bbsaeMeshLog") ?: "false")
+            vmArg "-Dbbsae.debugAllShapes=" + (project.findProperty("bbsaeAllShapes") ?: "false")
             vmArg "-Dbbsae.debugCompShotTicks=" + (project.findProperty("bbsaeCompShotTicks") ?: "300")
             vmArg "-Dbbsae.debugWindow=" + (project.findProperty("bbsaeWindow") ?: "")
             vmArg "-Dbbsae.debugInspectorScroll=" + (project.findProperty("bbsaeInspectorScroll") ?: "")

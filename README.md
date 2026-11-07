@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.59.jar`](https://github.com/zhongend/bbsae/releases/download/v0.59/bbsae-0.59.jar)
-   from the **v0.59** release (the asset is updated with each source push).
+1. Download [`bbsae-0.60.jar`](https://github.com/zhongend/bbsae/releases/download/v0.60/bbsae-0.60.jar)
+   from the **v0.60** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.59.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.60.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.59.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.60.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,18 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.60 — 3D shape rendering verified in the client
+
+- The "gaps" between the cube's faces were **not geometry**: with a full-bleed source texture the
+  faces meet exactly (`docs/verify/round33-cube-fill.png`). Earlier screenshots sampled the layer's
+  transparent margins onto the faces, which is expected for a source with alpha padding.
+- New `bbsaeAllShapes` debug scenario builds a 16-primitive grid in one composition, and
+  `bbsaeCompShot` writes the exact rendered frame for inspection.
+- **Open issue (documented, not claimed fixed):** mesh effects on **2D** layers still sample the
+  whole composition texture instead of the layer rectangle, so their appearance there is wrong. The
+  baked 3D-layer path is verified correct.
+- 334 tests green; 130 effects.
 
 ## What's new in 0.59 — 3D shapes bake into the layer again
 
