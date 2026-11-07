@@ -49,6 +49,10 @@ public final class ShaderSources
         uniform vec2 TexRepeat;
         uniform vec2 TexOffset;
         uniform float TexAngle;
+        /* Mesh UVs are 0..1 per primitive; these map them onto the layer's rectangle inside the
+         * source framebuffer (identity in the layer-local bake). */
+        uniform vec2 UvScale;
+        uniform vec2 UvOffset;
 
 
         in vec2 vUv;
@@ -57,11 +61,14 @@ public final class ShaderSources
 
         void main()
         {
-            vec2 uv = vUv;
+            vec2 uv = UvOffset + vUv * UvScale;
             float ca = cos(radians(TexAngle));
             float sa = sin(radians(TexAngle));
             uv = vec2(ca * uv.x - sa * uv.y, sa * uv.x + ca * uv.y);
-            uv = uv * max(TexRepeat, vec2(0.01)) + 0.5 + TexOffset;
+            /* Repeat around the tile centre; with repeat = 1 and offset = 0 this is the identity,
+             * so the mapped UV reaches the shader unchanged. The old +0.5 shift sampled the wrong
+             * quadrant of the source and made textured 3D shapes come out blank. */
+            uv = (uv - 0.5) * max(TexRepeat, vec2(0.01)) + 0.5 + TexOffset;
             uv = length(TexRepeat - vec2(1.0)) > 0.0001 ? fract(uv) : clamp(uv, 0.0, 1.0);
             vec4 texel = texture(Source, uv);
             float ndl = max(dot(normalize(vNormal), normalize(LightDir)), 0.0);

@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.60.jar`](https://github.com/zhongend/bbsae/releases/download/v0.60/bbsae-0.60.jar)
-   from the **v0.60** release (the asset is updated with each source push).
+1. Download [`bbsae-0.61.jar`](https://github.com/zhongend/bbsae/releases/download/v0.61/bbsae-0.61.jar)
+   from the **v0.61** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.60.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.61.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.60.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.61.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,18 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.61 — 3D shapes now work on 2D layers too
+
+- Composition-space mesh effects render into a **layer-sized surface** first and then place that
+  surface as a quad at the layer's projected rectangle. The previous path sampled the whole
+  composition on every face, which is why they looked wrong on 2D layers.
+- Fixed a long-standing fragment-shader bug: `uv = uv * repeat + 0.5` shifted every textured mesh
+  sample into the wrong quadrant of the source (shapes appeared blank or misplaced). It is now
+  `(uv - 0.5) * repeat + 0.5 + offset`, an identity at the defaults.
+- Evidence: `docs/verify/round34-all-shapes.png` shows **all 16 primitives in one frame** on 2D
+  layers, and `docs/verify/round34-cube3d.png` is the 3D baked path.
+- 334 tests green; 130 effects.
 
 ## What's new in 0.60 — 3D shape rendering verified in the client
 
