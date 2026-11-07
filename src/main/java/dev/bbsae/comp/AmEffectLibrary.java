@@ -475,6 +475,27 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_edge_light", "边缘光", "AM · 风格化", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float ring = 0.0;
+
+                for (int i = 0; i < 16; i++)
+                {
+                    float a = float(i) * 0.3926991;
+                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(Size, vec2(1.0)));
+                    ring = max(ring, texture(Source, clamp(vUv + offset, 0.0, 1.0)).a);
+                }
+
+                float edge = clamp(ring - c.a, 0.0, 1.0) * clamp(u_strength, 0.0, 2.0);
+                fragColor = vec4(mix(c.rgb, u_color.rgb, edge), c.a);
+            }
+            """, 0F, "radius")
+            .p("radius", "范围", 0F, 60F, 8F, 1F)
+            .p("strength", "强度", 0F, 2F, 1F, 0.01F)
+            .c("color", "边缘颜色", 0xFFFFFFFF));
+
         add(new AmEffectDef("am_desaturate", "去色", "AM · 调色", """
             void main()
             {
@@ -738,6 +759,12 @@ public final class AmEffectLibrary
                 fragColor = vec4(c.rgb, c.a * inside.x * inside.y);
             }
             """, 0F, null)
+            .neutralWhen((effect) ->
+                Math.abs(effect.valueF("scale", 2F) - 1F) <= 0.0001F
+                    && Math.abs(effect.valueF("offset_x", 0F)) <= 0.0001F
+                    && Math.abs(effect.valueF("offset_y", 0F)) <= 0.0001F
+                    && Math.abs(effect.valueF("gap", 0F)) <= 0.0001F
+                    && effect.valueF("mirror", 0F) < 0.5F)
             .p("scale", "平铺数", 0.1F, 12F, 2F, 0.01F)
             .p("offset_x", "偏移 X", -1F, 1F, 0F, 0.01F)
             .p("offset_y", "偏移 Y", -1F, 1F, 0F, 0.01F)
@@ -1234,6 +1261,12 @@ public final class AmEffectLibrary
                 fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a * keep);
             }
             """, 0F, null)
+            .neutralWhen((effect) ->
+                effect.valueF("size", 16F) <= 1.01F
+                    && Math.abs(effect.valueF("offset_x", 0F)) <= 0.0001F
+                    && Math.abs(effect.valueF("offset_y", 0F)) <= 0.0001F
+                    && Math.abs(effect.valueF("vignette", 0F)) <= 0.0001F
+                    && Math.abs(effect.valueF("saturation", 0F)) <= 0.0001F)
             .p("size", "像素大小", 1F, 128F, 16F, 1F)
             .p("stretch", "纵向拉伸", 0.05F, 4F, 1F, 0.01F)
             .p("offset_x", "偏移 X", -1F, 1F, 0F, 0.01F)
@@ -1282,6 +1315,11 @@ public final class AmEffectLibrary
         if (definition == null)
         {
             return false;
+        }
+
+        if (definition.neutralPredicate != null && definition.neutralPredicate.test(effect))
+        {
+            return true;
         }
 
         List<String> keys = new ArrayList<>();

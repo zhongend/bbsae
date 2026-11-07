@@ -84,6 +84,8 @@ public class EffectNeutralTest
         {"am_circular_ripple", "strength", "0"},
         {"am_swirl", "angle", "0"},
         {"am_mirror_warp", "strength", "0"},
+        {"am_tile", "scale", "1"},
+        {"am_pixelate", "size", "1"},
     };
 
     /** Effects that legitimately have no zero state (generators, keyers, quantisers). */
@@ -91,7 +93,7 @@ public class EffectNeutralTest
     {
         "gradient_ramp", "noise_gradient", "checkerboard", "grid", "circle",
         "chroma_key", "luma_key", "posterize", "threshold", "depth_matte",
-        "kaleidoscope", "am_kaleidoscope", "am_pixelate", "am_tile", "am_rotate_tile", "am_hex_tile",
+        "kaleidoscope", "am_kaleidoscope", "am_rotate_tile", "am_hex_tile",
     };
 
     @Test

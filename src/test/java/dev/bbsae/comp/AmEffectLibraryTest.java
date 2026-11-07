@@ -37,7 +37,7 @@ public class AmEffectLibraryTest
             assertTrue(definition.body.contains("fragColor"), "body writes no colour: " + definition.id);
         }
 
-        assertTrue(ids.size() >= 60, "the catalogue should have grown with the overlay batch");
+        assertTrue(ids.size() >= 61, "the catalogue should have grown with the edge-light batch");
     }
 
     @Test
@@ -114,6 +114,9 @@ public class AmEffectLibraryTest
         assertNeutral("am_monochrome", "amount", 0F);
         assertNeutral("am_gradient_overlay", "alpha", 0F);
         assertNeutral("am_radial_gradient", "alpha", 0F);
+        assertNeutral("am_edge_light", "radius", 0F);
+        assertNeutral("am_tile", "scale", 1F);
+        assertNeutral("am_pixelate", "size", 1F);
 
         CompEffect balance = CompEffectRegistry.create("am_color_balance", 1);
 
@@ -145,8 +148,11 @@ public class AmEffectLibraryTest
 
         assertTrue(AmEffectLibrary.isNeutral(effect), id + " must be an identity with " + key + " = 0");
 
-        effect.put(key, 0.5D);
+        /* Probe just past the identity: a value inside the parameter's allowed range that must
+         * change the image (0.5 is below the minimum size of the pixelate effect). */
+        effect.put(key, (double) (value + 1F));
 
-        assertFalse(AmEffectLibrary.isNeutral(effect), id + " must not be an identity with " + key + " = 0.5");
+        assertFalse(AmEffectLibrary.isNeutral(effect),
+            id + " must not be an identity with " + key + " = " + (value + 1F));
     }
 }

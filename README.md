@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.37.jar`](https://github.com/zhongend/bbsae/releases/download/v0.37/bbsae-0.37.jar)
-   from the **v0.37** release (the asset is updated with each source push).
+1. Download [`bbsae-0.38.jar`](https://github.com/zhongend/bbsae/releases/download/v0.38/bbsae-0.38.jar)
+   from the **v0.38** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.37.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.38.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.37.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.38.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,17 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.38 — edge light and a wider zero contract
+
+- **边缘光** (`AM · 风格化`): 16-direction alpha-ring sampling with colour and strength;
+  radius 0 returns the layer untouched. 61 effects total.
+- **Custom identity tests**: `AmEffectDef.neutralWhen(predicate)` covers effects whose neutral value
+  is not zero — 平铺 at scale 1 (offset/gap/mirror zero) and 像素化 at size 1 (no vignette/
+  saturation/offset) now report neutral and skip the pass, exactly like effects whose identity
+  parameter is zero.
+- The neutrality tests were extended accordingly (probe values now respect slider minimums).
+- 321 tests green.
 
 ## What's new in 0.37 — overlay and desaturation batch
 

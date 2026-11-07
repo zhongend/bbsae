@@ -33,6 +33,8 @@ public final class AmEffectDef
     public String iterationsKey;
     /** True when the body samples the composition below the layer ({@code Comp}). */
     public boolean usesComp;
+    /** Extra identity test for effects whose neutral value is not "all keys zero". */
+    public java.util.function.Predicate<CompEffect> neutralPredicate;
 
     public final List<Param> params = new ArrayList<>();
     public final List<ColorParam> colors = new ArrayList<>();
@@ -52,6 +54,14 @@ public final class AmEffectDef
     public AmEffectDef p(String key, String label, float min, float max, float def, float step)
     {
         this.params.add(new Param(key, label, min, max, def, step));
+
+        return this;
+    }
+
+    /** Declares a custom identity test (for example a scale of one rather than zero). */
+    public AmEffectDef neutralWhen(java.util.function.Predicate<CompEffect> predicate)
+    {
+        this.neutralPredicate = predicate;
 
         return this;
     }
