@@ -495,6 +495,111 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_channel_map", "通道映射", "AM · 调色", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float channels[3];
+                channels[0] = c.r;
+                channels[1] = c.g;
+                channels[2] = c.b;
+                int r = int(clamp(u_map_r, 0.0, 2.0));
+                int g = int(clamp(u_map_g, 0.0, 2.0));
+                int b = int(clamp(u_map_b, 0.0, 2.0));
+                fragColor = vec4(channels[r], channels[g], channels[b], c.a);
+            }
+            """, 0F, null)
+            .neutralWhen((effect) ->
+                Math.abs(effect.valueF("map_r", 0F) - 0F) <= 0.0001F
+                    && Math.abs(effect.valueF("map_g", 1F) - 1F) <= 0.0001F
+                    && Math.abs(effect.valueF("map_b", 2F) - 2F) <= 0.0001F)
+            .p("map_r", "红输出（0 R / 1 G / 2 B）", 0F, 2F, 0F, 1F)
+            .p("map_g", "绿输出（0 R / 1 G / 2 B）", 0F, 2F, 1F, 1F)
+            .p("map_b", "蓝输出（0 R / 1 G / 2 B）", 0F, 2F, 2F, 1F));
+
+        add(new AmEffectDef("am_channel_map_hsv", "HSV 通道映射", "AM · 调色", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec3 hsv = rgb2hsv(c.rgb);
+                hsv.x = fract(hsv.x + u_hue_shift / 360.0);
+                hsv.y = clamp(hsv.y * max(u_saturation_gain, 0.0), 0.0, 1.0);
+                hsv.z = clamp(hsv.z * max(u_value_gain, 0.0), 0.0, 1.0);
+                fragColor = vec4(clamp(hsv2rgb(hsv), 0.0, 1.0), c.a);
+            }
+            """, 0F, null)
+            .neutralWhen((effect) ->
+                Math.abs(effect.valueF("hue_shift", 0F)) <= 0.0001F
+                    && Math.abs(effect.valueF("saturation_gain", 1F) - 1F) <= 0.0001F
+                    && Math.abs(effect.valueF("value_gain", 1F) - 1F) <= 0.0001F)
+            .p("hue_shift", "色相偏移", -180F, 180F, 0F, 1F)
+            .p("saturation_gain", "饱和度倍率", 0F, 3F, 1F, 0.01F)
+            .p("value_gain", "明度倍率", 0F, 3F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_fill_behind", "填充背后", "AM · 合成", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float fill = (1.0 - c.a) * clamp(u_amount, 0.0, 1.0);
+                vec3 rgb = mix(c.rgb, u_color.rgb, fill);
+                float alpha = c.a + fill * (1.0 - c.a);
+                fragColor = vec4(rgb, clamp(alpha, 0.0, 1.0));
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .c("color", "填充颜色", 0xFFFFFFFF));
+
+        add(new AmEffectDef("am_solid_matte", "实色遮罩", "AM · 合成", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                fragColor = vec4(mix(c.rgb, u_color.rgb, clamp(u_amount, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .c("color", "实色", 0xFF1A1A1A));
+
+        add(new AmEffectDef("am_matte_fringe", "遮罩边缘", "AM · 合成", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float ring = 0.0;
+
+                for (int i = 0; i < 12; i++)
+                {
+                    float a = float(i) * 0.5235988;
+                    vec2 offset = vec2(cos(a), sin(a)) * (u_width / max(LayerSize, vec2(1.0)));
+                    ring = max(ring, sampleLayer(luv + offset).a);
+                }
+
+                float fringe = clamp(ring - c.a, 0.0, 1.0) * clamp(u_alpha, 0.0, 1.0);
+                fragColor = vec4(mix(c.rgb, u_color.rgb, fringe), clamp(c.a + fringe, 0.0, 1.0));
+            }
+            """, 0F, "width")
+            .p("width", "宽度（像素）", 0F, 20F, 2F, 0.5F)
+            .p("alpha", "强度", 0F, 1F, 1F, 0.01F)
+            .c("color", "边缘颜色", 0xFFFF5533));
+
+        add(new AmEffectDef("am_flicker", "闪烁", "AM · 透明度", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float tick = floor(Time * max(u_speed, 0.0) * 30.0);
+                float rnd = hash(vec2(tick, u_seed));
+                float alpha = clamp(c.a * (1.0 - u_amount * rnd), 0.0, 1.0);
+                fragColor = vec4(c.rgb, alpha);
+            }
+            """, 0F, "amount")
+            .p("amount", "幅度", 0F, 1F, 0.5F, 0.01F)
+            .p("speed", "速度", 0F, 30F, 8F, 0.1F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
+
         add(new AmEffectDef("am_border", "边框", "AM · 绘制", """
             void main()
             {

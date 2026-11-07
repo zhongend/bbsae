@@ -37,7 +37,7 @@ public class AmEffectLibraryTest
             assertTrue(definition.body.contains("fragColor"), "body writes no colour: " + definition.id);
         }
 
-        assertTrue(ids.size() >= 89, "the catalogue should have grown with the border/beam batch");
+        assertTrue(ids.size() >= 95, "the catalogue should have grown with the channel/composite batch");
     }
 
     @Test
@@ -145,6 +145,12 @@ public class AmEffectLibraryTest
         assertNeutral("am_hex_array", "intensity", 0F);
         assertNeutral("am_color_separate", "amount", 0F);
         assertNeutral("am_stroke_taper", "width", 0F);
+        assertNeutral("am_channel_map", "map_r", 0F);
+        assertNeutral("am_channel_map_hsv", "hue_shift", 0F);
+        assertNeutral("am_fill_behind", "amount", 0F);
+        assertNeutral("am_solid_matte", "amount", 0F);
+        assertNeutral("am_matte_fringe", "width", 0F);
+        assertNeutral("am_flicker", "amount", 0F);
 
         CompEffect balance = CompEffectRegistry.create("am_color_balance", 1);
 
