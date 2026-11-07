@@ -300,6 +300,7 @@ public class BbsAeClient implements BBSAddonMod
          * LAST here was too late in practice: the BBS preview layer could sample the previous
          * composition frame, producing a scanlined feedback ghost in the exported video. */
         WorldRenderEvents.AFTER_TRANSLUCENT.register((context) -> BbsPreviewBridge.captureFrame());
+        WorldRenderEvents.AFTER_ENTITIES.register((context) -> BbsPreviewBridge.captureEarlyWorldForCustomSize());
     }
 
     /**

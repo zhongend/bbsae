@@ -89,6 +89,8 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
 
         boolean external = !isFilmEditorOpen();
 
+        BbsPreviewBridge.beginOverlayRendering();
+
         try
         {
             for (CompInstance instance : instances)
@@ -175,6 +177,7 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
         }
         finally
         {
+            BbsPreviewBridge.endOverlayRendering();
             RenderSystem.setProjectionMatrix(previous, VertexSorter.BY_Z);
             RenderSystem.depthFunc(previousDepthFunc);
 

@@ -46,6 +46,34 @@ import net.minecraft.client.MinecraftClient;
  */
 public final class BbsPreviewBridge
 {
+    /** True while CompositionOverlay is drawing: a world capture then would capture the
+     * composition itself and feed it back into a BBS preview layer. */
+    private static boolean overlayRendering;
+
+    public static void beginOverlayRendering()
+    {
+        overlayRendering = true;
+    }
+
+    public static void endOverlayRendering()
+    {
+        overlayRendering = false;
+    }
+
+    /**
+     * Film-editor camera preview renders with BBS' custom size. Its frame overlays can run before
+     * AFTER_TRANSLUCENT, so the late copy ends up containing the previous composition. Take the
+     * clean copy after entities instead; the editor preview does not need the translucent pass to
+     * avoid the feedback ghosts.
+     */
+    public static void captureEarlyWorldForCustomSize()
+    {
+        if (mchorse.bbs_mod.client.BBSRendering.isCustomSize())
+        {
+            SceneColor.capture();
+        }
+    }
+
     /** BBS camera clips are authored in ticks; the composition timeline is in seconds. */
     private static final float TICKS_PER_SECOND = 20F;
 
@@ -332,6 +360,11 @@ public final class BbsPreviewBridge
     /** Force a world copy right now; used on the first overlay frame, before LAST runs again. */
     public static void captureWorldNow()
     {
+        if (overlayRendering)
+        {
+            return;
+        }
+
         SceneColor.capture();
 
         if (depthRequested)
@@ -512,7 +545,12 @@ public final class BbsPreviewBridge
 
         if (editorNeeds || exportNeeds)
         {
-            SceneColor.capture();
+            /* Custom-size preview/recording already captured after entities; a late copy here can
+             * contain the composition overlay and become a feedback ghost. */
+            if (!mchorse.bbs_mod.client.BBSRendering.isCustomSize())
+            {
+                SceneColor.capture();
+            }
 
             /* Depth is copied in the same pass, from the same framebuffer, so colour and depth can
              * never come from different frames. It is only requested when an effect samples it:
