@@ -466,6 +466,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private static final int DRAG_ROTATE = 4;
             private static final int DRAG_CAMERA_BODY = 5;
             private static final int DRAG_CAMERA_TARGET = 6;
+    private static final int DRAG_GIZMO = 7;
 
             private int dragMode = DRAG_NONE;
             private int dragHandle;
@@ -491,6 +492,17 @@ public class UICompositorPanel extends UIDashboardPanel
             private float startScreenAngle;
             private float cameraStartTargetX;
             private float cameraStartTargetY;
+
+            /* 3D translate gizmo drag. Axis direction and pixels-per-unit are captured when the
+             * drag starts so the layer follows the pointer even while the camera moves. */
+            private int gizmoAxisIndex = -1;
+            private String gizmoLayerId;
+            private int gizmoStartMouseX;
+            private int gizmoStartMouseY;
+            private float gizmoStartValue;
+            private float gizmoDirX;
+            private float gizmoDirY;
+            private float gizmoPixelsPerUnit;
 
             /* 3D viewport navigation state. Absolute snapshots are used instead of incremental
              * deltas: applying "delta since the last event" to a camera that already moved makes
@@ -1193,6 +1205,13 @@ public class UICompositorPanel extends UIDashboardPanel
                         }
                     }
 
+                    CompLayer primary = UICompositorPanel.this.selectedLayer;
+
+                    if (primary != null && !"camera".equals(primary.type))
+                    {
+                        this.renderViewportTransformGizmo(context, primary, renderContext, camera);
+                    }
+
                     CompLayer cameraLayer = doc.activeCamera(UICompositorPanel.this.time);
 
                     if (cameraLayer != null)
@@ -1401,6 +1420,189 @@ public class UICompositorPanel extends UIDashboardPanel
                 context.batcher.textShadow(label, ex + 12F, ey - 12F, color);
             }
 
+            /* ------------------------------------------------------- 3D translate gizmo */
+
+            /**
+             * Screen geometry of one gizmo axis: {originX, originY, dirX, dirY, pixelsPerUnit,
+             * lengthPixels}. Length 0 means the axis points almost straight at the camera, where a
+             * screen drag cannot express depth; such an axis is drawn but not hit-tested.
+             */
+            private float[] viewportGizmoAxis(CompLayer layer, CompRenderContext renderContext,
+                                              dev.bbsae.client.render.CompViewportCamera camera, int axis)
+            {
+                org.joml.Matrix4f world = dev.bbsae.client.render.CompScene.world(renderContext, layer);
+                org.joml.Vector3f origin = world.transformPosition(new org.joml.Vector3f());
+                org.joml.Vector3f direction = new org.joml.Vector3f(
+                    axis == 0 ? 1F : 0F, axis == 1 ? 1F : 0F, axis == 2 ? 1F : 0F);
+
+                world.transformDirection(direction);
+
+                if (direction.lengthSquared() < 0.000001F)
+                {
+                    return null;
+                }
+
+                direction.normalize();
+
+                org.joml.Vector3f probe = new org.joml.Vector3f(origin)
+                    .fma(CompGizmo3D.PROBE_UNITS, direction);
+                org.joml.Vector2f a = camera.project(origin);
+                org.joml.Vector2f b = camera.project(probe);
+
+                if (a == null || b == null)
+                {
+                    return null;
+                }
+
+                float originX = this.area.x + a.x;
+                float originY = this.area.y + a.y;
+                float[] screen = CompGizmo3D.screenAxis(a.x, a.y, b.x, b.y);
+
+                return new float[] {
+                    originX, originY, screen[0], screen[1],
+                    screen[2] / CompGizmo3D.PROBE_UNITS, screen[2]
+                };
+            }
+
+            private int viewportGizmoAxisAt(UIContext context, CompLayer layer, CompRenderContext renderContext,
+                                            dev.bbsae.client.render.CompViewportCamera camera)
+            {
+                if (layer == null || layer.locked || "camera".equals(layer.type))
+                {
+                    return -1;
+                }
+
+                int axes = layer.threeD ? 3 : 2;
+
+                for (int axis = 0; axis < axes; axis++)
+                {
+                    float[] geometry = this.viewportGizmoAxis(layer, renderContext, camera, axis);
+
+                    if (geometry == null || geometry[5] < 12F)
+                    {
+                        continue;
+                    }
+
+                    float tipX = geometry[0] + geometry[2] * CompGizmo3D.ARM_PIXELS;
+                    float tipY = geometry[1] + geometry[3] * CompGizmo3D.ARM_PIXELS;
+                    float distance = CompGizmo3D.distanceToSegment(context.mouseX, context.mouseY,
+                        geometry[0], geometry[1], tipX, tipY);
+
+                    if (distance <= 8F
+                        || Math.abs(context.mouseX - tipX) <= 10F && Math.abs(context.mouseY - tipY) <= 10F)
+                    {
+                        return axis;
+                    }
+                }
+
+                return -1;
+            }
+
+            private void renderViewportTransformGizmo(UIContext context, CompLayer layer,
+                                                      CompRenderContext renderContext,
+                                                      dev.bbsae.client.render.CompViewportCamera camera)
+            {
+                int axes = layer.threeD ? 3 : 2;
+                int[] colors = {0xFFFF5A5A, 0xFF6BE06B, 0xFF5AA9FF};
+                String[] labels = {"X", "Y", "Z"};
+
+                for (int axis = 0; axis < axes; axis++)
+                {
+                    float[] geometry = this.viewportGizmoAxis(layer, renderContext, camera, axis);
+
+                    if (geometry == null)
+                    {
+                        continue;
+                    }
+
+                    boolean usable = geometry[5] >= 12F;
+                    int color = layer.locked ? 0xFF8A6A6A : colors[axis];
+
+                    if (!usable)
+                    {
+                        color = UiGfx.alpha(color, 0.35F);
+                    }
+
+                    float tipX = geometry[0] + geometry[2] * CompGizmo3D.ARM_PIXELS;
+                    float tipY = geometry[1] + geometry[3] * CompGizmo3D.ARM_PIXELS;
+
+                    this.line(context, geometry[0], geometry[1], tipX, tipY, color);
+
+                    float baseX = tipX - geometry[2] * 11F;
+                    float baseY = tipY - geometry[3] * 11F;
+                    float perpX = -geometry[3];
+                    float perpY = geometry[2];
+
+                    this.line(context, tipX, tipY, baseX + perpX * 5F, baseY + perpY * 5F, color);
+                    this.line(context, tipX, tipY, baseX - perpX * 5F, baseY - perpY * 5F, color);
+                    context.batcher.textShadow(labels[axis], tipX + geometry[2] * 7F + 2F,
+                        tipY + geometry[3] * 7F - 3F, color);
+                }
+
+                float[] first = this.viewportGizmoAxis(layer, renderContext, camera, 0);
+                float centerX = first == null ? this.area.x + this.area.w * 0.5F : first[0];
+                float centerY = first == null ? this.area.y + this.area.h * 0.5F : first[1];
+
+                context.batcher.box(centerX - 5F, centerY - 5F, centerX + 5F, centerY + 5F, 0xFF101418);
+                context.batcher.box(centerX - 3F, centerY - 3F, centerX + 3F, centerY + 3F, 0xFFFFFFFF);
+            }
+
+            private void beginGizmoDrag(UIContext context, CompLayer layer, int axis)
+            {
+                float[] geometry = this.viewportGizmoAxis(layer, this.viewportContext(), this.viewport(), axis);
+
+                if (geometry == null || geometry[5] < 12F)
+                {
+                    return;
+                }
+
+                float value = axis == 0 ? layer.transformAt(UICompositorPanel.this.getFrame()).translate.x
+                    : axis == 1 ? layer.transformAt(UICompositorPanel.this.getFrame()).translate.y
+                    : layer.scalarAt("z", layer.z, UICompositorPanel.this.getFrame());
+
+                this.gizmoAxisIndex = axis;
+                this.gizmoLayerId = layer.id;
+                this.gizmoStartMouseX = context.mouseX;
+                this.gizmoStartMouseY = context.mouseY;
+                this.gizmoStartValue = value;
+                this.gizmoDirX = geometry[2];
+                this.gizmoDirY = geometry[3];
+                this.gizmoPixelsPerUnit = Math.max(0.0001F, geometry[4]);
+                this.dragStartX = context.mouseX;
+                this.dragStartY = context.mouseY;
+                this.dragMode = DRAG_GIZMO;
+            }
+
+            private void applyGizmoDrag(UIContext context)
+            {
+                CompLayer layer = this.gizmoLayerId == null || UICompositorPanel.this.doc == null
+                    ? null : UICompositorPanel.this.doc.getLayer(this.gizmoLayerId);
+
+                if (layer == null || this.gizmoAxisIndex < 0)
+                {
+                    this.endDrag();
+
+                    return;
+                }
+
+                float value = CompGizmo3D.dragValue(this.gizmoStartValue,
+                    context.mouseX - this.gizmoStartMouseX,
+                    context.mouseY - this.gizmoStartMouseY,
+                    this.gizmoDirX, this.gizmoDirY, this.gizmoPixelsPerUnit);
+
+                if (Window.isShiftPressed())
+                {
+                    value = CompGizmo3D.snap(value, true);
+                }
+
+                String path = this.gizmoAxisIndex == 0 ? "x" : this.gizmoAxisIndex == 1 ? "y" : "z";
+
+                UICompositorPanel.this.setScalar(layer, path, value);
+                UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                    "%s %s %.1f", path.toUpperCase(java.util.Locale.ROOT),
+                    UICompositorPanel.this.layerLabel(layer), value));
+            }
+
             /** Bottom-left HUD: mode, camera pose and the navigation keys. */
             private void renderViewportHud(UIContext context, CompDocument doc, CompLayer cameraLayer)
             {
@@ -1491,8 +1693,13 @@ public class UICompositorPanel extends UIDashboardPanel
                     float mx = (corners[i * 2] + corners[j * 2]) * 0.5F;
                     float my = (corners[i * 2 + 1] + corners[j * 2 + 1]) * 0.5F;
 
+                    /* Edge grips carry the axis they scale: top/bottom (20/22) edit Y (green),
+                     * left/right (21/23) edit X (red). The colour is the same convention as the 3D
+                     * arrows, so "which axis will move" is readable before the drag starts. */
+                    int grip = (i == 0 || i == 2) ? 0xFF6BE06B : 0xFFFF5A5A;
+
                     context.batcher.box(mx - 3F, my - 3F, mx + 3F, my + 3F, 0xFF101418);
-                    context.batcher.box(mx - 2F, my - 2F, mx + 2F, my + 2F, 0xFFFFFFFF);
+                    context.batcher.box(mx - 2F, my - 2F, mx + 2F, my + 2F, grip);
                 }
 
                 float rx = (corners[0] + corners[2]) * 0.5F;
@@ -2371,6 +2578,13 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
+                if (this.dragMode == DRAG_GIZMO)
+                {
+                    this.applyGizmoDrag(context);
+
+                    return;
+                }
+
                 if (layer.threeD)
                 {
                     float nowX = context.mouseX - this.startScreenCenterX;
@@ -2404,7 +2618,7 @@ public class UICompositorPanel extends UIDashboardPanel
                                 this.startLocalX, this.startLocalY,
                                 planeLocal[0], planeLocal[1],
                                 this.startScaleX, this.startScaleY,
-                                this.dragMode == DRAG_CORNER && !Window.isShiftPressed()
+                                this.dragMode == DRAG_CORNER && Window.isShiftPressed()
                             );
 
                             sx = scales[0];
@@ -2445,7 +2659,7 @@ public class UICompositorPanel extends UIDashboardPanel
                         this.writeTransform(layer, sx, sy, null);
                         UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
                             "缩放 X %.0f%%   Y %.0f%%%s", sx * 100F, sy * 100F,
-                            this.dragMode == DRAG_CORNER ? "（Shift 单轴）" : ""));
+                            this.dragMode == DRAG_CORNER ? "（Shift 等比）" : ""));
 
                         return;
                     }
@@ -2478,7 +2692,7 @@ public class UICompositorPanel extends UIDashboardPanel
                         this.startLocalX, this.startLocalY,
                         local[0], local[1],
                         this.startScaleX, this.startScaleY,
-                        this.dragMode == DRAG_CORNER && !Window.isShiftPressed()
+                        this.dragMode == DRAG_CORNER && Window.isShiftPressed()
                     );
                     float sx = scales[0];
                     float sy = scales[1];
@@ -2486,7 +2700,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     this.writeTransform(layer, sx, sy, null);
                     UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
                         "缩放 X %.0f%%   Y %.0f%%%s", sx * 100F, sy * 100F,
-                        this.dragMode == DRAG_CORNER ? "（Shift 单轴）" : ""));
+                        this.dragMode == DRAG_CORNER ? "（Shift 等比）" : ""));
 
                     return;
                 }
@@ -3178,6 +3392,9 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.dragMode = DRAG_NONE;
                 UICompositorPanel.this.refreshInspector();
                 UICompositorPanel.this.save();
+            
+                this.gizmoAxisIndex = -1;
+                this.gizmoLayerId = null;
             }
 
             /**
@@ -3460,6 +3677,16 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
 
                 CompDocument doc = UICompositorPanel.this.doc;
+                CompLayer selected = UICompositorPanel.this.selectedLayer;
+                int gizmoAxis = this.viewportGizmoAxisAt(context, selected, this.viewportContext(), this.viewport());
+
+                if (gizmoAxis >= 0)
+                {
+                    this.beginGizmoDrag(context, selected, gizmoAxis);
+
+                    return true;
+                }
+
                 int handle = this.viewportCameraHandle(context);
 
                 if (handle >= 0)
@@ -7652,6 +7879,17 @@ public class UICompositorPanel extends UIDashboardPanel
 
             case "quick":
                 this.debugQuick3D();
+
+                if (Boolean.getBoolean("bbsae.debugGizmo3D"))
+                {
+                    CompLayer card = this.doc.getLayer("card_3d");
+
+                    this.cameraPreviewMode = false;
+                    this.enter3DSpace();
+                    this.selectLayer(card);
+                    this.setStatus("3D 移动 gizmo：拖动红/绿/蓝箭头");
+                }
+
                 break;
 
             case "queue":

@@ -32,7 +32,7 @@ public class CompTransformHandlesTest
     }
 
     @Test
-    public void cornerWithoutShiftKeepsTheOriginalAspectRatio()
+    public void shiftOnACornerKeepsTheOriginalAspectRatio()
     {
         float[] result = CompTransformHandles.scaled(13, 100F, 50F, 150F, 100F, 2F, 1F, true);
 
@@ -42,12 +42,32 @@ public class CompTransformHandlesTest
     }
 
     @Test
-    public void shiftOnACornerAllowsIndependentAxes()
+    public void cornerWithoutShiftMovesEachAxisIndependently()
     {
         float[] result = CompTransformHandles.scaled(11, 100F, 50F, 150F, 100F, 2F, 1F, false);
 
         assertEquals(3F, result[0], 0.0001F);
         assertEquals(2F, result[1], 0.0001F);
+    }
+
+    @Test
+    public void theTopEdgeInScreenSpaceIsNegativeYAndStillGrowsHeight()
+    {
+        /* Composition Y points down, so the top edge sits at a negative local Y. Dragging further
+         * up (more negative) must grow the layer, not invert it. */
+        float[] top = CompTransformHandles.scaled(20, 100F, -50F, 100F, -100F, 1F, 1F, false);
+
+        assertEquals(1F, top[0], 0.0001F);
+        assertEquals(2F, top[1], 0.0001F);
+    }
+
+    @Test
+    public void draggingPastTheAnchorMirrorsInsteadOfCollapsing()
+    {
+        float[] mirrored = CompTransformHandles.scaled(21, 100F, 50F, -100F, 50F, 1F, 1F, false);
+
+        assertEquals(-1F, mirrored[0], 0.0001F);
+        assertEquals(1F, mirrored[1], 0.0001F);
     }
 
     @Test

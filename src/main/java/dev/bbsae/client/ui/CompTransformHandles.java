@@ -58,10 +58,23 @@ public final class CompTransformHandles
             sy = startScaleY * uniform;
         }
 
-        return new float[] {
-            Math.max(MIN_SCALE, Math.min(MAX_SCALE, sx)),
-            Math.max(MIN_SCALE, Math.min(MAX_SCALE, sy))
-        };
+        return new float[] {clampScale(sx), clampScale(sy)};
+    }
+
+    /**
+     * Clamps the magnitude but keeps the sign: crossing the anchor must mirror the layer (AE does,
+     * and negative scale is legal renderer state), not collapse it to a positive sliver.
+     */
+    private static float clampScale(float value)
+    {
+        if (Float.isNaN(value) || Float.isInfinite(value))
+        {
+            return MIN_SCALE;
+        }
+
+        float magnitude = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.abs(value)));
+
+        return value < 0F ? -magnitude : magnitude;
     }
 
     private static float axisRatio(float start, float current)
