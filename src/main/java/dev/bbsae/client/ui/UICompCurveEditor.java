@@ -198,6 +198,10 @@ public class UICompCurveEditor extends UIElement
         private static final boolean DEBUG_SPANS = Boolean.getBoolean("bbsae.debugCurve");
         private static final int ROW_H = 17;
         private static final int GROUP_H = 15;
+        private static final int ROW_MIN = 12;
+        private static final int ROW_MAX = 34;
+        /** Vertical zoom of the channel list (Alt+wheel), independent of value/time zoom. */
+        private int rowHeight = ROW_H;
 
         private final Area listArea = new Area();
         private final Area rulerArea = new Area();
@@ -526,8 +530,8 @@ public class UICompCurveEditor extends UIElement
                     continue;
                 }
 
-                this.rows.add(new ListRow(null, channel, y, ROW_H));
-                y += ROW_H;
+                this.rows.add(new ListRow(null, channel, y, this.rowHeight));
+                y += this.rowHeight;
             }
 
             /* Clamp the scroll to the laid-out content: without an upper bound the wheel kept
@@ -2800,6 +2804,24 @@ public class UICompCurveEditor extends UIElement
 
             if (this.listArea.isInside(context))
             {
+                if (CompInput.altDown())
+                {
+                    /* Alt+wheel is the NLE-standard vertical zoom of the track list. The old
+                     * editor only scrolled, so a channel list that was too tall or too cramped
+                     * could not be adjusted at all. */
+                    int next = Math.max(ROW_MIN, Math.min(ROW_MAX,
+                        this.rowHeight + (context.mouseWheel > 0 ? 1 : -1)));
+
+                    if (next != this.rowHeight)
+                    {
+                        this.rowHeight = next;
+                        this.buildRows();
+                        UICompCurveEditor.this.panel.setStatus("通道轨道高度 " + next + "px（Alt+滚轮）");
+                    }
+
+                    return true;
+                }
+
                 this.listScroll = Math.max(0, this.listScroll - (int) Math.signum(context.mouseWheel) * 18);
                 this.buildRows();
 
@@ -2852,6 +2874,22 @@ public class UICompCurveEditor extends UIElement
             if (context.getKeyAction() != KeyAction.PRESSED)
             {
                 return super.subKeyPressed(context);
+            }
+
+            if (CompInput.altDown() && (context.getKeyCode() == GLFW.GLFW_KEY_EQUAL
+                || context.getKeyCode() == GLFW.GLFW_KEY_MINUS))
+            {
+                int next = Math.max(ROW_MIN, Math.min(ROW_MAX,
+                    this.rowHeight + (context.getKeyCode() == GLFW.GLFW_KEY_EQUAL ? 2 : -2)));
+
+                if (next != this.rowHeight)
+                {
+                    this.rowHeight = next;
+                    this.buildRows();
+                    UICompCurveEditor.this.panel.setStatus("通道轨道高度 " + next + "px");
+                }
+
+                return true;
             }
 
             switch (context.getKeyCode())

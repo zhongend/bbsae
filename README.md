@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.76.jar`](https://github.com/zhongend/bbsae/releases/download/v0.76/bbsae-0.76.jar)
-   from the **v0.76** release (the asset is updated with each source push).
+1. Download [`bbsae-0.77.jar`](https://github.com/zhongend/bbsae/releases/download/v0.77/bbsae-0.77.jar)
+   from the **v0.77** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.76.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.77.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.76.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.77.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,19 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.77 — wireframe settings and track-height zoom
+
+- Settings has a new **显示与线框** page: a master gizmo switch, gizmo opacity, wireframe thickness,
+  selection boxes, camera gizmos and safe-area/guides toggles. All overlay strokes go through one
+  `line()` path, so opacity and thickness apply immediately to gizmos, selection boxes, camera
+  frustums and guides; turning gizmos or selection boxes off also disables their hit tests, so an
+  invisible handle cannot be dragged by accident.
+- The curve editor's channel list now supports **vertical zoom**: Alt+wheel or Alt+= / Alt+- changes
+  the row height between 12 and 34 px, with the status line showing the current size. The timeline's
+  existing Alt+wheel track-height gesture is unchanged.
+- Client screenshot: `docs/verify/round52-settings-overlay.png`.
+- 373 tests green.
 
 ## What's new in 0.76 — move / scale / rotate gizmos in 3D
 

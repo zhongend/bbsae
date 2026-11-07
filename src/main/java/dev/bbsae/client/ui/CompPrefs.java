@@ -70,6 +70,15 @@ public final class CompPrefs
         public boolean shadows = true;
         public float backdropIntensity = 1F;
 
+        /* Overlay wireframes: gizmos, selection boxes, guides and camera frustums. Kept together so
+         * "the handles are in the way" has one switch instead of a hunt through the UI. */
+        public boolean gizmos = true;
+        public float gizmoOpacity = 1F;
+        public float gizmoThickness = 1F;
+        public boolean selectionBoxes = true;
+        public boolean cameraGizmos = true;
+        public boolean guides = true;
+
         /** 0 standard, 1 focus, 2 compact, 3 wide. */
         public int layoutPreset = LAYOUT_STANDARD;
         /** UI density preference used before a project exists. */

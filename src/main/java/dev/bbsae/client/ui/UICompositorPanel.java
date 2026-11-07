@@ -990,7 +990,8 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 if (UICompositorPanel.this.doc == null || UICompositorPanel.this.project == null
                     || UICompositorPanel.this.project.settings == null
-                    || !UICompositorPanel.this.project.settings.showSafeArea)
+                    || !UICompositorPanel.this.project.settings.showSafeArea
+                    || !CompPrefs.get().guides)
                 {
                     return;
                 }
@@ -1022,7 +1023,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void renderGuides(UIContext context)
             {
-                if (UICompositorPanel.this.doc == null || UICompositorPanel.this.project == null)
+                if (!CompPrefs.get().guides || UICompositorPanel.this.doc == null
+                    || UICompositorPanel.this.project == null)
                 {
                     return;
                 }
@@ -1101,6 +1103,11 @@ public class UICompositorPanel extends UIDashboardPanel
              */
             private void renderCameraGizmo(UIContext context, CompRenderContext renderContext, CompLayer layer, float ox, float oy, float scale)
             {
+                if (!CompPrefs.get().cameraGizmos)
+                {
+                    return;
+                }
+
                 CompDocument doc = UICompositorPanel.this.doc;
                 CompLayer active = doc.activeCamera(UICompositorPanel.this.time);
 
@@ -1190,7 +1197,8 @@ public class UICompositorPanel extends UIDashboardPanel
                     CompRenderContext renderContext = new CompRenderContext(project, doc, UICompositorPanel.this.time, null, null, null);
                     dev.bbsae.client.render.CompViewportCamera camera = UICompositorPanel.this.viewportCamera;
 
-                    for (CompLayer layer : UICompositorPanel.this.getSelectedLayers())
+                    for (CompLayer layer : CompPrefs.get().selectionBoxes
+                        ? UICompositorPanel.this.getSelectedLayers() : java.util.Collections.<CompLayer>emptyList())
                     {
                         if (layer == null)
                         {
@@ -1205,7 +1213,7 @@ public class UICompositorPanel extends UIDashboardPanel
                             continue;
                         }
 
-                        int color = layer.locked ? 0xFF8A6A6A : 0xFF55AAFF;
+                        int color = this.overlayColor(layer.locked ? 0xFF8A6A6A : 0xFF55AAFF);
 
                         for (int i = 0; i < 4; i++)
                         {
@@ -1382,6 +1390,11 @@ public class UICompositorPanel extends UIDashboardPanel
             /** Camera body + frustum + target crosshair, all in viewport pixels. */
             private void renderViewportCameraGizmo(UIContext context, CompLayer layer, CompDocument doc, boolean active)
             {
+                if (!CompPrefs.get().cameraGizmos)
+                {
+                    return;
+                }
+
                 dev.bbsae.client.render.CompViewportCamera camera = UICompositorPanel.this.viewportCamera;
                 org.joml.Vector3f eye = CompCamera.eyeOf(layer, UICompositorPanel.this.getFrame(), doc.height);
                 org.joml.Vector2f eyeScreen = camera.project(eye);
@@ -1549,6 +1562,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private int gizmoModeButtonAt(UIContext context)
             {
+                if (!CompPrefs.get().gizmos)
+                {
+                    return -1;
+                }
+
                 int x = this.area.x + 8;
                 /* Above the bottom HUD: the top strip belongs to the preview's own toolbar, and
                  * the first version of this bar was hidden underneath it. */
@@ -1570,6 +1588,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void renderGizmoModeBar(UIContext context)
             {
+                if (!CompPrefs.get().gizmos)
+                {
+                    return;
+                }
+
                 String[] labels = {"W 移动", "E 缩放", "R 旋转"};
                 int x = this.area.x + 8;
                 int y = this.area.ey() - 70;
@@ -1589,7 +1612,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private int viewportGizmoHit(UIContext context, CompLayer layer, CompRenderContext renderContext,
                                          dev.bbsae.client.render.CompViewportCamera camera)
             {
-                if (layer == null || layer.locked || "camera".equals(layer.type))
+                if (!CompPrefs.get().gizmos || layer == null || layer.locked || "camera".equals(layer.type))
                 {
                     return -1;
                 }
@@ -1680,6 +1703,11 @@ public class UICompositorPanel extends UIDashboardPanel
                                                       CompRenderContext renderContext,
                                                       dev.bbsae.client.render.CompViewportCamera camera)
             {
+                if (!CompPrefs.get().gizmos)
+                {
+                    return;
+                }
+
                 if (UICompositorPanel.this.previewGizmoModeOverride >= 0)
                 {
                     this.gizmoMode = UICompositorPanel.this.previewGizmoModeOverride;
@@ -1725,8 +1753,8 @@ public class UICompositorPanel extends UIDashboardPanel
                             centerY - 18F, color);
                     }
 
-                    context.batcher.box(centerX - 4F, centerY - 4F, centerX + 4F, centerY + 4F, 0xFF101418);
-                    context.batcher.box(centerX - 2F, centerY - 2F, centerX + 2F, centerY + 2F, 0xFFFFFFFF);
+                    context.batcher.box(centerX - 4F, centerY - 4F, centerX + 4F, centerY + 4F, this.overlayColor(0xFF101418));
+                    context.batcher.box(centerX - 2F, centerY - 2F, centerX + 2F, centerY + 2F, this.overlayColor(0xFFFFFFFF));
 
                     return;
                 }
@@ -1741,7 +1769,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     }
 
                     boolean usable = geometry[5] >= 12F;
-                    int color = layer.locked ? 0xFF8A6A6A : colors[axis];
+                    int color = this.overlayColor(layer.locked ? 0xFF8A6A6A : colors[axis]);
 
                     if (!usable)
                     {
@@ -1755,7 +1783,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     if (this.gizmoMode == GIZMO_SCALE)
                     {
-                        context.batcher.box(tipX - 6F, tipY - 6F, tipX + 6F, tipY + 6F, 0xFF101418);
+                        context.batcher.box(tipX - 6F, tipY - 6F, tipX + 6F, tipY + 6F, this.overlayColor(0xFF101418));
                         context.batcher.box(tipX - 5F, tipY - 5F, tipX + 5F, tipY + 5F, color);
                     }
                     else
@@ -1773,15 +1801,15 @@ public class UICompositorPanel extends UIDashboardPanel
                         tipY + geometry[3] * 7F - 3F, color);
                 }
 
-                context.batcher.box(centerX - 5F, centerY - 5F, centerX + 5F, centerY + 5F, 0xFF101418);
+                context.batcher.box(centerX - 5F, centerY - 5F, centerX + 5F, centerY + 5F, this.overlayColor(0xFF101418));
 
                 if (this.gizmoMode == GIZMO_SCALE)
                 {
-                    context.batcher.box(centerX - 4F, centerY - 4F, centerX + 4F, centerY + 4F, 0xFFFFFFFF);
+                    context.batcher.box(centerX - 4F, centerY - 4F, centerX + 4F, centerY + 4F, this.overlayColor(0xFFFFFFFF));
                 }
                 else
                 {
-                    context.batcher.box(centerX - 3F, centerY - 3F, centerX + 3F, centerY + 3F, 0xFFFFFFFF);
+                    context.batcher.box(centerX - 3F, centerY - 3F, centerX + 3F, centerY + 3F, this.overlayColor(0xFFFFFFFF));
                 }
             }
 
@@ -1954,6 +1982,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void renderSelection(UIContext context)
             {
+                if (!CompPrefs.get().selectionBoxes)
+                {
+                    return;
+                }
+
                 CompLayer layer = UICompositorPanel.this.selectedLayer;
 
                 if (layer == null || UICompositorPanel.this.doc == null || UICompositorPanel.this.project == null)
@@ -1999,8 +2032,8 @@ public class UICompositorPanel extends UIDashboardPanel
                     float x = corners[i * 2];
                     float y = corners[i * 2 + 1];
 
-                    context.batcher.box(x - 5F, y - 5F, x + 5F, y + 5F, 0xFF101418);
-                    context.batcher.box(x - 4F, y - 4F, x + 4F, y + 4F, 0xFFFFFFFF);
+                    context.batcher.box(x - 5F, y - 5F, x + 5F, y + 5F, this.overlayColor(0xFF101418));
+                    context.batcher.box(x - 4F, y - 4F, x + 4F, y + 4F, this.overlayColor(0xFFFFFFFF));
                 }
 
                 for (int i = 0; i < 4; i++)
@@ -2014,8 +2047,8 @@ public class UICompositorPanel extends UIDashboardPanel
                      * arrows, so "which axis will move" is readable before the drag starts. */
                     int grip = (i == 0 || i == 2) ? 0xFF6BE06B : 0xFFFF5A5A;
 
-                    context.batcher.box(mx - 3F, my - 3F, mx + 3F, my + 3F, 0xFF101418);
-                    context.batcher.box(mx - 2F, my - 2F, mx + 2F, my + 2F, grip);
+                    context.batcher.box(mx - 3F, my - 3F, mx + 3F, my + 3F, this.overlayColor(0xFF101418));
+                    context.batcher.box(mx - 2F, my - 2F, mx + 2F, my + 2F, this.overlayColor(grip));
                 }
 
                 float rx = (corners[0] + corners[2]) * 0.5F;
@@ -2041,8 +2074,8 @@ public class UICompositorPanel extends UIDashboardPanel
                 float hy = ry + dy * 26F;
 
                 this.line(context, rx, ry, hx, hy, color);
-                context.batcher.box(hx - 4F, hy - 4F, hx + 4F, hy + 4F, 0xFF101418);
-                context.batcher.box(hx - 3F, hy - 3F, hx + 3F, hy + 3F, 0xFFFFD27A);
+                context.batcher.box(hx - 4F, hy - 4F, hx + 4F, hy + 4F, this.overlayColor(0xFF101418));
+                context.batcher.box(hx - 3F, hy - 3F, hx + 3F, hy + 3F, this.overlayColor(0xFFFFD27A));
             }
 
             /** Four screen-space corners in TL, TR, BR, BL order. */
@@ -2587,6 +2620,11 @@ public class UICompositorPanel extends UIDashboardPanel
                     return -1;
                 }
 
+                if (!CompPrefs.get().selectionBoxes)
+                {
+                    return -1;
+                }
+
                 float[] corners = this.selectionCorners(layer);
 
                 if (corners == null)
@@ -2817,8 +2855,20 @@ public class UICompositorPanel extends UIDashboardPanel
              * frame. Rotating the matrix stack once and drawing a single box is the same picture
              * for one quad — this alone was a measurable part of "the camera view crawls".</p>
              */
+            /** Overlay alpha setting, clamped so a stray config value cannot erase the UI. */
+            private int overlayColor(int color)
+            {
+                return UiGfx.mulA(color, Math.max(0F, Math.min(1F, CompPrefs.get().gizmoOpacity)));
+            }
+
+            private float overlayThickness()
+            {
+                return Math.max(0.4F, Math.min(3F, CompPrefs.get().gizmoThickness));
+            }
+
             private void line(UIContext context, float x1, float y1, float x2, float y2, int color)
             {
+                color = this.overlayColor(color);
                 float dx = x2 - x1;
                 float dy = y2 - y1;
                 float length = (float) Math.sqrt(dx * dx + dy * dy);
@@ -2833,7 +2883,9 @@ public class UICompositorPanel extends UIDashboardPanel
                 stack.push();
                 stack.translate(x1, y1, 0F);
                 stack.multiply(new org.joml.Quaternionf().rotateZ((float) Math.atan2(dy, dx)));
-                context.batcher.box(0F, -0.75F, length, 0.75F, color);
+                float half = 0.75F * this.overlayThickness();
+
+                context.batcher.box(0F, -half, length, half, color);
                 stack.pop();
             }
 
@@ -8130,6 +8182,10 @@ public class UICompositorPanel extends UIDashboardPanel
 
             case "settingslayout":
                 this.openSettings("layout");
+                return;
+
+            case "settingsoverlay":
+                this.openSettings("overlay");
                 return;
 
             case "demo":

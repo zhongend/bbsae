@@ -41,11 +41,11 @@ public class UICompSettings extends UIElement
 {
     private static final String[] CATEGORIES =
     {
-        "动效与光效", "界面布局", "快捷键", "项目设置", "高级", "新手引导", "赞助者"
+        "动画与光效", "界面布局", "显示与线框", "快捷键", "项目设置", "高级", "新手引导", "赞助者"
     };
     private static final String[] CATEGORY_IDS =
     {
-        "motion", "layout", "keys", "project", "advanced", "guide", "sponsor"
+        "motion", "layout", "overlay", "keys", "project", "advanced", "guide", "sponsor"
     };
 
     private final UICompositorPanel panel;
@@ -352,6 +352,7 @@ public class UICompSettings extends UIElement
         switch (this.category)
         {
             case "layout" -> this.buildLayout();
+            case "overlay" -> this.buildOverlay();
             case "keys" -> this.buildKeys();
             case "project" -> this.buildProject();
             case "advanced" -> this.buildAdvanced();
@@ -675,6 +676,47 @@ public class UICompSettings extends UIElement
     }
 
     /* -------------------------------------------------------------- shortcuts */
+
+    /* ---------------------------------------------------------------- overlay */
+
+    private void buildOverlay()
+    {
+        CompPrefs.Data prefs = CompPrefs.get();
+
+        this.add(this.section("线框与 Gizmo"));
+        this.add(this.row("显示 Gizmo", this.toggle("", prefs.gizmos, (value) ->
+        {
+            prefs.gizmos = value;
+            CompPrefs.save();
+        }), 170, "3D 移动/缩放/旋转箭头与圆环；关闭后仍可用检查器改数值"));
+        this.add(this.row("Gizmo 不透明度", this.slider(prefs.gizmoOpacity, 0.15F, 1F, (value) ->
+        {
+            prefs.gizmoOpacity = (float) value;
+            CompPrefs.markDirty();
+        }), 170, "箭头、圆环、选择框和参考线的整体透明度"));
+        this.add(this.row("线框粗细", this.slider(prefs.gizmoThickness, 0.5F, 3F, (value) ->
+        {
+            prefs.gizmoThickness = (float) value;
+            CompPrefs.markDirty();
+        }), 170, "选择框、Gizmo、摄像机视锥与参考线的描边粗细"));
+
+        this.add(this.section("其他线框"));
+        this.add(this.row("选择框", this.toggle("", prefs.selectionBoxes, (value) ->
+        {
+            prefs.selectionBoxes = value;
+            CompPrefs.save();
+        }), 170, "图层选择框与角点/边柄；关闭后不会误点缩放手柄"));
+        this.add(this.row("摄像机线框", this.toggle("", prefs.cameraGizmos, (value) ->
+        {
+            prefs.cameraGizmos = value;
+            CompPrefs.save();
+        }), 170, "2D/3D 摄像机图标、目标十字与视锥"));
+        this.add(this.row("安全区与参考线", this.toggle("", prefs.guides, (value) ->
+        {
+            prefs.guides = value;
+            CompPrefs.save();
+        }), 170, "标题/动作安全区、三分线和中心参考线"));
+    }
 
     private void buildKeys()
     {
