@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-<b>作者 / Author：终end</b> · <a href="https://github.com/zhongend">@zhongend</a>
+<b>作者 / Author：终end</b> · <a href="https://github.com/zhongend">@zhongend</a>　<b>联合开发者 / Co-developer：星辰久梦君（Star Dm Sov）</b> · <a href="https://github.com/cupefersi">@cupefersi</a>
 </p>
 
 > **特别感谢赞助者：【星辰久梦君_Star Dm Sov】、血之书、Szv文森特37** — 你们的赞助支持了本插件的开发，感谢你们。完整鸣谢见 [CREDITS.md](CREDITS.md)。

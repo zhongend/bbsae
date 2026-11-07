@@ -39,6 +39,11 @@ contact the maintainer about sponsorship.
 - **运行环境 / Runtime:** Minecraft 1.20.1, Fabric Loader, Fabric API, BBS FS 2.7-1.20.1
 - **随游戏打包的库 / Bundled libraries:** JOML, LWJGL, Gson (via their respective licenses)
 
+## Co-developer / 联合开发者
+
+- **星辰久梦君（Star Dm Sov）** — 联合开发者，参与插件开发与测试。
+  GitHub: [@cupefersi](https://github.com/cupefersi)
+
 ## Photon
 
 [Photon](https://github.com/Low-Drag-MC/Photon) by **KilaBash** is licensed
