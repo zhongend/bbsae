@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.65.jar`](https://github.com/zhongend/bbsae/releases/download/v0.65/bbsae-0.65.jar)
-   from the **v0.65** release (the asset is updated with each source push).
+1. Download [`bbsae-0.66.jar`](https://github.com/zhongend/bbsae/releases/download/v0.66/bbsae-0.66.jar)
+   from the **v0.66** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.65.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.66.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.65.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.66.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,17 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.66 — painter sorting for non-convex primitives
+
+- Back-face culling alone is only correct for convex meshes; torus, ring, hollow box and star
+  polyhedron are non-convex, so their holes filled in, side walls showed sawtooth notches and back
+  faces leaked through. `Mesh.drawSorted(mvp)` now sorts triangles far-to-near by centroid clip z
+  (JOML column-major: `clip.z = m02*x + m12*y + m22*z + m32`) into a dynamic index buffer, and
+  culling is disabled so the painter order owns occlusion regardless of winding.
+- `docs/verify/round39-all-shapes.png` shows the result: torus/ring have real holes, cylinder and
+  sphere are smooth, heart and star polyhedron are solid.
+- 338 tests green; 137 effects.
 
 ## What's new in 0.65 — zero-restore verified in the real renderer
 

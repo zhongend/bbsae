@@ -29,6 +29,8 @@ public final class Mesh
     private int vao;
     private int vbo;
     private int ebo;
+    private int sortedEbo;
+    private long[] sortKeys;
 
     Mesh(float[] data, int[] indices)
     {
@@ -39,6 +41,77 @@ public final class Mesh
     int size()
     {
         return this.indices.length;
+    }
+
+    /**
+     * Painter's algorithm for non-convex primitives (torus, ring, hollow box, star polyhedron).
+     *
+     * <p>The colour-only targets have no depth buffer; back-face culling alone is enough for convex
+     * meshes but the far side of a torus can overwrite the near side. Triangles are sorted far to
+     * near in clip space and drawn through a dynamic index buffer.</p>
+     */
+    void drawSorted(org.joml.Matrix4f mvp)
+    {
+        int triangles = this.indices.length / 3;
+
+        if (this.vao == 0)
+        {
+            this.upload();
+        }
+
+        if (this.sortKeys == null || this.sortKeys.length != triangles)
+        {
+            this.sortKeys = new long[triangles];
+        }
+
+        float[] data = this.data;
+
+        for (int t = 0; t < triangles; t++)
+        {
+            int a = this.indices[t * 3] * STRIDE;
+            int b = this.indices[t * 3 + 1] * STRIDE;
+            int c = this.indices[t * 3 + 2] * STRIDE;
+            /* JOML is column-major: clip z = m02*x + m12*y + m22*z + m32. */
+            float za = mvp.m02() * data[a] + mvp.m12() * data[a + 1] + mvp.m22() * data[a + 2] + mvp.m32();
+            float zb = mvp.m02() * data[b] + mvp.m12() * data[b + 1] + mvp.m22() * data[b + 2] + mvp.m32();
+            float zc = mvp.m02() * data[c] + mvp.m12() * data[c + 1] + mvp.m22() * data[c + 2] + mvp.m32();
+            float depth = (za + zb + zc) / 3F;
+            int quantized = (int) Math.max(0, Math.min(0xFFFFF, Math.round((depth + 1F) * 0.5F * 0xFFFFF)));
+
+            this.sortKeys[t] = ((long) quantized << 32) | (t & 0xFFFFFFFFL);
+        }
+
+        java.util.Arrays.sort(this.sortKeys);
+
+        if (this.sortedEbo == 0)
+        {
+            this.sortedEbo = GL15.glGenBuffers();
+        }
+
+        int[] sorted = new int[this.indices.length];
+
+        for (int t = 0; t < triangles; t++)
+        {
+            /* NDC z grows with distance (near plane is -1), so walk from the largest key: the
+             * farthest triangles are drawn first and the near ones paint over them. */
+            int triangle = (int) (this.sortKeys[triangles - 1 - t] & 0xFFFFFFFFL);
+
+            sorted[t * 3] = this.indices[triangle * 3];
+            sorted[t * 3 + 1] = this.indices[triangle * 3 + 1];
+            sorted[t * 3 + 2] = this.indices[triangle * 3 + 2];
+        }
+
+        /* sortKeys is ascending by quantised depth; drawing from the far end gives near-last. */
+        GL30.glBindVertexArray(this.vao);
+        GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, this.sortedEbo);
+
+        IntBuffer elements = MemoryUtil.memAllocInt(sorted.length);
+
+        elements.put(sorted).flip();
+        GL15.glBufferData(GL15.GL_ELEMENT_ARRAY_BUFFER, elements, GL15.GL_STREAM_DRAW);
+        MemoryUtil.memFree(elements);
+        GL11.glDrawElements(GL11.GL_TRIANGLES, sorted.length, GL11.GL_UNSIGNED_INT, 0L);
+        GL30.glBindVertexArray(0);
     }
 
     void draw()
@@ -98,6 +171,12 @@ public final class Mesh
         {
             GL15.glDeleteBuffers(this.ebo);
             this.ebo = 0;
+        }
+
+        if (this.sortedEbo != 0)
+        {
+            GL15.glDeleteBuffers(this.sortedEbo);
+            this.sortedEbo = 0;
         }
 
         if (this.vao != 0)

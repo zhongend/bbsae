@@ -190,8 +190,10 @@ public final class MeshRenderer
         target.begin();
         GlStateManager._disableBlend();
         GlStateManager._disableDepthTest();
-        GlStateManager._enableCull();
-        GL11.glFrontFace(GL11.GL_CW);
+        /* No back-face culling: the painter sort draws every triangle far-to-near, so back faces
+         * are covered by front faces instead of needing consistent winding. Culling a wrongly
+         * wound primitive used to punch sawtooth notches into ring/torus walls. */
+        GlStateManager._disableCull();
         program.use();
         PassRenderer.bind(program, "Source", 0, source);
         program.set("Mvp", mvp);
@@ -214,9 +216,7 @@ public final class MeshRenderer
         program.set("TexAngle", effect.valueF("tex_angle", 0F));
         program.set("UvScale", uvScale.x, uvScale.y);
         program.set("UvOffset", uvOffset.x, uvOffset.y);
-        mesh.draw();
-        GL11.glFrontFace(GL11.GL_CCW);
-        GlStateManager._disableCull();
+        mesh.drawSorted(mvp);
     }
 
     private static Mesh mesh(String shape)
