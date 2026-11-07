@@ -78,7 +78,15 @@
 `UIEffectList` 覆写 `rowContentX/renderElementPart`，在每行左侧预留 16 px 图标槽，
 分类表头保持原有箭头与整行文字。图标随 UI 缩放，不依赖外部图片资源。
 
-### 2.5 检查器分组分割线
+### 2.5 效果库去重（同一效果只出现一次）
+
+AM 复刻批次上线后，效果库出现了两组同名条目（高斯模糊/万花筒/镜像/网格/色彩映射/置换图/
+极坐标/描边/色相映射…各两份）。现在 `CompEffectRegistry.isLibraryHidden` 把被 AM 版本取代的
+经典 id 从**库列表**隐藏（recent 列表同样过滤），但它们仍然注册、仍然有渲染器——老工程继续正常
+打开。“隐藏 id 必有渲染器 + 必有 AM 后继”由 `EffectLibraryNamingTest` 钉住，同时断言可见效果名
+全局唯一。
+
+### 2.6 检查器分组分割线
 
 新增 `UIInspectorDivider`：每个 `UISection` 之前插入一条「亮边 + 暗边」的两像素凹槽，
 在 `refreshInspector()` 组装完成后统一注入，不侵入十几个 section 构建方法。

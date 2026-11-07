@@ -107,6 +107,11 @@ public class UIEffectLibrary extends UIElement
     {
         for (CompEffectRegistry.Definition definition : CompEffectRegistry.all())
         {
+            if (CompEffectRegistry.isLibraryHidden(definition.id))
+            {
+                continue;
+            }
+
             CATEGORIES.computeIfAbsent(definition.category, (key) -> new ArrayList<>()).add(definition);
         }
     }
@@ -240,7 +245,7 @@ public class UIEffectLibrary extends UIElement
 
             CompEffectRegistry.Definition definition = CompEffectRegistry.get(id);
 
-            if (definition != null)
+            if (definition != null && !CompEffectRegistry.isLibraryHidden(id))
             {
                 rows.add(EffectRow.effect(definition));
             }

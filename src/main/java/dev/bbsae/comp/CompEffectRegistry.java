@@ -75,6 +75,24 @@ public final class CompEffectRegistry
         }
     }
 
+    /**
+     * Classic entries that the reference-compatible catalogue supersedes one for one.
+     *
+     * <p>They stay registered (old projects keep rendering) but the effect library hides them, so
+     * the list has one entry per effect instead of two identical names in two categories: the AM
+     * gaussian blur is the same control set as {@code blur}, and showing both made the panel look
+     * like it had duplicated rows.</p>
+     */
+    private static final java.util.Set<String> LIBRARY_HIDDEN = java.util.Set.of(
+        "blur", "box_blur", "radial_blur", "polar_coordinates", "displacement",
+        "kaleidoscope", "mirror", "grid", "colorama", "stroke"
+    );
+
+    public static boolean isLibraryHidden(String id)
+    {
+        return id != null && LIBRARY_HIDDEN.contains(id);
+    }
+
     private static final Map<String, Definition> DEFS = new LinkedHashMap<>();
     private static final List<Definition> LIST = new ArrayList<>();
 
