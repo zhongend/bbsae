@@ -27,7 +27,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_color_balance", "色彩平衡", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = luma(c.rgb);
                 float wLow = 1.0 - smoothstep(0.0, 0.5, y);
                 float wHigh = smoothstep(0.5, 1.0, y);
@@ -53,7 +54,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_temperature", "色温", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float t = clamp(u_temperature, -1.0, 1.0);
                 vec3 tint = vec3(1.0 + 0.28 * t, 1.0 - 0.04 * abs(t), 1.0 - 0.28 * t);
                 vec3 graded = c.rgb * tint;
@@ -67,7 +69,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_highlight_shadow", "高光与阴影", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = luma(c.rgb);
                 float wLow = 1.0 - smoothstep(0.0, 0.5, y);
                 float wHigh = smoothstep(0.5, 1.0, y);
@@ -82,11 +85,12 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_cartoon", "卡通", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
-                vec3 s = texture(Source, vUv + vec2(Texel.x, 0.0)).rgb;
-                vec3 d = texture(Source, vUv - vec2(Texel.x, 0.0)).rgb;
-                vec3 s2 = texture(Source, vUv + vec2(0.0, Texel.y)).rgb;
-                vec3 d2 = texture(Source, vUv - vec2(0.0, Texel.y)).rgb;
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec3 s = sampleLayer(luv + vec2(LayerTexel.x, 0.0)).rgb;
+                vec3 d = sampleLayer(luv - vec2(LayerTexel.x, 0.0)).rgb;
+                vec3 s2 = sampleLayer(luv + vec2(0.0, LayerTexel.y)).rgb;
+                vec3 d2 = sampleLayer(luv - vec2(0.0, LayerTexel.y)).rgb;
                 float edge = length(s - d) + length(s2 - d2);
                 float levels = mix(16.0, 4.0, clamp(u_strength, 0.0, 1.0));
                 vec3 flatColor = floor(c.rgb * levels + 0.5) / levels;
@@ -102,7 +106,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_long_shadow", "长阴影", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float size = max(u_size, 0.0);
                 float shade = 0.0;
                 vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
@@ -110,9 +115,9 @@ public final class AmEffectLibrary
                 for (int i = 1; i <= 48; i++)
                 {
                     float t = float(i) / 48.0;
-                    vec2 uv = vUv - dir * (size * t) / max(Size, vec2(1.0));
+                    vec2 uv = luv - dir * (size * t) / max(LayerSize, vec2(1.0));
                     float inside = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 ? 1.0 : 0.0;
-                    float a = texture(Source, clamp(uv, 0.0, 1.0)).a * inside;
+                    float a = sampleLayer(clamp(uv, 0.0, 1.0)).a * inside;
                     float falloff = mix(1.0, 1.0 - t, clamp(u_fade, 0.0, 1.0));
                     shade = max(shade, a * falloff);
                 }
@@ -134,14 +139,15 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_bend", "弯曲", "AM · 变形", """
             void main()
             {
-                vec2 uv = vUv;
+                vec2 luv = layerUv(vUv);
+                vec2 uv = luv;
                 float amount = clamp(u_amount, -1.0, 1.0);
                 vec2 local = uv - vec2(u_center_x, u_center_y);
                 float bend = amount * local.x * local.x * 2.0;
                 local.y += bend;
                 uv = local + vec2(u_center_x, u_center_y);
                 vec2 inside = step(vec2(0.0), uv) * step(uv, vec2(1.0));
-                vec4 c = texture(Source, clamp(uv, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(uv, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a * inside.x * inside.y);
             }
             """, 0.25F, "amount")
@@ -152,16 +158,17 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_outline", "描边", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float a = 0.0;
-                a = max(a, texture(Source, vUv + vec2(Texel.x * u_width, 0.0)).a);
-                a = max(a, texture(Source, vUv - vec2(Texel.x * u_width, 0.0)).a);
-                a = max(a, texture(Source, vUv + vec2(0.0, Texel.y * u_width)).a);
-                a = max(a, texture(Source, vUv - vec2(0.0, Texel.y * u_width)).a);
-                a = max(a, texture(Source, vUv + Texel * u_width).a);
-                a = max(a, texture(Source, vUv - Texel * u_width).a);
-                a = max(a, texture(Source, vUv + vec2(Texel.x, -Texel.y) * u_width).a);
-                a = max(a, texture(Source, vUv + vec2(-Texel.x, Texel.y) * u_width).a);
+                a = max(a, sampleLayer(luv + vec2(LayerTexel.x * u_width, 0.0)).a);
+                a = max(a, sampleLayer(luv - vec2(LayerTexel.x * u_width, 0.0)).a);
+                a = max(a, sampleLayer(luv + vec2(0.0, LayerTexel.y * u_width)).a);
+                a = max(a, sampleLayer(luv - vec2(0.0, LayerTexel.y * u_width)).a);
+                a = max(a, sampleLayer(luv + LayerTexel * u_width).a);
+                a = max(a, sampleLayer(luv - LayerTexel * u_width).a);
+                a = max(a, sampleLayer(luv + vec2(LayerTexel.x, -LayerTexel.y) * u_width).a);
+                a = max(a, sampleLayer(luv + vec2(-LayerTexel.x, LayerTexel.y) * u_width).a);
                 float ring = clamp(a - c.a, 0.0, 1.0) * clamp(u_alpha, 0.0, 1.0);
                 vec3 rgb = mix(c.rgb, u_color.rgb, ring);
                 fragColor = vec4(rgb, clamp(c.a + ring, 0.0, 1.0));
@@ -174,16 +181,17 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_pinch_bulge", "收缩与膨胀", "AM · 变形", """
             void main()
             {
-                vec2 uv = vUv;
+                vec2 luv = layerUv(vUv);
+                vec2 uv = luv;
                 vec2 center = vec2(u_center_x, u_center_y);
                 vec2 d = uv - center;
                 float radius = max(u_radius, 0.0001);
-                float dist = length(d * Size) / max(Size.x, Size.y);
+                float dist = length(d * LayerSize) / max(LayerSize.x, LayerSize.y);
                 float falloff = clamp(1.0 - dist / radius, 0.0, 1.0);
                 float amount = clamp(u_strength, -1.0, 1.0) * falloff * falloff;
                 vec2 warped = center + d * (1.0 - amount);
                 vec2 inside = step(vec2(0.0), warped) * step(warped, vec2(1.0));
-                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(warped, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a * inside.x * inside.y);
             }
             """, 0.5F, "strength")
@@ -195,17 +203,18 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_circular_ripple", "圆形波纹", "AM · 变形", """
             void main()
             {
-                vec2 uv = vUv;
+                vec2 luv = layerUv(vUv);
+                vec2 uv = luv;
                 vec2 center = vec2(u_center_x, u_center_y);
                 vec2 d = uv - center;
-                float dist = length(d * Size);
-                float radius = max(u_radius, 0.0001) * max(Size.x, Size.y);
+                float dist = length(d * LayerSize);
+                float radius = max(u_radius, 0.0001) * max(LayerSize.x, LayerSize.y);
                 float feather = clamp(u_feather, 0.0, 1.0);
                 float edge = 1.0 - smoothstep(radius * (1.0 - feather), radius, dist);
                 float wave = sin(dist / max(u_frequency, 0.0001) * 6.2831853 + u_phase) * u_strength * edge;
-                vec2 offset = dist > 0.0001 ? (d / dist) * wave / max(Size, vec2(1.0)) : vec2(0.0);
+                vec2 offset = dist > 0.0001 ? (d / dist) * wave / max(LayerSize, vec2(1.0)) : vec2(0.0);
                 vec2 warped = uv + offset;
-                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(warped, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a);
             }
             """, 0.5F, "strength")
@@ -220,8 +229,9 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_kaleidoscope", "万花筒", "AM · 变形", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 center = vec2(u_center_x, u_center_y);
-                vec2 p = vUv - center;
+                vec2 p = luv - center;
                 float radius = length(p);
                 float angle = atan(p.y, p.x) + radians(u_offset_angle);
                 float segments = max(1.0, floor(u_rcount + 0.5));
@@ -229,7 +239,7 @@ public final class AmEffectLibrary
                 angle = mod(angle, wedge);
                 angle = abs(angle - wedge * 0.5);
                 vec2 warped = center + vec2(cos(angle), sin(angle)) * radius;
-                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(warped, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a);
             }
             """, 0F, null)
@@ -241,7 +251,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_mirror_warp", "镜像", "AM · 变形", """
             void main()
             {
-                vec2 uv = vUv;
+                vec2 luv = layerUv(vUv);
+                vec2 uv = luv;
                 vec2 center = vec2(u_center_x, u_center_y);
                 vec2 warped = uv;
                 float strength = clamp(u_strength, 0.0, 1.0);
@@ -258,7 +269,7 @@ public final class AmEffectLibrary
 
                 warped = mix(uv, warped, strength);
                 vec2 inside = step(vec2(0.0), warped) * step(warped, vec2(1.0));
-                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(warped, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a * inside.x * inside.y * alpha + c.a * (1.0 - alpha));
             }
             """, 0F, "strength")
@@ -271,16 +282,17 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_swirl", "旋转扭曲", "AM · 变形", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 center = vec2(u_center_x, u_center_y);
-                vec2 d = vUv - center;
+                vec2 d = luv - center;
                 float radius = max(u_radius, 0.0001);
-                float dist = length(d * Size) / max(Size.x, Size.y);
+                float dist = length(d * LayerSize) / max(LayerSize.x, LayerSize.y);
                 float falloff = clamp(1.0 - dist / radius, 0.0, 1.0);
                 float angle = radians(u_angle) * falloff * falloff;
                 float s = sin(angle);
                 float c = cos(angle);
                 vec2 warped = center + mat2(c, s, -s, c) * d;
-                vec4 texel = texture(Source, clamp(warped, 0.0, 1.0));
+                vec4 texel = sampleLayer(clamp(warped, 0.0, 1.0));
                 fragColor = vec4(texel.rgb, texel.a);
             }
             """, 0.5F, "angle")
@@ -292,10 +304,11 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_chromatic_aberration", "彩色像差", "AM · 风格化", """
             void main()
             {
-                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle))) * u_amount / max(Size, vec2(1.0));
-                vec4 g = texture(Source, vUv);
-                float r = texture(Source, clamp(vUv + dir, 0.0, 1.0)).r;
-                float b = texture(Source, clamp(vUv - dir, 0.0, 1.0)).b;
+                vec2 luv = layerUv(vUv);
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle))) * u_amount / max(LayerSize, vec2(1.0));
+                vec4 g = sampleLayer(luv);
+                float r = sampleLayer(clamp(luv + dir, 0.0, 1.0)).r;
+                float b = sampleLayer(clamp(luv - dir, 0.0, 1.0)).b;
                 fragColor = vec4(r, g.g, b, g.a);
             }
             """, 0.5F, "amount")
@@ -305,18 +318,19 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_tilt_shift", "移轴模糊", "AM · 模糊", """
             void main()
             {
-                vec4 sharp = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 sharp = sampleLayer(luv);
                 vec4 sum = vec4(0.0);
-                vec2 stepUv = vec2(u_radius / max(Size.x, 1.0), 0.0);
+                vec2 stepUv = vec2(u_radius / max(LayerSize.x, 1.0), 0.0);
 
                 for (int i = -8; i <= 8; i++)
                 {
-                    sum += texture(Source, clamp(vUv + stepUv * float(i), 0.0, 1.0));
+                    sum += sampleLayer(clamp(luv + stepUv * float(i), 0.0, 1.0));
                 }
 
                 vec4 blurred = sum / 17.0;
                 float band = smoothstep(clamp(u_width, 0.0, 0.6), clamp(u_width, 0.0, 0.6) + 0.12,
-                    abs(vUv.y - u_center_y));
+                    abs(luv.y - u_center_y));
                 fragColor = mix(sharp, blurred, band);
             }
             """, 0.5F, "radius")
@@ -327,21 +341,22 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_stretch_axis", "轴向拉伸", "AM · 变形", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 center = vec2(u_center_x, u_center_y);
-                vec2 uv = vUv;
+                vec2 uv = luv;
                 float factor = 1.0 + u_amount;
 
                 if (u_axis < 0.5)
                 {
-                    uv.x = center.x + (vUv.x - center.x) / max(factor, 0.01);
+                    uv.x = center.x + (luv.x - center.x) / max(factor, 0.01);
                 }
                 else
                 {
-                    uv.y = center.y + (vUv.y - center.y) / max(factor, 0.01);
+                    uv.y = center.y + (luv.y - center.y) / max(factor, 0.01);
                 }
 
                 vec2 inside = step(vec2(0.0), uv) * step(uv, vec2(1.0));
-                vec4 c = texture(Source, clamp(uv, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(uv, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a * inside.x * inside.y);
             }
             """, 0.5F, "amount")
@@ -353,12 +368,13 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_slice_glitch", "切片故障", "AM · 风格化", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 float bands = max(u_bands, 1.0);
-                float line = floor(vUv.y * bands);
+                float line = floor(luv.y * bands);
                 float phase = floor(Time * max(u_speed, 0.0));
                 float rnd = hash(vec2(line, phase + u_seed));
-                float offset = (rnd - 0.5) * 2.0 * u_amount / max(Size.x, 1.0);
-                vec4 c = texture(Source, clamp(vec2(vUv.x + offset, vUv.y), 0.0, 1.0));
+                float offset = (rnd - 0.5) * 2.0 * u_amount / max(LayerSize.x, 1.0);
+                vec4 c = sampleLayer(clamp(vec2(luv.x + offset, luv.y), 0.0, 1.0));
                 fragColor = c;
             }
             """, 0.5F, "amount")
@@ -370,9 +386,10 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_four_color_gradient", "四色渐变", "AM · 生成", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
-                float t = clamp(dot(vUv - 0.5, dir) * max(u_scale, 0.01) + 0.5 + u_offset, 0.0, 1.0);
+                float t = clamp(dot(luv - 0.5, dir) * max(u_scale, 0.01) + 0.5 + u_offset, 0.0, 1.0);
                 float o1 = clamp(u_offset1, 0.0, 1.0);
                 float o2 = clamp(u_offset2, 0.0, 1.0);
                 float o3 = clamp(u_offset3, 0.0, 1.0);
@@ -409,9 +426,10 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_stripes", "条纹", "AM · 生成", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
-                float coord = dot(vUv, dir) * max(u_frequency, 0.1) + u_phase;
+                float coord = dot(luv, dir) * max(u_frequency, 0.1) + u_phase;
                 float wave = abs(fract(coord) - 0.5) * 2.0;
                 float width = clamp(u_width, 0.01, 0.99);
                 float softness = max(u_softness, 0.001);
@@ -432,8 +450,9 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_grid_lines", "网格", "AM · 生成", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
-                vec2 p = (vUv - 0.5) * Size;
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 p = (luv - 0.5) * LayerSize;
                 float angle = radians(u_angle);
                 mat2 rotation = rot(angle);
                 p = rotation * p;
@@ -454,10 +473,11 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_starfield", "星空", "AM · 生成", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec2 grid = vec2(12.0, 8.0) * max(u_density, 0.05);
-                vec2 cell = floor(vUv * grid);
-                vec2 local = fract(vUv * grid);
+                vec2 cell = floor(luv * grid);
+                vec2 local = fract(luv * grid);
                 vec2 rnd = hash2(cell + u_seed);
                 vec2 center = vec2(0.2) + rnd * 0.6;
                 float radius = max(u_size, 0.5) / 100.0;
@@ -478,9 +498,10 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_lens_flare", "镜头光晕", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec2 light = vec2(u_light_x, u_light_y);
-                vec2 d = (vUv - light) * vec2(Size.x / max(Size.y, 1.0), 1.0);
+                vec2 d = (luv - light) * vec2(LayerSize.x / max(LayerSize.y, 1.0), 1.0);
                 float dist = length(d);
                 float angle = atan(d.y, d.x);
                 float rays = pow(abs(sin(angle * max(u_rays, 1.0) + Time * u_speed)), 8.0) * exp(-dist * 6.0);
@@ -501,14 +522,15 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_edge_light", "边缘光", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float ring = 0.0;
 
                 for (int i = 0; i < 16; i++)
                 {
                     float a = float(i) * 0.3926991;
-                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(Size, vec2(1.0)));
-                    ring = max(ring, texture(Source, clamp(vUv + offset, 0.0, 1.0)).a);
+                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(LayerSize, vec2(1.0)));
+                    ring = max(ring, sampleLayer(clamp(luv + offset, 0.0, 1.0)).a);
                 }
 
                 float edge = clamp(ring - c.a, 0.0, 1.0) * clamp(u_strength, 0.0, 2.0);
@@ -522,7 +544,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_desaturate", "去色", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = luma(c.rgb);
                 fragColor = vec4(mix(c.rgb, vec3(y), clamp(u_amount, 0.0, 1.0)), c.a);
             }
@@ -532,7 +555,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_monochrome", "单色", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = luma(c.rgb);
                 vec3 tinted = u_color.rgb * (0.15 + y * 1.6);
                 fragColor = vec4(mix(c.rgb, clamp(tinted, 0.0, 1.0), clamp(u_amount, 0.0, 1.0)), c.a);
@@ -544,9 +568,10 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_gradient_overlay", "渐变叠加", "AM · 生成", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
-                float t = clamp(dot(vUv - 0.5, dir) * max(u_scale, 0.01) + 0.5 + u_offset, 0.0, 1.0);
+                float t = clamp(dot(luv - 0.5, dir) * max(u_scale, 0.01) + 0.5 + u_offset, 0.0, 1.0);
                 vec3 overlay = mix(u_start.rgb, u_end.rgb, t);
                 vec3 base = mix(u_start.rgb, u_end.rgb, t);
                 vec3 blended;
@@ -568,9 +593,10 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_radial_gradient", "径向渐变", "AM · 生成", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec2 center = vec2(u_center_x, u_center_y);
-                float dist = length((vUv - center) * vec2(Size.x / max(Size.y, 1.0), 1.0));
+                float dist = length((luv - center) * vec2(LayerSize.x / max(LayerSize.y, 1.0), 1.0));
                 float t = 1.0 - smoothstep(max(u_radius, 0.001) * 0.5, max(u_radius, 0.001), dist);
                 vec3 base = mix(u_end.rgb, u_start.rgb, clamp(t, 0.0, 1.0));
                 vec3 blended;
@@ -592,15 +618,16 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_hex_shift", "六边形位移", "AM · 变形", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 spacing = vec2(1.0, 1.7320508);
-                vec2 p = vUv * Size / max(u_size, 1.0) / spacing;
+                vec2 p = luv * LayerSize / max(u_size, 1.0) / spacing;
                 vec2 a = mod(p, spacing) - spacing * 0.5;
                 vec2 b = mod(p + vec2(0.5, 0.0), spacing) - spacing * 0.5;
                 vec2 local = dot(a, a) < dot(b, b) ? a : b;
                 vec2 center = p - local;
                 float h = hash(center + u_seed) * 6.2831853;
-                vec2 offset = vec2(cos(h), sin(h)) * u_amount / max(Size, vec2(1.0));
-                vec4 c = texture(Source, clamp(vUv + offset, 0.0, 1.0));
+                vec2 offset = vec2(cos(h), sin(h)) * u_amount / max(LayerSize, vec2(1.0));
+                vec4 c = sampleLayer(clamp(luv + offset, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a);
             }
             """, 0.5F, "amount")
@@ -611,14 +638,15 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_ripple_pulse", "波纹扩散", "AM · 变形", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 center = vec2(u_center_x, u_center_y);
-                vec2 d = vUv - center;
-                float dist = length(d * Size);
+                vec2 d = luv - center;
+                float dist = length(d * LayerSize);
                 float phase = dist / max(u_wavelength, 1.0) - Time * max(u_speed, 0.0) * 6.2831853;
                 float wave = sin(phase) * u_strength;
                 float falloff = 1.0 - smoothstep(u_radius * 0.5, u_radius, dist);
-                vec2 offset = dist > 0.0001 ? (d / dist) * wave * falloff / max(Size, vec2(1.0)) : vec2(0.0);
-                vec4 c = texture(Source, clamp(vUv + offset, 0.0, 1.0));
+                vec2 offset = dist > 0.0001 ? (d / dist) * wave * falloff / max(LayerSize, vec2(1.0)) : vec2(0.0);
+                vec4 c = sampleLayer(clamp(luv + offset, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a);
             }
             """, 0.5F, "strength")
@@ -632,14 +660,15 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_inner_glow", "内发光", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float ring = 0.0;
 
                 for (int i = 0; i < 16; i++)
                 {
                     float a = float(i) * 0.3926991;
-                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(Size, vec2(1.0)));
-                    ring = max(ring, texture(Source, clamp(vUv + offset, 0.0, 1.0)).a);
+                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(LayerSize, vec2(1.0)));
+                    ring = max(ring, sampleLayer(clamp(luv + offset, 0.0, 1.0)).a);
                 }
 
                 float inner = smoothstep(0.0, 1.0, ring) * (1.0 - c.a) * clamp(u_strength, 0.0, 2.0);
@@ -654,7 +683,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_heat_map", "热力图", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = clamp(luma(c.rgb), 0.0, 1.0);
                 vec4 stops[5];
                 stops[0] = vec4(0.02, 0.0, 0.1, 1.0);
@@ -674,7 +704,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_color_tune", "色偏", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec3 shift = vec3(u_cr, u_mg, u_yb) * 0.5;
                 vec3 tinted = clamp(c.rgb + shift, 0.0, 1.0);
                 fragColor = vec4(mix(c.rgb, tinted, clamp(u_amount, 0.0, 1.0)), c.a);
@@ -688,8 +719,9 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_clouds", "云雾", "AM · 生成", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
-                vec2 p = vUv * max(u_scale, 0.1) + vec2(u_seed * 3.7 + Time * u_speed, u_seed * 1.9);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 p = luv * max(u_scale, 0.1) + vec2(u_seed * 3.7 + Time * u_speed, u_seed * 1.9);
                 float n = fbm(p, 5);
                 n = clamp((n - 0.5) * max(u_contrast, 0.01) + 0.5, 0.0, 1.0);
                 vec3 cloud = mix(u_shadow.rgb, u_highlight.rgb, n);
@@ -707,7 +739,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_contour_lines", "等高线", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = clamp(luma(c.rgb), 0.0, 1.0);
                 float wave = sin((y + u_phase) * max(u_frequency, 0.1) * 6.2831853);
                 float line = 1.0 - smoothstep(0.0, max(u_thickness, 0.01), abs(wave));
@@ -723,14 +756,15 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_hex_tile", "六边形平铺", "AM · 重复", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 1.0);
-                vec2 p = vUv * Size / spacing;
+                vec2 p = luv * LayerSize / spacing;
                 vec2 a = mod(p, vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
                 vec2 b = mod(p + vec2(0.5, 0.0), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
                 vec2 local = dot(a, a) < dot(b, b) ? a : b;
                 vec2 center = p - local;
-                vec2 sourceUv = center * spacing / max(Size, vec2(1.0));
-                vec4 c = texture(Source, clamp(sourceUv, 0.0, 1.0));
+                vec2 sourceUv = center * spacing / max(LayerSize, vec2(1.0));
+                vec4 c = sampleLayer(clamp(sourceUv, 0.0, 1.0));
                 float edge = max(abs(local.x) / 0.5, abs(local.y) / 0.8660254);
                 float gap = smoothstep(1.0 - clamp(u_gap, 0.0, 0.9), 1.0, edge);
                 vec3 rgb = mix(c.rgb, u_line.rgb, gap * clamp(u_line_alpha, 0.0, 1.0));
@@ -745,17 +779,18 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_curl", "卷曲", "AM · 变形", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 center = vec2(u_center_x, u_center_y);
-                vec2 d = vUv - center;
+                vec2 d = luv - center;
                 float radius = max(u_radius, 0.0001);
-                float dist = length(d * Size) / max(Size.x, Size.y);
+                float dist = length(d * LayerSize) / max(LayerSize.x, LayerSize.y);
                 float falloff = clamp(1.0 - dist / radius, 0.0, 1.0);
                 float angle = radians(u_angle) * falloff;
                 float s = sin(angle);
                 float c = cos(angle);
                 vec2 warped = center + mat2(c, s, -s, c) * d;
                 vec2 inside = step(vec2(0.0), warped) * step(warped, vec2(1.0));
-                vec4 texel = texture(Source, clamp(warped, 0.0, 1.0));
+                vec4 texel = sampleLayer(clamp(warped, 0.0, 1.0));
                 fragColor = vec4(texel.rgb, texel.a * inside.x * inside.y);
             }
             """, 0.5F, "angle")
@@ -767,7 +802,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_tile", "平铺", "AM · 重复", """
             void main()
             {
-                vec2 uv = (vUv - vec2(u_offset_x, u_offset_y)) * max(u_scale, 0.01);
+                vec2 luv = layerUv(vUv);
+                vec2 uv = (luv - vec2(u_offset_x, u_offset_y)) * max(u_scale, 0.01);
                 vec2 cell = floor(uv);
                 vec2 local = fract(uv);
 
@@ -778,7 +814,7 @@ public final class AmEffectLibrary
                 }
 
                 vec2 inside = step(vec2(u_gap), local) * step(local, vec2(1.0 - u_gap));
-                vec4 c = texture(Source, clamp(local, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(local, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a * inside.x * inside.y);
             }
             """, 0F, null)
@@ -797,8 +833,9 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_rotate_tile", "旋转平铺", "AM · 重复", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 center = vec2(u_center_x, u_center_y);
-                vec2 p = vUv - center;
+                vec2 p = luv - center;
                 float radius = length(p);
                 float angle = atan(p.y, p.x) + radians(u_angle);
                 float sectors = max(u_count, 1.0);
@@ -806,7 +843,7 @@ public final class AmEffectLibrary
                 angle = mod(angle, wedge);
                 angle = abs(angle - wedge * 0.5);
                 vec2 warped = center + vec2(cos(angle), sin(angle)) * radius * max(u_scale, 0.01);
-                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(warped, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a);
             }
             """, 0F, null)
@@ -819,7 +856,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_pulse_opacity", "脉动不透明度", "AM · 透明度", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float pulse = 0.5 + 0.5 * sin(Time * max(u_speed, 0.0) * 6.2831853 + u_phase);
                 float alpha = clamp(c.a * (1.0 - clamp(u_amount, 0.0, 1.0) * pulse), 0.0, 1.0);
                 fragColor = vec4(c.rgb, alpha);
@@ -832,7 +870,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_sepia", "棕褐色", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = luma(c.rgb);
                 vec3 sepia = vec3(y * 1.07 + 0.1, y * 0.95 + 0.02, y * 0.72);
                 fragColor = vec4(mix(c.rgb, clamp(sepia, 0.0, 1.0), clamp(u_amount, 0.0, 1.0)), c.a);
@@ -843,7 +882,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_color_bands", "色带", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float levels = max(u_levels, 2.0);
                 vec3 quantised = floor(c.rgb * levels + 0.5) / levels;
                 fragColor = vec4(clamp(mix(c.rgb, quantised, clamp(u_amount, 0.0, 1.0)), 0.0, 1.0), c.a);
@@ -855,9 +895,10 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_oil_paint", "油画", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float radius = max(u_radius, 0.0);
-                vec2 stepUv = radius / max(Size, vec2(1.0));
+                vec2 stepUv = radius / max(LayerSize, vec2(1.0));
                 float bestVariance = 1.0e9;
                 vec3 bestColor = c.rgb;
 
@@ -870,7 +911,7 @@ public final class AmEffectLibrary
 
                     for (int i = 1; i <= 4; i++)
                     {
-                        vec3 sample = texture(Source, clamp(vUv + direction * stepUv * (float(i) * 0.5), 0.0, 1.0)).rgb;
+                        vec3 sample = sampleLayer(clamp(luv + direction * stepUv * (float(i) * 0.5), 0.0, 1.0)).rgb;
                         mean += sample;
                         meanSquare += sample * sample;
                     }
@@ -894,7 +935,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_split_tone", "分离色调", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = clamp(luma(c.rgb) + u_balance * 0.35, 0.0, 1.0);
                 vec3 tinted = mix(u_shadow.rgb, u_highlight.rgb, smoothstep(0.0, 1.0, y));
                 vec3 rgb = mix(c.rgb, tinted * (0.35 + y * 1.3), clamp(u_amount, 0.0, 1.0));
@@ -909,7 +951,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_duotone", "双色调", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = clamp(luma(c.rgb), 0.0, 1.0);
                 vec3 mapped = mix(u_dark.rgb, u_light.rgb, y);
                 fragColor = vec4(mix(c.rgb, mapped, clamp(u_amount, 0.0, 1.0)), c.a);
@@ -922,7 +965,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_palette_map", "色彩映射", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = clamp(luma(c.rgb), 0.0, 1.0);
                 vec4 palette[8];
                 palette[0] = u_color1;
@@ -953,7 +997,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_hue_shift", "色相偏移", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec3 hsv = rgb2hsv(c.rgb);
                 hsv.x = fract(hsv.x + u_hue / 360.0);
                 vec3 shifted = hsv2rgb(hsv);
@@ -966,9 +1011,10 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_light_leak", "漏光", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
-                float band = dot(vUv - 0.5, dir) + 0.5 + u_position;
+                float band = dot(luv - 0.5, dir) + 0.5 + u_position;
                 float wave = sin(Time * max(u_speed, 0.0) + u_phase) * 0.08;
                 float leak = 1.0 - smoothstep(0.0, max(u_width, 0.01), abs(fract(band + wave) - 0.5));
                 leak = pow(clamp(leak, 0.0, 1.0), max(u_falloff, 0.01));
@@ -987,15 +1033,16 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_light_wrap", "光包裹", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float edge = 0.0;
                 vec3 spill = vec3(0.0);
 
                 for (int i = 0; i < 12; i++)
                 {
                     float a = float(i) * 0.5235988;
-                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(Size, vec2(1.0)));
-                    edge = max(edge, texture(Source, clamp(vUv + offset, 0.0, 1.0)).a);
+                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(LayerSize, vec2(1.0)));
+                    edge = max(edge, sampleLayer(luv + offset).a);
                     spill += texture(Comp, clamp(vUv + offset * 0.5, 0.0, 1.0)).rgb;
                 }
 
@@ -1013,6 +1060,7 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_displace_map", "置换图", "AM · 变形", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec4 map = texture(Comp, vUv);
                 vec2 offset;
 
@@ -1030,8 +1078,8 @@ public final class AmEffectLibrary
                     offset = vec2(y - 0.5, y - 0.5) * 2.0;
                 }
 
-                vec2 uv = vUv + offset * (u_amount / max(Size, vec2(1.0)));
-                vec4 c = texture(Source, clamp(uv, 0.0, 1.0));
+                vec2 uv = luv + offset * (u_amount / max(LayerSize, vec2(1.0)));
+                vec4 c = sampleLayer(uv);
                 fragColor = vec4(c.rgb, c.a);
             }
             """, 0.5F, "amount")
@@ -1047,8 +1095,9 @@ public final class AmEffectLibrary
                 float down = luma(texture(Comp, clamp(vUv - vec2(0.0, Texel.y), 0.0, 1.0)).rgb);
                 float up = luma(texture(Comp, clamp(vUv + vec2(0.0, Texel.y), 0.0, 1.0)).rgb);
                 vec2 gradient = vec2(right - left, up - down);
-                vec2 uv = vUv + gradient * (u_strength / max(Size, vec2(1.0)));
-                vec4 c = texture(Source, clamp(uv, 0.0, 1.0));
+                vec2 luv = layerUv(vUv);
+                vec2 uv = luv + gradient * (u_strength / max(LayerSize, vec2(1.0)));
+                vec4 c = sampleLayer(uv);
                 fragColor = vec4(c.rgb, c.a);
             }
             """, 0.5F, "strength")
@@ -1064,8 +1113,9 @@ public final class AmEffectLibrary
                 float down = luma(texture(Comp, clamp(vUv - vec2(0.0, Texel.y), 0.0, 1.0)).rgb);
                 float up = luma(texture(Comp, clamp(vUv + vec2(0.0, Texel.y), 0.0, 1.0)).rgb);
                 vec2 gradient = vec2(right - left, up - down);
-                vec2 offset = gradient * (u_strength / max(Size, vec2(1.0)));
-                vec3 refracted = texture(Source, clamp(vUv + offset, 0.0, 1.0)).rgb;
+                vec2 luv = layerUv(vUv);
+                vec2 offset = gradient * (u_strength / max(LayerSize, vec2(1.0)));
+                vec3 refracted = sampleLayer(luv + offset).rgb;
                 float brightness = dot(refracted, vec3(0.299, 0.587, 0.114));
                 vec3 tinted = mix(refracted, vec3(brightness) * u_tint.rgb * 2.0, clamp(u_tint_amount, 0.0, 1.0));
                 float shine = clamp(length(gradient) * u_shine, 0.0, 1.0);
@@ -1081,7 +1131,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_gaussian_blur", "高斯模糊", "AM · 模糊", """
             void main()
             {
-                fragColor = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                fragColor = sampleLayer(luv);
             }
             """, 0F, "strength")
             .blur("strength", false, null)
@@ -1090,7 +1141,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_box_blur", "方框模糊", "AM · 模糊", """
             void main()
             {
-                fragColor = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                fragColor = sampleLayer(luv);
             }
             """, 0F, "strength")
             .blur("strength", true, "iter")
@@ -1100,14 +1152,15 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_motion_blur", "动感模糊", "AM · 模糊", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 direction = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
-                vec2 stepUv = direction * (u_length / max(Size, vec2(1.0))) / 24.0;
+                vec2 stepUv = direction * (u_length / max(LayerSize, vec2(1.0))) / 24.0;
                 vec4 sum = vec4(0.0);
 
                 for (int i = 0; i < 24; i++)
                 {
                     float t = float(i) / 23.0 - 0.5;
-                    sum += texture(Source, clamp(vUv + stepUv * (float(i) - 11.5), 0.0, 1.0));
+                    sum += sampleLayer(clamp(luv + stepUv * (float(i) - 11.5), 0.0, 1.0));
                 }
 
                 fragColor = sum / 24.0;
@@ -1119,15 +1172,16 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_zoom_blur", "径向模糊", "AM · 模糊", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 center = vec2(u_center_x, u_center_y);
-                vec2 delta = vUv - center;
+                vec2 delta = luv - center;
                 vec4 sum = vec4(0.0);
 
                 for (int i = 0; i < 24; i++)
                 {
                     float t = float(i) / 23.0;
                     float scale = 1.0 + (t - 0.5) * u_strength;
-                    sum += texture(Source, clamp(center + delta * scale, 0.0, 1.0));
+                    sum += sampleLayer(clamp(center + delta * scale, 0.0, 1.0));
                 }
 
                 fragColor = sum / 24.0;
@@ -1140,7 +1194,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_lens_blur", "镜头模糊", "AM · 模糊", """
             void main()
             {
-                vec2 radiusUv = vec2(u_radius) / max(Size, vec2(1.0));
+                vec2 luv = layerUv(vUv);
+                vec2 radiusUv = vec2(u_radius) / max(LayerSize, vec2(1.0));
                 vec4 sum = vec4(0.0);
                 float total = 0.0;
 
@@ -1148,10 +1203,10 @@ public final class AmEffectLibrary
                 {
                     float a = float(i) * 2.3999632;
                     float r = sqrt(float(i) / 31.0) * u_radius;
-                    vec2 point = vUv + vec2(cos(a), sin(a)) * r / max(Size, vec2(1.0));
+                    vec2 point = luv + vec2(cos(a), sin(a)) * r / max(LayerSize, vec2(1.0));
                     float weight = 1.0 - 0.5 * (r / max(u_radius, 0.001));
 
-                    sum += texture(Source, clamp(point, 0.0, 1.0)) * weight;
+                    sum += sampleLayer(clamp(point, 0.0, 1.0)) * weight;
                     total += weight;
                 }
 
@@ -1163,15 +1218,16 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_polar", "极坐标", "AM · 变形", """
             void main()
             {
+                vec2 luv = layerUv(vUv);
                 vec2 center = vec2(u_center_x, u_center_y);
-                vec2 p = (vUv - center) * 2.0;
+                vec2 p = (luv - center) * 2.0;
                 float radius = length(p);
                 float angle = atan(p.y, p.x) + radians(u_angle);
                 vec2 polar = vec2(angle / 6.2831853 * max(u_repeat, 1.0) + 0.5,
                                   radius * max(u_scale, 0.01));
                 polar = fract(polar);
-                vec2 warped = mix(vUv, polar, clamp(u_amount, 0.0, 1.0));
-                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                vec2 warped = mix(luv, polar, clamp(u_amount, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(warped, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a);
             }
             """, 0.5F, "amount")
@@ -1185,12 +1241,13 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_fractal_warp", "分形扭曲", "AM · 变形", """
             void main()
             {
-                vec2 warped = vUv;
-                vec2 noiseUv = vUv * max(u_scale, 0.01) + vec2(u_seed * 7.13);
+                vec2 luv = layerUv(vUv);
+                vec2 warped = luv;
+                vec2 noiseUv = luv * max(u_scale, 0.01) + vec2(u_seed * 7.13);
                 float n1 = fbm(noiseUv, 4) - 0.5;
                 float n2 = fbm(noiseUv + 13.7, 4) - 0.5;
-                warped += vec2(n1, n2) * (u_amount / max(Size, vec2(1.0)));
-                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                warped += vec2(n1, n2) * (u_amount / max(LayerSize, vec2(1.0)));
+                vec4 c = sampleLayer(clamp(warped, 0.0, 1.0));
                 fragColor = vec4(c.rgb, c.a);
             }
             """, 0.5F, "amount")
@@ -1201,7 +1258,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_colorize", "色彩化", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = luma(c.rgb);
                 vec3 tinted = u_color.rgb * (0.25 + y * 1.5);
                 fragColor = vec4(clamp(mix(c.rgb, tinted, clamp(u_strength, 0.0, 1.0)), 0.0, 1.0), c.a);
@@ -1213,7 +1271,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_replace_color", "替换颜色", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float distanceToTarget = length(c.rgb - u_target.rgb);
                 float hit = 1.0 - smoothstep(u_tolerance, u_tolerance + max(u_softness, 0.001), distanceToTarget);
                 vec3 rgb = mix(c.rgb, u_replacement.rgb, hit * clamp(u_strength, 0.0, 1.0));
@@ -1229,7 +1288,8 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_gradient_map", "渐变映射", "AM · 调色", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 float y = clamp(luma(c.rgb), 0.0, 1.0);
                 vec3 mapped = mix(u_shadow.rgb, u_highlight.rgb, y);
                 vec3 rgb = mix(c.rgb, mapped, clamp(u_amount, 0.0, 1.0));
@@ -1243,14 +1303,15 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_radial_shadow", "径向阴影", "AM · 风格化", """
             void main()
             {
-                vec4 c = texture(Source, vUv);
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
                 vec2 light = vec2(u_light_x, u_light_y);
-                vec2 toPixel = vUv - light;
+                vec2 toPixel = luv - light;
                 float dist = length(toPixel);
                 vec2 direction = dist > 0.0001 ? toPixel / dist : vec2(0.0);
-                float size = u_size / max(Size.x, Size.y);
-                vec2 shadowUv = clamp(vUv + direction * size, 0.0, 1.0);
-                vec4 shadowSample = texture(Source, shadowUv);
+                float size = u_size / max(LayerSize.x, LayerSize.y);
+                vec2 shadowUv = clamp(luv + direction * size, 0.0, 1.0);
+                vec4 shadowSample = sampleLayer(shadowUv);
                 float falloff = mix(1.0, clamp(1.0 - dist, 0.0, 1.0), clamp(u_fade, 0.0, 1.0));
                 float alpha = shadowSample.a * clamp(u_alpha, 0.0, 1.0) * falloff;
                 vec3 rgb = mix(u_color.rgb, c.rgb, c.a);
@@ -1268,14 +1329,15 @@ public final class AmEffectLibrary
         add(new AmEffectDef("am_pixelate", "像素化", "AM · 变形", """
             void main()
             {
-                vec2 uv = vUv;
+                vec2 luv = layerUv(vUv);
+                vec2 uv = luv;
                 vec2 grid = max(vec2(u_size, u_size * max(u_stretch, 0.05)), vec2(1.0));
                 vec2 offset = vec2(u_offset_x, u_offset_y);
-                vec2 snapped = (floor((uv + offset) * Size / grid) + 0.5) * grid / max(Size, vec2(1.0));
+                vec2 snapped = (floor((uv + offset) * LayerSize / grid) + 0.5) * grid / max(LayerSize, vec2(1.0));
                 vec2 d = snapped - 0.5;
                 float vignette = 1.0 - smoothstep(0.35, 0.75, length(d));
                 float keep = mix(1.0, vignette, clamp(u_vignette, 0.0, 1.0));
-                vec4 c = texture(Source, clamp(snapped, 0.0, 1.0));
+                vec4 c = sampleLayer(clamp(snapped, 0.0, 1.0));
                 vec3 rgb = c.rgb;
                 if (u_saturation != 0.0)
                 {

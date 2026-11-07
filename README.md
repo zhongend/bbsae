@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.39.jar`](https://github.com/zhongend/bbsae/releases/download/v0.39/bbsae-0.39.jar)
-   from the **v0.39** release (the asset is updated with each source push).
+1. Download [`bbsae-0.40.jar`](https://github.com/zhongend/bbsae/releases/download/v0.40/bbsae-0.40.jar)
+   from the **v0.40** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.39.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.40.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.39.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.40.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,19 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.40 — reference effects now work in layer space
+
+- Every reference effect body now runs in **layer coordinates**: `luv = layerUv(vUv)`, pixel radii in
+  `LayerSize` (layer pixels), resampling through `sampleLayer()` (which maps layer pixels back to
+  composition UVs), and `LayerTexel` for texel offsets.
+- 58 single-input bodies were migrated mechanically and the four backdrop-reading effects
+  (置换图/渐变置换/玻璃/光包裹) by hand — `Source` is sampled in layer space while `Comp` stays in
+  composition space.
+- Consequence: ripples, bends, glows and blurs on a small layer are anchored to that layer instead
+  of the composition centre; directional effects follow layer-local y-down coordinates, which is the
+  reference convention (and why some sheet tiles read flipped).
+- 321 tests green; all 62 shader bodies still link.
 
 ## What's new in 0.39 — lens flare and proxy-correct pixel units
 
