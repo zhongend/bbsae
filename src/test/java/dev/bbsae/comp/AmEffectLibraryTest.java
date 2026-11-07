@@ -37,7 +37,7 @@ public class AmEffectLibraryTest
             assertTrue(definition.body.contains("fragColor"), "body writes no colour: " + definition.id);
         }
 
-        assertTrue(ids.size() >= 95, "the catalogue should have grown with the channel/composite batch");
+        assertTrue(ids.size() >= 101, "the catalogue should have crossed one hundred effects");
     }
 
     @Test
@@ -151,6 +151,12 @@ public class AmEffectLibraryTest
         assertNeutral("am_solid_matte", "amount", 0F);
         assertNeutral("am_matte_fringe", "width", 0F);
         assertNeutral("am_flicker", "amount", 0F);
+        assertNeutral("am_flip", "angle", 0F);
+        assertNeutral("am_skew", "amount", 0F);
+        assertNeutral("am_squeeze", "amount", 0F);
+        assertNeutral("am_mask_blur", "radius", 0F);
+        assertNeutral("am_color_gain", "gain_r", 1F);
+        assertNeutral("am_block_dissolve", "progress", 1F);
 
         CompEffect balance = CompEffectRegistry.create("am_color_balance", 1);
 
@@ -182,11 +188,27 @@ public class AmEffectLibraryTest
 
         assertTrue(AmEffectLibrary.isNeutral(effect), id + " must be an identity with " + key + " = 0");
 
-        /* Probe just past the identity: a value inside the parameter's allowed range that must
-         * change the image (0.5 is below the minimum size of the pixelate effect). */
-        effect.put(key, (double) (value + 1F));
+        /* Probe another value inside the parameter's allowed range that must change the image.
+         * Stepping up is preferred; identities at the maximum (a dissolve at progress 1) step down
+         * instead, and the probe never leaves the slider range. */
+        CompEffectRegistry.Definition definition = CompEffectRegistry.get(id);
+        float min = 0F;
+        float max = 1F;
+
+        for (CompEffectRegistry.Param param : definition.params)
+        {
+            if (param.key.equals(key))
+            {
+                min = param.min;
+                max = param.max;
+            }
+        }
+
+        float probe = value + 1F <= max ? value + 1F : Math.max(min, value - 0.5F);
+
+        effect.put(key, (double) probe);
 
         assertFalse(AmEffectLibrary.isNeutral(effect),
-            id + " must not be an identity with " + key + " = " + (value + 1F));
+            id + " must not be an identity with " + key + " = " + probe);
     }
 }
