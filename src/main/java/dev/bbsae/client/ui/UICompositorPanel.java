@@ -13582,6 +13582,35 @@ public class UICompositorPanel extends UIDashboardPanel
         text.setText(layer.text);
         section.fields.add(text);
 
+        /* Text content effects: these change the string (timecode, counter, scramble, typewriter)
+         * before layout, so they work with the existing per-character animators instead of
+         * duplicating them. */
+        String[] textModeNames = {"静态文字", "时间码", "计数器"};
+        UICompButton textMode = new UICompButton(IKey.constant(textModeNames[Math.max(0, Math.min(2, layer.textMode == null ? 0 : layer.textMode))]), (button) ->
+        {
+            this.beginAction("切换文字模式");
+            int mode = layer.textMode == null ? 0 : layer.textMode;
+            mode = (mode + 1) % textModeNames.length;
+            layer.textMode = mode;
+            button.label = IKey.constant(textModeNames[mode]);
+            this.refreshInspector();
+            this.save();
+        });
+        section.fields.add(this.fieldRow("文字模式", textMode));
+
+        float progress = layer.textProgress == null ? 1F : layer.textProgress;
+
+        section.fields.add(this.animatedNumberRow("打字进度", layer, "text/progress", progress,
+            (value) -> layer.textProgress = value.floatValue(), 0F, 1F));
+        section.fields.add(this.numberRow("随机字符比例", (double) (layer.textRandom == null ? 0F : layer.textRandom), 0D, 1D, false,
+            (value) -> layer.textRandom = value.floatValue()));
+        section.fields.add(this.numberRow("随机种子", (double) (layer.textRandomSeed == null ? 0 : layer.textRandomSeed), 0D, 9999D, true,
+            (value) -> layer.textRandomSeed = value.intValue()));
+        section.fields.add(this.numberRow("计数器偏移", (double) (layer.textCounterOffset == null ? 0F : layer.textCounterOffset), -100000D, 100000D, false,
+            (value) -> layer.textCounterOffset = value.floatValue()));
+        section.fields.add(this.numberRow("计数器倍率", (double) (layer.textCounterScale == null ? 1F : layer.textCounterScale), -1000D, 1000D, false,
+            (value) -> layer.textCounterScale = value.floatValue()));
+
         java.util.List<String> fontLabels = new java.util.ArrayList<>();
         java.util.Map<String, String> fontFiles = new java.util.LinkedHashMap<>();
 

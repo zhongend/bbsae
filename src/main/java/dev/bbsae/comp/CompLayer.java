@@ -138,6 +138,15 @@ public class CompLayer
     public float strokeWidth = 0F;
 
     public String text = "";
+    /** Text content mode: null/0 static, 1 timecode, 2 counter. */
+    public Integer textMode;
+    /** Typewriter reveal over code points (null = 1). */
+    public Float textProgress;
+    /** Fraction of glyphs replaced by random characters (null = 0). */
+    public Float textRandom;
+    public Integer textRandomSeed;
+    public Float textCounterOffset;
+    public Float textCounterScale;
     public String fontName = "";
     public float fontSize = 48F;
     public float tracking = 0F;

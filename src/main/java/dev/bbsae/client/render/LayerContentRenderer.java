@@ -450,7 +450,10 @@ final class LayerContentRenderer
 
     private static void drawText(CompLayer layer, CompRenderContext context, Batcher2D batcher)
     {
-        String text = layer.text == null ? "" : layer.text;
+        String text = dev.bbsae.comp.TextContent.resolve(layer,
+            context == null ? 0F : context.time,
+            context == null || context.comp == null ? 60 : Math.max(1, Math.round(context.comp.fps)),
+            context == null ? 0 : Math.round(context.frame));
 
         if (text.isEmpty())
         {
