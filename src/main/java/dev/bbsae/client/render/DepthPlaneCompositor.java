@@ -72,21 +72,30 @@ final class DepthPlaneCompositor
         program.set("PlaneN", viewNormal.x, viewNormal.y, viewNormal.z);
         program.set("PlaneD", planeD);
 
-        /* 1) Depth-only pass: writes the plane's depth where the layer has coverage. */
+        /* 1) Depth-only pass for the opaque part: a translucent layer must not occlude what is
+         * behind it, so only alpha >= 0.5 writes depth. */
         this.target.bindOnly();
         org.lwjgl.opengl.GL11.glColorMask(false, false, false, false);
         org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
         org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_LESS);
         org.lwjgl.opengl.GL11.glDepthMask(true);
-        program.set("WriteColor", 0);
+        program.set("Mode", 0);
         program.drawFullscreen();
 
-        /* 2) Colour pass at equality: only the fragments the depth pass accepted survive. */
+        /* 2) Opaque colour at equality: only the fragments the depth pass accepted survive. */
         this.target.clearColorOnly(0);
         org.lwjgl.opengl.GL11.glColorMask(true, true, true, true);
         org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_EQUAL);
         org.lwjgl.opengl.GL11.glDepthMask(false);
-        program.set("WriteColor", 1);
+        program.set("Mode", 1);
+        program.drawFullscreen();
+
+        /* 3) Translucent colour, less-or-equal against the depth of the layers behind it and no
+         * depth writes: a semitransparent layer blends over nearer opaque pixels only when it is
+         * actually in front of them. */
+        org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_LEQUAL);
+        org.lwjgl.opengl.GL11.glDepthMask(false);
+        program.set("Mode", 2);
         program.drawFullscreen();
 
         org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);

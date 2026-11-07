@@ -125,7 +125,7 @@ public final class ShaderSources
         uniform mat4 Projection;
         uniform vec3 PlaneN;
         uniform float PlaneD;
-        uniform int WriteColor;
+        uniform int Mode;
 
         in vec2 vUv;
         out vec4 fragColor;
@@ -133,6 +133,13 @@ public final class ShaderSources
         void main()
         {
             vec4 source = texture(Layer, vUv);
+
+            /* 0 = depth only (opaque fragments write depth), 1 = opaque colour at equality,
+             * 2 = translucent colour at less-or-equal without depth writes. */
+            if (Mode == 2 ? source.a >= 0.5 : source.a < 0.5)
+            {
+                discard;
+            }
 
             if (source.a < 0.004)
             {
@@ -160,7 +167,7 @@ public final class ShaderSources
             vec4 clip = Projection * vec4(point, 1.0);
             gl_FragDepth = clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0);
 
-            if (WriteColor == 0)
+            if (Mode == 0)
             {
                 fragColor = vec4(0.0);
 

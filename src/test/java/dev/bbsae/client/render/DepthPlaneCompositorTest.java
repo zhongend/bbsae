@@ -124,6 +124,64 @@ public class DepthPlaneCompositorTest
         return pixels[(SIZE / 2) * SIZE + SIZE / 2];
     }
 
+    private static int composeCenter(int farArgb, int nearArgb, boolean farFirst)
+    {
+        CompCamera camera = CompCamera.identity(SIZE, SIZE);
+        GlFramebuffer far = solid(farArgb);
+        GlFramebuffer near = solid(nearArgb);
+        GlFramebuffer accumulation = new GlFramebuffer(SIZE, SIZE);
+        DepthPlaneCompositor compositor = new DepthPlaneCompositor(SIZE, SIZE);
+
+        accumulation.begin(0x00000000);
+
+        Matrix4f farWorld = new Matrix4f().translate(0F, 0F, 0F);
+        Matrix4f nearWorld = new Matrix4f().translate(0F, 0F, 30F);
+
+        if (farFirst)
+        {
+            accumulation = compositor.composite(far, farWorld, camera, accumulation, CompLayer.BLEND_NORMAL, 1F);
+            accumulation = compositor.composite(near, nearWorld, camera, accumulation, CompLayer.BLEND_NORMAL, 1F);
+        }
+        else
+        {
+            accumulation = compositor.composite(near, nearWorld, camera, accumulation, CompLayer.BLEND_NORMAL, 1F);
+            accumulation = compositor.composite(far, farWorld, camera, accumulation, CompLayer.BLEND_NORMAL, 1F);
+        }
+
+        int[] pixels = accumulation.readTopDown();
+        int center = center(pixels);
+
+        compositor.delete();
+        accumulation.delete();
+        far.delete();
+        near.delete();
+
+        return center;
+    }
+
+    @Test
+    public void aTranslucentNearLayerBlendsInsteadOfOccluding()
+    {
+        Assumptions.assumeTrue(CompShaders.depthPlane != null && CompShaders.depthPlane.isValid(),
+            "depth plane program unavailable");
+
+        int center = composeCenter(0xFFFF0000, 0x800000FF, true);
+
+        assertTrue(((center >> 16) & 0xFF) > 40, "the red far layer must remain visible through the translucent near one: " + Integer.toHexString(center));
+        assertTrue((center & 0xFF) > 40, "the blue near layer must contribute: " + Integer.toHexString(center));
+    }
+
+    @Test
+    public void aTranslucentFarLayerIsHiddenBehindAnOpaqueNearOne()
+    {
+        Assumptions.assumeTrue(CompShaders.depthPlane != null && CompShaders.depthPlane.isValid(),
+            "depth plane program unavailable");
+
+        int center = composeCenter(0x80FF0000, 0xFF0000FF, false);
+
+        assertEquals(0xFF0000FF, center, "the opaque near layer owns the pixel");
+    }
+
     @Test
     public void theNearerPlaneOwnsTheResultInBothOrders()
     {
