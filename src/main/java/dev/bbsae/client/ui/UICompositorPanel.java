@@ -10536,6 +10536,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
             this.keyframeDrawer.setVisible(false);
             this.keyframeHandle.setVisible(false);
+            this.keyframeDrawerSlide = 0F;
 
             return;
         }
@@ -10544,7 +10545,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.keyframeDrawerHeight));
 
-        float slide = this.keyframeOpen ? Math.max(0F, Math.min(1F, this.keyframeDrawerSlide)) : 0F;
+        /* Use the live slide value for both directions: closing must shrink the drawer instead of
+         * snapping it shut, so the same animated height drives the layout until it reaches 0. */
+        float slide = Math.max(0F, Math.min(1F, this.keyframeDrawerSlide));
         int shownHeight = Math.round(this.keyframeDrawerHeight * slide);
 
         /* Visibility is a function of the page and the open flag here, not a one-shot side effect
