@@ -91,7 +91,7 @@ public class EffectNeutralTest
     {
         "gradient_ramp", "noise_gradient", "checkerboard", "grid", "circle",
         "chroma_key", "luma_key", "posterize", "threshold", "depth_matte",
-        "kaleidoscope", "am_kaleidoscope", "am_pixelate",
+        "kaleidoscope", "am_kaleidoscope", "am_pixelate", "am_tile", "am_rotate_tile",
     };
 
     @Test

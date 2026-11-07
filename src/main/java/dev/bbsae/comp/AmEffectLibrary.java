@@ -475,6 +475,127 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_tile", "平铺", "AM · 重复", """
+            void main()
+            {
+                vec2 uv = (vUv - vec2(u_offset_x, u_offset_y)) * max(u_scale, 0.01);
+                vec2 cell = floor(uv);
+                vec2 local = fract(uv);
+
+                if (u_mirror > 0.5)
+                {
+                    local.x = mix(local.x, 1.0 - local.x, mod(cell.y, 2.0));
+                    local.y = mix(local.y, 1.0 - local.y, mod(cell.x, 2.0));
+                }
+
+                vec2 inside = step(vec2(u_gap), local) * step(local, vec2(1.0 - u_gap));
+                vec4 c = texture(Source, clamp(local, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a * inside.x * inside.y);
+            }
+            """, 0F, null)
+            .p("scale", "平铺数", 0.1F, 12F, 2F, 0.01F)
+            .p("offset_x", "偏移 X", -1F, 1F, 0F, 0.01F)
+            .p("offset_y", "偏移 Y", -1F, 1F, 0F, 0.01F)
+            .p("gap", "缝隙", 0F, 0.45F, 0F, 0.005F)
+            .p("mirror", "镜像（0/1）", 0F, 1F, 0F, 1F));
+
+        add(new AmEffectDef("am_rotate_tile", "旋转平铺", "AM · 重复", """
+            void main()
+            {
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 p = vUv - center;
+                float radius = length(p);
+                float angle = atan(p.y, p.x) + radians(u_angle);
+                float sectors = max(u_count, 1.0);
+                float wedge = 6.2831853 / sectors;
+                angle = mod(angle, wedge);
+                angle = abs(angle - wedge * 0.5);
+                vec2 warped = center + vec2(cos(angle), sin(angle)) * radius * max(u_scale, 0.01);
+                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0F, null)
+            .p("count", "扇区数", 1F, 24F, 8F, 1F)
+            .p("angle", "旋转", -180F, 180F, 0F, 1F)
+            .p("scale", "半径缩放", 0.1F, 4F, 1F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_pulse_opacity", "脉动不透明度", "AM · 透明度", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float pulse = 0.5 + 0.5 * sin(Time * max(u_speed, 0.0) * 6.2831853 + u_phase);
+                float alpha = clamp(c.a * (1.0 - clamp(u_amount, 0.0, 1.0) * pulse), 0.0, 1.0);
+                fragColor = vec4(c.rgb, alpha);
+            }
+            """, 0F, "amount")
+            .p("amount", "脉动幅度", 0F, 1F, 0.5F, 0.01F)
+            .p("speed", "速度（次/秒）", 0F, 10F, 1F, 0.01F)
+            .p("phase", "相位", 0F, 6.2831853F, 0F, 0.01F));
+
+        add(new AmEffectDef("am_sepia", "棕褐色", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = luma(c.rgb);
+                vec3 sepia = vec3(y * 1.07 + 0.1, y * 0.95 + 0.02, y * 0.72);
+                fragColor = vec4(mix(c.rgb, clamp(sepia, 0.0, 1.0), clamp(u_amount, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_color_bands", "色带", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float levels = max(u_levels, 2.0);
+                vec3 quantised = floor(c.rgb * levels + 0.5) / levels;
+                fragColor = vec4(clamp(mix(c.rgb, quantised, clamp(u_amount, 0.0, 1.0)), 0.0, 1.0), c.a);
+            }
+            """, 0F, "amount")
+            .p("levels", "色阶数", 2F, 32F, 6F, 1F)
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_oil_paint", "油画", "AM · 风格化", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float radius = max(u_radius, 0.0);
+                vec2 stepUv = radius / max(Size, vec2(1.0));
+                float bestVariance = 1.0e9;
+                vec3 bestColor = c.rgb;
+
+                for (int quadrant = 0; quadrant < 4; quadrant++)
+                {
+                    vec2 direction = vec2(quadrant == 0 || quadrant == 3 ? -1.0 : 1.0,
+                                           quadrant < 2 ? -1.0 : 1.0);
+                    vec3 mean = vec3(0.0);
+                    vec3 meanSquare = vec3(0.0);
+
+                    for (int i = 1; i <= 4; i++)
+                    {
+                        vec3 sample = texture(Source, clamp(vUv + direction * stepUv * (float(i) * 0.5), 0.0, 1.0)).rgb;
+                        mean += sample;
+                        meanSquare += sample * sample;
+                    }
+
+                    mean /= 4.0;
+                    meanSquare /= 4.0;
+                    float variance = dot(meanSquare - mean * mean, vec3(1.0));
+
+                    if (variance < bestVariance)
+                    {
+                        bestVariance = variance;
+                        bestColor = mean;
+                    }
+                }
+
+                fragColor = vec4(clamp(bestColor, 0.0, 1.0), c.a);
+            }
+            """, 0.5F, "radius")
+            .p("radius", "笔触半径", 0F, 20F, 3F, 0.1F));
+
         add(new AmEffectDef("am_split_tone", "分离色调", "AM · 调色", """
             void main()
             {

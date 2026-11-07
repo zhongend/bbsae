@@ -45,7 +45,7 @@
 新增三层，效果不再需要写进 `EffectRenderer` 的巨型 switch：
 
 - `comp/AmEffectDef`：id、显示名、分类、参数表（float/color）、`main()` 片段、零点参数。
-- `comp/AmEffectLibrary`：41 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
+- `comp/AmEffectLibrary`：47 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
   弯曲、描边、收缩与膨胀、圆形波纹、万花筒、镜像、旋转扭曲、像素化、极坐标、分形扭曲、
   色彩化、替换颜色、渐变映射、径向阴影），参数名/范围/默认值与参考应用一致。
 - `client/render/AmEffectRenderer`：按定义拼装完整 fragment（标准 uniform + 参数 uniform +
@@ -150,6 +150,7 @@ switch 中拆出来：
 4.8 **第四批**（彩色像差、移轴模糊、轴向拉伸、切片故障、四色渐变、条纹、网格、星空；已完成）
 4.9 **背景采样批**（置换图、渐变置换、玻璃；已完成）
 4.10 **第五批**（分离色调、双色调、色彩映射、色相偏移、漏光、光包裹；已完成）
+4.11 **重复/风格批**（平铺、旋转平铺、脉动不透明度、棕褐色、色带、油画；已完成）
     - `CompRenderContext.backdrop` 承载"当前图层下方的合成"，由 `CompRenderer` 在图层效果循环与
       调整层处理期间设置/恢复；
     - `AmEffectDef.comp()` 声明效果读取 `Comp`，渲染器绑定 backdrop（无 backdrop 时回退到自身输入）；

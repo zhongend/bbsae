@@ -37,7 +37,7 @@ public class AmEffectLibraryTest
             assertTrue(definition.body.contains("fragColor"), "body writes no colour: " + definition.id);
         }
 
-        assertTrue(ids.size() >= 41, "the catalogue should have grown with the colour/style batch");
+        assertTrue(ids.size() >= 47, "the catalogue should have grown with the repeat/style batch");
     }
 
     @Test
@@ -98,6 +98,10 @@ public class AmEffectLibraryTest
         assertNeutral("am_hue_shift", "amount", 0F);
         assertNeutral("am_light_leak", "alpha", 0F);
         assertNeutral("am_light_wrap", "strength", 0F);
+        assertNeutral("am_pulse_opacity", "amount", 0F);
+        assertNeutral("am_sepia", "amount", 0F);
+        assertNeutral("am_color_bands", "amount", 0F);
+        assertNeutral("am_oil_paint", "radius", 0F);
 
         CompEffect balance = CompEffectRegistry.create("am_color_balance", 1);
 
