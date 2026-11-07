@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.72.jar`](https://github.com/zhongend/bbsae/releases/download/v0.72/bbsae-0.72.jar)
-   from the **v0.72** release (the asset is updated with each source push).
+1. Download [`bbsae-0.73.jar`](https://github.com/zhongend/bbsae/releases/download/v0.73/bbsae-0.73.jar)
+   from the **v0.73** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.72.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.73.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.72.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.73.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,18 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.73 — client smoke test and replay-matte verification entry
+
+- Added `-PbbsaeFilmId=` for the existing `bbsaeView=entity` verification view, so a real film's
+  replay matte can be opened without clicking through the UI.
+- Ran the client once (not repeatedly): the composition with 3D layers, text and the world backdrop
+  rendered correctly after the depth changes — `docs/verify/round47-client-smoke.png`. The available
+  test film has no usable replay actor, so the matte was empty; the offset fix is still covered by
+  the sizing rules/tests and the runtime size warning, but a film with a replay is needed for the
+  final on-screen check.
+- Project data was backed up and restored around the run.
+- 357 tests green; 137 effects.
 
 ## What's new in 0.72 — pooled depth targets and a matte-size guard
 
