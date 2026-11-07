@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.64.jar`](https://github.com/zhongend/bbsae/releases/download/v0.64/bbsae-0.64.jar)
-   from the **v0.64** release (the asset is updated with each source push).
+1. Download [`bbsae-0.65.jar`](https://github.com/zhongend/bbsae/releases/download/v0.65/bbsae-0.65.jar)
+   from the **v0.65** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.64.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.65.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.64.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.65.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,16 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.65 — zero-restore verified in the real renderer
+
+- New `bbsaeView=zerotest` scenario renders three cases in one frame: shatter at **0** (must be a
+  clean rectangle), shatter at **0.35** (must be broken) and a 3D cube with stacked effects.
+  `docs/verify/round38-zerotest.png` shows exactly that — the user-reported "shatter at 0 cannot
+  restore a square" contract now has pixel evidence from the real composition renderer.
+- New effects: **发光** (`AM · 风格化`, alpha halo) and **平滑斜面** (`AM · 绘制`, luminance bevel),
+  both with zero identities covered by the forced-shader audits.
+- 137 effects total (122 2D + 15 3D); 338 tests green.
 
 ## What's new in 0.64 — zero-set audits and contour lines
 

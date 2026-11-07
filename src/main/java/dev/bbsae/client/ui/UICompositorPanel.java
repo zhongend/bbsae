@@ -7462,6 +7462,10 @@ public class UICompositorPanel extends UIDashboardPanel
                  * (filter dropdown, debug shots) without opening the curve editor. */
                 break;
 
+            case "zerotest":
+                this.debugZeroTest();
+                return;
+
             case "cubetest":
                 this.debugCubeTest();
                 return;
@@ -7905,6 +7909,109 @@ public class UICompositorPanel extends UIDashboardPanel
      * Verification only: one 3D layer with a mesh effect, nothing else. This isolates whether the
      * projected mesh output is composited at all, without relying on layer visibility flags.
      */
+    /**
+     * Verification only: the user's "2D shatter at zero must restore a normal square" contract,
+     * next to a broken shatter for comparison and a stacked 3D primitive.
+     */
+    public void debugZeroTest()
+    {
+        this.project = CompStore.demo("zero-test");
+        this.doc = this.project.getComp(CompStore.DEFAULT_COMP);
+        this.doc.width = 1280;
+        this.doc.height = 720;
+        this.doc.layers.clear();
+
+        CompLayer restored = new CompLayer("zero_restored", "Shatter 0", "shape");
+
+        restored.x = 300F;
+        restored.y = 360F;
+        restored.width = 320F;
+        restored.height = 220F;
+        restored.shapes.add(CompShape.rect("zero_shape", 0F, 0F, 320F, 220F, 0xFFFFFFFF));
+        CompEffect restoredGradient = CompEffectRegistry.create("gradient_ramp", 1);
+
+        restoredGradient.putColor("start", 0xFF7C3AED);
+        restoredGradient.putColor("end", 0xFF06B6D4);
+        restoredGradient.put("angle", 45D);
+        restored.effects.add(restoredGradient);
+        CompEffect shatterZero = CompEffectRegistry.create("block_shatter", 1);
+
+        shatterZero.put("progress", 0.0);
+        restored.effects.add(shatterZero);
+        this.doc.layers.add(restored);
+
+        CompLayer broken = new CompLayer("zero_broken", "Shatter 0.35", "shape");
+
+        broken.x = 640F;
+        broken.y = 360F;
+        broken.width = 320F;
+        broken.height = 220F;
+        broken.shapes.add(CompShape.rect("broken_shape", 0F, 0F, 320F, 220F, 0xFFFFFFFF));
+        CompEffect brokenGradient = CompEffectRegistry.create("gradient_ramp", 1);
+
+        brokenGradient.putColor("start", 0xFF7C3AED);
+        brokenGradient.putColor("end", 0xFF06B6D4);
+        brokenGradient.put("angle", 45D);
+        broken.effects.add(brokenGradient);
+        CompEffect shatterBroken = CompEffectRegistry.create("block_shatter", 1);
+
+        shatterBroken.put("progress", 0.35);
+        broken.effects.add(shatterBroken);
+        this.doc.layers.add(broken);
+
+        CompLayer stack = new CompLayer("zero_stack", "3D stacked", "shape");
+
+        stack.x = 980F;
+        stack.y = 360F;
+        stack.width = 280F;
+        stack.height = 180F;
+        stack.threeD = true;
+        stack.z = 120F;
+        stack.rotationY = 24F;
+        stack.rotationX = -12F;
+        stack.shapes.add(CompShape.rect("stack_shape", 0F, 0F, 280F, 180F, 0xFFFFFFFF));
+        CompEffect stackGradient = CompEffectRegistry.create("gradient_ramp", 1);
+
+        stackGradient.putColor("start", 0xFFF97316);
+        stackGradient.putColor("end", 0xFF06B6D4);
+        stackGradient.put("angle", 45D);
+        stack.effects.add(stackGradient);
+        stack.effects.add(CompEffectRegistry.create("s3d_cube", 1));
+        this.doc.layers.add(stack);
+
+        CompLayer camera = new CompLayer("camera_3d", "3D Camera", "camera");
+
+        camera.width = 100F;
+        camera.height = 100F;
+        camera.threeD = true;
+        camera.camera3D = true;
+        camera.z = this.defaultCameraZ();
+        camera.cameraZ = camera.z;
+        camera.cameraTargetX = this.doc.width / 2F;
+        camera.cameraTargetY = this.doc.height / 2F;
+        camera.cameraTargetZ = 0F;
+        this.doc.layers.add(camera);
+        this.doc.activeCameraId = camera.id;
+        this.selectedLayer = restored;
+        this.selectedIds.clear();
+        this.selectedIds.add(restored.id);
+        this.time = 2F;
+        this.startScreenOpen = false;
+
+        if (this.startScreen != null)
+        {
+            this.startScreen.setVisible(false);
+        }
+
+        this.inspectorPage = PAGE_EFFECTS;
+        dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.trackTimeline.fit();
+        this.updatePlayLabel();
+    }
+
     public void debugCubeTest()
     {
         this.project = CompStore.demo("cube-test");

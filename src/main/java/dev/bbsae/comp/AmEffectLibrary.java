@@ -902,6 +902,49 @@ public final class AmEffectLibrary
             .p("intensity", "强度", 0F, 4F, 1.2F, 0.01F)
             .c("color", "光带颜色", 0xFFB0E4FF));
 
+        add(new AmEffectDef("am_glow", "发光", "AM · 风格化", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float halo = 0.0;
+
+                for (int i = 0; i < 16; i++)
+                {
+                    float a = float(i) * 0.3926991;
+                    float r = u_radius / max(LayerSize.x, 1.0);
+                    halo += sampleLayer(luv + vec2(cos(a), sin(a)) * r).a;
+                }
+
+                halo = clamp(halo / 16.0 * 1.8, 0.0, 1.0);
+                float intensity = clamp(u_intensity, 0.0, 3.0);
+                vec3 rgb = clamp(c.rgb + u_color.rgb * halo * intensity, 0.0, 1.0);
+                float alpha = clamp(max(c.a, halo * intensity * 0.7), 0.0, 1.0);
+                fragColor = vec4(rgb, alpha);
+            }
+            """, 0F, "intensity")
+            .p("radius", "半径（像素）", 0F, 80F, 12F, 1F)
+            .p("intensity", "强度", 0F, 3F, 0.9F, 0.01F)
+            .c("color", "光晕颜色", 0xFFFFFFFF));
+
+        add(new AmEffectDef("am_bevel", "平滑斜面", "AM · 绘制", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float left = luma(sampleLayer(luv - vec2(LayerTexel.x, 0.0)).rgb);
+                float right = luma(sampleLayer(luv + vec2(LayerTexel.x, 0.0)).rgb);
+                float up = luma(sampleLayer(luv - vec2(0.0, LayerTexel.y)).rgb);
+                float down = luma(sampleLayer(luv + vec2(0.0, LayerTexel.y)).rgb);
+                vec3 normal = normalize(vec3(left - right, up - down, 0.6));
+                float shade = clamp(dot(normal, normalize(vec3(-0.4, -0.6, 0.7))), 0.0, 1.0);
+                float strength = clamp(u_strength, 0.0, 2.0);
+                vec3 rgb = clamp(c.rgb * mix(1.0, shade * 1.6 + 0.2, strength), 0.0, 1.0);
+                fragColor = vec4(rgb, c.a);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 2F, 0.8F, 0.01F));
+
         add(new AmEffectDef("am_contour", "轮廓线", "AM · 绘制", """
             void main()
             {
