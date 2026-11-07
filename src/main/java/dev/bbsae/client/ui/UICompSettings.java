@@ -755,6 +755,11 @@ public class UICompSettings extends UIElement
             prefs.previewHints = value;
             CompPrefs.save();
         }), 170, "预览里的模式/摄像机 HUD、分辨率条和看穿提示；关闭后画面更干净"));
+        this.add(this.row("关闭 BBS 洋葱皮残影", this.toggle("", prefs.suppressOnionSkin, (value) ->
+        {
+            prefs.suppressOnionSkin = value;
+            CompPrefs.save();
+        }), 170, "摄像机预览出现多重残影时保持开启；它会在合成器打开期间临时关闭 BBS 编辑器的洋葱皮"));
         this.add(this.row("关键帧轨道高度", this.slider(prefs.keyframeRowHeight > 0 ? prefs.keyframeRowHeight : 24,
             12F, 60F, (value) ->
         {

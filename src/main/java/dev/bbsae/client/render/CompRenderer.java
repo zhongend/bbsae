@@ -145,14 +145,27 @@ public final class CompRenderer
         float scale = previewScale(doc, frameWidth, frameHeight, fit);
         long signature = CompRenderCache.signature(project, doc, time, renderEffects, renderMasks, fit, Math.round(frameWidth), Math.round(frameHeight), cameraOverlays) ^ ((long) Math.round(scale * 1000F) << 48);
 
-        if (!liveWorld && CompRenderCache.matches(signature, doc, doc.width, doc.height))
+        if (!cameraOverlays && !liveWorld && CompRenderCache.matches(signature, doc, doc.width, doc.height))
         {
             blit(batcher, CompRenderCache.get(), doc, alpha, frameWidth, frameHeight, fit);
 
             return;
         }
 
-        GlFramebuffer composition = renderToTexture(project, doc, time, false, renderEffects, renderMasks, true, null, scale);
+        boolean previousOpaque = previewOpaqueStage;
+
+        previewOpaqueStage = cameraOverlays;
+
+        GlFramebuffer composition;
+
+        try
+        {
+            composition = renderToTexture(project, doc, time, false, renderEffects, renderMasks, true, null, scale);
+        }
+        finally
+        {
+            previewOpaqueStage = previousOpaque;
+        }
 
         if (composition == null)
         {
@@ -254,6 +267,9 @@ public final class CompRenderer
 
     /** Extra factor applied to the preview while a curve/handle is being dragged. */
     private static final float INTERACTION_SCALE = 0.7F;
+    /** Camera-preview frames use an opaque stage: a transparent stage lets the previous frame/
+     * world show through and reads as ghosting. */
+    private static boolean previewOpaqueStage;
     private static boolean interactionPreview;
 
     public static void setInteractionPreview(boolean interacting)
@@ -902,6 +918,11 @@ public final class CompRenderer
         if (transparentStage)
         {
             return 0;
+        }
+
+        if (previewOpaqueStage)
+        {
+            return comp == null ? 0xFF000000 : comp.background;
         }
 
         if (preview && project != null && project.settings != null && project.settings.previewBackground == 1)

@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.86.jar`](https://github.com/zhongend/bbsae/releases/download/v0.86/bbsae-0.86.jar)
-   from the **v0.86** release (the asset is updated with each source push).
+1. Download [`bbsae-0.87.jar`](https://github.com/zhongend/bbsae/releases/download/v0.87/bbsae-0.87.jar)
+   from the **v0.87** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.86.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.87.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.86.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.87.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,18 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.87 — camera-preview ghosting fix
+
+- Camera preview now renders a **fresh opaque frame** every time: it no longer reuses the preview
+  cache (whose transparent stage could let the previous frame show through) and never shares a
+  cached texture with the normal preview.
+- While the compositor is open, BBS' editor **onion skins** are temporarily suppressed (restored on
+  exit); their extra previous/next frame drawings are a common source of duplicated shapes and text
+  in camera preview. A new Settings switch 关闭 BBS 洋葱皮残影 controls this if you need onion skins.
+- `Viewport3DRenderer` now restores depth writes/tests when it finishes, so depth state cannot leak
+  into the composition blit.
+- 375 tests green.
 
 ## What's new in 0.86 — keyframe TIME-axis zoom
 

@@ -110,6 +110,12 @@ public final class Viewport3DRenderer
         GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
 
         GL30.glBindVertexArray(0);
+
+        /* Restore conservative depth state: leaving depth writes/tests armed leaked into whatever
+         * was drawn next (UI preview, composition blit) and could keep stale pixels on screen. */
+        GL11.glDepthMask(true);
+        GL11.glDepthFunc(GL11.GL_LEQUAL);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
     }
 
     private static void ensureGeometry()

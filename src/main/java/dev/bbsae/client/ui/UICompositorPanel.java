@@ -226,6 +226,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private boolean cameraPreviewMode;
     /** Debug-view override for the 3D gizmo mode; -1 = unset. */
     private int previewGizmoModeOverride = -1;
+    /** Previous BBS onion-skin state, non-null while the compositor has suppressed it. */
+    private Boolean onionSkinRestore;
     /** BBS-style camera flight: WASD/mouse free look, F enters and exits. */
     private boolean cameraFlying;
     private CompLayer flightCamera;
@@ -11302,6 +11304,46 @@ public class UICompositorPanel extends UIDashboardPanel
      * It only shows in the gutters between panels; no control loses contrast, and the glow is only
      * two primitives.</p>
      */
+    /** BBS onion skins render extra film frames; while compositing they can look like ghosting. */
+    private void suppressBbsOnionSkin()
+    {
+        if (!CompPrefs.get().suppressOnionSkin || BBSSettings.editorOnionSkin == null)
+        {
+            return;
+        }
+
+        if (this.onionSkinRestore == null)
+        {
+            this.onionSkinRestore = BBSSettings.editorOnionSkin.enabled.get();
+        }
+
+        if (Boolean.TRUE.equals(this.onionSkinRestore) && BBSSettings.editorOnionSkin.enabled.get())
+        {
+            BBSSettings.editorOnionSkin.enabled.set(false);
+        }
+    }
+
+    private void restoreBbsOnionSkin()
+    {
+        if (this.onionSkinRestore != null && BBSSettings.editorOnionSkin != null)
+        {
+            BBSSettings.editorOnionSkin.enabled.set(this.onionSkinRestore);
+        }
+
+        this.onionSkinRestore = null;
+    }
+
+    @Override
+    public void setVisible(boolean visible)
+    {
+        super.setVisible(visible);
+
+        if (!visible)
+        {
+            this.restoreBbsOnionSkin();
+        }
+    }
+
     private void renderShellAtmosphere(UIContext context)
     {
         if (this.area.w <= 0 || this.area.h <= 0)
@@ -18045,6 +18087,8 @@ public class UICompositorPanel extends UIDashboardPanel
          * harder to read and makes the preview look like it is floating. Painting the panel's own
          * rect here means "no transparency" does not depend on a global setting the user cannot
          * find. */
+        this.suppressBbsOnionSkin();
+
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF0E1116);
         this.renderShellAtmosphere(context);
 

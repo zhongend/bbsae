@@ -19,6 +19,7 @@ public class CompPrefsOverlayTest
         assertTrue(data.cameraGizmos);
         assertTrue(data.guides);
         assertTrue(data.previewHints);
+        assertTrue(data.suppressOnionSkin);
         assertEquals(1F, data.gizmoOpacity, 0.0001F);
         assertEquals(1F, data.gizmoThickness, 0.0001F);
     }

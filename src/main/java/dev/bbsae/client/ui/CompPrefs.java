@@ -80,6 +80,9 @@ public final class CompPrefs
         public boolean guides = true;
         /** Preview HUD text (mode/pose/camera readouts and the resolution strip). */
         public boolean previewHints = true;
+        /** Keep BBS' editor onion skins off while the compositor is open: their ghost frames can
+         * bleed into the camera preview and read as duplicated shapes/text. */
+        public boolean suppressOnionSkin = true;
 
         /** Saved vertical zoom of the two track editors; 0 = use the editor's default. */
         public int timelineRowHeight = 0;
