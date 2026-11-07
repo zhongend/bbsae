@@ -132,11 +132,41 @@ public class UIEffectLibraryOverlay extends UIElement
         }
 
         this.categories.addAll(seen);
+
+        /* Pinned on top once the panel has any history; it is rebuilt from the same registry
+         * definitions, so favourites cannot point at a removed effect. */
+        if (this.categories.contains("最近使用") == false)
+        {
+            this.categories.add(1, "最近使用");
+        }
     }
 
     private void rebuild()
     {
         this.filtered.clear();
+
+        boolean recent = "最近使用".equals(this.category);
+
+        if (recent)
+        {
+            for (String id : this.panel.getRecentEffects())
+            {
+                for (CompEffectRegistry.Definition definition : this.all)
+                {
+                    if (definition.id.equals(id))
+                    {
+                        this.filtered.add(definition);
+
+                        break;
+                    }
+                }
+            }
+
+            this.updateStatus();
+            this.grid.scrollToTop();
+
+            return;
+        }
 
         for (CompEffectRegistry.Definition definition : this.all)
         {

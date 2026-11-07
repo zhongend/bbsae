@@ -8211,6 +8211,14 @@ public class UICompositorPanel extends UIDashboardPanel
 
             case "cubetest":
                 this.debugCubeTest();
+
+                int keyframeRowHeight = Integer.getInteger("bbsae.keyframeRowHeight", 0);
+
+                if (keyframeRowHeight > 0 && this.keyframeEditor.view instanceof UICompositorKeyframes keyframes)
+                {
+                    keyframes.debugSetTrackHeight(keyframeRowHeight);
+                }
+
                 return;
 
             case "onboarding":

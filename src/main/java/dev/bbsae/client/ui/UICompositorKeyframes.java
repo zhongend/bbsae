@@ -41,6 +41,12 @@ public class UICompositorKeyframes extends UIKeyframes
      * it. Alt+wheel (and Alt+= / Alt+-) is the same vertical zoom gesture as the curve editor, so
      * both keyframe surfaces behave alike.
      */
+    /** Verification hook: change the dope-sheet row height without a wheel event. */
+    public void debugSetTrackHeight(double height)
+    {
+        this.setTrackHeight(height);
+    }
+
     private void setTrackHeight(double height)
     {
         UIKeyframeDopeSheet dopeSheet = this.getDopeSheet();

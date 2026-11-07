@@ -108,6 +108,7 @@ loom {
             vmArg "-Dbbsae.debugOpenEffectLibrary=" + (project.findProperty("bbsaeOpenEffectLibrary") ?: "false")
             vmArg "-Dbbsae.debugGizmo3D=" + (project.findProperty("bbsaeDebugGizmo3D") ?: "false")
             vmArg "-Dbbsae.gizmoMode=" + (project.findProperty("bbsaeGizmoMode") ?: "move")
+            vmArg "-Dbbsae.keyframeRowHeight=" + (project.findProperty("bbsaeKeyframeRowHeight") ?: "0")
             vmArg "-Dbbsae.debugCompShot=" + (project.findProperty("bbsaeCompShot") ?: "")
             vmArg "-Dbbsae.debugShape=" + (project.findProperty("bbsaeShape") ?: "s3d_cube")
             vmArg "-Dbbsae.debugMeshLog=" + (project.findProperty("bbsaeMeshLog") ?: "false")
