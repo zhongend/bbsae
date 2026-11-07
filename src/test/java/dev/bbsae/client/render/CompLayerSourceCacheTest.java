@@ -130,6 +130,76 @@ public class CompLayerSourceCacheTest
     }
 
     @Test
+    public void layerRasterKeysIncludeTheProjectIdentity()
+    {
+        String first = CompLayerSourceCache.cacheKey("film_a", "main", "layer_1");
+        String second = CompLayerSourceCache.cacheKey("film_b", "main", "layer_1");
+
+        assertNotEquals(first, second, "equal comp/layer ids in different projects must not share pixels");
+        assertEquals("film_a/main/layer_1", first);
+    }
+
+    @Test
+    public void entitySettingsInvalidateBothFrameAndLayerRasters()
+    {
+        CompDocument doc = new CompDocument();
+        CompProject project = new CompProject();
+        CompLayer layer = new CompLayer("actor", "Actor", "replay");
+
+        doc.layers.add(layer);
+        project.comps.add(doc);
+
+        CompRenderContext context = new CompRenderContext(project, doc, 0F, null, null, null);
+        long frame = CompRenderCache.signature(project, doc, 0F, true, true, 0, 1920, 1080, false);
+        long source = CompLayerSourceCache.signature(layer, context, 400, 200);
+
+        layer.entityScope = CompLayer.ENTITY_SCOPE_SELECTED;
+        long nextFrame = CompRenderCache.signature(project, doc, 0F, true, true, 0, 1920, 1080, false);
+        long nextSource = CompLayerSourceCache.signature(layer, context, 400, 200);
+        assertNotEquals(frame, nextFrame, "entity scope must invalidate the composed frame");
+        assertNotEquals(source, nextSource, "entity scope must invalidate the baked layer");
+        frame = nextFrame;
+        source = nextSource;
+
+        layer.entityIds = "actor_1";
+        nextFrame = CompRenderCache.signature(project, doc, 0F, true, true, 0, 1920, 1080, false);
+        nextSource = CompLayerSourceCache.signature(layer, context, 400, 200);
+        assertNotEquals(frame, nextFrame);
+        assertNotEquals(source, nextSource);
+        frame = nextFrame;
+        source = nextSource;
+
+        layer.entityOcclusion = false;
+        layer.entityErode = 2F;
+        layer.entityFeather = 4F;
+        layer.entityTolerance = 0.2F;
+        assertNotEquals(frame, CompRenderCache.signature(project, doc, 0F, true, true, 0, 1920, 1080, false));
+        assertNotEquals(source, CompLayerSourceCache.signature(layer, context, 400, 200));
+    }
+
+    @Test
+    public void worldAndEntitySourcesChangeWithTheCompositionFrame()
+    {
+        CompDocument doc = new CompDocument();
+        CompLayer layer = new CompLayer("actor", "Actor", "replay");
+
+        doc.layers.add(layer);
+
+        long first = CompLayerSourceCache.signature(layer, context(doc), 400, 200);
+        long second = CompLayerSourceCache.signature(layer,
+            new CompRenderContext(new CompProject(), doc, 1F, null, null, null), 400, 200);
+
+        assertNotEquals(first, second, "an entity texture must follow the replay frame");
+
+        layer.type = "bbs";
+        first = CompLayerSourceCache.signature(layer, context(doc), 400, 200);
+        second = CompLayerSourceCache.signature(layer,
+            new CompRenderContext(new CompProject(), doc, 1F, null, null, null), 400, 200);
+
+        assertNotEquals(first, second, "a world texture must not freeze at its first frame");
+    }
+
+    @Test
     public void effectOrderAndColorChangesInvalidateTheLayerRaster()
     {
         CompDocument doc = new CompDocument();

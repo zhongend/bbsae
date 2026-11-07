@@ -95,7 +95,7 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
             {
                 try
                 {
-                    CompProject project = CompStore.load(instance.project);
+                    CompProject project = CompStore.getForFrame(instance.project);
 
                     if (project == null)
                     {

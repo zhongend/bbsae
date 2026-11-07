@@ -169,6 +169,38 @@ public class CompCurvesTest
         assertEquals(240F, layer.x, 0.01F);
     }
 
+    @Test
+    public void mirroredHandlesFollowRadiusSymmetrically()
+    {
+        CompLayer layer = animatedLayer();
+        List<Keyframe> keys = keys(layer);
+        Keyframe key = keys.get(0);
+
+        /* A short-left / long-right pair — the exact state that made the old slope-only mirror
+         * swing the paired handle wildly on vertical drags (the formula divided by the other
+         * side's radius). */
+        key.rx = 8F;
+        key.ry = 6F;
+        key.lx = 2F;
+        key.ly = 0F;
+
+        /* Dragging the right handle mirrors the whole vector through the key: the left handle
+         * takes the SAME radius and the opposite vertical direction — not just the slope. */
+        CompCurves.mirrorHandles(key, true, 10F);
+
+        assertEquals(8F, key.lx, 0.0001F, "mirrored radius must equal the dragged radius");
+        assertEquals(-6F, key.ly, 0.0001F, "mirrored vertical offset must be exactly inverted");
+
+        /* The reverse drag clamps the mirrored radius to the neighbouring segment, so a control
+         * point can never be pushed past the adjacent key. */
+        CompCurves.mirrorHandles(key, false, 4F);
+
+        assertEquals(4F, key.rx, 0.0001F, "mirrored radius clamps to the opposite segment");
+        /* The left vector is (8, -6), so its reflection is (+6) on the right: mirroring inverts
+         * the vertical offset relative to the dragged handle, which here equals the original. */
+        assertEquals(6F, key.ry, 0.0001F, "mirrored vertical offset inverts relative to the dragged handle");
+    }
+
     @SuppressWarnings("unchecked")
     private static List<Keyframe> keys(CompLayer layer)
     {

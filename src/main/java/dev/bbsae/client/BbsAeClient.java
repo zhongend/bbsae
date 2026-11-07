@@ -63,7 +63,7 @@ public class BbsAeClient implements BBSAddonMod
             localizeClipName(BBSModClient.getL10n());
         }
 
-        BbsAeAddon.LOGGER.info("BBS Compositor client ready");
+        BbsAeAddon.LOGGER.info("BBS AE client ready");
 
         /* Verification hook: force the OS window (and therefore the framebuffer) to an exact
          * size. Minecraft's --width/--height are not reliable on every launcher/window manager;
@@ -588,6 +588,6 @@ public class BbsAeClient implements BBSAddonMod
             BbsAeAddon.ICON
         );
 
-        BbsAeAddon.LOGGER.info("BBS Compositor dashboard panel registered");
+        BbsAeAddon.LOGGER.info("BBS AE dashboard panel registered");
     }
 }

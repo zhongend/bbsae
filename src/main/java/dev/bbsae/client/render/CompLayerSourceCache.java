@@ -97,7 +97,7 @@ public final class CompLayerSourceCache
             return null;
         }
 
-        String key = context.comp.id + "/" + layer.id;
+        String key = cacheKey(context.project == null ? "" : context.project.id, context.comp.id, layer.id);
         Rect rect = bounds(layer, context);
         float scale = Math.min(1F, MAX_EDGE / Math.max(rect.width, rect.height));
         int pixelWidth = Math.max(1, Math.round(rect.width * scale));
@@ -162,14 +162,26 @@ public final class CompLayerSourceCache
         CACHE.clear();
     }
 
-    /** Drops one layer's raster (used when a layer is deleted). */
+    static String cacheKey(String projectId, String compId, String layerId)
+    {
+        return (projectId == null ? "" : projectId) + "/" + compId + "/" + layerId;
+    }
+
+    /** Drops matching layer rasters in every project; callers of this legacy API have no project id. */
     public static void invalidate(String compId, String layerId)
     {
-        Entry entry = CACHE.remove(compId + "/" + layerId);
+        String suffix = "/" + compId + "/" + layerId;
+        Iterator<Map.Entry<String, Entry>> iterator = CACHE.entrySet().iterator();
 
-        if (entry != null)
+        while (iterator.hasNext())
         {
-            release(entry);
+            Map.Entry<String, Entry> entry = iterator.next();
+
+            if (entry.getKey().endsWith(suffix))
+            {
+                iterator.remove();
+                release(entry.getValue());
+            }
         }
     }
 
@@ -583,6 +595,12 @@ public final class CompLayerSourceCache
      * the {@link EffectPadding} margin (computed in layer pixels) is only half as wide as the
      * kernel, so the effect is clipped again. Multiplying the radius by the raster scale keeps the
      * visual radius in layer pixels and makes the margin exactly cover the kernel.</p>
+     *
+     * <p>Deliberately NOT scaled here: every parameter the <b>shader</b> already measures through
+     * the layer basis (LayerSize / LayerX / LayerY). The DISTORT family's amounts, the PIXEL
+     * family's mosaic/scanline/glitch sizes and the generators' cell sizes are all expressed in
+     * layer pixels and converted inside GLSL; scaling them here double-counted, so 波浪 / 置换图 /
+     * 湍流置换 shrank with the proxy and a 3D layer's checkerboard grew at small rasters.</p>
      */
     static CompEffect scaleEffectForRaster(CompEffect effect, float scale)
     {
@@ -620,25 +638,10 @@ public final class CompLayerSourceCache
             }
             case "stroke" -> scaleParam(scaled, "width", scale);
             case "rgb_split" -> scaleParam(scaled, "amount", scale);
-            case "displacement", "bulge", "pinch", "twist", "turbulent_displace" ->
-                scaleParam(scaled, "amount", scale);
-            case "turbulent_displace_size" -> scaleParam(scaled, "size", scale);
+            /* Noise/grain measure their cells against the raster itself (Size = the FBO), so the
+             * feature size has to travel to raster pixels. */
             case "noise" -> scaleParam(scaled, "scale", scale);
             case "grain" -> scaleParam(scaled, "size", scale);
-            case "wave" ->
-            {
-                scaleParam(scaled, "amplitude", scale);
-                scaleParam(scaled, "wavelength", scale);
-            }
-            case "glitch" -> scaleParam(scaled, "amount", scale);
-            case "mosaic" -> scaleParam(scaled, "size", scale);
-            case "scanlines" -> scaleParam(scaled, "spacing", scale);
-            case "halftone" -> scaleParam(scaled, "amount", scale);
-            case "generate", "gradient_ramp", "noise_gradient", "checkerboard", "grid", "circle" ->
-            {
-                scaleParam(scaled, "scale", scale);
-                scaleParam(scaled, "size", scale);
-            }
             default ->
             {
             }
@@ -928,6 +931,12 @@ public final class CompLayerSourceCache
          * it. AUTO depends on the source and the raster size, both already in the fingerprint. */
         h = mix(h, TextureFilter.resolveMode(layer, context.project));
         h = mix(h, layer.precompId == null ? 0 : layer.precompId.hashCode());
+        h = mix(h, layer.entityScope);
+        h = mix(h, layer.entityIds == null ? 0 : layer.entityIds.hashCode());
+        h = mix(h, layer.entityOcclusion ? 1 : 0);
+        h = mix(h, layer.entityErode);
+        h = mix(h, layer.entityFeather);
+        h = mix(h, layer.entityTolerance);
         h = mix(h, layer.trackMatteEnabled ? 1 : 0);
         h = mix(h, layer.squash);
 
@@ -1164,11 +1173,11 @@ public final class CompLayerSourceCache
 
     /**
      * True when this layer's pixels can change without any edit: footage samples another frame,
-     * text animators move glyphs, and keyed text/shape/effect channels change what is drawn.
+     * world/entity textures track the replay, and animated content changes what is drawn.
      */
     private static boolean isTimeDependent(CompLayer layer)
     {
-        if ("footage".equals(layer.type))
+        if ("footage".equals(layer.type) || "replay".equals(layer.type) || "bbs".equals(layer.type))
         {
             return true;
         }

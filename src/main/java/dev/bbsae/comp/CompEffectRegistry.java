@@ -177,7 +177,11 @@ public final class CompEffectRegistry
             .p("softness", "柔和度", 0.001F, 1, 1, 0.01F)
             .c("start", "起始色", 0xFF55AAFF)
             .c("end", "结束色", 0x00000000));
-        add(new Definition("noise_gradient", "分形杂色", "生成")
+        /* 分形杂色 is a real FX the way AE ships it (噪波与颗粒 → 分形杂色): an effect that can be
+         * applied to any layer, keyframed through 演化, and dialled back with 效果强度. The 图层库
+         * keeps a 分形杂色 layer preset that is a solid + this effect, so both entries share one
+         * implementation. */
+        add(new Definition("noise_gradient", "分形杂色", "噪点与颗粒")
             .p("scale", "缩放", 1, 400, 80, 1)
             .p("octaves", "细节", 1, 8, 4, 1)
             .p("evolution", "演化", 0, 100, 0, 0.01F)
@@ -282,8 +286,14 @@ public final class CompEffectRegistry
             .p("center_y", "中心 Y", 0, 1, 0.5F, 0.01F));
 
         add(new Definition("chroma_key", "色度抠像", "抠像")
+            /* The keyer works on HUE (brightness-independent chroma), so a shaded green screen
+             * keys out like a pure one; Tolerance is a hue width (0.18 ≈ ±32°) and Softness the
+             * feather around it. Clip Black/White are the screen-matte cleanup: black zeroes the
+             * residual veil and grain, white forces not-quite-pure screen pixels transparent. */
             .p("tolerance", "容差", 0, 1, 0.18F, 0.01F)
             .p("softness", "柔和度", 0.001F, 0.5F, 0.08F, 0.001F)
+            .p("clip_black", "蒙版黑场", 0, 0.5F, 0, 0.005F)
+            .p("clip_white", "蒙版白场", 0.5F, 1, 1, 0.005F)
             .p("spill", "溢色抑制", 0, 1, 0.4F, 0.01F)
             .c("key", "抠像颜色", 0xFF00FF00));
         add(new Definition("luma_key", "亮度抠像", "抠像")

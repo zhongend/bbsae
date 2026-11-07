@@ -199,13 +199,20 @@ public final class ReplayEntityMask
     private static float lastActorTransition;
 
     /**
-     * Records what the current composition needs. Cheap: it walks the layers of one document and
-     * compares a signature string; nothing is allocated when nothing changed.
+     * Records what the current composition needs. The common no-entity path performs an
+     * allocation-free preflight; request objects are only built when an entity layer exists.
      */
     public static void request(CompProject project, CompDocument doc)
     {
         if (doc == null)
         {
+            return;
+        }
+
+        if (!hasEntityLayer(doc, project, 0))
+        {
+            clearLayerRequest();
+
             return;
         }
 
@@ -220,15 +227,7 @@ public final class ReplayEntityMask
 
         if (!any[0])
         {
-            if (requested)
-            {
-                requested = false;
-                requestedSignature = "";
-                requestedIds.clear();
-                requestedFilm = "";
-                requestOccluded = false;
-                requestUnoccluded = false;
-            }
+            clearLayerRequest();
 
             return;
         }
@@ -248,6 +247,51 @@ public final class ReplayEntityMask
         requestedIds.clear();
         requestedIds.addAll(ids);
         requestedSignature = signature;
+    }
+
+    static boolean hasEntityLayer(CompDocument doc, CompProject project, int depth)
+    {
+        if (doc == null || doc.layers == null || depth > 8)
+        {
+            return false;
+        }
+
+        for (CompLayer layer : doc.layers)
+        {
+            if (layer == null || !layer.visible || layer.type == null)
+            {
+                continue;
+            }
+
+            if (layer.isEntityLayer())
+            {
+                return true;
+            }
+
+            if ("precomp".equals(layer.type) && project != null && layer.precompId != null
+                && !layer.precompId.isEmpty()
+                && hasEntityLayer(project.getComp(layer.precompId), project, depth + 1))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void clearLayerRequest()
+    {
+        if (!requested)
+        {
+            return;
+        }
+
+        requested = false;
+        requestedSignature = "";
+        requestedIds.clear();
+        requestedFilm = "";
+        requestOccluded = false;
+        requestUnoccluded = false;
     }
 
     private static void collect(CompDocument doc, CompProject project, Set<String> ids, boolean[] all,

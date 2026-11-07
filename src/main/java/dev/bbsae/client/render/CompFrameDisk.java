@@ -11,10 +11,14 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -50,8 +54,31 @@ public final class CompFrameDisk
 
     private static final int MAGIC = 0x42425346; // "BBSF"
     private static final int VERSION = 1;
+    private static final int MAX_PENDING_WRITES = 2;
+    private static final Object WRITE_LOCK = new Object();
+    private static final ArrayDeque<PendingWrite> WRITE_QUEUE = new ArrayDeque<>();
+    private static final Set<Path> PENDING = new HashSet<>();
 
+    private static Thread writer;
     private static boolean sweeping;
+
+    private static final class PendingWrite
+    {
+        final Path file;
+        final int frame;
+        final int width;
+        final int height;
+        final int[] pixels;
+
+        PendingWrite(Path file, int frame, int width, int height, int[] pixels)
+        {
+            this.file = file;
+            this.frame = frame;
+            this.width = width;
+            this.height = height;
+            this.pixels = pixels;
+        }
+    }
 
     private CompFrameDisk()
     {}
@@ -149,20 +176,134 @@ public final class CompFrameDisk
 
     public static void save(CompProject project, CompDocument doc, long signature, int frame, int width, int height, int[] pixels)
     {
-        if (pixels == null || width <= 0 || height <= 0 || pixels.length < width * height)
+        if (!valid(pixels, width, height))
         {
             return;
         }
 
+        write(file(project, doc, signature, frame, width, height), frame, width, height, pixels);
+    }
+
+    /**
+     * Queues a cache write without blocking the render thread on disk I/O or a cache sweep.
+     * At most two frames are retained; duplicate or overflow requests are simply cache skips.
+     *
+     * @return true when this frame was accepted by the single background writer
+     */
+    public static boolean saveAsync(CompProject project, CompDocument doc, long signature, int frame, int width, int height, int[] pixels)
+    {
+        if (!valid(pixels, width, height))
+        {
+            return false;
+        }
+
         Path file = file(project, doc, signature, frame, width, height);
+
+        synchronized (WRITE_LOCK)
+        {
+            if (PENDING.size() >= MAX_PENDING_WRITES || !PENDING.add(file))
+            {
+                return false;
+            }
+
+            WRITE_QUEUE.add(new PendingWrite(file, frame, width, height, pixels));
+
+            if (writer == null)
+            {
+                writer = new Thread(CompFrameDisk::writeLoop, "BBS AE frame-cache writer");
+                writer.setDaemon(true);
+                writer.start();
+            }
+
+            WRITE_LOCK.notifyAll();
+
+            return true;
+        }
+    }
+
+    private static boolean valid(int[] pixels, int width, int height)
+    {
+        return pixels != null && width > 0 && height > 0 && pixels.length >= width * height;
+    }
+
+    private static void writeLoop()
+    {
+        while (true)
+        {
+            PendingWrite pending;
+
+            synchronized (WRITE_LOCK)
+            {
+                while (WRITE_QUEUE.isEmpty())
+                {
+                    try
+                    {
+                        WRITE_LOCK.wait();
+                    }
+                    catch (InterruptedException e)
+                    {
+                        Thread.currentThread().interrupt();
+
+                        return;
+                    }
+                }
+
+                pending = WRITE_QUEUE.remove();
+            }
+
+            try
+            {
+                write(pending.file, pending.frame, pending.width, pending.height, pending.pixels);
+            }
+            finally
+            {
+                synchronized (WRITE_LOCK)
+                {
+                    PENDING.remove(pending.file);
+                    WRITE_LOCK.notifyAll();
+                }
+            }
+        }
+    }
+
+    /** Waits for complete, atomically moved files; used by clear and by regression tests. */
+    static boolean awaitWrites(long timeoutMillis) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + Math.max(0L, timeoutMillis) * 1_000_000L;
+
+        synchronized (WRITE_LOCK)
+        {
+            while (!PENDING.isEmpty())
+            {
+                long remaining = deadline - System.nanoTime();
+
+                if (remaining <= 0L)
+                {
+                    return false;
+                }
+
+                long millis = remaining / 1_000_000L;
+                int nanos = (int) (remaining % 1_000_000L);
+
+                WRITE_LOCK.wait(millis, nanos);
+            }
+
+            return true;
+        }
+    }
+
+    /** Publishes only complete frames, so a concurrent load never observes a partial file. */
+    private static void write(Path file, int frame, int width, int height, int[] pixels)
+    {
+        Path temporary = null;
 
         try
         {
             Files.createDirectories(file.getParent());
+            temporary = Files.createTempFile(file.getParent(), file.getFileName().toString(), ".tmp");
 
             try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
-                Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE), 1 << 16)))
+                Files.newOutputStream(temporary, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE), 1 << 16)))
             {
                 out.writeInt(MAGIC);
                 out.writeInt(VERSION);
@@ -175,12 +316,35 @@ public final class CompFrameDisk
                     out.writeInt(pixels[i]);
                 }
             }
+
+            try
+            {
+                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            }
+            catch (java.nio.file.AtomicMoveNotSupportedException e)
+            {
+                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            temporary = null;
         }
         catch (Exception e)
         {
             dev.bbsae.BbsAeAddon.LOGGER.warn("Could not write frame cache {}", file, e);
 
             return;
+        }
+        finally
+        {
+            if (temporary != null)
+            {
+                try
+                {
+                    Files.deleteIfExists(temporary);
+                }
+                catch (IOException ignored)
+                {}
+            }
         }
 
         sweep(file.getParent());
@@ -285,6 +449,22 @@ public final class CompFrameDisk
     /** Drops everything; used by the settings page and by tests. */
     public static void clear()
     {
+        try
+        {
+            if (!awaitWrites(30_000L))
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.warn("Frame cache clear skipped: writes are still pending");
+
+                return;
+            }
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+
+            return;
+        }
+
         try (Stream<Path> stream = Files.walk(root()))
         {
             stream.sorted(Comparator.reverseOrder()).forEach((path) ->

@@ -38,6 +38,8 @@ public class CompDocument
     public List<CompParameter> parameters = new ArrayList<>();
     /** Audio track: music, voice-over and effects mixed into every export. */
     public List<CompAudio> audio = new ArrayList<>();
+    /** Point trackers; results feed layer baking and {@code tracker.<id>.x/y} expressions. */
+    public List<CompTracker> trackers = new ArrayList<>();
 
     public CompLayer getLayer(String layerId)
     {
@@ -289,6 +291,37 @@ public class CompDocument
         }
 
         return null;
+    }
+
+    public CompTracker getTracker(String trackerId)
+    {
+        if (trackerId == null)
+        {
+            return null;
+        }
+
+        for (CompTracker tracker : this.trackers)
+        {
+            if (trackerId.equals(tracker.id))
+            {
+                return tracker;
+            }
+        }
+
+        return null;
+    }
+
+    public void removeTracker(String trackerId)
+    {
+        for (int i = 0; i < this.trackers.size(); i++)
+        {
+            if (trackerId.equals(this.trackers.get(i).id))
+            {
+                this.trackers.remove(i);
+
+                return;
+            }
+        }
     }
 
     public int getFrameCount()

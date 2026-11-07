@@ -30,8 +30,8 @@ import java.util.function.Consumer;
 public class UILayerLibrary extends UIElement
 {
     private static final int PAD = 16;
-    private static final int CARD_W = 178;
-    private static final int CARD_H = 62;
+    private static final int MIN_CARD_W = 230;
+    private static final int CARD_H = 74;
     private static final int GAP = 10;
     private static final int SIDEBAR = 132;
     private static final int HEADER = 104;
@@ -309,9 +309,21 @@ public class UILayerLibrary extends UIElement
             return this.selected >= 0 && this.selected < this.entries.size() ? this.entries.get(this.selected) : null;
         }
 
+        /**
+         * Cards need room for a name, a category tag and two description lines.  At 230 px the
+         * Chinese descriptions still read comfortably; below that the grid collapses to one
+         * column instead of shrinking the type into an unreadable strip.
+         */
         private int columns()
         {
-            return Math.max(1, (this.area.w + GAP) / (CARD_W + GAP));
+            return Math.max(1, Math.min(3, (this.area.w + GAP) / (MIN_CARD_W + GAP)));
+        }
+
+        private int cardWidth()
+        {
+            int columns = this.columns();
+
+            return Math.max(1, (this.area.w - GAP * (columns - 1)) / columns);
         }
 
         private int contentHeight()
@@ -372,13 +384,14 @@ public class UILayerLibrary extends UIElement
             try
             {
                 int columns = this.columns();
+                int cardWidth = this.cardWidth();
                 int scroll = Math.round(this.smoothScroll);
 
                 for (int i = 0; i < this.entries.size(); i++)
                 {
                     int column = i % columns;
                     int row = i / columns;
-                    int x = this.area.x + column * (CARD_W + GAP);
+                    int x = this.area.x + column * (cardWidth + GAP);
                     int y = this.area.y + row * (CARD_H + GAP) - scroll;
 
                     if (y + CARD_H < this.area.y || y > this.area.ey())
@@ -386,7 +399,7 @@ public class UILayerLibrary extends UIElement
                         continue;
                     }
 
-                    this.renderCard(context, this.entries.get(i), i, x, y);
+                    this.renderCard(context, this.entries.get(i), i, x, y, cardWidth);
                 }
 
                 if (this.entries.isEmpty())
@@ -411,10 +424,19 @@ public class UILayerLibrary extends UIElement
             }
 
             int columns = this.columns();
-            int row = (mouseY - this.area.y + Math.round(this.smoothScroll)) / (CARD_H + GAP);
-            int column = (mouseX - this.area.x) / (CARD_W + GAP);
+            int cardWidth = this.cardWidth();
+            int localX = mouseX - this.area.x;
+            int localY = mouseY - this.area.y + Math.round(this.smoothScroll);
+            int row = localY / (CARD_H + GAP);
+            int column = localX / (cardWidth + GAP);
 
             if (column < 0 || column >= columns || row < 0)
+            {
+                return -1;
+            }
+
+            if (localX - column * (cardWidth + GAP) >= cardWidth
+                || localY - row * (CARD_H + GAP) >= CARD_H)
             {
                 return -1;
             }
@@ -424,7 +446,7 @@ public class UILayerLibrary extends UIElement
             return index >= 0 && index < this.entries.size() ? index : -1;
         }
 
-        private void renderCard(UIContext context, LayerCatalog.Entry entry, int index, int x, int y)
+        private void renderCard(UIContext context, LayerCatalog.Entry entry, int index, int x, int y, int cardWidth)
         {
             boolean active = index == this.selected;
             float hover = this.motion.hover("layer:" + index, this.hot == index ? "layer:" + index : null);
@@ -437,44 +459,106 @@ public class UILayerLibrary extends UIElement
 
             if (hover > 0.01F && CompPrefs.get().shadows)
             {
-                UiGfx.shadow(context.batcher, x, drawY, CARD_W, CARD_H, 3F,
+                UiGfx.shadow(context.batcher, x, drawY, cardWidth, CARD_H, 3F,
                     UiGfx.alpha(0xFF000000, 0.14F * hover));
             }
 
-            context.batcher.box(x, drawY, x + CARD_W, drawY + CARD_H, UiGfx.mulA(fill, intro));
-            context.batcher.outline(x, drawY, x + CARD_W, drawY + CARD_H,
+            context.batcher.box(x, drawY, x + cardWidth, drawY + CARD_H, UiGfx.mulA(fill, intro));
+            context.batcher.outline(x, drawY, x + cardWidth, drawY + CARD_H,
                 UiMotion.lerpColor(0xFF313B49, 0xFF7FB4FF, sel));
 
             int iconColor = UiMotion.lerpColor(0xFF9FB2C8, 0xFFFFFFFF, sel);
+            int categoryWidth = context.batcher.getFont().getWidth(entry.category);
+            int nameWidth = Math.max(20, cardWidth - 34 - 12 - categoryWidth - 8);
 
-            context.batcher.icon(UILayerLibrary.icon(entry.icon), UiGfx.mulA(iconColor, intro), x + 10, drawY + 10);
-            context.batcher.text(entry.name, x + 32, drawY + 8,
+            context.batcher.icon(UILayerLibrary.icon(entry.icon), UiGfx.mulA(iconColor, intro), x + 12, drawY + 12);
+            context.batcher.text(this.ellipsize(context, entry.name, nameWidth), x + 34, drawY + 10,
                 UiGfx.mulA(UiMotion.lerpColor(0xFFD6DEEB, 0xFFFFFFFF, hover), intro));
-            context.batcher.text(entry.category, x + CARD_W - 8 - context.batcher.getFont().getWidth(entry.category), drawY + 9,
+            context.batcher.text(entry.category, x + cardWidth - 12 - categoryWidth, drawY + 11,
                 UiGfx.mulA(0xFF6F7A8A, intro));
-            context.batcher.text(this.wrap(entry.description, CARD_W - 40), x + 32, drawY + 26,
+            context.batcher.text(this.wrap(context, entry.description, cardWidth - 46, 2), x + 34, drawY + 30,
                 UiGfx.mulA(0xFF8A94A6, intro));
         }
 
-        /** Two-line clamp: the card has room for two rows at 13 px. */
-        private String wrap(String text, int width)
+        /**
+         * Greedy wrap measured with the actual font instead of the old {@code width / 6}
+         * approximation.  A Chinese glyph is wider than 6 px, which is why the stock descriptions
+         * ran past the card edge and were clipped by the grid scissor.
+         */
+        private String wrap(UIContext context, String text, int width, int maxLines)
         {
-            if (text == null)
+            if (text == null || text.isEmpty() || width <= 0 || maxLines <= 0)
             {
                 return "";
             }
 
-            int perLine = Math.max(8, width / 6);
-            String first = text.length() <= perLine ? text : text.substring(0, perLine);
+            List<String> lines = new ArrayList<>();
+            StringBuilder line = new StringBuilder();
 
-            if (text.length() <= perLine)
+            for (int i = 0; i < text.length();)
             {
-                return first;
+                int codePoint = text.codePointAt(i);
+                int step = Character.charCount(codePoint);
+
+                if (codePoint == '\n')
+                {
+                    lines.add(line.toString());
+                    line.setLength(0);
+                    i += step;
+                    continue;
+                }
+
+                String glyph = new String(Character.toChars(codePoint));
+
+                if (line.length() > 0 && context.batcher.getFont().getWidth(line + glyph) > width)
+                {
+                    lines.add(line.toString());
+                    line.setLength(0);
+                }
+
+                line.append(glyph);
+                i += step;
             }
 
-            String rest = text.substring(perLine);
+            if (line.length() > 0)
+            {
+                lines.add(line.toString());
+            }
 
-            return first + "\n" + (rest.length() <= perLine ? rest : rest.substring(0, Math.max(0, perLine - 1)) + "…");
+            if (lines.size() <= maxLines)
+            {
+                return String.join("\n", lines);
+            }
+
+            String last = lines.get(maxLines - 1);
+
+            while (!last.isEmpty() && context.batcher.getFont().getWidth(last + "…") > width)
+            {
+                last = last.substring(0, last.offsetByCodePoints(last.length(), -1));
+            }
+
+            List<String> clamped = new ArrayList<>(lines.subList(0, maxLines - 1));
+
+            clamped.add(last.stripTrailing() + "…");
+
+            return String.join("\n", clamped);
+        }
+
+        private String ellipsize(UIContext context, String text, int width)
+        {
+            if (text == null || text.isEmpty() || context.batcher.getFont().getWidth(text) <= width)
+            {
+                return text == null ? "" : text;
+            }
+
+            String result = text;
+
+            while (!result.isEmpty() && context.batcher.getFont().getWidth(result + "…") > width)
+            {
+                result = result.substring(0, result.offsetByCodePoints(result.length(), -1));
+            }
+
+            return result.stripTrailing() + "…";
         }
 
         private void renderScrollbar(UIContext context)
@@ -506,12 +590,13 @@ public class UILayerLibrary extends UIElement
             this.dragged = false;
 
             int columns = this.columns();
+            int cardWidth = this.cardWidth();
             int localX = context.mouseX - this.area.x;
             int localY = context.mouseY - this.area.y + Math.round(this.smoothScroll);
-            int column = localX / (CARD_W + GAP);
+            int column = localX / (cardWidth + GAP);
             int row = localY / (CARD_H + GAP);
 
-            if (column >= columns || localX - column * (CARD_W + GAP) > CARD_W || localY - row * (CARD_H + GAP) > CARD_H)
+            if (column >= columns || localX - column * (cardWidth + GAP) > cardWidth || localY - row * (CARD_H + GAP) > CARD_H)
             {
                 return true;
             }

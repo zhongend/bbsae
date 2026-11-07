@@ -749,11 +749,44 @@ public final class ShaderSources
         uniform float Threshold;
         uniform float Invert;
         uniform float Choke;
+        uniform float ClipBlack;
+        uniform float ClipWhite;
         uniform vec2 Texel;
         uniform vec2 Size;
 
         in vec2 vUv;
         out vec4 fragColor;
+
+        /* (r - y, b - y): the colour-difference (chroma) axes of an RGB colour. */
+        vec2 chromaOf(vec3 rgb)
+        {
+            float y = dot(rgb, vec3(0.299, 0.587, 0.114));
+
+            return rgb.rb - vec2(y);
+        }
+
+        /* Colour-difference distance to the key colour, in 0..1. The chroma axes separate "is this
+         * the key hue" from "how bright is it", which is the whole reason this keyer works: the
+         * old RGB-distance matte conflated "right hue, wrong brightness" with "different colour",
+         * so every shaded pixel of a green screen kept a translucent green veil. Pixels with
+         * almost no chroma (grey, white, black) have no meaningful hue at all — their angle is
+         * noise — so the saturation gate pushes them to distance 1 (far from the key, kept); the
+         * gate is relative to the key's own saturation, which keeps dark-but-saturated screen
+         * colours keyed while desaturated footage stays. */
+        float keyDistance(vec3 rgb, vec3 key)
+        {
+            vec2 c = chromaOf(rgb);
+            vec2 k = chromaOf(key);
+            float satC = length(c);
+            float satK = max(length(k), 0.0001);
+            /* Zero-saturation pixels (white/grey/black) have no angle at all: the epsilon keeps
+             * cosA at 0 (hue 0.5) and the saturation gate below pushes the distance to 1. */
+            float cosA = clamp(dot(c, k) / max(satC * satK, 0.0001), -1.0, 1.0);
+            float hue = acos(cosA) / 3.14159265;
+            float satGate = smoothstep(0.08, 0.28, satC / satK);
+
+            return mix(1.0, hue, satGate);
+        }
 
         void main()
         {
@@ -762,15 +795,31 @@ public final class ShaderSources
 
             if (Mode == 0)
             {
-                float d = distance(c.rgb, KeyColor.rgb);
-                alpha *= smoothstep(Tolerance, Tolerance + Softness, d);
-                float spillAmount = max(0.0, c.g - max(c.r, c.b)) * Spill;
-                c.g -= spillAmount;
+                float d = keyDistance(c.rgb, KeyColor.rgb);
+                float matte = smoothstep(Tolerance, Tolerance + max(Softness, 0.001), d);
+
+                /* Screen-matte clip: black lifts the floor (garbage noise and heavy grain go to
+                 * zero), white pulls the ceiling down (not-quite-pure screen pixels go fully
+                 * transparent). This is what finishes the veil the hue matte alone can't. */
+                matte = clamp((matte - ClipBlack) / max(ClipWhite - ClipBlack, 0.001), 0.0, 1.0);
+
+                /* Despill: remove the green that sits ABOVE the other channels wherever the
+                 * screen still has influence. Fully kept pixels (matte 1) are untouched — a
+                 * genuinely green shirt survives — while keyed and semi-keyed pixels lose the
+                 * veil, so downstream premultiplied effects (blur/glow) cannot re-inject the
+                 * green the matte removed. */
+                float spill = max(0.0, c.g - max(c.r, c.b));
+
+                c.g -= spill * clamp(Spill, 0.0, 1.0) * (1.0 - matte);
+
+                alpha *= matte;
             }
             else if (Mode == 1)
             {
                 float luma = dot(c.rgb, vec3(0.299, 0.587, 0.114));
                 float m = smoothstep(Threshold - Softness, Threshold + Softness, luma);
+
+                m = clamp((m - ClipBlack) / max(ClipWhite - ClipBlack, 0.001), 0.0, 1.0);
                 alpha *= mix(m, 1.0 - m, Invert);
             }
             else
@@ -874,6 +923,34 @@ public final class ShaderSources
             return mat2(c, -s, s, c);
         }
 
+        /* Fractal noise for 分形杂色. Each octave is rotated by the evolution angle before being
+         * sampled, so a keyed 演化 MORPHS the clouds (AE's Evolution) instead of sliding the whole
+         * field diagonally. Normalising by the summed amplitudes keeps 对比度/亮度 meaningful at
+         * every 细节 level. */
+        float fbmMorph(vec2 p, float evo, int octaves)
+        {
+            float value = 0.0;
+            float amplitude = 0.5;
+            float total = 0.0;
+
+            for (int i = 0; i < 8; i++)
+            {
+                if (i >= octaves)
+                {
+                    break;
+                }
+
+                mat2 m = rot(evo * (float(i) + 1.0) * 0.55);
+
+                value += noise(m * p) * amplitude;
+                total += amplitude;
+                p = m * p * 2.03 + 11.17;
+                amplitude *= 0.5;
+            }
+
+            return value / max(total, 0.0001);
+        }
+
         void main()
         {
             vec2 uv = layerUv(vUv);
@@ -893,7 +970,12 @@ public final class ShaderSources
             }
             else if (Type == 1)
             {
-                float n = fbm(uv * Scale + Evolution + Seed);
+                /* Fractal noise measured in LAYER pixels: 缩放 is the feature size, so a 80 px
+                 * cloud reads the same on a 200 px title and a 1920 px background. The old
+                 * normalized `uv * Scale` counted noise cycles across the layer instead, which
+                 * stretched the pattern on wide layers and made the FX read as fine static. */
+                vec2 p = uv * LayerSize / max(Scale, 1.0) + Seed * 7.13;
+                float n = fbmMorph(p, Evolution * 0.6, Octaves);
                 n = clamp((n - 0.5) * Contrast + 0.5, 0.0, 1.0);
                 color = vec4(mix(ColorA.rgb, ColorB.rgb, n), 1.0);
             }
@@ -1041,9 +1123,11 @@ public final class ShaderSources
                 }
 
                 /* Amount is in pixels; convert through the layer basis so displacement follows
-                 * rotation and scale instead of always pushing along the comp axes. */
-                vec2 localPx = vec2(offset.x / max(LayerSize.x, 1.0), offset.y / max(LayerSize.y, 1.0));
-                uv += localDeltaToComp(localPx);
+                 * rotation and scale instead of always pushing along the comp axes. localDeltaToComp
+                 * takes LAYER pixels (LayerX/LayerY are comp pixels per layer pixel) — the old
+                 * extra /LayerSize division made a 48 px displacement move ~0.1 px, which is why
+                 * 置换图 looked dead on anything larger than a postage stamp. */
+                uv += localDeltaToComp(offset);
             }
             else if (Mode == 1 || Mode == 2)
             {
@@ -1078,14 +1162,15 @@ public final class ShaderSources
             else if (Mode == 4)
             {
                 /* Frequency is radians per pixel (2π / wavelength), so the wavelength parameter
-                 * means the same thing on a 200 px title and a 1920 px background. */
+                 * means the same thing on a 200 px title and a 1920 px background. Amplitude is a
+                 * LAYER pixel delta handed straight to localDeltaToComp — the old wave/LayerSize
+                 * pre-division shrank a 24 px wave to a fraction of a pixel and the effect never
+                 * moved. */
                 float travel = Vertical == 1 ? luv.y * LayerSize.y : luv.x * LayerSize.x;
                 float wave = sin(travel * Frequency + Phase) * Amount;
-                vec2 localPx = Vertical == 1
-                    ? vec2(0.0, wave / max(LayerSize.y, 1.0))
-                    : vec2(wave / max(LayerSize.x, 1.0), 0.0);
+                vec2 delta = Vertical == 1 ? vec2(0.0, wave) : vec2(wave, 0.0);
 
-                uv += localDeltaToComp(localPx);
+                uv += localDeltaToComp(delta);
             }
             else
             {
@@ -1097,9 +1182,8 @@ public final class ShaderSources
                 vec2 p = (luv * LayerSize + Seed * 19.37 + Evolution * 8.0) / sizePx;
                 float angle = fbm(p) * 6.2831853 + fbm(p + 41.7) * 1.7;
                 vec2 offset = vec2(cos(angle), sin(angle)) * Amount;
-                vec2 localPx = vec2(offset.x / max(LayerSize.x, 1.0), offset.y / max(LayerSize.y, 1.0));
 
-                uv += localDeltaToComp(localPx);
+                uv += localDeltaToComp(offset);
             }
 
             fragColor = texture(Source, clamp(uv, vec2(0.0), vec2(1.0)));
@@ -1985,6 +2069,30 @@ public final class ShaderSources
              * writing straight alpha here would divide the colour a second time and glow the
              * matte edges. */
             fragColor = vec4(rgb * a, a);
+        }
+        """;
+
+    /**
+     * Copies a captured world frame with alpha forced to 1.
+     *
+     * <p>{@code glCopyTexSubImage2D} copies alpha verbatim, and shader packs routinely leave the
+     * final pass alpha at 0 — iterationRP's final fragment literally writes {@code vec4(color, 0.0)}.
+     * Every consumer draws the capture with texture-alpha blending, so a verbatim copy is
+     * <b>invisible</b>: under such a pack the BBS 预览 layer and the whole compositor preview go
+     * black. This pass is the last step of every capture; it also drops any pack-side garbage in
+     * the alpha channel.</p>
+     */
+    public static final String OPAQUE = """
+        #version 150 core
+
+        uniform sampler2D Source;
+
+        in vec2 vUv;
+        out vec4 fragColor;
+
+        void main()
+        {
+            fragColor = vec4(texture(Source, vUv).rgb, 1.0);
         }
         """;
 

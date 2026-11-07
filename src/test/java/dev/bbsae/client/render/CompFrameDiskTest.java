@@ -64,6 +64,21 @@ public class CompFrameDiskTest
     }
 
     @Test
+    public void asynchronousFramesAreCompleteAndReadable() throws Exception
+    {
+        CompProject project = project();
+        CompDocument doc = project.comps.get(0);
+        int[] source = pixels(doc.width, doc.height, 17);
+        long signature = 0xA51C7L;
+
+        assertTrue(CompFrameDisk.saveAsync(project, doc, signature, 11, doc.width, doc.height, source));
+        assertTrue(CompFrameDisk.awaitWrites(5000L), "the bounded writer must finish the queued frame");
+        assertArrayEquals(source, CompFrameDisk.load(project, doc, signature, 11, doc.width, doc.height));
+        assertTrue(!CompFrameDisk.saveAsync(project, doc, signature, 11, 0, doc.height, source),
+            "invalid frames must not enter the background queue");
+    }
+
+    @Test
     public void aDifferentSignatureIsAMiss()
     {
         CompProject project = project();

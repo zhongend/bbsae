@@ -170,6 +170,7 @@ public class UICompTrackTimeline extends UIElement
         return this.doc() == null ? 20F : Math.max(1F, this.doc().fps);
     }
 
+    /** Reversed rows for discrete input operations; render-time code uses direct indexing. */
     private List<CompLayer> rows()
     {
         if (this.doc() == null)
@@ -182,6 +183,47 @@ public class UICompTrackTimeline extends UIElement
         Collections.reverse(layers);
 
         return layers;
+    }
+
+    /** Number of layer rows without copying the document's list. */
+    private int layerCount()
+    {
+        CompDocument doc = this.doc();
+
+        return doc == null || doc.layers == null ? 0 : doc.layers.size();
+    }
+
+    /** The visible top row is the last layer in the source stack. */
+    static int sourceRowIndex(int row, int layerCount)
+    {
+        return layerCount - 1 - row;
+    }
+
+    /** Resolves a visible row directly in the reversed source stack. */
+    private CompLayer rowLayer(int row)
+    {
+        CompDocument doc = this.doc();
+
+        if (doc == null || doc.layers == null || row < 0 || row >= doc.layers.size())
+        {
+            return null;
+        }
+
+        return doc.layers.get(sourceRowIndex(row, doc.layers.size()));
+    }
+
+    private int layerRow(CompLayer layer)
+    {
+        CompDocument doc = this.doc();
+
+        if (doc == null || doc.layers == null)
+        {
+            return -1;
+        }
+
+        int sourceIndex = doc.layers.indexOf(layer);
+
+        return sourceIndex < 0 ? -1 : sourceRowIndex(sourceIndex, doc.layers.size());
     }
 
     private int headerWidth()
@@ -225,13 +267,13 @@ public class UICompTrackTimeline extends UIElement
 
     private int audioRowIndex()
     {
-        return this.hasAudioRow() ? this.rows().size() : -1;
+        return this.hasAudioRow() ? this.layerCount() : -1;
     }
 
     /** Layers + the audio lane: the only place that knows how many rows exist. */
     private int rowCount()
     {
-        return this.rows().size() + (this.hasAudioRow() ? 1 : 0);
+        return this.layerCount() + (this.hasAudioRow() ? 1 : 0);
     }
 
     /** Length drawn for a clip: an explicit duration, or the rest of the composition. */
@@ -288,7 +330,7 @@ public class UICompTrackTimeline extends UIElement
      */
     private int reorderTarget(int mouseY)
     {
-        int size = this.rows().size();
+        int size = this.layerCount();
 
         if (size <= 0)
         {
@@ -531,8 +573,7 @@ public class UICompTrackTimeline extends UIElement
             return;
         }
 
-        List<CompLayer> rows = this.rows();
-        int index = rows.indexOf(selected);
+        int index = this.layerRow(selected);
 
         if (index < 0)
         {
@@ -760,9 +801,9 @@ public class UICompTrackTimeline extends UIElement
 
     private void renderRows(UIContext context)
     {
-        List<CompLayer> rows = this.rows();
+        int layerCount = this.layerCount();
 
-        if (rows.isEmpty())
+        if (layerCount == 0)
         {
             /* No layers yet: the empty-state hint lives in the space above the audio lane instead
              * of replacing the whole area, otherwise the audio track would vanish exactly when a
@@ -778,7 +819,7 @@ public class UICompTrackTimeline extends UIElement
         }
 
         int first = Math.max(0, this.scrollY / Math.max(1, this.rowHeight));
-        int last = Math.min(rows.size(), first + this.laneArea.h / Math.max(1, this.rowHeight) + 2);
+        int last = Math.min(layerCount, first + this.laneArea.h / Math.max(1, this.rowHeight) + 2);
 
         for (int i = first; i < last; i++)
         {
@@ -789,7 +830,7 @@ public class UICompTrackTimeline extends UIElement
                 continue;
             }
 
-            CompLayer layer = rows.get(i);
+            CompLayer layer = this.rowLayer(i);
             boolean selected = layer == this.panel.getSelectedLayer();
             boolean alsoSelected = !selected && this.panel.isLayerSelected(layer);
 
@@ -2143,14 +2184,13 @@ public class UICompTrackTimeline extends UIElement
         }
 
         int row = this.rowAt(context.mouseY);
-        List<CompLayer> rows = this.rows();
+        CompLayer layer = this.rowLayer(row);
 
-        if (row < 0 || row >= rows.size())
+        if (layer == null)
         {
             return;
         }
 
-        CompLayer layer = rows.get(row);
         int start = this.toX(layer.in);
         int finish = this.toX(layer.out);
 

@@ -7,9 +7,10 @@ import java.util.Map;
  * is numbers, {@code + - * / % ^}, parentheses, variables and a handful of math functions.
  *
  * <p>Supported variables: {@code time}, {@code frame}, {@code value}, {@code fps},
- * {@code comp.<parameter>}, {@code layer.<layerId>.<property>}. Functions: sin, cos, tan, abs,
- * min, max, clamp, floor, ceil, round, sqrt, pow, noise, wiggle. Anything unknown falls back to the
- * property's static value instead of breaking the frame.</p>
+ * {@code comp.<parameter>}, {@code layer.<layerId>.<property>},
+ * {@code tracker.<trackerId>.x / .y} (a point tracker's position at the current frame). Functions:
+ * sin, cos, tan, abs, min, max, clamp, floor, ceil, round, sqrt, pow, noise, wiggle. Anything
+ * unknown falls back to the property's static value instead of breaking the frame.</p>
  */
 public final class CompExpression
 {
@@ -330,6 +331,31 @@ public final class CompExpression
                 if (layer != null)
                 {
                     return layerProperty(layer, rest.substring(dot + 1), frame, layerValue);
+                }
+            }
+        }
+
+        if (path.startsWith("tracker.") && comp != null)
+        {
+            String[] parts = path.split("\\.", 3);
+
+            if (parts.length == 3)
+            {
+                CompTracker tracker = comp.getTracker(parts[1]);
+
+                if (tracker != null)
+                {
+                    int at = Math.round(frame);
+
+                    if ("x".equals(parts[2]))
+                    {
+                        return tracker.xAt(at);
+                    }
+
+                    if ("y".equals(parts[2]))
+                    {
+                        return tracker.yAt(at);
+                    }
                 }
             }
         }

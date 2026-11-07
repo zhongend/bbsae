@@ -221,8 +221,10 @@ public final class CompFrameServer
         {
             int[] pixels = rendered.readTopDown();
 
-            diskWrites++;
-            CompFrameDisk.save(project, doc, key.signature, frameIndex, width, height, pixels);
+            if (CompFrameDisk.saveAsync(project, doc, key.signature, frameIndex, width, height, pixels))
+            {
+                diskWrites++;
+            }
         }
 
         return rendered;

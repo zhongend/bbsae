@@ -115,6 +115,9 @@ public final class CompCurves
     /** AE's Easy Ease default: the handle covers a third of the segment, horizontally. */
     public static final float DEFAULT_INFLUENCE = 1F / 3F;
 
+    /** Smallest handle radius in frames; matches the drag clamp in {@code CurveInteraction}. */
+    public static final float MIN_HANDLE = 0.01F;
+
     public static final int EASE_BOTH = 0;
     public static final int EASE_IN = 1;
     public static final int EASE_OUT = 2;
@@ -472,6 +475,42 @@ public final class CompCurves
         key.ly = 0F;
     }
 
+    /**
+     * Whether a key owns a visible, editable handle for a real Bezier segment.
+     *
+     * <p>The left key owns the segment's interpolation. Therefore an incoming handle depends on
+     * the previous key's type, not on the selected key's type. Endpoints do not expose a handle
+     * on the side where no segment exists, and automatic/linear/hold segments do not show stale
+     * stored handles that currently have no effect.</p>
+     */
+    public static boolean hasBezierHandle(KeyframeChannel<?> channel, Keyframe<?> key, boolean outgoing)
+    {
+        if (channel == null || key == null)
+        {
+            return false;
+        }
+
+        List<Keyframe> keys = castKeys(channel);
+
+        return hasBezierHandle(keys, indexOfIdentity(keys, key), outgoing);
+    }
+
+    public static boolean hasBezierHandle(List<Keyframe> keys, int index, boolean outgoing)
+    {
+        if (keys == null || index < 0 || index >= keys.size())
+        {
+            return false;
+        }
+
+        if (outgoing)
+        {
+            return index + 1 < keys.size()
+                && keys.get(index).getInterpolation().has(Interpolations.BEZIER);
+        }
+
+        return index > 0 && keys.get(index - 1).getInterpolation().has(Interpolations.BEZIER);
+    }
+
     public static void applyAuto(KeyframeChannel<?> channel, List<Keyframe> selection, boolean clamped)
     {
         for (Keyframe key : selection)
@@ -543,25 +582,31 @@ public final class CompCurves
      * Links a key's handles so the tangent is continuous through it — AE's default when dragging a
      * handle without Alt.
      *
-     * <p>AE keeps each side's <b>length</b> and mirrors the <b>slope</b>, it does not copy the time
-     * offset: a handle that reaches 30% into a long segment should not be forced to reach 30% into
-     * a short one. With (rx, ry) and (lx, ly) as offsets, equal slope means
-     * {@code ly / lx = -ry / rx}.</p>
+     * <p><b>Symmetric mirroring</b>: the paired handle is the dragged vector reflected through the
+     * key — equal radius, opposite direction. The old rule kept each side's own radius and only
+     * mirrored the slope ({@code ly = -ry · lx/rx}); pulling one handle out then merely rotated
+     * the other, and whenever one radius was much shorter than the other (or clamped to the
+     * minimum) the ratio blew the paired handle's value up by tens to hundreds of times, so
+     * vertical drags made it fly around the graph.</p>
      *
-     * @param fromRight true when the right handle was dragged (so the left one follows).
+     * @param fromRight   true when the right handle was dragged (so the left one follows).
+     * @param oppositeMax segment length the mirrored handle may not exceed (ticks to the
+     *                    neighbouring key on that side); a bezier control point past the
+     *                    neighbour would fold the curve behind it.
      */
-    public static void mirrorHandles(Keyframe<?> key, boolean fromRight)
+    public static void mirrorHandles(Keyframe<?> key, boolean fromRight, float oppositeMax)
     {
+        float limit = Math.max(MIN_HANDLE, oppositeMax);
+
         if (fromRight)
         {
-            if (key.rx > 0.0001F)
-            {
-                key.ly = -key.ry * (key.lx / key.rx);
-            }
+            key.lx = Math.max(MIN_HANDLE, Math.min(limit, key.rx));
+            key.ly = -key.ry;
         }
-        else if (key.lx > 0.0001F)
+        else
         {
-            key.ry = -key.ly * (key.rx / key.lx);
+            key.rx = Math.max(MIN_HANDLE, Math.min(limit, key.lx));
+            key.ry = -key.ly;
         }
     }
 

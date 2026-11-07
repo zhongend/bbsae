@@ -53,6 +53,15 @@ public class CompTimelineZoomTest
         assertEquals(0.05D, UICompTrackTimeline.zoomTarget(0.06D, -10D), 0.001D, "lower clamp");
     }
 
+    @Test
+    public void visibleRowsMapDirectlyToTheReversedLayerStack()
+    {
+        assertEquals(2, UICompTrackTimeline.sourceRowIndex(0, 3));
+        assertEquals(1, UICompTrackTimeline.sourceRowIndex(1, 3));
+        assertEquals(0, UICompTrackTimeline.sourceRowIndex(2, 3));
+        assertEquals(0, UICompTrackTimeline.sourceRowIndex(0, 1));
+    }
+
     /** Audio clips with no explicit length play (and are drawn) to the end of the composition. */
     @Test
     public void audioLengthFallsBackToTheCompositionEnd()

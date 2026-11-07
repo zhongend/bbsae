@@ -28,6 +28,8 @@ import dev.bbsae.comp.CompStore;
 import dev.bbsae.comp.CompStyle;
 import dev.bbsae.comp.CompTextAnimator;
 import dev.bbsae.comp.CompTime;
+import dev.bbsae.comp.CompTracker;
+import dev.bbsae.comp.CompCurves;
 import dev.bbsae.comp.CompositionClip;
 import dev.bbsae.client.render.CompRenderContext;
 import dev.bbsae.client.ui.CompInput;
@@ -465,7 +467,10 @@ public class UICompositorPanel extends UIDashboardPanel
             private float startLocalX;
             private float startLocalY;
             private float startAngle;
+            private final Matrix4f startWorld = new Matrix4f();
             private final Matrix4f startInverse = new Matrix4f();
+            /** A 3D layer seen edge-on has no usable plane hit; the screen-distance fallback runs. */
+            private boolean startPlaneValid;
             private float startScreenCenterX;
             private float startScreenCenterY;
             private float startScreenDistance;
@@ -617,6 +622,16 @@ public class UICompositorPanel extends UIDashboardPanel
                 {
                     cursor = org.lwjgl.glfw.GLFW.GLFW_HAND_CURSOR;
                 }
+                else if (this.dragMode == DRAG_ROTATE)
+                {
+                    cursor = org.lwjgl.glfw.GLFW.GLFW_HAND_CURSOR;
+                }
+                else if (this.dragMode == DRAG_EDGE)
+                {
+                    cursor = this.dragHandle == 20 || this.dragHandle == 22
+                        ? org.lwjgl.glfw.GLFW.GLFW_VRESIZE_CURSOR
+                        : org.lwjgl.glfw.GLFW.GLFW_HRESIZE_CURSOR;
+                }
                 else if (this.dragMode != DRAG_NONE)
                 {
                     cursor = org.lwjgl.glfw.GLFW.GLFW_HRESIZE_CURSOR;
@@ -628,6 +643,10 @@ public class UICompositorPanel extends UIDashboardPanel
                     if (handle == 30)
                     {
                         cursor = org.lwjgl.glfw.GLFW.GLFW_HAND_CURSOR;
+                    }
+                    else if (handle == 20 || handle == 22)
+                    {
+                        cursor = org.lwjgl.glfw.GLFW.GLFW_VRESIZE_CURSOR;
                     }
                     else if (handle >= 0)
                     {
@@ -751,8 +770,13 @@ public class UICompositorPanel extends UIDashboardPanel
                 if (UICompositorPanel.this.project != null && UICompositorPanel.this.doc != null)
                 {
                     /* Keep the BBS camera on the composition playhead even while the panel is
-                     * paused: scrubbing the timeline must move the film frame too. */
-                    dev.bbsae.client.overlay.BbsPreviewBridge.sync(UICompositorPanel.this.time);
+                     * paused: scrubbing the timeline must move the film frame too. A running
+                     * point tracker drives the runner itself (frame by frame), so the two must
+                     * not fight — the engine's seek wins until the analysis finishes. */
+                    if (!dev.bbsae.client.render.TrackerEngine.isRunning())
+                    {
+                        dev.bbsae.client.overlay.BbsPreviewBridge.sync(UICompositorPanel.this.time);
+                    }
 
                     /* Re-derive the colour/depth capture requests from the document every frame.
                      * The old build only set them from a toggle callback, so a reopened project
@@ -2125,7 +2149,7 @@ public class UICompositorPanel extends UIDashboardPanel
              * matrix here would feed the scale change back into the ratio and make the handle run
              * away from the cursor.
              */
-            private float[] startLocalPoint(UIContext context)
+            private float[] startLocalPoint(UIContext context, CompLayer layer)
             {
                 float scale = this.fitScale();
 
@@ -2141,6 +2165,21 @@ public class UICompositorPanel extends UIDashboardPanel
                 );
                 float screenX = (context.mouseX - this.area.x - ox) / scale;
                 float screenY = (context.mouseY - this.area.y - oy) / scale;
+
+                if (!layer.threeD)
+                {
+                    /* Match CompScene.project(): 2D layers go through view2D · world, not the
+                     * perspective camera. Using the perspective unproject here made the scale
+                     * pivot drift whenever the camera was zoomed or panned. */
+                    CompCamera camera = CompScene.camera(renderContext);
+                    Matrix4f model = new Matrix4f(camera.view2D).mul(this.startWorld);
+                    Vector3f point = new Vector3f(screenX, screenY, 0F);
+
+                    new Matrix4f(model).invert().transformPosition(point);
+
+                    return new float[] {point.x, point.y};
+                }
+
                 Vector3f point = CompScene.camera(renderContext).unproject(
                     screenX, screenY, UICompositorPanel.this.doc.width, UICompositorPanel.this.doc.height, 0F
                 );
@@ -2148,6 +2187,68 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.startInverse.transformPosition(point);
 
                 return new float[] {point.x, point.y};
+            }
+
+            /**
+             * Pointer in the 3D layer's own plane, measured with the drag-start transform.
+             *
+             * <p>The old 3D path ignored the handle direction and scaled by the ratio of the
+             * cursor's distance from the screen centre. That is not an edge stretch: every handle
+             * behaved like a uniform corner and the grabbed handle did not track the pointer under
+             * perspective. Casting the mouse ray onto the layer plane and applying the start
+             * inverse gives the same pre-drag local coordinates the 2D path uses.</p>
+             */
+            private float[] startLocalPointOnLayerPlane(UIContext context)
+            {
+                float scale = this.fitScale();
+
+                if (scale <= 0F || UICompositorPanel.this.doc == null || UICompositorPanel.this.project == null)
+                {
+                    return null;
+                }
+
+                float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
+                float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
+                float compX = (context.mouseX - this.area.x - ox) / scale;
+                float compY = (context.mouseY - this.area.y - oy) / scale;
+                CompRenderContext renderContext = new CompRenderContext(
+                    UICompositorPanel.this.project, UICompositorPanel.this.doc, UICompositorPanel.this.time, null, null, null
+                );
+
+                try
+                {
+                    CompCamera camera = CompScene.camera(renderContext);
+                    Vector3f rayA = camera.unproject(compX, compY, UICompositorPanel.this.doc.width,
+                        UICompositorPanel.this.doc.height, 0F);
+                    Vector3f rayB = camera.unproject(compX, compY, UICompositorPanel.this.doc.width,
+                        UICompositorPanel.this.doc.height, 1000F);
+                    Vector3f origin = this.startWorld.transformPosition(new Vector3f(0F, 0F, 0F));
+                    Vector3f normal = this.startWorld.transformDirection(new Vector3f(0F, 0F, 1F)).normalize();
+                    Vector3f direction = new Vector3f(rayB).sub(rayA);
+                    float denominator = direction.dot(normal);
+
+                    if (Math.abs(denominator) < 0.00001F)
+                    {
+                        return null;
+                    }
+
+                    float t = new Vector3f(origin).sub(rayA).dot(normal) / denominator;
+
+                    if (t < 0F)
+                    {
+                        return null;
+                    }
+
+                    Vector3f local = new Vector3f(rayA).fma(t, direction);
+
+                    this.startInverse.transformPosition(local);
+
+                    return new float[] {local.x, local.y};
+                }
+                catch (RuntimeException e)
+                {
+                    return null;
+                }
             }
 
             /** Ray-casting point-in-quad for the projected 3D selection box. */
@@ -2248,7 +2349,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 float dx = (context.mouseX - this.dragStartX) / scale;
                 float dy = (context.mouseY - this.dragStartY) / scale;
-                float[] local = this.startLocalPoint(context);
+                float[] local = this.startLocalPoint(context, layer);
 
                 if (this.dragMode == DRAG_CAMERA_BODY || this.dragMode == DRAG_CAMERA_TARGET)
                 {
@@ -2272,18 +2373,68 @@ public class UICompositorPanel extends UIDashboardPanel
 
                         this.writeTransform(layer, null, null, this.startRotation + delta);
                         UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "旋转 %.1f°", this.startRotation + delta));
+
+                        return;
                     }
-                    else
+
+                    if (this.dragMode == DRAG_CORNER || this.dragMode == DRAG_EDGE)
                     {
-                        float ratio = Math.max(0.01F, this.startScreenDistance <= 0.001F ? 1F : distance / this.startScreenDistance);
-                        float sx = Math.max(0.01F, Math.min(100F, this.startScaleX * ratio));
-                        float sy = Math.max(0.01F, Math.min(100F, this.startScaleY * ratio));
+                        float[] planeLocal = this.startPlaneValid ? this.startLocalPointOnLayerPlane(context) : null;
+                        float sx;
+                        float sy;
+
+                        if (planeLocal != null)
+                        {
+                            float[] scales = CompTransformHandles.scaled(
+                                this.dragHandle,
+                                this.startLocalX, this.startLocalY,
+                                planeLocal[0], planeLocal[1],
+                                this.startScaleX, this.startScaleY,
+                                this.dragMode == DRAG_CORNER && !Window.isShiftPressed()
+                            );
+
+                            sx = scales[0];
+                            sy = scales[1];
+                        }
+                        else
+                        {
+                            /* Edge-on plane: no reliable local hit. Fall back to the old radial
+                             * ratio, but still honour the handle's axis so a side grip never
+                             * changes height. */
+                            float ratio = Math.max(0.01F,
+                                this.startScreenDistance <= 0.001F ? 1F : distance / this.startScreenDistance);
+
+                            sx = this.startScaleX;
+                            sy = this.startScaleY;
+
+                            if (this.dragMode == DRAG_EDGE)
+                            {
+                                if (this.dragHandle == 20 || this.dragHandle == 22)
+                                {
+                                    sy *= ratio;
+                                }
+                                else
+                                {
+                                    sx *= ratio;
+                                }
+                            }
+                            else
+                            {
+                                sx *= ratio;
+                                sy *= ratio;
+                            }
+
+                            sx = Math.max(CompTransformHandles.MIN_SCALE, Math.min(CompTransformHandles.MAX_SCALE, sx));
+                            sy = Math.max(CompTransformHandles.MIN_SCALE, Math.min(CompTransformHandles.MAX_SCALE, sy));
+                        }
 
                         this.writeTransform(layer, sx, sy, null);
-                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "缩放 X %.0f%%   Y %.0f%%", sx * 100F, sy * 100F));
-                    }
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                            "缩放 X %.0f%%   Y %.0f%%%s", sx * 100F, sy * 100F,
+                            this.dragMode == DRAG_CORNER ? "（Shift 单轴）" : ""));
 
-                    return;
+                        return;
+                    }
                 }
 
                 if (this.dragMode == DRAG_ROTATE)
@@ -2308,32 +2459,16 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (this.dragMode == DRAG_CORNER || this.dragMode == DRAG_EDGE)
                 {
-                    float sx = Math.abs(this.startLocalX) < 0.001F ? this.startScaleX : this.startScaleX * (local[0] / this.startLocalX);
-                    float sy = Math.abs(this.startLocalY) < 0.001F ? this.startScaleY : this.startScaleY * (local[1] / this.startLocalY);
+                    float[] scales = CompTransformHandles.scaled(
+                        this.dragHandle,
+                        this.startLocalX, this.startLocalY,
+                        local[0], local[1],
+                        this.startScaleX, this.startScaleY,
+                        this.dragMode == DRAG_CORNER && !Window.isShiftPressed()
+                    );
+                    float sx = scales[0];
+                    float sy = scales[1];
 
-                    if (this.dragMode == DRAG_CORNER && !Window.isShiftPressed())
-                    {
-                        /* Corner = proportional scale (AE). Shift frees the axes, edge handles
-                         * are always single-axis. */
-                        float uniform = (sx / Math.max(0.0001F, this.startScaleX) + sy / Math.max(0.0001F, this.startScaleY)) * 0.5F;
-
-                        sx = this.startScaleX * uniform;
-                        sy = this.startScaleY * uniform;
-                    }
-                    else if (this.dragMode == DRAG_EDGE)
-                    {
-                        if (this.dragHandle == 20 || this.dragHandle == 22)
-                        {
-                            sy = this.startScaleY;
-                        }
-                        else
-                        {
-                            sx = this.startScaleX;
-                        }
-                    }
-
-                    sx = Math.max(0.01F, Math.min(100F, sx));
-                    sy = Math.max(0.01F, Math.min(100F, sy));
                     this.writeTransform(layer, sx, sy, null);
                     UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
                         "缩放 X %.0f%%   Y %.0f%%%s", sx * 100F, sy * 100F,
@@ -3399,18 +3534,33 @@ public class UICompositorPanel extends UIDashboardPanel
                     null
                 );
 
+                this.startPlaneValid = false;
+
                 try
                 {
                     Matrix4f world = CompRenderer.worldMatrix(UICompositorPanel.this.doc, layer, renderContext, new java.util.HashSet<>());
 
+                    this.startWorld.set(world);
                     this.startInverse.set(world).invert();
                 }
                 catch (RuntimeException e)
                 {
+                    this.startWorld.identity();
                     this.startInverse.identity();
                 }
 
-                float[] local = this.localPoint(context, layer);
+                float[] local = null;
+
+                if (layer.threeD)
+                {
+                    local = this.startLocalPointOnLayerPlane(context);
+                    this.startPlaneValid = local != null;
+                }
+
+                if (local == null)
+                {
+                    local = this.localPoint(context, layer);
+                }
 
                 this.startLocalX = local[0];
                 this.startLocalY = local[1];
@@ -3431,7 +3581,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 UICompositorPanel.this.setStatus(handle == 30
                     ? "拖动旋转；Shift 15° 吸附"
-                    : "拖动缩放；角点默认等比，Shift 可单独改 X/Y");
+                    : handle >= 20
+                        ? "拖动单轴缩放；边柄只改变对应的 X 或 Y"
+                        : "拖动等比缩放；Shift 可单独改 X/Y");
             }
 
             @Override
@@ -13038,6 +13190,59 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.textRow("表达式：旋转", l.expressionRotation, (text) -> l.expressionRotation = text));
         section.fields.add(this.textRow("表达式：不透明度", l.expressionOpacity, (text) -> l.expressionOpacity = text));
 
+        /* Point tracker: follows a feature across the film; the result either bakes into this
+         * layer's position or feeds expressions like tracker.<id>.x. */
+        if (this.doc != null)
+        {
+            section.fields.add(UI.label(IKey.constant("跟踪器"), 14));
+
+            for (CompTracker tracker : this.doc.trackers)
+            {
+                boolean trackerRunning = dev.bbsae.client.render.TrackerEngine.isRunning()
+                    && dev.bbsae.client.render.TrackerEngine.current() == tracker;
+
+                section.fields.add(UI.label(IKey.constant(tracker.name + " · " + trackerStateLabel(tracker)
+                    + " · " + tracker.samples.size() + " 帧"
+                    + (tracker.message == null || tracker.message.isEmpty() ? "" : " · " + tracker.message)), 13));
+                section.fields.add(this.numberRow("锚点 X", (double) tracker.x, 0D, (double) Math.max(1, this.doc.width), false,
+                    (value) -> tracker.x = value.floatValue()));
+                section.fields.add(this.numberRow("锚点 Y", (double) tracker.y, 0D, (double) Math.max(1, this.doc.height), false,
+                    (value) -> tracker.y = value.floatValue()));
+                section.fields.add(this.numberRow("模板半径（像素）", (double) tracker.pattern, 4D, 64D, true,
+                    (value) -> tracker.pattern = value.intValue()));
+                section.fields.add(this.numberRow("搜索半径（像素）", (double) tracker.search, 4D, 128D, true,
+                    (value) -> tracker.search = value.intValue()));
+                section.fields.add(this.numberRow("置信度阈值", (double) tracker.confidence, 0D, 1D, false,
+                    (value) -> tracker.confidence = value.floatValue()));
+                section.fields.add(UI.row(
+                    this.smallButton(trackerRunning ? "停止" : "开始分析", () -> this.toggleTracker(tracker)),
+                    this.smallButton("应用到位置", () -> this.bakeTrackerToLayer(tracker))
+                ));
+                section.fields.add(UI.row(
+                    this.smallButton("清除结果", () ->
+                    {
+                        tracker.clearSamples();
+                        this.refreshInspector();
+                        this.save();
+                    }),
+                    this.smallButton("删除跟踪器", () ->
+                    {
+                        if (dev.bbsae.client.render.TrackerEngine.current() == tracker)
+                        {
+                            dev.bbsae.client.render.TrackerEngine.cancel();
+                        }
+
+                        this.beginAction("删除跟踪器");
+                        this.doc.removeTracker(tracker.id);
+                        this.refreshInspector();
+                        this.save();
+                    })
+                ));
+            }
+
+            section.fields.add(this.smallButton("＋ 新建跟踪器", () -> this.createTracker()));
+        }
+
         if ("image".equals(l.type) || "footage".equals(l.type))
         {
             section.fields.add(this.textRow("序列".equals(l.type) ? "图片序列 (%04d)" : "图片路径", l.imagePath, (text) -> l.imagePath = text));
@@ -16275,6 +16480,30 @@ public class UICompositorPanel extends UIDashboardPanel
             dev.bbsae.client.render.CompPrecache.tick(this.project, this.doc);
         }
 
+        /* Point tracker: one analyzed frame per display frame, the same cooperative budget idea as
+         * the pre-render cache. The engine seeks the film runner itself (the preview sync above is
+         * suspended while it runs), so a composition with a BBS world layer tracks real pixels. */
+        if (dev.bbsae.client.render.TrackerEngine.isRunning())
+        {
+            dev.bbsae.client.render.TrackerEngine.update();
+
+            dev.bbsae.comp.CompTracker running = dev.bbsae.client.render.TrackerEngine.current();
+
+            if (running != null && running.state != dev.bbsae.comp.CompTracker.STATE_TRACKING)
+            {
+                this.setStatus("跟踪器：" + (running.message == null || running.message.isEmpty() ? "结束" : running.message));
+                this.refreshInspector();
+                this.save();
+            }
+            else if (running != null)
+            {
+                int total = Math.max(1, running.endFrame - running.startFrame + 1);
+                int done = Math.max(0, running.cursorFrame - running.startFrame);
+
+                this.setStatus(String.format(java.util.Locale.ROOT, "跟踪中：%d / %d 帧", done, total));
+            }
+        }
+
         if (this.statusTicks > 0)
         {
             this.statusTicks -= 1;
@@ -16341,12 +16570,17 @@ public class UICompositorPanel extends UIDashboardPanel
                 String shader = dev.bbsae.client.render.ShaderCompat.label();
                 String depth = this.hasDepthEffects() && !dev.bbsae.client.overlay.BbsPreviewBridge.depthAvailable()
                     ? "  ·  深度降级" : "";
+                /* What the world capture actually produced this frame: under a shader pack a
+                 * fallback (colortex0, un-tonemapped) or a missing final frame is exactly the kind
+                 * of thing that would otherwise read as "the preview is just dark". */
+                String capture = dev.bbsae.client.render.SceneColor.status();
 
                 /* One short line. The old readout appended shader/depth/camera/cache status and
                  * overflowed the preview's own width, which made it collide with the BBS flight
                  * HUD. The authoritative camera hint lives in the inspector and the status bar. */
                 this.previewInfo.label = IKey.constant(this.doc.width + "x" + this.doc.height + "  " + (int) this.doc.fps
-                    + "fps  " + effects + " FX  ·  " + shader + depth);
+                    + "fps  " + effects + " FX  ·  " + shader
+                    + (capture == null || "世界帧".equals(capture) ? "" : " · " + capture) + depth);
                 this.updatePrecacheLabel();
             }
             else
@@ -16584,6 +16818,145 @@ public class UICompositorPanel extends UIDashboardPanel
             case CompLayer.MATTE_LUMA_INVERTED -> "亮度反转";
             default -> "Alpha";
         };
+    }
+
+    /* ------------------------------------------------------------------ point tracker */
+
+    private void createTracker()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        this.beginAction("新建跟踪器");
+
+        CompTracker tracker = new CompTracker();
+
+        tracker.id = CompStore.uniqueId("tracker", this.doc.trackers, (t) -> t.id);
+        tracker.name = "跟踪器 " + (this.doc.trackers.size() + 1);
+        tracker.x = this.doc.width / 2F;
+        tracker.y = this.doc.height / 2F;
+
+        int frames = this.doc.getFrameCount();
+
+        tracker.startFrame = 0;
+        tracker.endFrame = Math.max(0, frames - 1);
+
+        /* Default the range to the selected layer's trim, which is almost always what a tracked
+         * element is for; the anchor defaults to the frame centre, to be moved onto the feature. */
+        if (this.selectedLayer != null)
+        {
+            float fps = Math.max(1F, this.doc.fps);
+
+            tracker.startFrame = Math.max(0, Math.min(frames - 1, Math.round(this.selectedLayer.in * fps)));
+            tracker.endFrame = Math.max(tracker.startFrame, Math.min(frames - 1, Math.round(this.selectedLayer.out * fps)));
+        }
+
+        this.doc.trackers.add(tracker);
+        this.refreshInspector();
+        this.save();
+        this.setStatus("已创建 " + tracker.name + "：把锚点 X/Y 移到目标上（用预览对位），再点「开始分析」");
+    }
+
+    private void toggleTracker(CompTracker tracker)
+    {
+        if (this.project == null || this.doc == null || tracker == null)
+        {
+            return;
+        }
+
+        if (dev.bbsae.client.render.TrackerEngine.isRunning())
+        {
+            dev.bbsae.client.render.TrackerEngine.cancel();
+            this.setStatus("跟踪已停止");
+            this.refreshInspector();
+
+            return;
+        }
+
+        dev.bbsae.client.render.TrackerEngine.start(this.project, this.doc, tracker);
+        this.setStatus("开始跟踪：" + tracker.name + "（每显示帧分析一帧，期间预览会停在分析帧上）");
+    }
+
+    /**
+     * Writes the tracker's samples into the selected layer's position channels.
+     *
+     * <p>The tracked offset is relative to the anchor: the layer keeps its base pose at the anchor
+     * frame and is moved by "how far the feature travelled", which is what "让这层跟着那个点走"
+     * means. Existing position keys are replaced — the layer now follows the tracker, and a mixture
+     * of old keys and baked keys would jitter between them.</p>
+     */
+    private void bakeTrackerToLayer(CompTracker tracker)
+    {
+        if (this.doc == null || tracker == null)
+        {
+            return;
+        }
+
+        CompLayer layer = this.selectedLayer;
+
+        if (layer == null)
+        {
+            this.setStatus("先在时间轴选择要应用跟踪的图层");
+
+            return;
+        }
+
+        if (tracker.samples.isEmpty())
+        {
+            this.setStatus("跟踪器还没有分析结果，先点「开始分析」");
+
+            return;
+        }
+
+        this.beginAction("应用跟踪到位置");
+
+        int anchor = Math.max(0, Math.min(this.doc.getFrameCount() - 1, tracker.startFrame));
+        float baseX = layer.transformAt(anchor).translate.x;
+        float baseY = layer.transformAt(anchor).translate.y;
+        float anchorX = tracker.xAt(anchor);
+        float anchorY = tracker.yAt(anchor);
+
+        /* First insert migrates a legacy shared Transform channel into the per-axis channels the
+         * bake is about to replace; without it an old project's original position keys would
+         * resurrect between the baked frames. */
+        layer.insertAxisKey(CompCurves.AXIS_X, anchor, baseX);
+        layer.insertAxisKey(CompCurves.AXIS_Y, anchor, baseY);
+        layer.axisChannel(CompCurves.AXIS_X).removeAll();
+        layer.axisChannel(CompCurves.AXIS_Y).removeAll();
+
+        for (double[] sample : tracker.samples)
+        {
+            int frame = (int) Math.round(sample[0]);
+
+            layer.insertAxisKey(CompCurves.AXIS_X, frame, baseX + ((float) sample[1] - anchorX));
+            layer.insertAxisKey(CompCurves.AXIS_Y, frame, baseY + ((float) sample[2] - anchorY));
+        }
+
+        this.refreshInspector();
+        this.save();
+        this.setStatus("已把 " + tracker.samples.size() + " 帧跟踪结果写入 " + this.layerLabel(layer) + " 的位置");
+    }
+
+    private static String trackerStateLabel(CompTracker tracker)
+    {
+        if (tracker.state == CompTracker.STATE_TRACKING)
+        {
+            return "跟踪中";
+        }
+
+        if (tracker.state == CompTracker.STATE_DONE)
+        {
+            return "已完成";
+        }
+
+        if (tracker.state == CompTracker.STATE_FAILED)
+        {
+            return "失败";
+        }
+
+        return tracker.samples.isEmpty() ? "未分析" : "有结果";
     }
 
     private void setMaskMode(CompMask mask, int mode)

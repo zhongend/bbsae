@@ -235,7 +235,10 @@ public class UICompCurveEditor extends UIElement
         private int listScroll;
 
         private int dragMode = DRAG_NONE;
+        private int dragButton = -1;
+        private Keyframe<?> dragPrimaryKey;
         private Keyframe<?> dragHandleKey;
+        private CompCurveChannel dragHandleChannel;
         private boolean dragHandleOutgoing;
         private int dragStartX;
         private int dragStartY;
@@ -361,6 +364,12 @@ public class UICompCurveEditor extends UIElement
 
             if (selected != this.layer)
             {
+                /* End the old gesture while its key and channel still belong to the old layer. */
+                if (this.dragMode != DRAG_NONE)
+                {
+                    this.finishDrag();
+                }
+
                 this.layer = selected;
                 this.selection.clear();
                 this.active = null;
@@ -1739,6 +1748,7 @@ public class UICompCurveEditor extends UIElement
             }
         }
 
+        @SuppressWarnings("unchecked")
         private void renderHandles(UIContext context)
         {
             CompCurveChannel channel = this.active;
@@ -1754,10 +1764,11 @@ public class UICompCurveEditor extends UIElement
             {
                 float pxPerFrame = this.pxPerSecond() / this.fps();
                 float pxPerValue = Math.abs(this.toY(0F) - this.toY(1F));
+                List<Keyframe> keys = (List<Keyframe>) (List<?>) channel.raw().getKeyframes();
 
-                for (Object entry : channel.raw().getKeyframes())
+                for (int i = 0; i < keys.size(); i++)
                 {
-                    Keyframe<?> key = (Keyframe<?>) entry;
+                    Keyframe<?> key = keys.get(i);
 
                     if (!this.selection.contains(key))
                     {
@@ -1766,17 +1777,24 @@ public class UICompCurveEditor extends UIElement
 
                     float x = this.toX(key.getTick() / this.fps());
                     float y = this.toY(channel.numericValue(key));
-                    float hx = x + key.rx * pxPerFrame;
-                    float hy = y - key.ry * pxPerValue;
 
-                    this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
-                    this.drawDisc(context, hx, hy, 3.4F, 0xFFE8C86A, 0xFF0D1015);
+                    if (CompCurves.hasBezierHandle(keys, i, true))
+                    {
+                        float hx = x + key.rx * pxPerFrame;
+                        float hy = y - key.ry * pxPerValue;
 
-                    hx = x - key.lx * pxPerFrame;
-                    hy = y - key.ly * pxPerValue;
+                        this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
+                        this.drawDisc(context, hx, hy, 3.4F, 0xFFE8C86A, 0xFF0D1015);
+                    }
 
-                    this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
-                    this.drawDisc(context, hx, hy, 3.4F, 0xFFE8C86A, 0xFF0D1015);
+                    if (CompCurves.hasBezierHandle(keys, i, false))
+                    {
+                        float hx = x - key.lx * pxPerFrame;
+                        float hy = y - key.ly * pxPerValue;
+
+                        this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
+                        this.drawDisc(context, hx, hy, 3.4F, 0xFFE8C86A, 0xFF0D1015);
+                    }
                 }
             }
             finally
@@ -1973,6 +1991,8 @@ public class UICompCurveEditor extends UIElement
                 return super.subMouseClicked(context);
             }
 
+            this.dragButton = context.mouseButton;
+
             if (context.mouseButton == 2 || (context.mouseButton == 0 && Window.isKeyPressed(GLFW.GLFW_KEY_SPACE)))
             {
                 this.dragMode = DRAG_PAN;
@@ -2017,6 +2037,7 @@ public class UICompCurveEditor extends UIElement
             {
                 this.dragMode = DRAG_HANDLE;
                 this.dragHandleKey = handle.key;
+                this.dragHandleChannel = this.active;
                 this.dragHandleOutgoing = handle.outgoing;
                 this.dragStartX = context.mouseX;
                 this.dragStartY = context.mouseY;
@@ -2024,6 +2045,7 @@ public class UICompCurveEditor extends UIElement
                 this.dragHandleStartRy = handle.key.ry;
                 this.dragHandleStartLx = handle.key.lx;
                 this.dragHandleStartLy = handle.key.ly;
+                this.dragMoved = false;
                 this.actionStarted = false;
 
                 return true;
@@ -2041,10 +2063,14 @@ public class UICompCurveEditor extends UIElement
 
                 if (Window.isShiftPressed())
                 {
-                    if (!this.selection.remove(key))
+                    /* Shift-clicking an already selected key only deselects it. It must not start
+                     * a drag of the remaining selection under the same pointer. */
+                    if (this.selection.remove(key))
                     {
-                        this.selection.add(key);
+                        return true;
                     }
+
+                    this.selection.add(key);
                 }
                 else if (!this.selection.contains(key))
                 {
@@ -2052,14 +2078,10 @@ public class UICompCurveEditor extends UIElement
                     this.selection.add(key);
                 }
 
-                CompCurveChannel selectedChannel = this.channelOf(key);
-
-                if (selectedChannel != null)
-                {
-                    CompCurves.ensureBezierHandles(selectedChannel.raw(), key);
-                }
-
+                /* Selection is not an edit. In particular, do not expand default handles here:
+                 * doing so changed playback without an undo checkpoint or a dirty notification. */
                 this.dragMode = DRAG_KEY;
+                this.dragPrimaryKey = key;
                 this.dragStartX = context.mouseX;
                 this.dragStartY = context.mouseY;
                 this.dragMoved = false;
@@ -2241,6 +2263,7 @@ public class UICompCurveEditor extends UIElement
             }
         }
 
+        @SuppressWarnings("unchecked")
         private HandleRef handleAt(int mouseX, int mouseY)
         {
             CompCurveChannel channel = this.active;
@@ -2252,34 +2275,46 @@ public class UICompCurveEditor extends UIElement
 
             float pxPerFrame = this.pxPerSecond() / this.fps();
             float pxPerValue = Math.abs(this.toY(0F) - this.toY(1F));
+            List<Keyframe> keys = (List<Keyframe>) (List<?>) channel.raw().getKeyframes();
+            float[] xs = new float[keys.size() * 2];
+            float[] ys = new float[keys.size() * 2];
+            List<HandleRef> refs = new ArrayList<>(keys.size() * 2);
+            int count = 0;
 
-            for (CompCurveChannel.Key key : channel.keys())
+            for (int i = 0; i < keys.size(); i++)
             {
-                if (!this.selection.contains(key.raw))
+                Keyframe<?> key = keys.get(i);
+
+                if (!this.selection.contains(key))
                 {
                     continue;
                 }
 
-                float x = this.toX(key.tick / this.fps());
-                float y = this.toY(key.value);
-                float rx = x + key.raw.rx * pxPerFrame;
-                float ry = y - key.raw.ry * pxPerValue;
+                float x = this.toX(key.getTick() / this.fps());
+                float y = this.toY(channel.numericValue(key));
 
-                if (Math.hypot(mouseX - rx, mouseY - ry) <= 10D)
+                if (CompCurves.hasBezierHandle(keys, i, true))
                 {
-                    return new HandleRef(key.raw, true);
+                    xs[count] = x + key.rx * pxPerFrame;
+                    ys[count] = y - key.ry * pxPerValue;
+                    refs.add(new HandleRef(key, true));
+                    count++;
                 }
 
-                float lx = x - key.raw.lx * pxPerFrame;
-                float ly = y - key.raw.ly * pxPerValue;
-
-                if (Math.hypot(mouseX - lx, mouseY - ly) <= 10D)
+                if (CompCurves.hasBezierHandle(keys, i, false))
                 {
-                    return new HandleRef(key.raw, false);
+                    xs[count] = x - key.lx * pxPerFrame;
+                    ys[count] = y - key.ly * pxPerValue;
+                    refs.add(new HandleRef(key, false));
+                    count++;
                 }
             }
 
-            return null;
+            /* The old loop returned the first handle inside ten pixels. Dense graphs therefore
+             * grabbed whichever key came first in the channel, not the dot nearest the pointer. */
+            int best = CurveInteraction.nearest(mouseX, mouseY, xs, ys, count, 10D);
+
+            return best < 0 ? null : refs.get(best);
         }
 
         @SuppressWarnings({"rawtypes", "unchecked"})
@@ -2303,17 +2338,19 @@ public class UICompCurveEditor extends UIElement
                 return;
             }
 
-            boolean held = this.dragMode == DRAG_PAN
-                ? Window.isMouseButtonPressed(2) || Window.isMouseButtonPressed(0)
-                : Window.isMouseButtonPressed(0);
-
-            if (!held)
+            if (this.dragButton < 0 || !Window.isMouseButtonPressed(this.dragButton))
             {
                 this.finishDrag();
 
                 return;
             }
 
+            this.updateDrag(context);
+        }
+
+        /** Applies one absolute pointer sample, shared by render polling and mouse-release events. */
+        private void updateDrag(UIContext context)
+        {
             if (this.dragMode == DRAG_SCRUB)
             {
                 UICompCurveEditor.this.panel.setTime((float) Math.max(0D, this.fromX(context.mouseX)));
@@ -2357,8 +2394,11 @@ public class UICompCurveEditor extends UIElement
 
             int dx = context.mouseX - this.dragStartX;
             int dy = context.mouseY - this.dragStartY;
+            boolean moved = this.dragMode == DRAG_HANDLE
+                ? dx != 0 || dy != 0
+                : Math.abs(dx) > 2 || Math.abs(dy) > 2;
 
-            if (Math.abs(dx) > 2 || Math.abs(dy) > 2)
+            if (moved)
             {
                 this.dragMoved = true;
             }
@@ -2396,45 +2436,57 @@ public class UICompCurveEditor extends UIElement
         private void dragHandle(UIContext context, int dx, int dy)
         {
             Keyframe key = this.dragHandleKey;
+            CompCurveChannel channel = this.dragHandleChannel;
 
-            if (key == null)
+            if (key == null || channel == null)
             {
                 return;
             }
 
-            CompCurveChannel channel = this.active;
             float pxPerFrame = Math.max(0.0001F, this.pxPerSecond() / this.fps());
             float pxPerValue = Math.max(0.00001F, Math.abs(this.toY(0F) - this.toY(1F)));
-            float frameDelta = dx / pxPerFrame;
-            float valueDelta = -dy / pxPerValue;
             List<Keyframe> keys = (List<Keyframe>) (List<?>) channel.raw().getKeyframes();
             int index = CompCurves.indexOfIdentity(keys, key);
+
+            /* A layer switch or structural edit may detach the pressed key. Never write that stale
+             * object through whichever channel happens to be active now. */
+            if (index < 0)
+            {
+                return;
+            }
 
             /* The drag is relative to the handle's state at press time. Clamping the time offset
              * to the adjacent segment is the AE rule: handles may not push the next/previous key
              * past each other, and BezierUtils clamps x1/x2 to [0,1] anyway. */
             if (this.dragHandleOutgoing)
             {
-                float max = index >= 0 && index + 1 < keys.size()
-                    ? Math.max(0.01F, keys.get(index + 1).getTick() - key.getTick())
+                float max = index + 1 < keys.size()
+                    ? keys.get(index + 1).getTick() - key.getTick()
                     : 1_000_000F;
 
-                key.rx = Math.max(0.01F, Math.min(max, this.dragHandleStartRx + frameDelta));
-                key.ry = this.dragHandleStartRy + valueDelta;
+                key.rx = CurveInteraction.handleFrames(this.dragHandleStartRx, dx, pxPerFrame, true, max);
+                key.ry = CurveInteraction.handleValue(this.dragHandleStartRy, dy, pxPerValue);
             }
             else
             {
                 float max = index > 0
-                    ? Math.max(0.01F, key.getTick() - keys.get(index - 1).getTick())
+                    ? key.getTick() - keys.get(index - 1).getTick()
                     : 1_000_000F;
 
-                key.lx = Math.max(0.01F, Math.min(max, this.dragHandleStartLx - frameDelta));
-                key.ly = this.dragHandleStartLy + valueDelta;
+                key.lx = CurveInteraction.handleFrames(this.dragHandleStartLx, dx, pxPerFrame, false, max);
+                key.ly = CurveInteraction.handleValue(this.dragHandleStartLy, dy, pxPerValue);
             }
 
             if (!CompInput.altDown())
             {
-                CompCurves.mirrorHandles(key, this.dragHandleOutgoing);
+                /* Symmetric mirroring: the paired handle mirrors the dragged one through the key,
+                 * equal radius, opposite direction. It may not cross its own neighbouring key,
+                 * otherwise the curve folds behind it. */
+                float oppositeMax = this.dragHandleOutgoing
+                    ? (index > 0 ? key.getTick() - keys.get(index - 1).getTick() : 1_000_000F)
+                    : (index + 1 < keys.size() ? keys.get(index + 1).getTick() - key.getTick() : 1_000_000F);
+
+                CompCurves.mirrorHandles(key, this.dragHandleOutgoing, oppositeMax);
             }
 
             key.getInterpolation().setInterp(Interpolations.BEZIER);
@@ -2447,7 +2499,7 @@ public class UICompCurveEditor extends UIElement
 
             /* Report influence and speed the way AE's keyframe dialog does. */
             Keyframe neighbor = this.dragHandleOutgoing
-                ? (index >= 0 && index + 1 < keys.size() ? keys.get(index + 1) : null)
+                ? (index + 1 < keys.size() ? keys.get(index + 1) : null)
                 : (index > 0 ? keys.get(index - 1) : null);
             float influence = 0F;
             float speed = 0F;
@@ -2457,8 +2509,7 @@ public class UICompCurveEditor extends UIElement
                 float length = Math.max(0.0001F, Math.abs(neighbor.getTick() - key.getTick()));
 
                 influence = (this.dragHandleOutgoing ? key.rx : key.lx) / length;
-                speed = CompCurves.handleSpeed(key, this.dragHandleOutgoing ? key.rx : key.lx,
-                    this.dragHandleOutgoing ? key.ry : key.ly, this.fps());
+                speed = this.keySpeed(channel, key, this.dragHandleOutgoing);
             }
 
             this.markHandleDirty(channel, key);
@@ -2476,24 +2527,17 @@ public class UICompCurveEditor extends UIElement
         {
             float pxPerFrame = Math.max(0.0001F, this.pxPerSecond() / this.fps());
             float pxPerValue = Math.max(0.00001F, Math.abs(this.toY(0F) - this.toY(1F)));
-            float startFrame = 0F;
-            float currentFrame = 0F;
+            Float startFrame = this.dragStartTicks.get(this.dragPrimaryKey);
 
-            if (this.active != null && !this.selection.isEmpty())
+            if (startFrame == null)
             {
-                Keyframe<?> first = this.selection.iterator().next();
-
-                startFrame = this.dragStartTicks.getOrDefault(first, first.getTick());
-                currentFrame = startFrame + dx / pxPerFrame;
+                return;
             }
 
-            if (this.snapping && this.fps() > 0F)
-            {
-                currentFrame = Math.round(currentFrame);
-            }
-
+            /* Anchor snapping to the key actually pressed, not IdentityHashMap iteration order. */
+            float currentFrame = CurveInteraction.keyTick(startFrame, dx, pxPerFrame, this.snapping);
             float frameDelta = currentFrame - startFrame;
-            float valueDelta = -dy / pxPerValue;
+            float valueDelta = CurveInteraction.handleValue(0F, dy, pxPerValue);
 
             for (Keyframe<?> key : this.selection)
             {
@@ -2704,7 +2748,10 @@ public class UICompCurveEditor extends UIElement
             int mode = this.dragMode;
 
             this.dragMode = DRAG_NONE;
+            this.dragButton = -1;
+            this.dragPrimaryKey = null;
             this.dragHandleKey = null;
+            this.dragHandleChannel = null;
 
             if ((mode == DRAG_KEY || mode == DRAG_HANDLE) && this.actionStarted)
             {
@@ -2716,11 +2763,29 @@ public class UICompCurveEditor extends UIElement
 
             this.actionStarted = false;
             this.dragMoved = false;
+            this.dragStartValues.clear();
+            this.dragStartTicks.clear();
 
             if (mode == DRAG_MARQUEE)
             {
                 this.selectInMarquee();
             }
+        }
+
+        @Override
+        protected boolean subMouseReleased(UIContext context)
+        {
+            if (this.dragMode != DRAG_NONE && context.mouseButton == this.dragButton)
+            {
+                /* Mouse move and release can arrive between two display frames. Consume the final
+                 * pointer sample before ending the gesture, rather than dropping those pixels. */
+                this.updateDrag(context);
+                this.finishDrag();
+
+                return true;
+            }
+
+            return super.subMouseReleased(context);
         }
 
         @Override

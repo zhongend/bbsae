@@ -85,6 +85,19 @@ public final class CompStore
         return load(projectId);
     }
 
+    /**
+     * Frame-path lookup for callers that also need project settings.
+     *
+     * <p>Unlike {@link #load(String)}, a cache hit performs no file-system calls. Ordinary loads
+     * retain their modification-time check; explicit reloads still pick up external edits.</p>
+     */
+    public static CompProject getForFrame(String projectId)
+    {
+        CachedProject cached = CACHE.get(safe(projectId));
+
+        return cached == null ? load(projectId) : cached.project;
+    }
+
     public static CompDocument getComp(String projectId, String compId)
     {
         CompProject project = load(projectId);
@@ -107,7 +120,7 @@ public final class CompStore
             return cached.document;
         }
 
-        CompDocument document = getComp(projectId, compId);
+        CompDocument document = getForFrame(projectId).getComp(compId);
 
         DOCUMENT_CACHE.put(key, new CachedDocument(current, document));
 
@@ -786,7 +799,7 @@ public final class CompStore
         CompProject project = new CompProject();
 
         project.id = safe(id);
-        project.name = "BBS Compositor Demo";
+        project.name = "BBS AE Demo";
         project.outputPresets = defaultPresets();
 
         CompDocument comp = defaultComp("Demo");
@@ -850,7 +863,7 @@ public final class CompStore
 
         CompLayer title = new CompLayer("title", "Title", "text");
 
-        title.text = "BBS COMPOSITOR";
+        title.text = "BBS AE";
         title.x = 960F;
         title.y = 500F;
         title.fontSize = 92F;

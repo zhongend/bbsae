@@ -98,7 +98,7 @@ public class UICompSettings extends UIElement
         this.title.color(0xFFF2F5FA, false);
         this.subtitle = new UILabel(IKey.constant("外观、动效、快捷键与工程默认值。修改会立即生效并保存。"));
         this.subtitle.color(0xFF8995A8, false);
-        this.footer = new UILabel(IKey.constant("BBS Compositor 0.19.1 · 设置随工程和全局偏好保存"));
+        this.footer = new UILabel(IKey.constant("BBS AE 0.23 · 设置随工程和全局偏好保存"));
         this.footer.color(0xFF687386, false);
 
         this.search = new UITextbox(96, (text) ->

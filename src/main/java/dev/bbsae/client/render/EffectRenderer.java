@@ -959,6 +959,14 @@ public final class EffectRenderer
         program.set("Threshold", effect.valueF("threshold", 0.3F));
         program.set("Invert", effect.valueF("invert", 0F));
         program.set("Choke", choker ? effect.valueF("choke", 2F) : 0F);
+
+        /* Screen-matte clip. Defaults are the identity (0 / 1), so projects saved before the
+         * sliders existed behave exactly as before; raising them is how a residual green veil or
+         * heavy grain in the matte gets finished off. */
+        float clipBlack = Math.max(0F, effect.valueF("clip_black", 0F));
+
+        program.set("ClipBlack", clipBlack);
+        program.set("ClipWhite", Math.max(clipBlack + 0.001F, Math.min(1F, effect.valueF("clip_white", 1F))));
         program.drawFullscreen();
 
         return output;

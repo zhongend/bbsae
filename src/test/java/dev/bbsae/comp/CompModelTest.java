@@ -139,7 +139,7 @@ public class CompModelTest
         assertEquals(1080, comp.height);
         assertTrue(comp.layers.size() >= 4);
         assertEquals("panel", comp.layers.get(0).type);
-        assertEquals("BBS COMPOSITOR", comp.getLayer("title").text);
+        assertEquals("BBS AE", comp.getLayer("title").text);
         assertEquals(2, comp.getLayer("title").axisChannel(CompCurves.AXIS_X).getKeyframes().size());
         assertEquals(2, comp.getLayer("title").axisChannel(CompCurves.AXIS_Y).getKeyframes().size());
         assertTrue(comp.getLayer("title").transformChannel().getKeyframes().isEmpty());
@@ -248,7 +248,7 @@ public class CompModelTest
 
         assertNotNull(copy);
         assertFalse(copy.layers.isEmpty());
-        assertEquals("BBS COMPOSITOR", copy.getLayer("title").text);
+        assertEquals("BBS AE", copy.getLayer("title").text);
         assertTrue(copy.getLayer("panel").masks.size() > 0);
     }
 

@@ -1,18 +1,19 @@
-# BBS Compositor (`bbsae`)
+# BBS AE (`bbsae`)
 
 <p align="center">
-  <img src="docs/gallery/cover.png" alt="BBS Compositor (bbsae)" width="460">
+  <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">
 </p>
 
 <p align="center">
 <b>作者 / Author：终end</b> · <a href="https://github.com/zhongend">@zhongend</a>
 </p>
 
-> **特别感谢赞助者：星辰久梦君、血之书、Szv文森特37** — 你们的赞助支持了本插件的开发，感谢你们。完整鸣谢见 [CREDITS.md](CREDITS.md)。
+> **特别感谢赞助者：【星辰久梦君_Star Dm Sov】、血之书、Szv文森特37** — 你们的赞助支持了本插件的开发，感谢你们。完整鸣谢见 [CREDITS.md](CREDITS.md)。
 
 > 交接文档：**[docs/HANDOFF.zh.md](docs/HANDOFF.zh.md)**（当前架构、已实现功能、关键 bug、未完成项、构建 - 重映射流程）。
 - **Source:** <https://github.com/zhongend/bbsae>
 - **Issues:** <https://github.com/zhongend/bbsae/issues>
+- **更新日记 / Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
 - **Feature matrix:** [`docs/features.zh.md`](docs/features.zh.md)
 - **UI architecture:** [`docs/ui-architecture.zh.md`](docs/ui-architecture.zh.md)
 - **Photon research:** [`docs/photon-research.zh.md`](docs/photon-research.zh.md)
@@ -93,7 +94,7 @@
 - **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
-  <img src="docs/gallery/hero.png" alt="BBS Compositor 0.18 — onboarding, BBS-style settings and editable shortcuts" width="100%">
+  <img src="docs/gallery/hero.png" alt="BBS AE — onboarding, BBS-style settings and editable shortcuts" width="100%">
 </p>
 
 > This repository does **not** redistribute the BBS FS jar. Download BBS FS 2.7-1.20.1 from its
@@ -109,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.22.1.jar`](https://github.com/zhongend/bbsae/releases/download/v0.22.1/bbsae-0.22.1.jar)
-   from the **v0.22.1** release (the asset is updated with each source push).
+1. Download [`bbsae-0.24.jar`](https://github.com/zhongend/bbsae/releases/download/v0.24/bbsae-0.24.jar)
+   from the **v0.24** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.22.1.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.24.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.22.1.jar` SHA-256: `64C109DDEA1710F3CCCEC021A9B6CAE2EA63208D8E4643471029C8A3F0F8ADB2`.
+`bbsae-0.24.jar` SHA-256: `E042C8269DE2459131BB548C4BB709C37984367C190A57204D399C299D6A8759`.
 
 ## Gallery
 
@@ -125,10 +126,10 @@ export** without touching the `.dat` film format.
 ### The editor, not an overlay
 
 <p align="center">
-  <img src="docs/gallery/editor-overview.png" alt="BBS Compositor editor: effects library, live preview, Effect Controls and track timeline" width="100%">
+  <img src="docs/gallery/editor-overview.png" alt="BBS AE editor: effects library, live preview, Effect Controls and track timeline" width="100%">
 </p>
 
-BBS Compositor opens as an **independent BBS dashboard panel**, not a transparent overlay on the
+BBS AE opens as an **independent BBS dashboard panel**, not a transparent overlay on the
 film editor. The layout follows a Premiere-style information architecture:
 
 1. **Effects library** — search, categories and a recent list; double-click applies to the selected track.
@@ -184,6 +185,37 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.24 — wave/chroma/itrp/蒙版 fix round + 点跟踪器
+
+- **波浪变形 / 置换图 / 湍流置换现在真的会动**。DISTORT 着色器的位移量被错误地除了两次图层
+  尺寸，一个 48 px 的位移只移动 ~0.1 px——这三个效果此前一直"未生效"。着色器改为直接把图层
+  像素位移交给 layer→comp 基；3D 烘焙的双重缩放一并修掉。
+- **绿幕抠像重做**：色度模式改为色相差 + 饱和度门控（亮度无关），打光的绿幕与偏黄绿都能抠净；
+  新增 蒙版黑场/白场 清理滑杆；溢色抑制只在屏幕色影响区压绿，主体绿色不受影响，叠加在抠像
+  上的效果不再混入残留绿边。
+- **分形杂色按 AE 语义重做**：归入「噪点与颗粒」，噪声域改图层像素空间（缩放 = 特征尺寸），
+  演化逐八度旋转噪声域——打关键帧后云雾变形而非平移。
+- **itrp / iterationRP 黑屏修复**：itrp 的 final pass 输出 alpha=0，捕获的世界帧按纹理 alpha
+  混合时整帧不可见——捕获后新增 OPAQUE pass 把 alpha 归一为 1；Iris 最终帧钩子绑不上时自动
+  回退 colortex0 捕获，预览读出显示捕获状态。
+- **蒙版**：2D/调整层/轨道遮罩的蒙版统一按渲染分辨率栅格化（与 3D 烘焙一致），动画蒙版编辑
+  不再每帧栅格化整幅合成，预览卡顿消除。
+- **点跟踪器**：检查器可新建跟踪器（锚点/模板/搜索/置信度/范围），每显示帧协作式分析一帧；
+  结果可一键烘焙到所选图层的位置关键帧，或通过 `tracker.<id>.x / .y` 表达式驱动参数。
+
+## What's new in 0.23 — this is now BBS AE
+
+**BBS Compositor is now BBS AE.** The mod id stays `bbsae`, so existing projects keep working.
+This release collects the fixes since 0.22.1:
+
+- **Faster preview** — frame-cache writes moved to a background writer with atomic files; cache keys now include the project and entity/replay parameters, and the timeline stops copying its layer list every frame.
+- **Precise curve editing** — only real Bezier handles are drawn, the nearest handle wins, and handle drags use a press snapshot so they no longer jump or drop the last mouse sample.
+- **Readable layer library** — cards size themselves from the available width and wrap Chinese descriptions with real font metrics.
+- **Better transform handles** — edges scale one axis, corners stay proportional (Shift frees them), and 3D layers use a ray/plane hit test so the handle tracks the pointer in perspective.
+- The first sponsor is now **【星辰久梦君_Star Dm Sov】**, in gold.
+
+The full list is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## What's new in 0.22.1 — imported fonts actually display
 
@@ -569,7 +601,7 @@ turn it off or reduce intensity/speed; all motion is paint-time only, never in t
 path. The `UiMotion` easings and the shortcut table are covered by unit tests.
 
 <p align="center">
-  <img src="docs/gallery/onboarding.png" alt="BBS Compositor first-run onboarding with layout, motion and shortcut choices" width="100%">
+  <img src="docs/gallery/onboarding.png" alt="BBS AE first-run onboarding with layout, motion and shortcut choices" width="100%">
 </p>
 
 <p align="center">

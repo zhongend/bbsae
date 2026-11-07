@@ -219,6 +219,12 @@ public final class CompRenderCache
         h = mix(h, layer.precompId == null ? 0 : layer.precompId.hashCode());
         h = mix(h, layer.precompTimeOffset);
         h = mix(h, layer.precompTimeScale);
+        h = mix(h, layer.entityScope);
+        h = mix(h, layer.entityIds == null ? 0 : layer.entityIds.hashCode());
+        h = mix(h, layer.entityOcclusion ? 1 : 0);
+        h = mix(h, layer.entityErode);
+        h = mix(h, layer.entityFeather);
+        h = mix(h, layer.entityTolerance);
         h = mix(h, layer.parentId == null ? 0 : layer.parentId.hashCode());
         h = mix(h, layer.trackMatteEnabled ? 1 : 0);
         h = mix(h, layer.trackMatteId == null ? 0 : layer.trackMatteId.hashCode());

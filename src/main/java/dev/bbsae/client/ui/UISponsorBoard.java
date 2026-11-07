@@ -15,8 +15,24 @@ import mchorse.bbs_mod.ui.framework.elements.UIElement;
  */
 public class UISponsorBoard extends UIElement
 {
-    public static final String[] NAMES = {"星辰久梦君", "血之书", "Szv文森特37"};
+    public static final String[] NAMES = {"【星辰久梦君_Star Dm Sov】", "血之书", "Szv文森特37"};
     private static final int[] ACCENTS = {0xFFFFD27A, 0xFFFF8A8A, 0xFF7AD8FF};
+    private static final int SPONSOR_GOLD = 0xFFFFD27A;
+
+    static String thankYouFor(int index)
+    {
+        return index == 0 ? "感谢您赞助和开发合作本插件" : "感谢你赞助本插件的开发。";
+    }
+
+    static int nameColorFor(int index)
+    {
+        return index == 0 ? SPONSOR_GOLD : 0xFFF4EBDD;
+    }
+
+    static int thankYouColorFor(int index)
+    {
+        return index == 0 ? SPONSOR_GOLD : 0xFFA99D8B;
+    }
 
     private final UiMotion motion = new UiMotion();
 
@@ -75,7 +91,7 @@ public class UISponsorBoard extends UIElement
     private void renderHeader(UIContext context, float x, float y, float w)
     {
         int gold = 0xFFFFD27A;
-        String kicker = "THANK YOU  /  BBS COMPOSITOR";
+        String kicker = "THANK YOU  /  BBS AE";
 
         context.batcher.textShadow(kicker, x + 16F, y + 12F, UiGfx.alpha(gold, 0.65F));
         context.batcher.textShadow("赞助者", x + 16F, y + 28F, 0xFFFFF4DE);
@@ -151,8 +167,8 @@ public class UISponsorBoard extends UIElement
 
         float nameY = y + (h < 90F ? 16F : 34F);
 
-        context.batcher.textShadow(NAMES[index], x + 14F, nameY, 0xFFF4EBDD);
-        context.batcher.textShadow("感谢你赞助本插件的开发。", x + 14F, nameY + 22F, 0xFFA99D8B);
+        context.batcher.textShadow(NAMES[index], x + 14F, nameY, nameColorFor(index));
+        context.batcher.textShadow(thankYouFor(index), x + 14F, nameY + 22F, thankYouColorFor(index));
         context.batcher.textShadow(String.format(java.util.Locale.ROOT, "%02d", index + 1),
             x + w - 26F, y + 12F, UiGfx.alpha(accent, 0.35F));
 

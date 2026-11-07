@@ -12,7 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The common half of BBS Compositor.
+ * The common half of BBS AE.
  *
  * <p>Everything that touches the client lives in {@code dev.bbsae.client}; this class only
  * registers the composition clip and the addon's own asset namespace.</p>
@@ -35,7 +35,7 @@ public class BbsAeAddon implements BBSAddonMod
     {
         BBSApi.requireVersion(MOD_ID, 2);
         event.registerAddon(MOD_ID, BbsAeAddon.class);
-        LOGGER.info("BBS Compositor initialized");
+        LOGGER.info("BBS AE initialized");
     }
 
     @Subscribe

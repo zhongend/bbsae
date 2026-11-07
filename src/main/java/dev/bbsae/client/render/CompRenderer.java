@@ -654,7 +654,17 @@ public final class CompRenderer
 
                 if (is2D && renderMasks && layer.masks != null && !layer.masks.isEmpty())
                 {
-                    MaskCache.MaskTexture mask = MaskCache.get(layer, comp.width, comp.height, model, context.frame);
+                    /* Rasterize at the RENDER size, not the composition size. The mask texture is
+                     * sampled with the content FBO's own UVs, so a full-resolution mask carries no
+                     * extra information — only cost: an animated mask re-rasterized a
+                     * 1920x1080 AWT path plus a box blur per frame, which is the "编辑蒙版时预览
+                     * 卡顿" complaint. The proxy preview now pays proxy pixels; the 3D bake path
+                     * already worked this way. */
+                    int maskWidth = context.renderWidth();
+                    int maskHeight = context.renderHeight();
+                    float maskScale = Math.max(0.0001F, maskWidth / (float) Math.max(1, comp.width));
+                    Matrix4f maskModel = new Matrix4f(model).scale(maskScale, maskScale, 1F);
+                    MaskCache.MaskTexture mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame, maskScale);
 
                     if (mask != null)
                     {
@@ -735,10 +745,15 @@ public final class CompRenderer
 
                         if (matteFbo != null)
                         {
-                            /* The matte's own masks belong to its own pixels. */
+                            /* The matte's own masks belong to its own pixels. Same render-size
+                             * rasterization as the layer path above. */
                             if (matte.masks != null && !matte.masks.isEmpty())
                             {
-                                MaskCache.MaskTexture matteMask = MaskCache.get(matte, comp.width, comp.height, matteModel, context.frame);
+                                int matteMaskWidth = context.renderWidth();
+                                int matteMaskHeight = context.renderHeight();
+                                float matteMaskScale = Math.max(0.0001F, matteMaskWidth / (float) Math.max(1, comp.width));
+                                Matrix4f matteMaskModel = new Matrix4f(matteModel).scale(matteMaskScale, matteMaskScale, 1F);
+                                MaskCache.MaskTexture matteMask = MaskCache.get(matte, matteMaskWidth, matteMaskHeight, matteMaskModel, context.frame, matteMaskScale);
 
                                 if (matteMask != null)
                                 {
@@ -1218,7 +1233,11 @@ public final class CompRenderer
 
         if (layer.masks != null && !layer.masks.isEmpty())
         {
-            MaskCache.MaskTexture mask = MaskCache.get(layer, context.width, context.height, CompScene.world(context, layer), context.frame);
+            int maskWidth = context.renderWidth();
+            int maskHeight = context.renderHeight();
+            float maskScale = Math.max(0.0001F, maskWidth / (float) Math.max(1, context.width));
+            Matrix4f maskModel = new Matrix4f(CompScene.world(context, layer)).scale(maskScale, maskScale, 1F);
+            MaskCache.MaskTexture mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame, maskScale);
 
             if (mask != null)
             {

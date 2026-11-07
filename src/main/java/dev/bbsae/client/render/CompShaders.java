@@ -29,6 +29,7 @@ public final class CompShaders
     public static GlslProgram grade;
     public static GlslProgram repeat;
     public static GlslProgram entityKey;
+    public static GlslProgram opaque;
 
     private CompShaders()
     {}
@@ -65,6 +66,7 @@ public final class CompShaders
         grade = make("grade", ShaderSources.GRADE);
         repeat = make("repeat", ShaderSources.REPEAT);
         entityKey = make("entity_key", ShaderSources.ENTITY_KEY);
+        opaque = make("opaque", ShaderSources.OPAQUE);
     }
 
     private static GlslProgram make(String name, String fragment)
@@ -113,8 +115,9 @@ public final class CompShaders
         delete(grade);
         delete(repeat);
         delete(entityKey);
+        delete(opaque);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = opaque = null;
         initialized = false;
     }
 
