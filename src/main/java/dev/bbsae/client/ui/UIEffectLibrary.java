@@ -10,6 +10,7 @@ import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
 import mchorse.bbs_mod.ui.framework.elements.input.list.UIList;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
+import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 
 import java.util.ArrayList;
@@ -304,6 +305,37 @@ public class UIEffectLibrary extends UIElement
             }
 
             return element.definition.name;
+        }
+
+        @Override
+        protected int rowContentX(EffectRow element)
+        {
+            /* Reserve a 16 px gutter for the category icon; only real effects get one, category
+             * headers keep their tree arrow and full-width label. */
+            return super.rowContentX(element) + (element.definition == null ? 0 : 18);
+        }
+
+        @Override
+        protected void renderElementPart(UIContext context, EffectRow element, int index, int x, int y,
+                                         boolean hover, boolean selected)
+        {
+            super.renderElementPart(context, element, index, x, y, hover, selected);
+
+            if (element.definition == null)
+            {
+                return;
+            }
+
+            Icon icon = EffectIcons.forDefinition(element.definition);
+
+            if (icon == null || icon == Icons.NONE)
+            {
+                return;
+            }
+
+            int top = y + Math.max(0, (this.rowHeight() - 16) / 2);
+
+            context.batcher.icon(icon, x + 3, top);
         }
 
         @Override

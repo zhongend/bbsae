@@ -45,8 +45,9 @@
 新增三层，效果不再需要写进 `EffectRenderer` 的巨型 switch：
 
 - `comp/AmEffectDef`：id、显示名、分类、参数表（float/color）、`main()` 片段、零点参数。
-- `comp/AmEffectLibrary`：首批 7 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
-  弯曲、描边），参数名/范围/默认值与参考应用一致。
+- `comp/AmEffectLibrary`：13 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
+  弯曲、描边、收缩与膨胀、圆形波纹、万花筒、镜像、旋转扭曲、像素化），参数名/范围/默认值与
+  参考应用一致。
 - `client/render/AmEffectRenderer`：按定义拼装完整 fragment（标准 uniform + 参数 uniform +
   共享 `luma/rgb2hsv/hsv2rgb/hash`），懒编译并缓存；`sources()` 供无头编译测试逐条验证。
 - `CompEffectRegistry` 在启动时把定义复制成普通条目，因此效果库、参数滑杆、颜色选择器、
@@ -60,7 +61,24 @@
 `AmEffectLibraryTest` 校验注册/渲染器/参数表/零点语义，`EffectPipelineTest` 的对照表
 最后一行已经能看到这 7 个效果的真实渲染结果（`docs/verify/effect-pipeline.png`）。
 
-### 2.3 检查器分组分割线
+### 2.3 零点审计（“拉到 0 恢复原样”）
+
+对 79 个既有条目重新核对了中性值，补齐 17 个原本没有零点的分支：亮度/对比度、色相/饱和度、
+曝光、着色、色阶、曲线、反相、暗角、噪点、颗粒、抖动、遮罩收缩、着色映射、调色（三段色轮 +
+曲线）、以及全部新增效果。新增 `EffectNeutralTest`：
+- 每个有零点的效果在零点必须被渲染器判定为 no-op（连 FBO 都不分配）；
+- 非零值必须判定为非中性；
+- 明确列出“天然无零点”的 13 个效果（生成器、抠像、色阶分离、万花筒、像素化等），
+  避免以后把遗漏当成通过。
+
+### 2.4 效果库图标
+
+`EffectIcons` 按分类映射到 BBS 自带的图标图集（调色=色轮、变形=变形、模糊=球体、
+生成=棋盘、抠像=钥匙、转场=交换、重复=结构、3D=圆柱、文字=字体…），
+`UIEffectList` 覆写 `rowContentX/renderElementPart`，在每行左侧预留 16 px 图标槽，
+分类表头保持原有箭头与整行文字。图标随 UI 缩放，不依赖外部图片资源。
+
+### 2.5 检查器分组分割线
 
 新增 `UIInspectorDivider`：每个 `UISection` 之前插入一条「亮边 + 暗边」的两像素凹槽，
 在 `refreshInspector()` 组装完成后统一注入，不侵入十几个 section 构建方法。
@@ -112,12 +130,14 @@ switch 中拆出来：
 ### 3.4 分批落地顺序
 
 1. **混合与透明度**：24 种混合 + 蒙版/排除（已完成；见 2.1）
-2. **变形核心**（弯曲已完成；其余待做）：bend、pinch/bulge、circular ripple、kaleidoscope、hex shift、polar、mirror、
+2. **变形核心**（本轮新增：收缩与膨胀、圆形波纹、万花筒、镜像、旋转扭曲、像素化；
+   位移贴图类还需多纹理输入，放到下一批）：bend、pinch/bulge、circular ripple、kaleidoscope、hex shift、polar、mirror、
    displace map、curl、glass、fractal warp
 3. **模糊**：box/gaussian/directional/lens/radial/motion/chromatic/mask blur（复用已有两次
    ping-pong 模糊骨架，按 AM 的半径/质量参数暴露）
 4. **调色**：brightness/contrast、exposure、hue/sat、color balance、temperature、levels、
    curves、posterize、threshold、gradient map、duotone/palette、long shadow、glow/shadow 家族
+4.5 **零点审计与图标**（已完成；见 2.3 / 2.4）
 5. **生成/风格化**：checker、grid、stripes、starfield、clouds、halftone、scanline、noise grain
    （噪点与颗粒按要求保持现状）
 6. **3D 与文字**：s3d-* 形状与 text 效果（依赖 3D 管线，放到最后一批）

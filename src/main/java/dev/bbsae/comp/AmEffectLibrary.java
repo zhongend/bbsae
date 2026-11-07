@@ -170,6 +170,150 @@ public final class AmEffectLibrary
             .p("width", "宽度", 0F, 8F, 2F, 0.1F)
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .c("color", "颜色", 0xFF000000));
+
+        add(new AmEffectDef("am_pinch_bulge", "收缩与膨胀", "AM · 变形", """
+            void main()
+            {
+                vec2 uv = vUv;
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = uv - center;
+                float radius = max(u_radius, 0.0001);
+                float dist = length(d * Size) / max(Size.x, Size.y);
+                float falloff = clamp(1.0 - dist / radius, 0.0, 1.0);
+                float amount = clamp(u_strength, -1.0, 1.0) * falloff * falloff;
+                vec2 warped = center + d * (1.0 - amount);
+                vec2 inside = step(vec2(0.0), warped) * step(warped, vec2(1.0));
+                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a * inside.x * inside.y);
+            }
+            """, 0.5F, "strength")
+            .p("strength", "强度（负=收缩）", -1F, 1F, 0.4F, 0.01F)
+            .p("radius", "半径", 0.01F, 1.5F, 0.5F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_circular_ripple", "圆形波纹", "AM · 变形", """
+            void main()
+            {
+                vec2 uv = vUv;
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = uv - center;
+                float dist = length(d * Size);
+                float radius = max(u_radius, 0.0001) * max(Size.x, Size.y);
+                float feather = clamp(u_feather, 0.0, 1.0);
+                float edge = 1.0 - smoothstep(radius * (1.0 - feather), radius, dist);
+                float wave = sin(dist / max(u_frequency, 0.0001) * 6.2831853 + u_phase) * u_strength * edge;
+                vec2 offset = dist > 0.0001 ? (d / dist) * wave / max(Size, vec2(1.0)) : vec2(0.0);
+                vec2 warped = uv + offset;
+                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0.5F, "strength")
+            .p("strength", "强度", -100F, 100F, 12F, 0.5F)
+            .p("frequency", "波长", 1F, 200F, 60F, 1F)
+            .p("phase", "相位", -180F, 180F, 0F, 1F)
+            .p("radius", "半径", 0.05F, 1.5F, 0.9F, 0.01F)
+            .p("feather", "羽化", 0F, 1F, 0.3F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_kaleidoscope", "万花筒", "AM · 变形", """
+            void main()
+            {
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 p = vUv - center;
+                float radius = length(p);
+                float angle = atan(p.y, p.x) + radians(u_offset_angle);
+                float segments = max(1.0, floor(u_rcount + 0.5));
+                float wedge = 6.2831853 / segments;
+                angle = mod(angle, wedge);
+                angle = abs(angle - wedge * 0.5);
+                vec2 warped = center + vec2(cos(angle), sin(angle)) * radius;
+                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0F, null)
+            .p("rcount", "重复次数", 1F, 24F, 6F, 1F)
+            .p("offset_angle", "旋转", -180F, 180F, 0F, 1F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_mirror_warp", "镜像", "AM · 变形", """
+            void main()
+            {
+                vec2 uv = vUv;
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 warped = uv;
+                float strength = clamp(u_strength, 0.0, 1.0);
+                float alpha = clamp(u_alpha, 0.0, 1.0);
+
+                if (u_mode < 0.5)
+                {
+                    warped.x = center.x + abs(uv.x - center.x);
+                }
+                else
+                {
+                    warped.y = center.y + abs(uv.y - center.y);
+                }
+
+                warped = mix(uv, warped, strength);
+                vec2 inside = step(vec2(0.0), warped) * step(warped, vec2(1.0));
+                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a * inside.x * inside.y * alpha + c.a * (1.0 - alpha));
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 1F, 0.5F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .p("mode", "方向（0 水平 / 1 垂直）", 0F, 1F, 0F, 1F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_swirl", "旋转扭曲", "AM · 变形", """
+            void main()
+            {
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = vUv - center;
+                float radius = max(u_radius, 0.0001);
+                float dist = length(d * Size) / max(Size.x, Size.y);
+                float falloff = clamp(1.0 - dist / radius, 0.0, 1.0);
+                float angle = radians(u_angle) * falloff * falloff;
+                float s = sin(angle);
+                float c = cos(angle);
+                vec2 warped = center + mat2(c, s, -s, c) * d;
+                vec4 texel = texture(Source, clamp(warped, 0.0, 1.0));
+                fragColor = vec4(texel.rgb, texel.a);
+            }
+            """, 0.5F, "angle")
+            .p("angle", "角度", -720F, 720F, 90F, 1F)
+            .p("radius", "半径", 0.01F, 1.5F, 0.5F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_pixelate", "像素化", "AM · 变形", """
+            void main()
+            {
+                vec2 uv = vUv;
+                vec2 grid = max(vec2(u_size, u_size * max(u_stretch, 0.05)), vec2(1.0));
+                vec2 offset = vec2(u_offset_x, u_offset_y);
+                vec2 snapped = (floor((uv + offset) * Size / grid) + 0.5) * grid / max(Size, vec2(1.0));
+                vec2 d = snapped - 0.5;
+                float vignette = 1.0 - smoothstep(0.35, 0.75, length(d));
+                float keep = mix(1.0, vignette, clamp(u_vignette, 0.0, 1.0));
+                vec4 c = texture(Source, clamp(snapped, 0.0, 1.0));
+                vec3 rgb = c.rgb;
+                if (u_saturation != 0.0)
+                {
+                    rgb = mix(vec3(luma(c.rgb)), c.rgb, clamp(1.0 + u_saturation, 0.0, 2.0));
+                }
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a * keep);
+            }
+            """, 0F, null)
+            .p("size", "像素大小", 1F, 128F, 16F, 1F)
+            .p("stretch", "纵向拉伸", 0.05F, 4F, 1F, 0.01F)
+            .p("offset_x", "偏移 X", -1F, 1F, 0F, 0.01F)
+            .p("offset_y", "偏移 Y", -1F, 1F, 0F, 0.01F)
+            .p("vignette", "暗角", 0F, 1F, 0F, 0.01F)
+            .p("saturation", "饱和度", -1F, 1F, 0F, 0.01F));
     }
 
     private AmEffectLibrary()

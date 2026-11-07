@@ -202,6 +202,53 @@ public final class EffectRenderer
             case "depth_fog", "depth_dof" -> effect.valueF("amount", 0.5F) <= eps;
             case "light_sweep" -> effect.valueF("opacity", 0.8F) <= eps;
             case "vhs" -> effect.valueF("amount", 0.5F) <= eps;
+            /* Colour effects: identity is "all knobs at their neutral value", not one zero. */
+            case "brightness_contrast" ->
+                Math.abs(effect.valueF("brightness", 0F)) <= eps
+                    && Math.abs(effect.valueF("contrast", 0F)) <= eps;
+            case "hue_saturation" ->
+                Math.abs(effect.valueF("hue", 0F)) <= eps
+                    && Math.abs(effect.valueF("saturation", 0F)) <= eps
+                    && Math.abs(effect.valueF("lightness", 0F)) <= eps;
+            case "exposure" ->
+                Math.abs(effect.valueF("exposure", 0F)) <= eps
+                    && Math.abs(effect.valueF("gamma", 1F) - 1F) <= eps;
+            case "tint" -> effect.valueF("amount", 0.5F) <= eps;
+            case "levels" ->
+                effect.valueF("black", 0F) <= eps
+                    && effect.valueF("white", 1F) >= 1F - eps
+                    && Math.abs(effect.valueF("gamma", 1F) - 1F) <= eps;
+            case "curves" ->
+                effect.valueF("amount", 1F) <= eps
+                    || (Math.abs(effect.valueF("shadow", 0F)) <= eps
+                        && Math.abs(effect.valueF("midtone", 0F)) <= eps
+                        && Math.abs(effect.valueF("highlight", 0F)) <= eps);
+            case "invert" -> effect.valueF("amount", 1F) <= eps;
+            case "vignette" -> effect.valueF("amount", 0.45F) <= eps;
+            case "noise" -> effect.valueF("amount", 0.2F) <= eps;
+            case "grain" -> effect.valueF("amount", 0.12F) <= eps;
+            case "shake" -> effect.valueF("amplitude", 18F) <= eps;
+            case "matte_choker" ->
+                Math.abs(effect.valueF("choke", 2F)) <= eps
+                    && Math.abs(effect.valueF("softness", 2F)) <= eps;
+            case "colorama" -> effect.valueF("amount", 1F) <= eps;
+            case "color_grade" ->
+                Math.abs(effect.valueF("exposure", 0F)) <= eps
+                    && Math.abs(effect.valueF("contrast", 0F)) <= eps
+                    && Math.abs(effect.valueF("saturation", 1F) - 1F) <= eps
+                    && Math.abs(effect.valueF("vibrance", 0F)) <= eps
+                    && Math.abs(effect.valueF("temperature", 0F)) <= eps
+                    && Math.abs(effect.valueF("tint", 0F)) <= eps
+                    && Math.abs(effect.valueF("hue", 0F)) <= eps
+                    && Math.abs(effect.valueF("fade", 0F)) <= eps
+                    && Math.abs(effect.valueF("curve_black", 0F)) <= eps
+                    && Math.abs(effect.valueF("curve_shadow", 0F)) <= eps
+                    && Math.abs(effect.valueF("curve_mid", 0F)) <= eps
+                    && Math.abs(effect.valueF("curve_highlight", 0F)) <= eps
+                    && Math.abs(effect.valueF("curve_white", 0F)) <= eps
+                    && effect.color("lift", 0xFF808080) == 0xFF808080
+                    && effect.color("gamma", 0xFF808080) == 0xFF808080
+                    && effect.color("gain", 0xFF808080) == 0xFF808080;
             case "block_shatter" -> effect.valueF("progress", 0.35F) <= eps;
             case "mosaic" -> effect.valueF("size", 16F) <= 1F;
             case "find_edges" -> effect.valueF("amount", 1F) <= eps;
