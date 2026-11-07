@@ -629,6 +629,101 @@ public final class AmEffectLibrary
             .p("blocks", "方块数", 2F, 120F, 20F, 1F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_checker_dissolve", "棋盘溶解", "AM · 透明度", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 cell = floor(luv * max(u_blocks, 1.0));
+                float parity = mod(cell.x + cell.y, 2.0);
+                float threshold = mix(0.0, 1.0, parity * 0.5 + 0.25);
+                float visible = u_progress >= threshold ? 1.0 : 0.0;
+                fragColor = vec4(c.rgb, c.a * visible);
+            }
+            """, 0F, null)
+            .neutralWhen((effect) -> effect.valueF("progress", 0.5F) >= 0.999F)
+            .p("progress", "进度", 0F, 1F, 0.5F, 0.01F)
+            .p("blocks", "棋盘数", 2F, 80F, 10F, 1F));
+
+        add(new AmEffectDef("am_pixel_dissolve", "像素溶解", "AM · 透明度", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 cell = floor(luv * max(u_blocks, 1.0));
+                float rnd = hash(cell + u_seed);
+                float visible = u_progress >= rnd ? 1.0 : 0.0;
+                fragColor = vec4(c.rgb, c.a * visible);
+            }
+            """, 0F, null)
+            .neutralWhen((effect) -> effect.valueF("progress", 0.5F) >= 0.999F)
+            .p("progress", "进度", 0F, 1F, 0.5F, 0.01F)
+            .p("blocks", "像素块数", 4F, 200F, 40F, 1F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
+
+        add(new AmEffectDef("am_radial_wipe", "径向擦除（角度）", "AM · 转场", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = (luv - center) * vec2(LayerSize.x / max(LayerSize.y, 1.0), 1.0);
+                float angle = atan(d.y, d.x) + radians(u_angle);
+                float t = fract(angle / 6.2831853);
+                float edge = clamp(u_softness, 0.001, 0.5);
+                float reveal = smoothstep(t - edge, t + edge, clamp(u_progress, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a * reveal);
+            }
+            """, 0F, null)
+            .neutralWhen((effect) -> effect.valueF("progress", 0.5F) >= 0.999F)
+            .p("progress", "进度", 0F, 1F, 0.5F, 0.01F)
+            .p("angle", "起始角度", -180F, 180F, 0F, 1F)
+            .p("softness", "边缘柔和", 0.001F, 0.5F, 0.15F, 0.001F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_gradient_mask", "渐变遮罩", "AM · 转场", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
+                float t = clamp(dot(luv - 0.5, dir) + 0.5, 0.0, 1.0);
+                float edge = max(u_softness, 0.001);
+                float reveal = smoothstep(u_progress - edge, u_progress + edge, t) * 0.0 + 1.0
+                    - smoothstep(u_progress - edge, u_progress + edge, 1.0 - t);
+                fragColor = vec4(c.rgb, c.a * clamp(reveal, 0.0, 1.0));
+            }
+            """, 0F, null)
+            .neutralWhen((effect) -> effect.valueF("progress", 0.5F) >= 0.999F)
+            .p("progress", "进度", 0F, 1F, 0.5F, 0.01F)
+            .p("angle", "方向", -180F, 180F, 0F, 1F)
+            .p("softness", "边缘柔和", 0.001F, 0.5F, 0.1F, 0.001F));
+
+        add(new AmEffectDef("am_speed_lines", "速度线", "AM · 生成", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = (luv - center) * vec2(LayerSize.x / max(LayerSize.y, 1.0), 1.0);
+                float radius = length(d);
+                float angle = atan(d.y, d.x);
+                float lines = pow(abs(sin(angle * max(u_count, 1.0))), max(u_sharpness, 0.5));
+                float falloff = smoothstep(u_inner, u_outer, radius);
+                float alpha = lines * falloff * clamp(u_alpha, 0.0, 1.0);
+                fragColor = vec4(mix(c.rgb, u_color.rgb, alpha), c.a);
+            }
+            """, 0F, "alpha")
+            .p("count", "线条数", 2F, 64F, 24F, 1F)
+            .p("sharpness", "锐度", 0.5F, 12F, 4F, 0.1F)
+            .p("inner", "内半径", 0F, 1F, 0.2F, 0.01F)
+            .p("outer", "外半径", 0.01F, 2F, 0.8F, 0.01F)
+            .p("alpha", "强度", 0F, 1F, 0.7F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F)
+            .c("color", "线条颜色", 0xFFFFFFFF));
+
         add(new AmEffectDef("am_reflection", "倒影", "AM · 合成", """
             void main()
             {

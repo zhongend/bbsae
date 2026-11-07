@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.54.jar`](https://github.com/zhongend/bbsae/releases/download/v0.54/bbsae-0.54.jar)
-   from the **v0.54** release (the asset is updated with each source push).
+1. Download [`bbsae-0.55.jar`](https://github.com/zhongend/bbsae/releases/download/v0.55/bbsae-0.55.jar)
+   from the **v0.55** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.54.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.55.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.54.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.55.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,13 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.55 — transition and reveal batch
+
+- **棋盘溶解**, **像素溶解**, **径向擦除（角度）**, **渐变遮罩** (`AM · 转场`): progress-driven
+  reveals; progress 1 is the identity and is declared through `neutralWhen`.
+- **速度线** (`AM · 生成`): radial speed streaks with count/sharpness/radius and colour.
+- 130 effects total (115 2D + 15 3D); 326 tests green; library names stay unique.
 
 ## What's new in 0.54 — effect order is preserved around the 3D bake
 
