@@ -179,6 +179,15 @@ switch 中拆出来：
 4.24 **程序化/绘制批**（径向光线、点阵、星形、平滑边缘、半调线；已完成）
 4.25 **边框/光束/阵列批**（边框、能量束、六边形阵列、彩色分离、描边锥度；已完成）
 4.26 **通道/合成批**（通道映射、HSV 通道映射、填充背后、实色遮罩、遮罩边缘、闪烁；已完成）
+4.46 **主合成器逐像素深度（0.70）**
+    - `DEPTH_PLANE` 着色器：把每个 3D 图层当作相机空间中的平面，逐片元求视线与平面的交点、
+      写 `gl_FragDepth`；`DepthPlaneCompositor` 用一张共享深度缓冲的 FBO 做"深度预写 + 等深着色"，
+      颜色仍交给 `PassRenderer.draw`，因此混合模式/不透明度完全不变。
+    - `CompRenderer` 在空间合成里对 `usePerspective` 图层走深度合成；2D 图层保持原路径。
+    - `DepthPlaneCompositorTest`：两个满幅平面（远红、近蓝），两种绘制顺序都得到蓝色近层；
+      整层画家排序做不到这一点。
+    - `CompShaders.reload()` 测试钩子：GL 测试各自建隐藏上下文，避免复用已销毁上下文的程序 id。
+
 4.45 **3D 工作区逐像素深度（0.69）**
     - `GlFramebuffer` 支持可选深度 renderbuffer（`DEPTH_COMPONENT24`，begin 时清深度，delete 释放）。
     - 新增 `Viewport3DRenderer` + `VIEWPORT_3D_VERTEX/FRAGMENT`：3D 图层的四个角用世界矩阵和

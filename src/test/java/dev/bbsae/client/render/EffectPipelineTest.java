@@ -40,6 +40,7 @@ public class EffectPipelineTest
     @BeforeAll
     public static void createContext()
     {
+
         Assumptions.assumeTrue(GLFW.glfwInit(), "GLFW/display unavailable");
 
         GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
@@ -47,25 +48,29 @@ public class EffectPipelineTest
         GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MINOR, 2);
         GLFW.glfwWindowHint(GLFW.GLFW_OPENGL_PROFILE, GLFW.GLFW_OPENGL_CORE_PROFILE);
         GLFW.glfwWindowHint(GLFW.GLFW_OPENGL_FORWARD_COMPAT, GLFW.GLFW_TRUE);
-        window = GLFW.glfwCreateWindow(64, 64, "bbsae effect pipeline check", 0L, 0L);
+        window = GLFW.glfwCreateWindow(64, 64, "bbsae test", 0L, 0L);
 
         Assumptions.assumeTrue(window != 0L, "could not create hidden GL context");
 
         GLFW.glfwMakeContextCurrent(window);
         GL.createCapabilities();
 
-        /* The pipeline talks to GL through GlStateManager, which asserts that it runs on the
-         * render thread Minecraft installs at bootstrap. The test is the render thread here. */
-        com.mojang.blaze3d.systems.RenderSystem.initRenderThread();
+        try
+        {
+            com.mojang.blaze3d.systems.RenderSystem.initRenderThread();
+        }
+        catch (IllegalStateException ignored)
+        {
+            /* Another GL test class in this JVM already owns the global render thread. */
+        }
+
+        CompShaders.reload();
         CompShaders.init();
     }
 
     @AfterAll
     public static void destroyContext()
     {
-        CompShaders.delete();
-        FboPool.clear();
-
         if (window != 0L)
         {
             GLFW.glfwDestroyWindow(window);
@@ -78,7 +83,6 @@ public class EffectPipelineTest
         }
     }
 
-    /** A recognisable test card: colour ramp, dark checkerboard and a white diagonal. */
     /**
      * Full-bleed opaque source: every pixel has alpha 255. The normal {@link #source()} square has
      * transparent margins, so an identity bug at the layer's border could hide in those margins.

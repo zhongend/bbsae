@@ -75,6 +75,24 @@ public final class GlFramebuffer
         this.begin(0x00000000);
     }
 
+    /** Binds the target and viewport without clearing or touching depth-test state. */
+    public void bindOnly()
+    {
+        GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.id);
+        GlStateManager._viewport(0, 0, this.width, this.height);
+        GlStateManager._disableScissorTest();
+        GlStateManager._colorMask(true, true, true, true);
+    }
+
+    /** Clears only the colour attachment, leaving the depth buffer intact. */
+    public void clearColorOnly(int clearColor)
+    {
+        this.bindOnly();
+        GlStateManager._clearColor(((clearColor >> 16) & 0xFF) / 255F, ((clearColor >> 8) & 0xFF) / 255F,
+            (clearColor & 0xFF) / 255F, ((clearColor >>> 24) & 0xFF) / 255F);
+        GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
+    }
+
     public void begin(int clearColor)
     {
         GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.id);

@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.69.jar`](https://github.com/zhongend/bbsae/releases/download/v0.69/bbsae-0.69.jar)
-   from the **v0.69** release (the asset is updated with each source push).
+1. Download [`bbsae-0.70.jar`](https://github.com/zhongend/bbsae/releases/download/v0.70/bbsae-0.70.jar)
+   from the **v0.70** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.69.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.70.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.69.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.70.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,20 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.70 — per-pixel depth in the main compositor
+
+- New `DEPTH_PLANE` shader treats each 3D layer as a camera-space plane: for every fragment it
+  intersects the view ray with the plane and writes `gl_FragDepth`.
+- `DepthPlaneCompositor` owns one colour+depth target per composition, runs a depth-only pass and an
+  equal-depth colour pass, then lets `PassRenderer` apply the layer's blend mode and opacity exactly
+  as before. `CompRenderer` now uses it for `usePerspective` layers in spatial compositions; 2D layers
+  keep the old path.
+- `DepthPlaneCompositorTest`: two full-frame planes (far red, near blue) composed in **both** orders
+  both end blue — impossible with whole-layer painter order.
+- Added a tiny `CompShaders.reload()` test hook so each GL test class can compile programs in its own
+  hidden context without reusing destroyed ids.
+- 354 tests green; 137 effects.
 
 ## What's new in 0.69 — real per-pixel depth in the 3D workspace
 

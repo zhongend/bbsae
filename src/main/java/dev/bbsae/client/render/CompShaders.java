@@ -32,9 +32,23 @@ public final class CompShaders
     public static GlslProgram opaque;
     public static GlslProgram mesh;
     public static GlslProgram viewport3d;
+    public static GlslProgram depthPlane;
 
     private CompShaders()
     {}
+
+    /**
+     * Test hook: drops the cached program objects so the next {@link #init()} compiles them in the
+     * current GL context. Test classes each create their own hidden context; reusing ids from a
+     * destroyed one produces GL_INVALID_VALUE in whichever class runs next.
+     */
+    public static synchronized void reload()
+    {
+        initialized = false;
+        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial
+            = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter
+            = rgbSplit = grade = repeat = entityKey = opaque = mesh = viewport3d = depthPlane = null;
+    }
 
     public static synchronized void init()
     {
@@ -71,6 +85,7 @@ public final class CompShaders
         opaque = make("opaque", ShaderSources.OPAQUE);
         mesh = makeMesh();
         viewport3d = make("viewport3d", ShaderSources.VIEWPORT_3D_VERTEX, ShaderSources.VIEWPORT_3D_FRAGMENT);
+        depthPlane = make("depth_plane", ShaderSources.DEPTH_PLANE);
     }
 
     private static GlslProgram makeMesh()
@@ -168,8 +183,9 @@ public final class CompShaders
         delete(opaque);
         delete(mesh);
         delete(viewport3d);
+        delete(depthPlane);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = opaque = mesh = viewport3d = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = opaque = mesh = viewport3d = depthPlane = null;
         initialized = false;
     }
 

@@ -89,6 +89,13 @@ public class ShaderCompileTest
             GL20.glDeleteProgram(viewport3d);
             assertEquals(GL11.GL_NO_ERROR, GL11.glGetError(), "GL error after viewport 3d compile");
 
+            /* Per-pixel depth compositing for 3D layers in the main composition. */
+            int depthPlane = link("depth_plane", ShaderSources.VERTEX, ShaderSources.DEPTH_PLANE);
+
+            assertTrue(depthPlane != 0, "depth plane program failed to link");
+            GL20.glDeleteProgram(depthPlane);
+            assertEquals(GL11.GL_NO_ERROR, GL11.glGetError(), "GL error after depth plane compile");
+
             /* 3D shape effects use a real vertex stage (position + UV + MVP), so they are linked
              * with their own vertex source rather than the fullscreen quad. */
             int mesh = link("mesh", ShaderSources.MESH_VERTEX, ShaderSources.MESH_FRAGMENT);

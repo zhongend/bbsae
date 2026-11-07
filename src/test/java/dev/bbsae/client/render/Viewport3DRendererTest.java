@@ -26,6 +26,7 @@ public class Viewport3DRendererTest
     @BeforeAll
     public static void createContext()
     {
+
         Assumptions.assumeTrue(GLFW.glfwInit(), "GLFW/display unavailable");
 
         GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
@@ -33,23 +34,23 @@ public class Viewport3DRendererTest
         GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MINOR, 2);
         GLFW.glfwWindowHint(GLFW.GLFW_OPENGL_PROFILE, GLFW.GLFW_OPENGL_CORE_PROFILE);
         GLFW.glfwWindowHint(GLFW.GLFW_OPENGL_FORWARD_COMPAT, GLFW.GLFW_TRUE);
-        window = GLFW.glfwCreateWindow(64, 64, "bbsae viewport 3d check", 0L, 0L);
+        window = GLFW.glfwCreateWindow(64, 64, "bbsae test", 0L, 0L);
 
         Assumptions.assumeTrue(window != 0L, "could not create hidden GL context");
 
         GLFW.glfwMakeContextCurrent(window);
         GL.createCapabilities();
 
-        /* Another GL test class may already have initialised the global render thread in this
-         * JVM; only the first one owns it. */
         try
         {
             com.mojang.blaze3d.systems.RenderSystem.initRenderThread();
         }
         catch (IllegalStateException ignored)
         {
+            /* Another GL test class in this JVM already owns the global render thread. */
         }
 
+        CompShaders.reload();
         CompShaders.init();
     }
 
@@ -62,6 +63,11 @@ public class Viewport3DRendererTest
         {
             GLFW.glfwDestroyWindow(window);
             window = 0L;
+        }
+
+        if (GLFW.glfwInit())
+        {
+            GLFW.glfwTerminate();
         }
     }
 

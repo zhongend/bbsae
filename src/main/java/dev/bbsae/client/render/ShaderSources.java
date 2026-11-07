@@ -112,6 +112,65 @@ public final class ShaderSources
         }
         """;
 
+    /**
+     * Depth-only / colour pass for a flat 3D layer. The layer is a plane in camera space; the view
+     * ray through each fragment is intersected with it and gl_FragDepth is written, so several 3D
+     * layers resolve crossings per pixel instead of by whole-layer painter order.
+     */
+    public static final String DEPTH_PLANE = """
+        #version 150 core
+
+        uniform sampler2D Layer;
+        uniform mat4 InvProjection;
+        uniform mat4 Projection;
+        uniform vec3 PlaneN;
+        uniform float PlaneD;
+        uniform int WriteColor;
+
+        in vec2 vUv;
+        out vec4 fragColor;
+
+        void main()
+        {
+            vec4 source = texture(Layer, vUv);
+
+            if (source.a < 0.004)
+            {
+                discard;
+            }
+
+            vec2 ndc = vUv * 2.0 - 1.0;
+            vec4 ray = InvProjection * vec4(ndc, -1.0, 1.0);
+            vec3 direction = normalize(ray.xyz / max(ray.w, 0.00001));
+            float denominator = dot(PlaneN, direction);
+
+            if (abs(denominator) < 0.000001)
+            {
+                discard;
+            }
+
+            float distance = PlaneD / denominator;
+
+            if (distance <= 0.0)
+            {
+                discard;
+            }
+
+            vec3 point = direction * distance;
+            vec4 clip = Projection * vec4(point, 1.0);
+            gl_FragDepth = clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0);
+
+            if (WriteColor == 0)
+            {
+                fragColor = vec4(0.0);
+
+                return;
+            }
+
+            fragColor = source;
+        }
+        """;
+
     public static final String COMPOSITE = """
         #version 150 core
 

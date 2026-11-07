@@ -62,6 +62,9 @@ public final class CompRenderContext
      */
     public GlFramebuffer backdrop;
 
+    /** Depth compositor for 3D layers; null for 2D compositions. */
+    public DepthPlaneCompositor spatialDepth;
+
     /**
      * True while effects run on a layer-local raster (the 3D bake) rather than on a
      * composition-sized target. Layer-space shaders then address the source in its own 0..1 UVs

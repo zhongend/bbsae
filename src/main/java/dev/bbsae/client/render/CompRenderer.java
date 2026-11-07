@@ -600,6 +600,11 @@ public final class CompRenderer
         context.preview = preview;
         context.scale = Math.max(0.05F, Math.min(1F, scale));
 
+        if (CompScene.spatial(context))
+        {
+            context.spatialDepth = new DepthPlaneCompositor(context.renderWidth(), context.renderHeight());
+        }
+
         GlFramebuffer accumulation = FboPool.acquire(context.renderWidth(), context.renderHeight());
         int previousFramebuffer = GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
         int[] previousViewport = new int[4];
@@ -828,7 +833,19 @@ public final class CompRenderer
                     continue;
                 }
 
-                GlFramebuffer blended = PassRenderer.draw(content, accumulation, null, layer.blendMode, opacity, 0F, 0F, 0xFFFFFF);
+                GlFramebuffer blended;
+
+                if (context.spatialDepth != null && CompScene.usePerspective(context, layer))
+                {
+                    /* 3D layers carry a plane; per-pixel depth resolves crossings that whole-layer
+                     * painter order cannot. Blend mode/opacity still goes through PassRenderer. */
+                    blended = context.spatialDepth.composite(content, CompScene.world(context, layer),
+                        CompScene.camera(context), accumulation, layer.blendMode, opacity);
+                }
+                else
+                {
+                    blended = PassRenderer.draw(content, accumulation, null, layer.blendMode, opacity, 0F, 0F, 0xFFFFFF);
+                }
 
                 FboPool.release(content);
                 FboPool.release(accumulation);
@@ -845,6 +862,12 @@ public final class CompRenderer
 
             /* A malformed project that throws mid-graph must not leak the accumulation target:
              * the exception propagates and nobody else knows this framebuffer exists. */
+            if (context.spatialDepth != null)
+            {
+                context.spatialDepth.delete();
+                context.spatialDepth = null;
+            }
+
             if (!completed)
             {
                 FboPool.release(accumulation);
