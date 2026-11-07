@@ -475,6 +475,119 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_heat_map", "热力图", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = clamp(luma(c.rgb), 0.0, 1.0);
+                vec4 stops[5];
+                stops[0] = vec4(0.02, 0.0, 0.1, 1.0);
+                stops[1] = vec4(0.6, 0.05, 0.2, 1.0);
+                stops[2] = vec4(1.0, 0.45, 0.0, 1.0);
+                stops[3] = vec4(1.0, 0.9, 0.2, 1.0);
+                stops[4] = vec4(1.0, 1.0, 1.0, 1.0);
+                float scaled = y * 4.0;
+                int index = int(floor(scaled));
+                int next = min(index + 1, 4);
+                vec3 mapped = mix(stops[index].rgb, stops[next].rgb, fract(scaled));
+                fragColor = vec4(mix(c.rgb, mapped, clamp(u_amount, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_color_tune", "色偏", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec3 shift = vec3(u_cr, u_mg, u_yb) * 0.5;
+                vec3 tinted = clamp(c.rgb + shift, 0.0, 1.0);
+                fragColor = vec4(mix(c.rgb, tinted, clamp(u_amount, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .p("cr", "青—红", -1F, 1F, 0F, 0.01F)
+            .p("mg", "洋红—绿", -1F, 1F, 0F, 0.01F)
+            .p("yb", "黄—蓝", -1F, 1F, 0F, 0.01F));
+
+        add(new AmEffectDef("am_clouds", "云雾", "AM · 生成", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 p = vUv * max(u_scale, 0.1) + vec2(u_seed * 3.7 + Time * u_speed, u_seed * 1.9);
+                float n = fbm(p, 5);
+                n = clamp((n - 0.5) * max(u_contrast, 0.01) + 0.5, 0.0, 1.0);
+                vec3 cloud = mix(u_shadow.rgb, u_highlight.rgb, n);
+                fragColor = vec4(mix(c.rgb, cloud, clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("scale", "缩放", 0.2F, 20F, 3F, 0.1F)
+            .p("speed", "流动速度", 0F, 4F, 0.3F, 0.01F)
+            .p("contrast", "对比度", 0.1F, 4F, 1.4F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 0.8F, 0.01F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F)
+            .c("shadow", "暗部颜色", 0xFF1B2436)
+            .c("highlight", "亮部颜色", 0xFFF5EEDC));
+
+        add(new AmEffectDef("am_contour_lines", "等高线", "AM · 风格化", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = clamp(luma(c.rgb), 0.0, 1.0);
+                float wave = sin((y + u_phase) * max(u_frequency, 0.1) * 6.2831853);
+                float line = 1.0 - smoothstep(0.0, max(u_thickness, 0.01), abs(wave));
+                fragColor = vec4(mix(c.rgb, u_color.rgb, line * clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("frequency", "密度", 0.1F, 30F, 8F, 0.1F)
+            .p("thickness", "线宽", 0.01F, 1F, 0.18F, 0.01F)
+            .p("phase", "相位", -1F, 1F, 0F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 0.9F, 0.01F)
+            .c("color", "线条颜色", 0xFF102030));
+
+        add(new AmEffectDef("am_hex_tile", "六边形平铺", "AM · 重复", """
+            void main()
+            {
+                vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 1.0);
+                vec2 p = vUv * Size / spacing;
+                vec2 a = mod(p, vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
+                vec2 b = mod(p + vec2(0.5, 0.0), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
+                vec2 local = dot(a, a) < dot(b, b) ? a : b;
+                vec2 center = p - local;
+                vec2 sourceUv = center * spacing / max(Size, vec2(1.0));
+                vec4 c = texture(Source, clamp(sourceUv, 0.0, 1.0));
+                float edge = max(abs(local.x) / 0.5, abs(local.y) / 0.8660254);
+                float gap = smoothstep(1.0 - clamp(u_gap, 0.0, 0.9), 1.0, edge);
+                vec3 rgb = mix(c.rgb, u_line.rgb, gap * clamp(u_line_alpha, 0.0, 1.0));
+                fragColor = vec4(rgb, c.a);
+            }
+            """, 0F, null)
+            .p("size", "六边形大小", 4F, 200F, 40F, 1F)
+            .p("gap", "缝隙", 0F, 0.9F, 0.1F, 0.01F)
+            .p("line_alpha", "缝隙颜色强度", 0F, 1F, 0.6F, 0.01F)
+            .c("line", "缝隙颜色", 0xFF0A0E14));
+
+        add(new AmEffectDef("am_curl", "卷曲", "AM · 变形", """
+            void main()
+            {
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = vUv - center;
+                float radius = max(u_radius, 0.0001);
+                float dist = length(d * Size) / max(Size.x, Size.y);
+                float falloff = clamp(1.0 - dist / radius, 0.0, 1.0);
+                float angle = radians(u_angle) * falloff;
+                float s = sin(angle);
+                float c = cos(angle);
+                vec2 warped = center + mat2(c, s, -s, c) * d;
+                vec2 inside = step(vec2(0.0), warped) * step(warped, vec2(1.0));
+                vec4 texel = texture(Source, clamp(warped, 0.0, 1.0));
+                fragColor = vec4(texel.rgb, texel.a * inside.x * inside.y);
+            }
+            """, 0.5F, "angle")
+            .p("angle", "卷曲角度", -720F, 720F, 120F, 1F)
+            .p("radius", "半径", 0.01F, 1.5F, 0.6F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
         add(new AmEffectDef("am_tile", "平铺", "AM · 重复", """
             void main()
             {
