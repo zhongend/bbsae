@@ -19,12 +19,19 @@ public final class GlFramebuffer
 {
     public final int id;
     public final GlTexture color;
+    /** Depth renderbuffer id, or 0 for a colour-only target. */
+    public final int depthBuffer;
     public final int width;
     public final int height;
     /** True while the framebuffer sits in {@link FboPool}. Guards against double releases. */
     boolean pooled;
 
     public GlFramebuffer(int width, int height)
+    {
+        this(width, height, false);
+    }
+
+    public GlFramebuffer(int width, int height, boolean withDepth)
     {
         this.width = Math.max(1, width);
         this.height = Math.max(1, height);
@@ -35,6 +42,19 @@ public final class GlFramebuffer
         GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.id);
         GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, this.color.id, 0);
         GL30.glDrawBuffers(GL30.GL_COLOR_ATTACHMENT0);
+
+        if (withDepth)
+        {
+            this.depthBuffer = GL30.glGenRenderbuffers();
+            GL30.glBindRenderbuffer(GL30.GL_RENDERBUFFER, this.depthBuffer);
+            GL30.glRenderbufferStorage(GL30.GL_RENDERBUFFER, GL30.GL_DEPTH_COMPONENT24, this.width, this.height);
+            GL30.glFramebufferRenderbuffer(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT,
+                GL30.GL_RENDERBUFFER, this.depthBuffer);
+        }
+        else
+        {
+            this.depthBuffer = 0;
+        }
 
         /* glCheckFramebufferStatus is a sync point. It used to run for every target the pool
          * created — including the ones created mid-frame when the pool was exhausted — so the
@@ -68,6 +88,12 @@ public final class GlFramebuffer
         GlStateManager._colorMask(true, true, true, true);
         GlStateManager._clearColor(((clearColor >> 16) & 0xFF) / 255F, ((clearColor >> 8) & 0xFF) / 255F, (clearColor & 0xFF) / 255F, ((clearColor >>> 24) & 0xFF) / 255F);
         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
+
+        if (this.depthBuffer != 0)
+        {
+            GL11.glDepthMask(true);
+            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+        }
     }
 
     public void bindTexture(int unit)
@@ -165,6 +191,12 @@ public final class GlFramebuffer
     public void delete()
     {
         GL30.glDeleteFramebuffers(this.id);
+
+        if (this.depthBuffer != 0)
+        {
+            GL30.glDeleteRenderbuffers(this.depthBuffer);
+        }
+
         this.color.delete();
     }
 

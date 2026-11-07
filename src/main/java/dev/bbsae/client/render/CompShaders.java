@@ -31,6 +31,7 @@ public final class CompShaders
     public static GlslProgram entityKey;
     public static GlslProgram opaque;
     public static GlslProgram mesh;
+    public static GlslProgram viewport3d;
 
     private CompShaders()
     {}
@@ -69,6 +70,7 @@ public final class CompShaders
         entityKey = make("entity_key", ShaderSources.ENTITY_KEY);
         opaque = make("opaque", ShaderSources.OPAQUE);
         mesh = makeMesh();
+        viewport3d = make("viewport3d", ShaderSources.VIEWPORT_3D_VERTEX, ShaderSources.VIEWPORT_3D_FRAGMENT);
     }
 
     private static GlslProgram makeMesh()
@@ -89,6 +91,29 @@ public final class CompShaders
         catch (RuntimeException e)
         {
             BbsAeAddon.LOGGER.error("Could not create the composition mesh shader", e);
+
+            return null;
+        }
+    }
+
+    private static GlslProgram make(String name, String vertex, String fragment)
+    {
+        try
+        {
+            GlslProgram program = new GlslProgram(name, vertex, fragment);
+
+            if (!program.isValid())
+            {
+                BbsAeAddon.LOGGER.error("Composition shader {} is unavailable", name);
+
+                return null;
+            }
+
+            return program;
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.error("Could not create the composition shader " + name, e);
 
             return null;
         }
@@ -142,8 +167,9 @@ public final class CompShaders
         delete(entityKey);
         delete(opaque);
         delete(mesh);
+        delete(viewport3d);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = opaque = mesh = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = opaque = mesh = viewport3d = null;
         initialized = false;
     }
 

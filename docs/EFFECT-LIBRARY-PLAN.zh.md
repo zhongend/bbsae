@@ -179,6 +179,15 @@ switch 中拆出来：
 4.24 **程序化/绘制批**（径向光线、点阵、星形、平滑边缘、半调线；已完成）
 4.25 **边框/光束/阵列批**（边框、能量束、六边形阵列、彩色分离、描边锥度；已完成）
 4.26 **通道/合成批**（通道映射、HSV 通道映射、填充背后、实色遮罩、遮罩边缘、闪烁；已完成）
+4.45 **3D 工作区逐像素深度（0.69）**
+    - `GlFramebuffer` 支持可选深度 renderbuffer（`DEPTH_COMPONENT24`，begin 时清深度，delete 释放）。
+    - 新增 `Viewport3DRenderer` + `VIEWPORT_3D_VERTEX/FRAGMENT`：3D 图层的四个角用世界矩阵和
+      相机 view-projection 变换，交给 GPU 插值真实逐像素深度；深度测试/写开启，透明像素 discard。
+    - 工作区场景目标带深度附件；2D 图层仍走屏幕空间批处理（关闭深度测试/写），保持屏幕附着语义。
+    - 无头验证 `Viewport3DRendererTest`：两个重叠四边形，无论先画近还是先画远，中心都由更近的
+      蓝色层获胜，边缘保留红色远层——这是真实深度缓冲，而不是整层画家排序。
+    - 说明：主合成器/导出仍以整层画家排序（3D 图层先烘焙再投影）；逐像素深度合成列为下一步。
+
 4.44 **3D 工作区排序可测试化 + AE 选项直接隐藏（0.68）**
     - `CompViewportRenderer.sortByView(ctx, layers, eye, forward)` 抽出：用轨道相机排序的规则
       现在有 `CompViewportSortTest` 固定（前后换边排序翻转、共面图层保持栈序）。

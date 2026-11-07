@@ -132,11 +132,13 @@ public final class CompViewportRenderer
 
         if (sceneTarget != null)
         {
-            FboPool.release(sceneTarget);
+            sceneTarget.delete();
             sceneTarget = null;
         }
 
-        sceneTarget = FboPool.acquire(width, height);
+        /* Depth attachment: the 3D workspace now resolves layer crossings per pixel instead of
+         * ordering whole pictures, which is what "layers penetrate in 3D" looked like. */
+        sceneTarget = new GlFramebuffer(width, height, true);
         sceneTargetWidth = width;
         sceneTargetHeight = height;
 
@@ -148,10 +150,11 @@ public final class CompViewportRenderer
     {
         if (sceneTarget != null)
         {
-            FboPool.release(sceneTarget);
+            sceneTarget.delete();
             sceneTarget = null;
         }
 
+        Viewport3DRenderer.delete();
         sceneTargetWidth = 0;
         sceneTargetHeight = 0;
     }
@@ -192,6 +195,7 @@ public final class CompViewportRenderer
             RenderSystem.defaultBlendFunc();
 
             drawSolidPass(doc, camera, 0F, 0F, matrix);
+            org.lwjgl.opengl.GL11.glClear(org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT);
 
             int layers = drawLayers(sceneBatcher, context, doc, camera, 0F, 0F, matrix);
 
@@ -208,6 +212,7 @@ public final class CompViewportRenderer
         finally
         {
             RenderSystem.defaultBlendFunc();
+            RenderSystem.disableDepthTest();
             RenderSystem.depthMask(true);
             BufferRenderer.resetCurrentVertexBuffer();
             modelView.pop();
@@ -472,6 +477,21 @@ public final class CompViewportRenderer
             }
 
             Matrix4f world = CompScene.world(context, layer);
+
+            /* 3D layers are depth-tested quads: the GPU interpolates the plane's true depth, so a
+             * layer crossing another one is resolved per pixel instead of by whole-layer order. */
+            if (layer.threeD && Viewport3DRenderer.available())
+            {
+                Viewport3DRenderer.draw(source.texture.color, world, camera.viewProjection,
+                    source.localX, source.localY, source.localX + source.localWidth,
+                    source.localY + source.localHeight, opacity);
+                drawn++;
+
+                continue;
+            }
+
+            RenderSystem.disableDepthTest();
+            RenderSystem.depthMask(false);
             float[] uv = screenSize(camera, world, source, screenX, screenY);
             int cells = Math.max(1, Math.min(MAX_CELLS, Math.round(uv[0] / CELL_PIXELS)));
 

@@ -38,6 +38,39 @@ public final class ShaderSources
         }
         """;
 
+    /** Textured, depth-tested quad for the 3D workspace draft view. */
+    public static final String VIEWPORT_3D_VERTEX = """
+        #version 150 core
+        in vec3 Position;
+        in vec2 UV;
+        uniform mat4 ViewProjection;
+        out vec2 vUv;
+        void main()
+        {
+            vUv = UV;
+            gl_Position = ViewProjection * vec4(Position, 1.0);
+        }
+        """;
+
+    public static final String VIEWPORT_3D_FRAGMENT = """
+        #version 150 core
+        uniform sampler2D Source;
+        uniform vec4 Tint;
+        in vec2 vUv;
+        out vec4 fragColor;
+        void main()
+        {
+            vec4 texel = texture(Source, vUv);
+
+            if (texel.a < 0.004)
+            {
+                discard;
+            }
+
+            fragColor = vec4(texel.rgb * Tint.rgb, texel.a * Tint.a);
+        }
+        """;
+
     public static final String MESH_FRAGMENT = """
         #version 150 core
 

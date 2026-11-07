@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.68.jar`](https://github.com/zhongend/bbsae/releases/download/v0.68/bbsae-0.68.jar)
-   from the **v0.68** release (the asset is updated with each source push).
+1. Download [`bbsae-0.69.jar`](https://github.com/zhongend/bbsae/releases/download/v0.69/bbsae-0.69.jar)
+   from the **v0.69** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.68.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.69.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.68.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.69.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,21 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.69 — real per-pixel depth in the 3D workspace
+
+- `GlFramebuffer` can now own a `DEPTH_COMPONENT24` renderbuffer (cleared in `begin`, released in
+  `delete`).
+- New `Viewport3DRenderer` draws each 3D layer as a quad whose four corners are transformed by the
+  layer's world matrix and the workspace camera's view-projection, so the GPU interpolates true
+  per-pixel depth. Depth test/write are enabled and fully transparent fragments are discarded; 2D
+  layers keep the screen-space batcher path with depth disabled.
+- `Viewport3DRendererTest` proves the point: two overlapping quads, drawn near-first or far-first,
+  both end with the nearer blue quad owning the centre and the far red ring outside — a depth buffer,
+  not whole-layer painter order.
+- Honest scope: the **main compositor/export** still bakes 3D layers and orders them by plane. A
+  per-pixel depth composite there is the next step and is not claimed here.
+- 353 tests green; 137 effects.
 
 ## What's new in 0.68 — viewport ordering pinned and the AE entry hidden when impossible
 
