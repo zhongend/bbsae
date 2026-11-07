@@ -495,6 +495,130 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_rgb_gamma", "RGB 伽马", "AM · 调色", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec3 gamma = vec3(max(u_gamma_r, 0.01), max(u_gamma_g, 0.01), max(u_gamma_b, 0.01));
+                vec3 graded = pow(max(c.rgb, vec3(0.0)), vec3(1.0) / gamma);
+                fragColor = vec4(clamp(mix(c.rgb, graded, clamp(u_amount, 0.0, 1.0)), 0.0, 1.0), c.a);
+            }
+            """, 0F, null)
+            .neutralWhen((effect) ->
+                Math.abs(effect.valueF("gamma_r", 1F) - 1F) <= 0.0001F
+                    && Math.abs(effect.valueF("gamma_g", 1F) - 1F) <= 0.0001F
+                    && Math.abs(effect.valueF("gamma_b", 1F) - 1F) <= 0.0001F)
+            .p("gamma_r", "红通道伽马", 0.1F, 4F, 1F, 0.01F)
+            .p("gamma_g", "绿通道伽马", 0.1F, 4F, 1F, 0.01F)
+            .p("gamma_b", "蓝通道伽马", 0.1F, 4F, 1F, 0.01F)
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_sat_vib", "饱和度与自然饱和度", "AM · 调色", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float y = luma(c.rgb);
+                float saturation = 1.0 + u_saturation;
+                vec3 saturated = mix(vec3(y), c.rgb, max(saturation, 0.0));
+                float natural = length(c.rgb - vec3(y));
+                float vibrance = 1.0 + u_vibrance * (1.0 - clamp(natural * 2.0, 0.0, 1.0));
+                vec3 rgb = mix(vec3(y), saturated, max(vibrance, 0.0));
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, null)
+            .neutralWhen((effect) ->
+                Math.abs(effect.valueF("saturation", 0F)) <= 0.0001F
+                    && Math.abs(effect.valueF("vibrance", 0F)) <= 0.0001F)
+            .p("saturation", "饱和度", -1F, 2F, 0F, 0.01F)
+            .p("vibrance", "自然饱和度", -1F, 2F, 0F, 0.01F));
+
+        add(new AmEffectDef("am_spot_color", "单色强调", "AM · 调色", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec3 target = rgb2hsv(u_color.rgb);
+                vec3 hsv = rgb2hsv(c.rgb);
+                float dh = abs(hsv.x - target.x);
+                dh = min(dh, 1.0 - dh);
+                float keep = 1.0 - smoothstep(u_range * 0.5, u_range * 0.5 + u_softness, dh);
+                float y = luma(c.rgb);
+                vec3 desaturated = vec3(y);
+                vec3 rgb = mix(desaturated, c.rgb, mix(1.0, keep, clamp(u_amount, 0.0, 1.0)));
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .p("range", "保留范围", 0.01F, 1F, 0.18F, 0.01F)
+            .p("softness", "边缘柔和", 0.001F, 0.5F, 0.08F, 0.001F)
+            .c("color", "保留颜色", 0xFFE23A3A));
+
+        add(new AmEffectDef("am_edge_glow", "发光边缘", "AM · 绘制", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float centre = luma(c.rgb);
+                float left = luma(sampleLayer(luv - vec2(LayerTexel.x, 0.0)).rgb);
+                float right = luma(sampleLayer(luv + vec2(LayerTexel.x, 0.0)).rgb);
+                float up = luma(sampleLayer(luv - vec2(0.0, LayerTexel.y)).rgb);
+                float down = luma(sampleLayer(luv + vec2(0.0, LayerTexel.y)).rgb);
+                float edge = clamp(length(vec2(right - left, down - up)) * 4.0, 0.0, 1.0);
+                vec3 rgb = clamp(c.rgb + u_color.rgb * edge * clamp(u_strength, 0.0, 3.0), 0.0, 1.0);
+                fragColor = vec4(rgb, c.a);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 3F, 1F, 0.01F)
+            .c("color", "发光颜色", 0xFFFFFFFF));
+
+        add(new AmEffectDef("am_vortex_blur", "漩涡模糊", "AM · 模糊", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = luv - center;
+                vec4 sum = vec4(0.0);
+
+                for (int i = 0; i < 20; i++)
+                {
+                    float t = (float(i) / 19.0 - 0.5) * radians(u_angle);
+                    float c = cos(t);
+                    float s = sin(t);
+                    vec2 rotated = vec2(c * d.x - s * d.y, s * d.x + c * d.y);
+                    sum += sampleLayer(center + rotated);
+                }
+
+                fragColor = sum / 20.0;
+            }
+            """, 0.5F, "angle")
+            .p("angle", "角度", -180F, 180F, 30F, 0.5F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_inner_blur", "内模糊", "AM · 模糊", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec4 sum = vec4(0.0);
+
+                for (int i = 0; i < 16; i++)
+                {
+                    float a = float(i) * 0.3926991;
+                    float r = u_radius / max(LayerSize.x, 1.0);
+                    sum += sampleLayer(luv + vec2(cos(a), sin(a)) * r);
+                }
+
+                vec4 blurred = sum / 16.0;
+                float inside = clamp(c.a, 0.0, 1.0);
+                fragColor = vec4(mix(c.rgb, blurred.rgb, inside * clamp(u_strength, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "radius")
+            .p("radius", "半径（像素）", 0F, 80F, 10F, 1F)
+            .p("strength", "强度", 0F, 1F, 1F, 0.01F));
+
         add(new AmEffectDef("am_jitter", "抖动", "AM · 变换", """
             void main()
             {
