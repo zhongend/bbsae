@@ -469,6 +469,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private static final int DRAG_CAMERA_BODY = 5;
             private static final int DRAG_CAMERA_TARGET = 6;
     private static final int DRAG_GIZMO = 7;
+    private static final int DRAG_BOX_3D = 8;
 
     private static final int GIZMO_MOVE = 0;
     private static final int GIZMO_SCALE = 1;
@@ -1225,8 +1226,21 @@ public class UICompositorPanel extends UIDashboardPanel
 
                         for (int i = 0; i < 4; i++)
                         {
-                            context.batcher.box(quad[i * 2] - 2F, quad[i * 2 + 1] - 2F,
-                                quad[i * 2] + 2F, quad[i * 2 + 1] + 2F, color);
+                            context.batcher.box(quad[i * 2] - 5F, quad[i * 2 + 1] - 5F,
+                                quad[i * 2] + 5F, quad[i * 2 + 1] + 5F, this.overlayColor(0xFF101418));
+                            context.batcher.box(quad[i * 2] - 4F, quad[i * 2 + 1] - 4F,
+                                quad[i * 2] + 4F, quad[i * 2 + 1] + 4F, this.overlayColor(0xFFFFFFFF));
+                        }
+
+                        /* Edge grips: the BBS placement gizmo's single-axis scale handles. */
+                        for (int i = 0; i < 4; i++)
+                        {
+                            int j = (i + 1) % 4;
+                            float mx = (quad[i * 2] + quad[j * 2]) * 0.5F;
+                            float my = (quad[i * 2 + 1] + quad[j * 2 + 1]) * 0.5F;
+
+                            context.batcher.box(mx - 4F, my - 4F, mx + 4F, my + 4F, this.overlayColor(0xFF101418));
+                            context.batcher.box(mx - 3F, my - 3F, mx + 3F, my + 3F, this.overlayColor(0xFFFFFFFF));
                         }
                     }
 
@@ -1461,6 +1475,106 @@ public class UICompositorPanel extends UIDashboardPanel
             /* ------------------------------------------------------- 3D transform gizmo */
 
             /**
+             * Pointer position on the layer's own plane, in pre-drag local pixels. The BBS-style box
+             * handles scale on this plane, so a rotated 3D layer still scales along its own axes.
+             */
+            private float[] viewportLocalPoint(UIContext context, CompLayer layer,
+                                               CompRenderContext renderContext,
+                                               dev.bbsae.client.render.CompViewportCamera camera,
+                                               org.joml.Matrix4f world)
+            {
+                try
+                {
+                    org.joml.Vector3f origin = world.transformPosition(new org.joml.Vector3f());
+                    org.joml.Vector3f normal = world.transformDirection(new org.joml.Vector3f(0F, 0F, 1F)).normalize();
+                    org.joml.Vector3f point = camera.unprojectPlane(
+                        context.mouseX - this.area.x, context.mouseY - this.area.y, origin, normal);
+
+                    if (point == null)
+                    {
+                        return null;
+                    }
+
+                    new org.joml.Matrix4f(world).invert().transformPosition(point);
+
+                    return new float[] {point.x, point.y};
+                }
+                catch (RuntimeException e)
+                {
+                    return null;
+                }
+            }
+
+            /** BBS placement-gizmo style handles: four corners and four edge midpoints. */
+            private int viewportBoxHandleAt(UIContext context, CompLayer layer,
+                                           CompRenderContext renderContext,
+                                           dev.bbsae.client.render.CompViewportCamera camera)
+            {
+                if (!CompPrefs.get().selectionBoxes || layer == null || layer.locked)
+                {
+                    return -1;
+                }
+
+                float[] quad = dev.bbsae.client.render.CompViewportRenderer.layerQuad(
+                    renderContext, layer, camera, this.area.x, this.area.y);
+
+                if (quad == null)
+                {
+                    return -1;
+                }
+
+                for (int i = 0; i < 4; i++)
+                {
+                    if (Math.abs(context.mouseX - quad[i * 2]) <= 9F
+                        && Math.abs(context.mouseY - quad[i * 2 + 1]) <= 9F)
+                    {
+                        return 10 + i;
+                    }
+                }
+
+                for (int i = 0; i < 4; i++)
+                {
+                    int j = (i + 1) % 4;
+                    float mx = (quad[i * 2] + quad[j * 2]) * 0.5F;
+                    float my = (quad[i * 2 + 1] + quad[j * 2 + 1]) * 0.5F;
+
+                    if (Math.abs(context.mouseX - mx) <= 8F && Math.abs(context.mouseY - my) <= 8F)
+                    {
+                        return 20 + i;
+                    }
+                }
+
+                return -1;
+            }
+
+            private void beginBox3DDrag(UIContext context, CompLayer layer, int handle)
+            {
+                CompRenderContext renderContext = this.viewportContext();
+                dev.bbsae.client.render.CompViewportCamera camera = this.viewport();
+                org.joml.Matrix4f world = dev.bbsae.client.render.CompScene.world(renderContext, layer);
+                float[] local = this.viewportLocalPoint(context, layer, renderContext, camera, world);
+
+                if (local == null)
+                {
+                    return;
+                }
+
+                layer.ensureIndependentAxes();
+
+                this.dragMode = DRAG_BOX_3D;
+                this.dragHandle = handle;
+                this.dragStartX = context.mouseX;
+                this.dragStartY = context.mouseY;
+                this.startLocalX = local[0];
+                this.startLocalY = local[1];
+                this.startScaleX = layer.scaleX;
+                this.startScaleY = layer.scaleY;
+                this.startWorld.set(world);
+                this.startInverse.set(world).invert();
+                this.startPlaneValid = true;
+            }
+
+            /**
              * Screen geometry of one gizmo axis: {originX, originY, dirX, dirY, pixelsPerUnit,
              * lengthPixels}. Length 0 means the axis points almost straight at the camera, where a
              * screen drag cannot express depth; such an axis is drawn but not hit-tested.
@@ -1577,7 +1691,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 int x = this.area.x + 8;
                 /* Above the bottom HUD: the top strip belongs to the preview's own toolbar, and
                  * the first version of this bar was hidden underneath it. */
-                int y = this.area.ey() - 70;
+                int y = this.area.ey() - 94;
                 int width = 58;
                 int height = 18;
 
@@ -1602,7 +1716,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 String[] labels = {"W 移动", "E 缩放", "R 旋转"};
                 int x = this.area.x + 8;
-                int y = this.area.ey() - 70;
+                int y = this.area.ey() - 94;
 
                 for (int i = 0; i < 3; i++)
                 {
@@ -2965,6 +3079,27 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
+                if (this.dragMode == DRAG_BOX_3D)
+                {
+                    float[] boxLocal = this.viewportLocalPoint(context, layer,
+                        this.viewportContext(), this.viewport(), this.startWorld);
+
+                    if (boxLocal == null)
+                    {
+                        return;
+                    }
+
+                    float[] scales = CompTransformHandles.scaled(this.dragHandle,
+                        this.startLocalX, this.startLocalY, boxLocal[0], boxLocal[1],
+                        this.startScaleX, this.startScaleY, false);
+
+                    this.writeTransform(layer, scales[0], scales[1], null);
+                    UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                        "缩放 X %.0f%%  Y %.0f%%", scales[0] * 100F, scales[1] * 100F));
+
+                    return;
+                }
+
                 if (layer.threeD)
                 {
                     float nowX = context.mouseX - this.startScreenCenterX;
@@ -4118,6 +4253,15 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 CompDocument doc = UICompositorPanel.this.doc;
                 CompLayer selected = UICompositorPanel.this.selectedLayer;
+                int boxHandle = this.viewportBoxHandleAt(context, selected, this.viewportContext(), this.viewport());
+
+                if (boxHandle >= 0)
+                {
+                    this.beginBox3DDrag(context, selected, boxHandle);
+
+                    return true;
+                }
+
                 int gizmoAxis = this.viewportGizmoHit(context, selected, this.viewportContext(), this.viewport());
 
                 if (gizmoAxis >= 0)
