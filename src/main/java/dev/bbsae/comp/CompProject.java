@@ -27,6 +27,32 @@ public class CompProject
      * that same frame, and the export hands those exact frames to FFmpeg. Frame timing, resolution
      * and duration belong to the composition.</p>
      */
+    /**
+     * True when any comp in this project needs the live BBS world frame: a "bbs" preview layer or a
+     * "replay" entity-key layer is produced by the tick-driven BBS renderer, which the AE frame
+     * renderer cannot reproduce. Such projects must stay on the BBS encoder.
+     */
+    public boolean needsBbsWorldRender()
+    {
+        for (CompDocument comp : this.comps)
+        {
+            if (comp == null || comp.layers == null)
+            {
+                continue;
+            }
+
+            for (CompLayer layer : comp.layers)
+            {
+                if (layer != null && ("bbs".equals(layer.type) || layer.isEntityLayer()))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     public static final String ENCODER_BBS = "bbs";
     public static final String ENCODER_AE = "ae";
     /**

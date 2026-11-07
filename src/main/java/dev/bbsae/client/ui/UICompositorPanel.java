@@ -102,6 +102,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIButton save;
     private final UIButton play;
     private final UIButton renderMode;
+    private final UIButton projectsButton;
     private final UIButton exportFilm;
     private final UIButton replaySelector;
     private final UIIcon focusButton;
@@ -337,6 +338,12 @@ public class UICompositorPanel extends UIDashboardPanel
         this.replaySelector = CompUi.flat("回放：-", "选择这条合成对应的回放或影片；右键可切到其它影片", this::openReplaySelector);
         this.replaySelector.context(this::replayContextMenu);
 
+        this.projectsButton = CompUi.flat("工程", "工程列表：保存当前工程并回到选择工程页面（也可在设置中打开）", () ->
+        {
+            this.save();
+            this.showStartScreen();
+        });
+
         this.save = CompUi.flat("保存", "把工程写入磁盘（Ctrl+S）；工程在 config/bbsae/projects", () ->
         {
             this.save();
@@ -370,6 +377,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.prevFrame.relative(this.header).x(302).y(inset).w(control).h(control);
         this.nextFrame.relative(this.header).x(302 + control + 2).y(inset).w(control).h(control);
         this.timecode.relative(this.header).x(302 + control * 2 + 8).y(inset).w(86).h(control);
+        this.projectsButton.relative(this.header).x(1F, -360).y(inset).w(54).h(control);
         this.save.relative(this.header).x(1F, -300).y(inset).w(48).h(control);
         this.exportFilm.relative(this.header).x(1F, -248).y(inset).w(54).h(control);
         this.renderMode.relative(this.header).x(1F, -190).y(inset).w(54).h(control);
@@ -377,7 +385,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.focusButton.relative(this.header).x(1F, -40).y(inset).w(control).h(control);
 
         this.header.add(this.title, this.replaySelector, this.play, this.prevFrame, this.nextFrame,
-            this.timecode, this.save, this.exportFilm, this.renderMode, this.settingsButton, this.focusButton);
+            this.timecode, this.projectsButton, this.save, this.exportFilm, this.renderMode, this.settingsButton, this.focusButton);
 
         /* Left column: the two panels an editor actually browses from - effects and media.
          * The layer stack lives in the timeline's track headers; keeping a second layer list
@@ -4710,6 +4718,13 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        if (project.settings != null && CompProject.ENCODER_AE.equals(project.settings.encoder)
+            && project.needsBbsWorldRender())
+        {
+            project.settings.encoder = CompProject.ENCODER_BBS;
+            this.setStatus("工程包含 BBS 预览/回放图层，已切回 BBS 原生导出");
+        }
+
         CompDocument comp = project.getCompOrFirst(CompStore.DEFAULT_COMP);
 
         if (comp == null)
@@ -5014,6 +5029,23 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (next.equals(this.currentEncoder()))
         {
+            return;
+        }
+
+        /* The AE renderer produces frames directly from the comp; it cannot sample the tick-driven
+         * BBS world. A project containing a BBS preview or replay-entity key layer is defined by
+         * that world frame, so switching would silently change what those layers show. */
+        if (CompProject.ENCODER_AE.equals(next) && this.project != null && this.project.needsBbsWorldRender())
+        {
+            this.closeModal();
+
+            if (this.settingsOverlay != null)
+            {
+                this.settingsOverlay.close();
+            }
+
+            this.setStatus("本项目包含 BBS 预览/回放抠像图层，只能使用 BBS 原生导出；请先移除这些图层再切换 AE");
+
             return;
         }
 

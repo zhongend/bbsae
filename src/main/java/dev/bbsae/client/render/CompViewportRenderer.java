@@ -427,7 +427,11 @@ public final class CompViewportRenderer
         for (int i = 0; i < order.size(); i++)
         {
             stack.put(order.get(i), i);
-            depths.put(order.get(i), CompScene.planeDepth(context, order.get(i)));
+            /* Depth must use the viewport's own eye/forward, not the composition camera: the
+             * workspace orbits a free camera, and sorting by the comp camera made layers swap
+             * order (and interpenetrate) as soon as the user rotated the view. */
+            depths.put(order.get(i), CompScene.planeDepth(CompScene.world(context, order.get(i)),
+                camera.position, camera.forward));
         }
 
         order.sort((a, b) ->

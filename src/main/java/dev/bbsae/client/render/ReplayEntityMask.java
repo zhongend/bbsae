@@ -197,6 +197,9 @@ public final class ReplayEntityMask
      * Capturing the actor's own transition makes both passes use the same sub-tick.</p>
      */
     private static float lastActorTransition;
+    /** Pixel size of the framebuffer the world frame was rendered into (0 = unknown). */
+    private static int lastWorldWidth;
+    private static int lastWorldHeight;
 
     /**
      * Records what the current composition needs. The common no-entity path performs an
@@ -380,6 +383,21 @@ public final class ReplayEntityMask
         if (context == null || context.matrixStack() == null || context.camera() == null)
         {
             return;
+        }
+
+        /* The world frame's own pixel size. The matte target must have this exact size, not the
+         * window framebuffer's: under BBS' custom-size preview/recorder the world is rendered at the
+         * film's resolution (e.g. 1920x1080) while the window may be another aspect. Rendering the
+         * coverage into a window-shaped target and sampling it 0..1 over the world plate stretched
+         * the matte by the aspect difference — the "entity key is offset" report. */
+        int[] viewport = new int[4];
+
+        GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport);
+
+        if (viewport[2] > 0 && viewport[3] > 0)
+        {
+            lastWorldWidth = viewport[2];
+            lastWorldHeight = viewport[3];
         }
 
         /* Fallback for hosts that did not call beforeEntities (a load order issue, or a test
@@ -594,13 +612,11 @@ public final class ReplayEntityMask
         }
 
         Framebuffer main = client.getFramebuffer();
-        int width = main.textureWidth;
-        int height = main.textureHeight;
-
-        if (width <= 0 || height <= 0)
-        {
-            return 0;
-        }
+        /* Match the world frame, not the window: see render(). */
+        java.awt.Dimension size = EntityMaskSizing.targetSize(lastWorldWidth, lastWorldHeight,
+            main.textureWidth, main.textureHeight);
+        int width = size.width;
+        int height = size.height;
 
         int rendered = 0;
 
@@ -609,7 +625,7 @@ public final class ReplayEntityMask
             if (occludedTarget.ensure(width, height))
             {
                 rendered = Math.max(rendered, drawInto(occludedTarget, controller, camera, stack, consumers,
-                    transition, depthSource, true));
+                    transition, depthSource, width, height, true));
             }
         }
 
@@ -618,7 +634,7 @@ public final class ReplayEntityMask
             if (plainTarget.ensure(width, height))
             {
                 rendered = Math.max(rendered, drawInto(plainTarget, controller, camera, stack, consumers,
-                    transition, 0, false));
+                    transition, 0, width, height, false));
             }
         }
 
@@ -632,7 +648,8 @@ public final class ReplayEntityMask
      *                    for an unoccluded pass
      */
     private static int drawInto(Target target, BaseFilmController controller, Camera camera, MatrixStack stack,
-                                VertexConsumerProvider consumers, float transition, int depthSource, boolean occluded)
+                                VertexConsumerProvider consumers, float transition, int depthSource,
+                                int worldWidth, int worldHeight, boolean occluded)
     {
         int previousFramebuffer = GL11.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
         int[] previousViewport = new int[4];
@@ -671,7 +688,7 @@ public final class ReplayEntityMask
 
             if (occluded)
             {
-                depthReady = copyWorldDepth(target, depthSource);
+                depthReady = copyWorldDepth(target, depthSource, worldWidth, worldHeight);
             }
 
             if (depthReady)
@@ -824,7 +841,7 @@ public final class ReplayEntityMask
      * target size. If the driver refuses it the pass still renders — unoccluded — because an actor
      * that shows through a wall is a far better failure than an invisible layer.</p>
      */
-    private static boolean copyWorldDepth(Target target, int sourceFbo)
+    private static boolean copyWorldDepth(Target target, int sourceFbo, int sourceWidth, int sourceHeight)
     {
         if (sourceFbo == 0 || sourceFbo == target.framebuffer || !target.withDepth)
         {
@@ -849,7 +866,15 @@ public final class ReplayEntityMask
 
             GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, sourceFbo);
             GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, target.framebuffer);
-            GL30.glBlitFramebuffer(0, 0, target.width, target.height, 0, 0, target.width, target.height,
+            int[] source = EntityMaskSizing.blitSource(sourceWidth, sourceHeight, target.width, target.height);
+            int srcW = source[0];
+            int srcH = source[1];
+
+            /* Source rect must describe the WORLD framebuffer; using the target's size read the
+             * bottom-left corner (or overran) whenever the custom-size world differed from the
+             * window, so occlusion no longer matched the plate. glBlitFramebuffer scales between
+             * differently sized rects, which is exactly the mapping needed here. */
+            GL30.glBlitFramebuffer(0, 0, srcW, srcH, 0, 0, target.width, target.height,
                 GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
 
             if (!target.depthChecked)

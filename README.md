@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.66.jar`](https://github.com/zhongend/bbsae/releases/download/v0.66/bbsae-0.66.jar)
-   from the **v0.66** release (the asset is updated with each source push).
+1. Download [`bbsae-0.67.jar`](https://github.com/zhongend/bbsae/releases/download/v0.67/bbsae-0.67.jar)
+   from the **v0.67** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.66.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.67.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.66.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.67.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,24 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.67 — 3D ordering, entity matte, project entry and the AE/BBS split
+
+- **3D workspace order**: layer sorting used `CompScene.planeDepth(ctx, layer)`, which resolves the
+  *composition* camera; the 3D workspace orbits a free camera. Orbiting therefore reordered layers
+  wrongly and they interpenetrated. `CompScene.planeDepth(world, eye, forward)` now sorts against the
+  orbit camera's own position/forward.
+- **Replay entity matte offset**: the coverage target was sized to the **window** framebuffer while
+  BBS' custom-size preview/recorder renders the world at the film resolution. Different aspect ratios
+  stretched the 0..1 mask over the plate. The matte now renders at the world frame's size and the
+  depth blit's source rectangle describes the world framebuffer (`EntityMaskSizing`, with tests).
+- **Project list on the main page**: a 工程 button in the compositor header saves and returns to the
+  project list (the list already existed on the start screen, but was only reachable via Settings).
+- **AE vs BBS renderer**: projects containing a `bbs` preview layer or a `replay` entity-key layer
+  cannot switch to the AE encoder (the AE renderer is frame-driven and cannot reproduce BBS'
+  tick-driven world). The status line explains why; opening an old AE project with such layers falls
+  back to the BBS encoder automatically.
+- 349 tests green; 137 effects.
 
 ## What's new in 0.66 — painter sorting for non-convex primitives
 

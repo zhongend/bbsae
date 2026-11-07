@@ -342,6 +342,43 @@ public final class CompScene
         return -alongNormal / denominator;
     }
 
+    /**
+     * Plane depth against an explicit eye/forward pair. The 3D workspace draws with its own orbit
+     * camera, which is not the composition camera {@link #camera(CompRenderContext)} resolves; using
+     * the composition camera there sorted layers by the wrong viewpoint, so orbiting made them
+     * interpenetrate.
+     */
+    public static float planeDepth(Matrix4f world, Vector3f eye, Vector3f forward)
+    {
+        Vector3f origin = new Vector3f();
+        Vector3f normal = new Vector3f(0F, 0F, 1F);
+
+        world.transformPosition(origin);
+        world.transformDirection(normal);
+
+        float view = -(origin.x - eye.x) * forward.x - (origin.y - eye.y) * forward.y
+            - (origin.z - eye.z) * forward.z;
+
+        if (normal.lengthSquared() < 0.000001F)
+        {
+            return view;
+        }
+
+        normal.normalize();
+
+        float denominator = normal.dot(forward);
+
+        if (Math.abs(denominator) < 0.02F)
+        {
+            return view;
+        }
+
+        float alongNormal = (origin.x - eye.x) * normal.x + (origin.y - eye.y) * normal.y
+            + (origin.z - eye.z) * normal.z;
+
+        return -alongNormal / denominator;
+    }
+
     /** Camera-space depth of the layer origin; larger = closer. Cached per frame. */
     public static float depth(CompRenderContext ctx, CompLayer layer)
     {
