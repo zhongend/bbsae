@@ -179,6 +179,16 @@ switch 中拆出来：
 4.24 **程序化/绘制批**（径向光线、点阵、星形、平滑边缘、半调线；已完成）
 4.25 **边框/光束/阵列批**（边框、能量束、六边形阵列、彩色分离、描边锥度；已完成）
 4.26 **通道/合成批**（通道映射、HSV 通道映射、填充背后、实色遮罩、遮罩边缘、闪烁；已完成）
+4.39 **强制着色器的恒等审计（0.63）**
+    - `AmEffectRenderer.applyForced`：测试专用入口，绕过 `isNeutral` 提前返回，真正执行着色器。
+    - 两个审计测试改用强制入口 + 满幅不透明源：
+      `everyDeclaredZeroIsIdentityInsideTheShader`、`everyCustomIdentityIsIdentityInsideTheShader`。
+    - 立即抓到并修复：
+      * 卡通：`strength=0` 时仍做 16 级量化（现在量化与描边都乘强度）；
+      * 玻璃：`tint`/`shine` 未随折射强度衰减（现在乘 `strength/24` 权重）；
+      * 渐变遮罩/径向擦除在进度 1 时边缘仍有半透明（加显式恒等分支）。
+    - 这些是"数值拉到零恢复不了/边缘不干净"的真实来源，此前被渲染器的提前返回掩盖。
+
 4.38 **零点契约的着色器级审计 + 键控/重复批（0.62）**
     - 新测试 `everyDeclaredZeroIsIdentityInsideTheShader`：绕过 `isNeutral` 提前返回，
       直接调用 `AmEffectRenderer`，对所有声明了 zeroKey 的效果逐像素比较"零值 = 原图"。

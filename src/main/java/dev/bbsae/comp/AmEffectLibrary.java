@@ -92,11 +92,13 @@ public final class AmEffectLibrary
                 vec3 s2 = sampleLayer(luv + vec2(0.0, LayerTexel.y)).rgb;
                 vec3 d2 = sampleLayer(luv - vec2(0.0, LayerTexel.y)).rgb;
                 float edge = length(s - d) + length(s2 - d2);
-                float levels = mix(16.0, 4.0, clamp(u_strength, 0.0, 1.0));
-                vec3 flatColor = floor(c.rgb * levels + 0.5) / levels;
+                float strength = clamp(u_strength, 0.0, 1.0);
+                float levels = mix(16.0, 4.0, strength);
+                vec3 quantized = floor(c.rgb * levels + 0.5) / levels;
+                vec3 flatColor = mix(c.rgb, quantized, strength);
                 float line = smoothstep(0.18, 0.5, edge);
                 vec4 outline = u_outline;
-                vec3 rgb = mix(flatColor, outline.rgb, line * clamp(u_strength, 0.0, 1.0));
+                vec3 rgb = mix(flatColor, outline.rgb, line * strength);
                 fragColor = vec4(rgb, c.a);
             }
             """, 0F, "strength")
@@ -671,7 +673,10 @@ public final class AmEffectLibrary
                 float angle = atan(d.y, d.x) + radians(u_angle);
                 float t = fract(angle / 6.2831853);
                 float edge = clamp(u_softness, 0.001, 0.5);
-                float reveal = smoothstep(t - edge, t + edge, clamp(u_progress, 0.0, 1.0));
+                float progress = clamp(u_progress, 0.0, 1.0);
+                float reveal = progress >= 0.999
+                    ? 1.0
+                    : smoothstep(t - edge, t + edge, progress);
                 fragColor = vec4(c.rgb, c.a * reveal);
             }
             """, 0F, null)
@@ -690,8 +695,21 @@ public final class AmEffectLibrary
                 vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
                 float t = clamp(dot(luv - 0.5, dir) + 0.5, 0.0, 1.0);
                 float edge = max(u_softness, 0.001);
-                float reveal = smoothstep(u_progress - edge, u_progress + edge, t) * 0.0 + 1.0
-                    - smoothstep(u_progress - edge, u_progress + edge, 1.0 - t);
+                float progress = clamp(u_progress, 0.0, 1.0);
+                float reveal;
+
+                if (progress >= 0.999)
+                {
+                    reveal = 1.0;
+                }
+                else if (progress <= 0.001)
+                {
+                    reveal = 0.0;
+                }
+                else
+                {
+                    reveal = 1.0 - smoothstep(progress - edge, progress + edge, t);
+                }
                 fragColor = vec4(c.rgb, c.a * clamp(reveal, 0.0, 1.0));
             }
             """, 0F, null)
@@ -2257,8 +2275,12 @@ public final class AmEffectLibrary
                 vec2 offset = gradient * (u_strength / max(LayerSize, vec2(1.0)));
                 vec3 refracted = sampleLayer(luv + offset).rgb;
                 float brightness = dot(refracted, vec3(0.299, 0.587, 0.114));
-                vec3 tinted = mix(refracted, vec3(brightness) * u_tint.rgb * 2.0, clamp(u_tint_amount, 0.0, 1.0));
-                float shine = clamp(length(gradient) * u_shine, 0.0, 1.0);
+                /* Both the tint and the highlight must fade with the refraction strength, otherwise
+                 * a zero strength still graded the layer (caught by the shader-level zero audit). */
+                float weight = clamp(u_strength / 24.0, 0.0, 1.0);
+                vec3 tinted = mix(refracted, vec3(brightness) * u_tint.rgb * 2.0,
+                    clamp(u_tint_amount, 0.0, 1.0) * weight);
+                float shine = clamp(length(gradient) * u_shine, 0.0, 1.0) * weight;
                 fragColor = vec4(clamp(tinted + shine, 0.0, 1.0), c.a);
             }
             """, 0.5F, "strength")

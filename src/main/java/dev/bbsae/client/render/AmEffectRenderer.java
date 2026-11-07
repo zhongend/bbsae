@@ -30,6 +30,25 @@ public final class AmEffectRenderer
     public static GlFramebuffer apply(CompLayer layer, CompEffect effect, GlFramebuffer input,
                                       CompRenderContext context, EffectSpace space)
     {
+        return applyInternal(layer, effect, input, context, space, false);
+    }
+
+    /**
+     * Test hook: renders even when the neutral predicate says the effect is the identity.
+     *
+     * <p>The zero-value contract is only meaningful if the shader body itself is the identity; the
+     * public path returns early for neutral effects, which would make a pixel audit pass vacuously.
+     * Package-private so only the render tests can bypass the shortcut.</p>
+     */
+    static GlFramebuffer applyForced(CompLayer layer, CompEffect effect, GlFramebuffer input,
+                                     CompRenderContext context, EffectSpace space)
+    {
+        return applyInternal(layer, effect, input, context, space, true);
+    }
+
+    private static GlFramebuffer applyInternal(CompLayer layer, CompEffect effect, GlFramebuffer input,
+                                               CompRenderContext context, EffectSpace space, boolean force)
+    {
         AmEffectDef definition = effect == null ? null : AmEffectLibrary.get(effect.type);
 
         if (definition == null || input == null)
@@ -37,7 +56,7 @@ public final class AmEffectRenderer
             return input;
         }
 
-        if (AmEffectLibrary.isNeutral(effect))
+        if (!force && AmEffectLibrary.isNeutral(effect))
         {
             return input;
         }

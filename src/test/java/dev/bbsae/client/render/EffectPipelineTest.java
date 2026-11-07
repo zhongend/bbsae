@@ -79,6 +79,29 @@ public class EffectPipelineTest
     }
 
     /** A recognisable test card: colour ramp, dark checkerboard and a white diagonal. */
+    /**
+     * Full-bleed opaque source: every pixel has alpha 255. The normal {@link #source()} square has
+     * transparent margins, so an identity bug at the layer's border could hide in those margins.
+     */
+    private static int[] opaqueSource()
+    {
+        int[] pixels = new int[SIZE * SIZE];
+
+        for (int y = 0; y < SIZE; y++)
+        {
+            for (int x = 0; x < SIZE; x++)
+            {
+                int r = 40 + (x * 175) / SIZE;
+                int g = 30 + (y * 175) / SIZE;
+                int b = 60 + ((x + y) * 120) / (SIZE * 2);
+
+                pixels[y * SIZE + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+            }
+        }
+
+        return pixels;
+    }
+
     private static int[] source()
     {
         int[] pixels = new int[SIZE * SIZE];
@@ -319,7 +342,7 @@ public class EffectPipelineTest
     @Test
     public void everyDeclaredZeroIsIdentityInsideTheShader()
     {
-        int[] source = source();
+        int[] source = opaqueSource();
         List<String> failures = new ArrayList<>();
 
         for (dev.bbsae.comp.AmEffectDef definition : dev.bbsae.comp.AmEffectLibrary.all())
@@ -339,7 +362,7 @@ public class EffectPipelineTest
 
             input.color.uploadTopDown(source);
 
-            GlFramebuffer output = AmEffectRenderer.apply(layer, effect, input, context,
+            GlFramebuffer output = AmEffectRenderer.applyForced(layer, effect, input, context,
 
                 EffectSpace.identity(context));
 
@@ -380,6 +403,142 @@ public class EffectPipelineTest
         }
 
         assertTrue(failures.isEmpty(), "zero values must be identities inside the shader: " + failures);
+    }
+
+    /**
+     * Custom identities (scale 1, progress 1, identity channel maps) must also be shader-level
+     * identities, not just predicate shortcuts.
+     *
+     * <p>The predicate cannot be inverted generically, so a few neutral candidates are tried and the
+     * first one the definition accepts is rendered directly through {@link AmEffectRenderer}. This
+     * is how the gradient wipe's progress=1 bug was found: the predicate said "neutral" while the
+     * shader still faded the sweep edge.</p>
+     */
+    @Test
+    public void probeGradientMaskDefaults()
+    {
+        CompEffect effect = CompEffectRegistry.create("am_gradient_mask", 1);
+        assertEquals(0.5F, effect.valueF("progress", -1F), 0.0001F, "default progress");
+        effect.put("progress", 1.0);
+        assertEquals(1F, effect.valueF("progress", -1F), 0.0001F, "stored progress");
+        assertEquals(0.1F, effect.valueF("softness", -1F), 0.0001F, "default softness");
+        dev.bbsae.comp.AmEffectDef def = dev.bbsae.comp.AmEffectLibrary.get("am_gradient_mask");
+        assertNotNull(def, "definition");
+        assertTrue(def.neutralPredicate != null, "predicate");
+        assertTrue(def.neutralPredicate.test(effect), "predicate accepts progress 1");
+    }
+
+    @Test
+    public void everyCustomIdentityIsIdentityInsideTheShader()
+    {
+        int[] source = opaqueSource();
+        List<String> failures = new ArrayList<>();
+
+        for (dev.bbsae.comp.AmEffectDef definition : dev.bbsae.comp.AmEffectLibrary.all())
+        {
+            if (definition.neutralPredicate == null)
+            {
+                continue;
+            }
+
+            CompEffect neutral = neutralCandidate(definition);
+
+            if (neutral == null)
+            {
+                failures.add(definition.id + ": no neutral candidate satisfied the predicate");
+
+                continue;
+            }
+
+            CompRenderContext context = context();
+            CompLayer layer = layer();
+            GlFramebuffer input = new GlFramebuffer(SIZE, SIZE);
+
+            input.color.uploadTopDown(source);
+
+            GlFramebuffer output = AmEffectRenderer.applyForced(layer, neutral, input, context,
+
+                EffectSpace.identity(context));
+
+            try
+            {
+                int[] pixels = output.readTopDown();
+                int mismatches = 0;
+                int first = -1;
+
+                for (int i = 0; i < pixels.length; i++)
+                {
+                    if (pixels[i] != source[i])
+                    {
+                        if (first < 0)
+                        {
+                            first = i;
+                        }
+
+                        mismatches++;
+                    }
+                }
+
+                if (mismatches > 0)
+                {
+                    failures.add(definition.id + " custom identity differs at " + first
+                        + " (" + mismatches + " px)");
+                }
+            }
+            finally
+            {
+                if (output != input)
+                {
+                    FboPool.release(output);
+                }
+
+                FboPool.release(input);
+            }
+        }
+
+        assertTrue(failures.isEmpty(), "custom identities must be identities inside the shader: " + failures);
+    }
+
+    private static CompEffect neutralCandidate(dev.bbsae.comp.AmEffectDef definition)
+    {
+        List<CompEffect> candidates = new ArrayList<>();
+
+        candidates.add(CompEffectRegistry.create(definition.id, 1));
+
+        CompEffect progress = CompEffectRegistry.create(definition.id, 1);
+
+        progress.put("progress", 1.0);
+        candidates.add(progress);
+
+        CompEffect ones = CompEffectRegistry.create(definition.id, 1);
+
+        for (dev.bbsae.comp.AmEffectDef.Param param : definition.params)
+        {
+            ones.put(param.key, 1.0);
+        }
+
+        candidates.add(ones);
+
+        for (dev.bbsae.comp.AmEffectDef.Param param : definition.params)
+        {
+            for (double value : new double[] {0.0, 1.0})
+            {
+                CompEffect candidate = CompEffectRegistry.create(definition.id, 1);
+
+                candidate.put(param.key, value);
+                candidates.add(candidate);
+            }
+        }
+
+        for (CompEffect candidate : candidates)
+        {
+            if (definition.neutralPredicate.test(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     private static Outcome applyTo(int[] sourcePixels, CompEffect effect)
