@@ -495,6 +495,102 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_jitter", "抖动", "AM · 变换", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                float tick = floor(Time * max(u_speed, 0.0));
+                vec2 rnd = hash2(vec2(tick, u_seed)) - 0.5;
+                vec2 offset = rnd * 2.0 * u_amount / max(LayerSize, vec2(1.0));
+                fragColor = sampleLayer(luv + offset);
+            }
+            """, 0.5F, "amount")
+            .p("amount", "幅度（像素）", 0F, 200F, 12F, 0.5F)
+            .p("speed", "变化速度", 0F, 60F, 12F, 0.1F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
+
+        add(new AmEffectDef("am_swing", "摇摆", "AM · 变换", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                float angle = radians(u_angle) * sin(Time * max(u_speed, 0.0) * 6.2831853 + u_phase);
+                vec2 d = luv - center;
+                float s = sin(angle);
+                float c = cos(angle);
+                vec2 rotated = vec2(c * d.x - s * d.y, s * d.x + c * d.y);
+                fragColor = sampleLayer(center + rotated);
+            }
+            """, 0.5F, "angle")
+            .p("angle", "角度", -180F, 180F, 12F, 0.5F)
+            .p("speed", "速度（次/秒）", 0F, 10F, 1F, 0.01F)
+            .p("phase", "相位", 0F, 6.2831853F, 0F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_pulsate", "脉动缩放", "AM · 变换", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                float scale = 1.0 + u_amount * 0.5 * sin(Time * max(u_speed, 0.0) * 6.2831853 + u_phase);
+                vec2 uv = center + (luv - center) / max(scale, 0.01);
+                fragColor = sampleLayer(uv);
+            }
+            """, 0.5F, "amount")
+            .p("amount", "幅度", 0F, 2F, 0.2F, 0.01F)
+            .p("speed", "速度（次/秒）", 0F, 10F, 1F, 0.01F)
+            .p("phase", "相位", 0F, 6.2831853F, 0F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_spin", "旋转", "AM · 变换", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                float angle = Time * max(u_speed, 0.0) * 6.2831853 + radians(u_phase);
+                vec2 d = luv - center;
+                float s = sin(angle);
+                float c = cos(angle);
+                vec2 rotated = vec2(c * d.x - s * d.y, s * d.x + c * d.y);
+                fragColor = sampleLayer(center + rotated);
+            }
+            """, 0.5F, "speed")
+            .p("speed", "转速（圈/秒）", -2F, 2F, 0.15F, 0.01F)
+            .p("phase", "初始角度", -180F, 180F, 0F, 1F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_random_displace", "随机位移", "AM · 变换", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec2 rnd = hash2(vec2(u_seed, u_seed * 1.37)) - 0.5;
+                vec2 offset = rnd * 2.0 * u_amount / max(LayerSize, vec2(1.0));
+                fragColor = sampleLayer(luv + offset);
+            }
+            """, 0.5F, "amount")
+            .p("amount", "幅度（像素）", 0F, 300F, 20F, 0.5F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
+
+        add(new AmEffectDef("am_scale_assist", "缩放辅助", "AM · 变换", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 uv = center + (luv - center) / vec2(max(u_scale_x, 0.01), max(u_scale_y, 0.01));
+                fragColor = sampleLayer(uv);
+            }
+            """, 0.5F, null)
+            .neutralWhen((effect) ->
+                Math.abs(effect.valueF("scale_x", 1F) - 1F) <= 0.0001F
+                    && Math.abs(effect.valueF("scale_y", 1F) - 1F) <= 0.0001F)
+            .p("scale_x", "缩放 X", 0.01F, 8F, 1F, 0.01F)
+            .p("scale_y", "缩放 Y", 0.01F, 8F, 1F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
         add(new AmEffectDef("am_spin_blur", "旋转模糊", "AM · 模糊", """
             void main()
             {

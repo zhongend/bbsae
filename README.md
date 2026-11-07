@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.41.jar`](https://github.com/zhongend/bbsae/releases/download/v0.41/bbsae-0.41.jar)
-   from the **v0.41** release (the asset is updated with each source push).
+1. Download [`bbsae-0.42.jar`](https://github.com/zhongend/bbsae/releases/download/v0.42/bbsae-0.42.jar)
+   from the **v0.42** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.41.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.42.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.41.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.42.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,13 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.42 — animated transform effects
+
+- **抖动**, **摇摆**, **脉动缩放**, **旋转**, **随机位移**, **缩放辅助** in `AM · 变换`.
+- Time-driven effects read the composition `Time` uniform, so preview, pause and export agree;
+  every one declares a zero value (amount/angle/speed), and scale assist reports neutral at 1×1.
+- 73 reference-compatible effects; 321 tests green.
 
 ## What's new in 0.41 — spin blur, liquify, sketch, chromatic blur, bokeh
 
