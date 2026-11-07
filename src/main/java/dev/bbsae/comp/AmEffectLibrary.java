@@ -289,6 +289,88 @@ public final class AmEffectLibrary
             .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
             .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
 
+        add(new AmEffectDef("am_gaussian_blur", "高斯模糊", "AM · 模糊", """
+            void main()
+            {
+                fragColor = texture(Source, vUv);
+            }
+            """, 0F, "strength")
+            .blur("strength", false, null)
+            .p("strength", "半径", 0F, 150F, 12F, 1F));
+
+        add(new AmEffectDef("am_box_blur", "方框模糊", "AM · 模糊", """
+            void main()
+            {
+                fragColor = texture(Source, vUv);
+            }
+            """, 0F, "strength")
+            .blur("strength", true, "iter")
+            .p("strength", "半径", 0F, 100F, 8F, 1F)
+            .p("iter", "迭代次数", 1F, 4F, 1F, 1F));
+
+        add(new AmEffectDef("am_motion_blur", "动感模糊", "AM · 模糊", """
+            void main()
+            {
+                vec2 direction = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
+                vec2 stepUv = direction * (u_length / max(Size, vec2(1.0))) / 24.0;
+                vec4 sum = vec4(0.0);
+
+                for (int i = 0; i < 24; i++)
+                {
+                    float t = float(i) / 23.0 - 0.5;
+                    sum += texture(Source, clamp(vUv + stepUv * (float(i) - 11.5), 0.0, 1.0));
+                }
+
+                fragColor = sum / 24.0;
+            }
+            """, 0.5F, "length")
+            .p("length", "长度（像素）", 0F, 300F, 30F, 1F)
+            .p("angle", "角度", -180F, 180F, 0F, 1F));
+
+        add(new AmEffectDef("am_zoom_blur", "径向模糊", "AM · 模糊", """
+            void main()
+            {
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 delta = vUv - center;
+                vec4 sum = vec4(0.0);
+
+                for (int i = 0; i < 24; i++)
+                {
+                    float t = float(i) / 23.0;
+                    float scale = 1.0 + (t - 0.5) * u_strength;
+                    sum += texture(Source, clamp(center + delta * scale, 0.0, 1.0));
+                }
+
+                fragColor = sum / 24.0;
+            }
+            """, 0.5F, "strength")
+            .p("strength", "强度", -1F, 1F, 0.25F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_lens_blur", "镜头模糊", "AM · 模糊", """
+            void main()
+            {
+                vec2 radiusUv = vec2(u_radius) / max(Size, vec2(1.0));
+                vec4 sum = vec4(0.0);
+                float total = 0.0;
+
+                for (int i = 0; i < 32; i++)
+                {
+                    float a = float(i) * 2.3999632;
+                    float r = sqrt(float(i) / 31.0) * u_radius;
+                    vec2 point = vUv + vec2(cos(a), sin(a)) * r / max(Size, vec2(1.0));
+                    float weight = 1.0 - 0.5 * (r / max(u_radius, 0.001));
+
+                    sum += texture(Source, clamp(point, 0.0, 1.0)) * weight;
+                    total += weight;
+                }
+
+                fragColor = sum / max(total, 0.0001);
+            }
+            """, 0.5F, "radius")
+            .p("radius", "半径（像素）", 0F, 80F, 12F, 1F));
+
         add(new AmEffectDef("am_polar", "极坐标", "AM · 变形", """
             void main()
             {

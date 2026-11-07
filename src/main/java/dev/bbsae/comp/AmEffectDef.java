@@ -27,6 +27,10 @@ public final class AmEffectDef
     public final float padding;
     /** Parameter that makes the effect an identity at zero, or null when there is none. */
     public final String zeroKey;
+    /** When set, the renderer runs its separable blur at this parameter's radius instead of the body. */
+    public String blurKey;
+    public boolean boxBlur;
+    public String iterationsKey;
 
     public final List<Param> params = new ArrayList<>();
     public final List<ColorParam> colors = new ArrayList<>();
@@ -57,6 +61,16 @@ public final class AmEffectDef
         {
             this.zeroKeys.add(key);
         }
+
+        return this;
+    }
+
+    /** Declares a pure blur effect: radius parameter, kernel and optional iteration parameter. */
+    public AmEffectDef blur(String key, boolean box, String iterationsKey)
+    {
+        this.blurKey = key;
+        this.boxBlur = box;
+        this.iterationsKey = iterationsKey;
 
         return this;
     }

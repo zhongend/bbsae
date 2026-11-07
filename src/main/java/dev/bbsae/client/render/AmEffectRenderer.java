@@ -41,6 +41,36 @@ public final class AmEffectRenderer
             return input;
         }
 
+        /* Pure blur effects are two separable passes over premultiplied content; running them
+         * through a fragment body would either be a huge tap loop or unpremultiplied bleeding. */
+        if (definition.blurKey != null)
+        {
+            float radius = effect.valueF(definition.blurKey, 0F);
+
+            if (radius <= 0.5F)
+            {
+                return input;
+            }
+
+            int iterations = definition.iterationsKey == null ? 1
+                : Math.max(1, Math.min(4, Math.round(effect.valueF(definition.iterationsKey, 1F))));
+            GlFramebuffer blurred = input;
+
+            for (int i = 0; i < iterations; i++)
+            {
+                GlFramebuffer next = PassRenderer.blur(blurred, radius, definition.boxBlur);
+
+                if (blurred != input)
+                {
+                    FboPool.release(blurred);
+                }
+
+                blurred = next;
+            }
+
+            return blurred;
+        }
+
         GlslProgram program = program(definition);
 
         if (program == null)
