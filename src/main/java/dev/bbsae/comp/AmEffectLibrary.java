@@ -495,6 +495,116 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_spin_blur", "旋转模糊", "AM · 模糊", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = luv - center;
+                float angle = radians(u_angle);
+                vec4 sum = vec4(0.0);
+
+                for (int i = 0; i < 24; i++)
+                {
+                    float t = (float(i) / 23.0 - 0.5) * angle;
+                    float c = cos(t);
+                    float s = sin(t);
+                    vec2 rotated = vec2(c * d.x - s * d.y, s * d.x + c * d.y);
+                    sum += sampleLayer(center + rotated);
+                }
+
+                fragColor = sum / 24.0;
+            }
+            """, 0.5F, "angle")
+            .p("angle", "角度", -180F, 180F, 20F, 0.5F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_liquify", "液化", "AM · 变形", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec2 p = luv * max(u_scale, 0.01) + vec2(u_seed * 5.17);
+                float n1 = fbm(p, 4) - 0.5;
+                float n2 = fbm(p + 13.7, 4) - 0.5;
+                vec2 offset = vec2(n1, n2) * (2.0 * u_strength / max(LayerSize, vec2(1.0)));
+                vec4 c = sampleLayer(luv + offset);
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0.5F, "strength")
+            .p("strength", "强度（像素）", 0F, 400F, 40F, 1F)
+            .p("scale", "细节", 0.5F, 40F, 6F, 0.1F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
+
+        add(new AmEffectDef("am_sketch", "素描", "AM · 风格化", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float left = luma(sampleLayer(luv - vec2(LayerTexel.x, 0.0)).rgb);
+                float right = luma(sampleLayer(luv + vec2(LayerTexel.x, 0.0)).rgb);
+                float up = luma(sampleLayer(luv - vec2(0.0, LayerTexel.y)).rgb);
+                float down = luma(sampleLayer(luv + vec2(0.0, LayerTexel.y)).rgb);
+                float edge = clamp(length(vec2(right - left, down - up)) * 6.0, 0.0, 1.0);
+                float y = luma(c.rgb);
+                float ink = clamp((1.0 - y) * 0.8 + edge, 0.0, 1.0);
+                vec3 paper = u_paper.rgb;
+                vec3 sketch = mix(paper, u_ink.rgb, ink);
+                fragColor = vec4(mix(c.rgb, sketch, clamp(u_strength, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 1F, 1F, 0.01F)
+            .c("paper", "纸张颜色", 0xFFF3ECD8)
+            .c("ink", "墨色", 0xFF1A1A1A));
+
+        add(new AmEffectDef("am_chromatic_blur", "彩色模糊", "AM · 模糊", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle))) * (u_strength / max(LayerSize, vec2(1.0)));
+                vec3 sum = vec3(0.0);
+
+                for (int i = 0; i < 12; i++)
+                {
+                    float t = float(i) / 11.0 - 0.5;
+                    sum.r += sampleLayer(luv + dir * (t * 1.0)).r;
+                    sum.g += sampleLayer(luv + dir * (t * 0.5)).g;
+                    sum.b += sampleLayer(luv + dir * (t * 0.0)).b;
+                }
+
+                vec4 c = sampleLayer(luv);
+                fragColor = vec4(clamp(sum / 12.0, 0.0, 1.0), c.a);
+            }
+            """, 0.5F, "strength")
+            .p("strength", "强度（像素）", 0F, 80F, 12F, 0.5F)
+            .p("angle", "角度", -180F, 180F, 0F, 1F));
+
+        add(new AmEffectDef("am_bokeh", "散景", "AM · 风格化", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec3 bright = vec3(0.0);
+
+                for (int i = 0; i < 24; i++)
+                {
+                    float a = float(i) * 2.3999632;
+                    float r = sqrt(float(i) / 23.0) * u_radius / max(LayerSize.x, 1.0);
+                    vec4 sample = sampleLayer(luv + vec2(cos(a), sin(a)) * r);
+                    float y = luma(sample.rgb);
+                    float weight = smoothstep(u_threshold, u_threshold + 0.15, y) * sample.a;
+
+                    bright += sample.rgb * weight;
+                }
+
+                bright /= 24.0;
+                fragColor = vec4(clamp(c.rgb + bright * u_intensity, 0.0, 1.0), c.a);
+            }
+            """, 0.5F, "intensity")
+            .p("radius", "半径（像素）", 0F, 80F, 16F, 1F)
+            .p("threshold", "亮度阈值", 0F, 1F, 0.65F, 0.01F)
+            .p("intensity", "强度", 0F, 3F, 0.8F, 0.01F));
+
         add(new AmEffectDef("am_lens_flare", "镜头光晕", "AM · 风格化", """
             void main()
             {

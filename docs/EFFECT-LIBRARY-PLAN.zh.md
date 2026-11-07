@@ -45,7 +45,7 @@
 新增三层，效果不再需要写进 `EffectRenderer` 的巨型 switch：
 
 - `comp/AmEffectDef`：id、显示名、分类、参数表（float/color）、`main()` 片段、零点参数。
-- `comp/AmEffectLibrary`：62 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
+- `comp/AmEffectLibrary`：67 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
   弯曲、描边、收缩与膨胀、圆形波纹、万花筒、镜像、旋转扭曲、像素化、极坐标、分形扭曲、
   色彩化、替换颜色、渐变映射、径向阴影），参数名/范围/默认值与参考应用一致。
 - `client/render/AmEffectRenderer`：按定义拼装完整 fragment（标准 uniform + 参数 uniform +
@@ -170,6 +170,7 @@ switch 中拆出来：
 4.18 **代理分辨率下的像素尺寸修复**：AM 效果的像素参数统一按**合成像素**换算
     （`Size/Texel` 使用 context 的合成尺寸，而不是代理 FBO 尺寸；可分离模糊也传合成 texel）。
     之前代理预览下所有半径/距离会按代理比例缩小，预览与导出不一致。
+4.21 **模糊/风格批**（旋转模糊、液化、素描、彩色模糊、散景；已完成）
 4.20 **图层空间适配（第一性原理修正）**
     - 每个 AM 效果体现在以 `vec2 luv = layerUv(vUv)` 为坐标系，像素半径用 `LayerSize`（图层像素）换算，
       采样通过 `sampleLayer(luv)`（内部 `localToCompUv` 把图层像素映射回合成 UV）；
