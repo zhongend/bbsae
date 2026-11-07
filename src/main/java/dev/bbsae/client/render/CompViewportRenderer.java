@@ -386,6 +386,34 @@ public final class CompViewportRenderer
             camera.ortho ? "ortho" : "persp", quad);
     }
 
+    /**
+     * Painter order for the 3D workspace: far to near, sorted by the plane depth measured from the
+     * workspace camera, with the layer stack as the tie-break for coplanar layers.
+     *
+     * <p>Extracted so the camera dependence is testable without a GL context: sorting against the
+     * composition camera instead of the orbit camera was the "layers penetrate while orbiting"
+     * defect.</p>
+     */
+    static void sortByView(CompRenderContext context, java.util.List<CompLayer> layers,
+                           org.joml.Vector3f eye, org.joml.Vector3f forward)
+    {
+        final java.util.Map<CompLayer, Float> depths = new java.util.IdentityHashMap<>();
+        final java.util.Map<CompLayer, Integer> stack = new java.util.IdentityHashMap<>();
+
+        for (int i = 0; i < layers.size(); i++)
+        {
+            stack.put(layers.get(i), i);
+            depths.put(layers.get(i), CompScene.planeDepth(CompScene.world(context, layers.get(i)), eye, forward));
+        }
+
+        layers.sort((a, b) ->
+        {
+            int byDepth = Float.compare(depths.get(a), depths.get(b));
+
+            return byDepth != 0 ? byDepth : Integer.compare(stack.get(a), stack.get(b));
+        });
+    }
+
     private static int drawLayers(Batcher2D batcher, CompRenderContext context, CompDocument doc,
                                    CompViewportCamera camera, float screenX, float screenY, Matrix4f matrix)
     {
@@ -421,25 +449,7 @@ public final class CompViewportRenderer
          * while a layer pushed towards the viewer on z sorts in front of them from any angle.
          * Using the nearest corner instead made a large background plane win against a small
          * layer stacked above it, because its bottom edge was nearer to a tilted camera. */
-        final java.util.Map<CompLayer, Float> depths = new java.util.IdentityHashMap<>();
-        final java.util.Map<CompLayer, Integer> stack = new java.util.IdentityHashMap<>();
-
-        for (int i = 0; i < order.size(); i++)
-        {
-            stack.put(order.get(i), i);
-            /* Depth must use the viewport's own eye/forward, not the composition camera: the
-             * workspace orbits a free camera, and sorting by the comp camera made layers swap
-             * order (and interpenetrate) as soon as the user rotated the view. */
-            depths.put(order.get(i), CompScene.planeDepth(CompScene.world(context, order.get(i)),
-                camera.position, camera.forward));
-        }
-
-        order.sort((a, b) ->
-        {
-            int byDepth = Float.compare(depths.get(a), depths.get(b));
-
-            return byDepth != 0 ? byDepth : Integer.compare(stack.get(a), stack.get(b));
-        });
+        sortByView(context, order, camera.position, camera.forward);
 
         BufferBuilder buffer = Tessellator.getInstance().getBuffer();
 

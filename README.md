@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.67.jar`](https://github.com/zhongend/bbsae/releases/download/v0.67/bbsae-0.67.jar)
-   from the **v0.67** release (the asset is updated with each source push).
+1. Download [`bbsae-0.68.jar`](https://github.com/zhongend/bbsae/releases/download/v0.68/bbsae-0.68.jar)
+   from the **v0.68** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.67.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.68.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.67.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.68.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,19 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.68 — viewport ordering pinned and the AE entry hidden when impossible
+
+- `CompViewportRenderer.sortByView(ctx, layers, eye, forward)` is now a testable unit.
+  `CompViewportSortTest` proves the orbit camera decides the order (layer depths swap when the camera
+  moves behind the comp) and that coplanar layers keep the stack order.
+- Settings → 渲染 / 编码管线 now **hides the AE option entirely** for projects containing a BBS
+  preview or replay-entity layer, with a tooltip explaining why, instead of accepting a click and
+  rejecting it afterwards.
+- Honest remaining limitation: intersecting 3D planes still rely on per-layer painter sorting; a
+  per-pixel depth composite (depth attachment + plane-depth shader) is the next step and is not
+  claimed done here.
+- 351 tests green; 137 effects.
 
 ## What's new in 0.67 — 3D ordering, entity matte, project entry and the AE/BBS split
 

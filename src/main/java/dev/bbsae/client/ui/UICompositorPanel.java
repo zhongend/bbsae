@@ -5748,16 +5748,24 @@ public class UICompositorPanel extends UIDashboardPanel
         UILabel encoderLabel = new UILabel(IKey.constant("渲染 / 编码管线"));
         encoderLabel.relative(this.modalBox).x(18).y(398).w(160).h(18);
 
+        /* A project that needs the live BBS world cannot run on the AE encoder at all: offering the
+         * entry and then rejecting the click is worse UX than not offering it. */
+        boolean bbsOnly = this.project != null && this.project.needsBbsWorldRender();
+        java.util.List<String> encoderValues = bbsOnly
+            ? java.util.List.of(CompProject.ENCODER_BBS)
+            : java.util.List.of(CompProject.ENCODER_BBS, CompProject.ENCODER_AE);
         mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton<String> encoder =
             new mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton<>(
-                java.util.List.of(CompProject.ENCODER_BBS, CompProject.ENCODER_AE),
+                encoderValues,
                 (value) -> CompProject.ENCODER_AE.equals(value) ? Icons.SERVER : Icons.FILM,
                 (value) -> IKey.constant(CompProject.ENCODER_AE.equals(value) ? "AE 编码器（帧服务器）" : "BBS 原生（默认）"));
 
         encoder.callback(this::requestEncoder);
         encoder.setValue(this.currentEncoder());
         encoder.relative(this.modalBox).x(190).y(396).w(190).h(20);
-        encoder.tooltip(IKey.constant("BBS：合成是影片叠加层，BBS 录像器导出。AE：合成自带帧服务器，预览与导出逐帧一致（有风险，首次切换会提示）"));
+        encoder.tooltip(IKey.constant(bbsOnly
+            ? "本项目包含 BBS 预览 / 回放抠像图层，只能使用 BBS 原生导出（AE 渲染器无法复现按 tick 渲染的世界帧）"
+            : "BBS：合成是影片叠加层，BBS 录像器导出。AE：合成自带帧服务器，预览与导出逐帧一致（有风险，首次切换会提示）"));
 
         /* Proxy is a *preview* option and says so: export always renders at 1/1, so the only thing
          * the factor changes is how many pixels the viewer spends. */
