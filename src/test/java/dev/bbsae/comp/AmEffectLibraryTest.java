@@ -37,7 +37,7 @@ public class AmEffectLibraryTest
             assertTrue(definition.body.contains("fragColor"), "body writes no colour: " + definition.id);
         }
 
-        assertTrue(ids.size() >= 24, "the catalogue should have grown with the blur batch");
+        assertTrue(ids.size() >= 32, "the catalogue should have grown with the generative batch");
     }
 
     @Test
@@ -81,6 +81,14 @@ public class AmEffectLibraryTest
         assertNeutral("am_motion_blur", "length", 0F);
         assertNeutral("am_zoom_blur", "strength", 0F);
         assertNeutral("am_lens_blur", "radius", 0F);
+        assertNeutral("am_chromatic_aberration", "amount", 0F);
+        assertNeutral("am_tilt_shift", "radius", 0F);
+        assertNeutral("am_stretch_axis", "amount", 0F);
+        assertNeutral("am_slice_glitch", "amount", 0F);
+        assertNeutral("am_four_color_gradient", "alpha", 0F);
+        assertNeutral("am_stripes", "alpha", 0F);
+        assertNeutral("am_grid_lines", "alpha", 0F);
+        assertNeutral("am_starfield", "alpha", 0F);
 
         CompEffect balance = CompEffectRegistry.create("am_color_balance", 1);
 

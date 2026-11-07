@@ -289,6 +289,192 @@ public final class AmEffectLibrary
             .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
             .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
 
+        add(new AmEffectDef("am_chromatic_aberration", "彩色像差", "AM · 风格化", """
+            void main()
+            {
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle))) * u_amount / max(Size, vec2(1.0));
+                vec4 g = texture(Source, vUv);
+                float r = texture(Source, clamp(vUv + dir, 0.0, 1.0)).r;
+                float b = texture(Source, clamp(vUv - dir, 0.0, 1.0)).b;
+                fragColor = vec4(r, g.g, b, g.a);
+            }
+            """, 0.5F, "amount")
+            .p("amount", "偏移（像素）", 0F, 40F, 4F, 0.1F)
+            .p("angle", "角度", -180F, 180F, 0F, 1F));
+
+        add(new AmEffectDef("am_tilt_shift", "移轴模糊", "AM · 模糊", """
+            void main()
+            {
+                vec4 sharp = texture(Source, vUv);
+                vec4 sum = vec4(0.0);
+                vec2 stepUv = vec2(u_radius / max(Size.x, 1.0), 0.0);
+
+                for (int i = -8; i <= 8; i++)
+                {
+                    sum += texture(Source, clamp(vUv + stepUv * float(i), 0.0, 1.0));
+                }
+
+                vec4 blurred = sum / 17.0;
+                float band = smoothstep(clamp(u_width, 0.0, 0.6), clamp(u_width, 0.0, 0.6) + 0.12,
+                    abs(vUv.y - u_center_y));
+                fragColor = mix(sharp, blurred, band);
+            }
+            """, 0.5F, "radius")
+            .p("radius", "模糊半径", 0F, 40F, 8F, 0.5F)
+            .p("width", "清晰带宽度", 0F, 0.6F, 0.12F, 0.01F)
+            .p("center_y", "清晰带位置", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_stretch_axis", "轴向拉伸", "AM · 变形", """
+            void main()
+            {
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 uv = vUv;
+                float factor = 1.0 + u_amount;
+
+                if (u_axis < 0.5)
+                {
+                    uv.x = center.x + (vUv.x - center.x) / max(factor, 0.01);
+                }
+                else
+                {
+                    uv.y = center.y + (vUv.y - center.y) / max(factor, 0.01);
+                }
+
+                vec2 inside = step(vec2(0.0), uv) * step(uv, vec2(1.0));
+                vec4 c = texture(Source, clamp(uv, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a * inside.x * inside.y);
+            }
+            """, 0.5F, "amount")
+            .p("amount", "拉伸", -0.95F, 2F, 0.3F, 0.01F)
+            .p("axis", "方向（0 X / 1 Y）", 0F, 1F, 0F, 1F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_slice_glitch", "切片故障", "AM · 风格化", """
+            void main()
+            {
+                float bands = max(u_bands, 1.0);
+                float line = floor(vUv.y * bands);
+                float phase = floor(Time * max(u_speed, 0.0));
+                float rnd = hash(vec2(line, phase + u_seed));
+                float offset = (rnd - 0.5) * 2.0 * u_amount / max(Size.x, 1.0);
+                vec4 c = texture(Source, clamp(vec2(vUv.x + offset, vUv.y), 0.0, 1.0));
+                fragColor = c;
+            }
+            """, 0.5F, "amount")
+            .p("amount", "位移（像素）", 0F, 300F, 24F, 1F)
+            .p("bands", "切片数", 2F, 80F, 18F, 1F)
+            .p("speed", "速度", 0F, 30F, 6F, 0.1F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
+
+        add(new AmEffectDef("am_four_color_gradient", "四色渐变", "AM · 生成", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
+                float t = clamp(dot(vUv - 0.5, dir) * max(u_scale, 0.01) + 0.5 + u_offset, 0.0, 1.0);
+                float o1 = clamp(u_offset1, 0.0, 1.0);
+                float o2 = clamp(u_offset2, 0.0, 1.0);
+                float o3 = clamp(u_offset3, 0.0, 1.0);
+                vec3 grad = u_color1.rgb;
+
+                if (t < o2)
+                {
+                    grad = mix(u_color1.rgb, u_color2.rgb, clamp((t - o1) / max(o2 - o1, 0.0001), 0.0, 1.0));
+                }
+                else if (t < o3)
+                {
+                    grad = mix(u_color2.rgb, u_color3.rgb, clamp((t - o2) / max(o3 - o2, 0.0001), 0.0, 1.0));
+                }
+                else
+                {
+                    grad = mix(u_color3.rgb, u_color4.rgb, clamp((t - o3) / max(1.0 - o3, 0.0001), 0.0, 1.0));
+                }
+
+                fragColor = vec4(mix(c.rgb, grad, clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("angle", "角度", -180F, 180F, 90F, 1F)
+            .p("offset", "偏移", -1F, 1F, 0F, 0.01F)
+            .p("offset1", "色标 1", 0F, 1F, 0F, 0.01F)
+            .p("offset2", "色标 2", 0F, 1F, 0.33F, 0.01F)
+            .p("offset3", "色标 3", 0F, 1F, 0.66F, 0.01F)
+            .p("scale", "缩放", 0.05F, 4F, 1F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .c("color1", "颜色 1", 0xFF55AAFF)
+            .c("color2", "颜色 2", 0xFFFFE2A8)
+            .c("color3", "颜色 3", 0xFFFF7AB0)
+            .c("color4", "颜色 4", 0xFF101040));
+
+        add(new AmEffectDef("am_stripes", "条纹", "AM · 生成", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
+                float coord = dot(vUv, dir) * max(u_frequency, 0.1) + u_phase;
+                float wave = abs(fract(coord) - 0.5) * 2.0;
+                float width = clamp(u_width, 0.01, 0.99);
+                float softness = max(u_softness, 0.001);
+                float stripe = 1.0 - smoothstep(width - softness, width + softness, wave);
+                vec3 line = mix(u_color1.rgb, u_color2.rgb, stripe);
+                fragColor = vec4(mix(c.rgb, line, clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("angle", "角度", -180F, 180F, 0F, 1F)
+            .p("frequency", "密度", 0.1F, 40F, 10F, 0.1F)
+            .p("width", "条纹宽", 0.01F, 0.99F, 0.5F, 0.01F)
+            .p("softness", "边缘柔和", 0.001F, 0.5F, 0.02F, 0.001F)
+            .p("phase", "相位", -1F, 1F, 0F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .c("color1", "颜色 1", 0xFF101828)
+            .c("color2", "颜色 2", 0xFFFFD070));
+
+        add(new AmEffectDef("am_grid_lines", "网格", "AM · 生成", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 p = (vUv - 0.5) * Size;
+                float angle = radians(u_angle);
+                mat2 rotation = rot(angle);
+                p = rotation * p;
+                vec2 cell = p / max(u_cell, 1.0);
+                vec2 line = abs(fract(cell) - 0.5);
+                float thickness = max(u_thickness, 0.001);
+                vec2 mask = 1.0 - smoothstep(vec2(0.5 - thickness), vec2(0.5), line * 2.0);
+                float grid = max(mask.x, mask.y) * clamp(u_alpha, 0.0, 1.0);
+                fragColor = vec4(mix(c.rgb, u_color.rgb, grid), c.a);
+            }
+            """, 0F, "alpha")
+            .p("cell", "格子大小", 2F, 200F, 32F, 1F)
+            .p("thickness", "线宽", 0.001F, 0.49F, 0.06F, 0.001F)
+            .p("angle", "旋转", -180F, 180F, 0F, 1F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .c("color", "线条颜色", 0xFFFFFFFF));
+
+        add(new AmEffectDef("am_starfield", "星空", "AM · 生成", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 grid = vec2(12.0, 8.0) * max(u_density, 0.05);
+                vec2 cell = floor(vUv * grid);
+                vec2 local = fract(vUv * grid);
+                vec2 rnd = hash2(cell + u_seed);
+                vec2 center = vec2(0.2) + rnd * 0.6;
+                float radius = max(u_size, 0.5) / 100.0;
+                float dist = length(local - center);
+                float star = smoothstep(radius, 0.0, dist);
+                float twinkle = 0.65 + 0.35 * sin(Time * max(u_speed, 0.0) + rnd.x * 6.2831853);
+                float amount = star * twinkle * clamp(u_brightness, 0.0, 3.0) * clamp(u_alpha, 0.0, 1.0);
+                fragColor = vec4(clamp(c.rgb + vec3(amount), 0.0, 1.0), c.a);
+            }
+            """, 0F, "alpha")
+            .p("density", "密度", 0.1F, 4F, 1F, 0.01F)
+            .p("size", "星点大小", 0.5F, 20F, 2F, 0.1F)
+            .p("speed", "闪烁速度", 0F, 20F, 3F, 0.1F)
+            .p("brightness", "亮度", 0F, 3F, 1F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
+
         add(new AmEffectDef("am_gaussian_blur", "高斯模糊", "AM · 模糊", """
             void main()
             {
