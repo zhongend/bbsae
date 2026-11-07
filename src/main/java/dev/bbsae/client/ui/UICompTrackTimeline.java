@@ -100,6 +100,13 @@ public class UICompTrackTimeline extends UIElement
     {
         this.panel = panel;
 
+        int savedHeight = CompPrefs.get().timelineRowHeight;
+
+        if (savedHeight > 0)
+        {
+            this.rowHeight = Math.max(ROW_MIN, Math.min(ROW_MAX, savedHeight));
+        }
+
         this.context((manager) ->
         {
             CompLayer layer = this.findLayer(this.contextLayerId);
@@ -498,7 +505,9 @@ public class UICompTrackTimeline extends UIElement
 
         this.rowHeight = next;
         this.clampScroll();
-        this.panel.setStatus("轨道高度 " + this.rowHeight + "px（Alt+加号/减号）");
+        CompPrefs.get().timelineRowHeight = next;
+        CompPrefs.markDirty();
+        this.panel.setStatus("轨道高度 " + this.rowHeight + "px（Alt+滚轮 / Alt+加号减号）");
     }
 
     /**

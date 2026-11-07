@@ -924,7 +924,8 @@ public class UICompositorPanel extends UIDashboardPanel
                     /* The 3D HUD owns the bottom strip; two readouts on top of each other read as
                      * a rendering bug. */
                     UICompositorPanel.this.previewInfo.setVisible(
-                        !UICompositorPanel.this.is3DSpace() && !UICompositorPanel.this.cameraFlying);
+                        CompPrefs.get().previewHints
+                            && !UICompositorPanel.this.is3DSpace() && !UICompositorPanel.this.cameraFlying);
                 }
 
                 if (!UICompositorPanel.this.is3DSpace())
@@ -1283,8 +1284,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 /* Bottom-left, above the frame edge: the top strip is where the preview bar's
                  * FX/mask/BBS toggles live, and a label underneath them is unreadable. */
-                context.batcher.textShadow("看穿摄像机 · 最终画面", x + 8F, y + h - 26F, 0xFFFFB4B4);
-                context.batcher.textShadow("按 0 回到自由视图", x + 8F, y + h - 14F, 0x99FFB4B4);
+                if (CompPrefs.get().previewHints)
+                {
+                    context.batcher.textShadow("看穿摄像机 · 最终画面", x + 8F, y + h - 26F, 0xFFFFB4B4);
+                    context.batcher.textShadow("按 0 回到自由视图", x + 8F, y + h - 14F, 0x99FFB4B4);
+                }
             }
 
             /**
@@ -1445,10 +1449,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 /* Position readout next to the icon: the user asked to always know where the
                  * camera is, and a number that follows the gizmo beats an inspector row. */
-                String label = String.format(java.util.Locale.ROOT, "🎥 %s  %.0f, %.0f, %.0f",
-                    UICompositorPanel.this.layerLabel(layer), eye.x, eye.y, eye.z);
+                if (CompPrefs.get().previewHints)
+                {
+                    String label = String.format(java.util.Locale.ROOT, "🎥 %s  %.0f, %.0f, %.0f",
+                        UICompositorPanel.this.layerLabel(layer), eye.x, eye.y, eye.z);
 
-                context.batcher.textShadow(label, ex + 12F, ey - 12F, color);
+                    context.batcher.textShadow(label, ex + 12F, ey - 12F, color);
+                }
             }
 
             /* ------------------------------------------------------- 3D transform gizmo */
@@ -1950,6 +1957,11 @@ public class UICompositorPanel extends UIDashboardPanel
             /** Bottom-left HUD: mode, camera pose and the navigation keys. */
             private void renderViewportHud(UIContext context, CompDocument doc, CompLayer cameraLayer)
             {
+                if (!CompPrefs.get().previewHints)
+                {
+                    return;
+                }
+
                 dev.bbsae.client.render.CompViewportCamera camera = UICompositorPanel.this.viewportCamera;
                 int x = this.area.x + 8;
                 int y = this.area.ey() - 46;

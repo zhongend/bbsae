@@ -2,8 +2,11 @@ package dev.bbsae.client.ui;
 
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframes;
+import mchorse.bbs_mod.ui.framework.elements.input.keyframes.graphs.UIKeyframeDopeSheet;
 import mchorse.bbs_mod.ui.framework.elements.utils.UITimelineCanvas;
+import mchorse.bbs_mod.ui.utils.keys.KeyAction;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.Locale;
 import java.util.function.Consumer;
@@ -24,6 +27,87 @@ public class UICompositorKeyframes extends UIKeyframes
         super(callback);
 
         this.panel = panel;
+
+        int savedHeight = CompPrefs.get().keyframeRowHeight;
+
+        if (savedHeight > 0)
+        {
+            this.setTrackHeight(savedHeight);
+        }
+    }
+
+    /**
+     * BBS' dope sheet has a real {@code setTrackHeight}; the compositor editor simply never exposed
+     * it. Alt+wheel (and Alt+= / Alt+-) is the same vertical zoom gesture as the curve editor, so
+     * both keyframe surfaces behave alike.
+     */
+    private void setTrackHeight(double height)
+    {
+        UIKeyframeDopeSheet dopeSheet = this.getDopeSheet();
+
+        if (dopeSheet != null)
+        {
+            dopeSheet.setTrackHeight(Math.max(12D, Math.min(60D, height)));
+        }
+    }
+
+    private void changeTrackHeight(int delta)
+    {
+        UIKeyframeDopeSheet dopeSheet = this.getDopeSheet();
+
+        if (dopeSheet == null)
+        {
+            return;
+        }
+
+        double next = Math.max(12D, Math.min(60D, dopeSheet.getTrackHeight() + delta));
+
+        if (Math.abs(next - dopeSheet.getTrackHeight()) < 0.01D)
+        {
+            return;
+        }
+
+        dopeSheet.setTrackHeight(next);
+        CompPrefs.get().keyframeRowHeight = (int) Math.round(next);
+        CompPrefs.markDirty();
+        this.panel.setStatus("关键帧轨道高度 " + Math.round(next) + "px（Alt+滚轮）");
+    }
+
+    @Override
+    protected boolean subMouseScrolled(UIContext context)
+    {
+        if (this.area.isInside(context) && CompInput.altDown())
+        {
+            this.changeTrackHeight(context.mouseWheel > 0 ? 2 : -2);
+
+            return true;
+        }
+
+        return super.subMouseScrolled(context);
+    }
+
+    @Override
+    protected boolean subKeyPressed(UIContext context)
+    {
+        if (this.area.isInside(context) && CompInput.altDown()
+            && context.getKeyAction() == KeyAction.PRESSED)
+        {
+            if (context.getKeyCode() == GLFW.GLFW_KEY_EQUAL)
+            {
+                this.changeTrackHeight(2);
+
+                return true;
+            }
+
+            if (context.getKeyCode() == GLFW.GLFW_KEY_MINUS)
+            {
+                this.changeTrackHeight(-2);
+
+                return true;
+            }
+        }
+
+        return super.subKeyPressed(context);
     }
 
     @Override

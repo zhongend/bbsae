@@ -716,6 +716,11 @@ public class UICompSettings extends UIElement
             prefs.guides = value;
             CompPrefs.save();
         }), 170, "标题/动作安全区、三分线和中心参考线"));
+        this.add(this.row("预览文字提示", this.toggle("", prefs.previewHints, (value) ->
+        {
+            prefs.previewHints = value;
+            CompPrefs.save();
+        }), 170, "预览里的模式/摄像机 HUD、分辨率条和看穿提示；关闭后画面更干净"));
     }
 
     private void buildKeys()

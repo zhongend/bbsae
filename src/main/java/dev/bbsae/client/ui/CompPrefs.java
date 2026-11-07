@@ -78,6 +78,12 @@ public final class CompPrefs
         public boolean selectionBoxes = true;
         public boolean cameraGizmos = true;
         public boolean guides = true;
+        /** Preview HUD text (mode/pose/camera readouts and the resolution strip). */
+        public boolean previewHints = true;
+
+        /** Saved vertical zoom of the two track editors; 0 = use the editor's default. */
+        public int timelineRowHeight = 0;
+        public int keyframeRowHeight = 0;
 
         /** 0 standard, 1 focus, 2 compact, 3 wide. */
         public int layoutPreset = LAYOUT_STANDARD;
