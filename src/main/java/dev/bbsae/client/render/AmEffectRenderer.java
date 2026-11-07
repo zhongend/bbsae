@@ -22,6 +22,7 @@ import java.util.Map;
 public final class AmEffectRenderer
 {
     private static final Map<String, GlslProgram> PROGRAMS = new HashMap<>();
+    private static final java.util.Set<String> FAILED = new java.util.HashSet<>();
 
     private AmEffectRenderer()
     {}
@@ -123,6 +124,11 @@ public final class AmEffectRenderer
             return cached;
         }
 
+        if (FAILED.contains(definition.id))
+        {
+            return null;
+        }
+
         String name = "am_" + definition.id;
 
         try
@@ -131,6 +137,7 @@ public final class AmEffectRenderer
 
             if (!program.isValid())
             {
+                FAILED.add(definition.id);
                 BbsAeAddon.LOGGER.error("Reference effect {} could not be compiled", definition.id);
 
                 return null;
@@ -142,6 +149,7 @@ public final class AmEffectRenderer
         }
         catch (RuntimeException e)
         {
+            FAILED.add(definition.id);
             BbsAeAddon.LOGGER.error("Reference effect {} failed to build", definition.id, e);
 
             return null;
@@ -288,6 +296,7 @@ public final class AmEffectRenderer
         }
 
         PROGRAMS.clear();
+        FAILED.clear();
     }
 
     private static void setColor(GlslProgram program, String uniform, int argb)

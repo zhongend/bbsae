@@ -475,6 +475,76 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_desaturate", "去色", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = luma(c.rgb);
+                fragColor = vec4(mix(c.rgb, vec3(y), clamp(u_amount, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_monochrome", "单色", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = luma(c.rgb);
+                vec3 tinted = u_color.rgb * (0.15 + y * 1.6);
+                fragColor = vec4(mix(c.rgb, clamp(tinted, 0.0, 1.0), clamp(u_amount, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .c("color", "颜色", 0xFFFF7A45));
+
+        add(new AmEffectDef("am_gradient_overlay", "渐变叠加", "AM · 生成", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
+                float t = clamp(dot(vUv - 0.5, dir) * max(u_scale, 0.01) + 0.5 + u_offset, 0.0, 1.0);
+                vec3 overlay = mix(u_start.rgb, u_end.rgb, t);
+                vec3 base = mix(u_start.rgb, u_end.rgb, t);
+                vec3 blended;
+                if (u_blend < 0.5) blended = base;
+                else if (u_blend < 1.5) blended = 1.0 - (1.0 - c.rgb) * (1.0 - base);
+                else if (u_blend < 2.5) blended = c.rgb * base;
+                else blended = min(c.rgb + base, vec3(1.0));
+                fragColor = vec4(mix(c.rgb, blended, clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("angle", "角度", -180F, 180F, 90F, 1F)
+            .p("offset", "偏移", -1F, 1F, 0F, 0.01F)
+            .p("scale", "缩放", 0.05F, 4F, 1F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .p("blend", "混合（0 正常 / 1 滤色 / 2 正片 / 3 相加）", 0F, 3F, 0F, 1F)
+            .c("start", "起始色", 0xFF1A2B6D)
+            .c("end", "结束色", 0xFFFFB86B));
+
+        add(new AmEffectDef("am_radial_gradient", "径向渐变", "AM · 生成", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                float dist = length((vUv - center) * vec2(Size.x / max(Size.y, 1.0), 1.0));
+                float t = 1.0 - smoothstep(max(u_radius, 0.001) * 0.5, max(u_radius, 0.001), dist);
+                vec3 base = mix(u_end.rgb, u_start.rgb, clamp(t, 0.0, 1.0));
+                vec3 blended;
+                if (u_blend < 0.5) blended = base;
+                else if (u_blend < 1.5) blended = 1.0 - (1.0 - c.rgb) * (1.0 - base);
+                else if (u_blend < 2.5) blended = c.rgb * base;
+                else blended = min(c.rgb + base, vec3(1.0));
+                fragColor = vec4(mix(c.rgb, blended, clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F)
+            .p("radius", "半径", 0.01F, 2F, 0.7F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .p("blend", "混合（0 正常 / 1 滤色 / 2 正片 / 3 相加）", 0F, 3F, 0F, 1F)
+            .c("start", "中心颜色", 0xFFFFE2A8)
+            .c("end", "边缘颜色", 0x00101828));
+
         add(new AmEffectDef("am_hex_shift", "六边形位移", "AM · 变形", """
             void main()
             {

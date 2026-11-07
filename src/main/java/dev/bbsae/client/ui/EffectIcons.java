@@ -40,6 +40,11 @@ final class EffectIcons
             return Icons.SHAPES;
         }
 
+        if (category.contains("透明度") || category.contains("不透明度"))
+        {
+            return Icons.VISIBLE;
+        }
+
         if (category.contains("模糊") || category.contains("锐化"))
         {
             return Icons.SPHERE;
