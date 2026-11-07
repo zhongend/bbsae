@@ -442,6 +442,16 @@ public final class ReplayEntityMask
          * test. */
         int depthSource = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
 
+        /* Authoritative world-frame size: ask the framebuffer's colour attachment, not the current
+         * viewport (BBS may have restored the window viewport already) and not the window size. */
+        int[] attached = FramebufferSize.of(depthSource);
+
+        if (attached != null)
+        {
+            lastWorldWidth = attached[0];
+            lastWorldHeight = attached[1];
+        }
+
         lastDepthSource = depthSource;
         lastDepthSourceValid = depthSource != 0;
 

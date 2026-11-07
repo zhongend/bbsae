@@ -102,7 +102,9 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIButton save;
     private final UIButton play;
     private final UIButton renderMode;
+    private final UIButton effectLibraryButton;
     private final UIButton projectsButton;
+    private UIEffectLibraryOverlay effectLibraryOverlay;
     private final UIButton exportFilm;
     private final UIButton replaySelector;
     private final UIIcon focusButton;
@@ -338,6 +340,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.replaySelector = CompUi.flat("回放：-", "选择这条合成对应的回放或影片；右键可切到其它影片", this::openReplaySelector);
         this.replaySelector.context(this::replayContextMenu);
 
+        this.effectLibraryButton = CompUi.flat("效果库", "打开带预览图的效果库（单击即可叠加到当前轨道）", this::openEffectLibrary);
+
         this.projectsButton = CompUi.flat("工程", "工程列表：保存当前工程并回到选择工程页面（也可在设置中打开）", () ->
         {
             this.save();
@@ -377,15 +381,16 @@ public class UICompositorPanel extends UIDashboardPanel
         this.prevFrame.relative(this.header).x(302).y(inset).w(control).h(control);
         this.nextFrame.relative(this.header).x(302 + control + 2).y(inset).w(control).h(control);
         this.timecode.relative(this.header).x(302 + control * 2 + 8).y(inset).w(86).h(control);
-        this.projectsButton.relative(this.header).x(1F, -360).y(inset).w(54).h(control);
-        this.save.relative(this.header).x(1F, -300).y(inset).w(48).h(control);
+        this.effectLibraryButton.relative(this.header).x(1F, -456).y(inset).w(54).h(control);
+        this.projectsButton.relative(this.header).x(1F, -396).y(inset).w(54).h(control);
+        this.save.relative(this.header).x(1F, -336).y(inset).w(48).h(control);
         this.exportFilm.relative(this.header).x(1F, -248).y(inset).w(54).h(control);
         this.renderMode.relative(this.header).x(1F, -190).y(inset).w(54).h(control);
         this.settingsButton.relative(this.header).x(1F, -132).y(inset).w(48).h(control);
         this.focusButton.relative(this.header).x(1F, -40).y(inset).w(control).h(control);
 
         this.header.add(this.title, this.replaySelector, this.play, this.prevFrame, this.nextFrame,
-            this.timecode, this.projectsButton, this.save, this.exportFilm, this.renderMode, this.settingsButton, this.focusButton);
+            this.timecode, this.effectLibraryButton, this.projectsButton, this.save, this.exportFilm, this.renderMode, this.settingsButton, this.focusButton);
 
         /* Left column: the two panels an editor actually browses from - effects and media.
          * The layer stack lives in the timeline's track headers; keeping a second layer list
@@ -5855,6 +5860,28 @@ public class UICompositorPanel extends UIDashboardPanel
 
     /* Asset library */
 
+    private void openEffectLibrary()
+    {
+        if (this.effectLibraryOverlay != null)
+        {
+            this.effectLibraryOverlay.removeFromParent();
+            this.effectLibraryOverlay = null;
+        }
+
+        this.effectLibraryOverlay = new UIEffectLibraryOverlay(this, () ->
+        {
+            if (this.effectLibraryOverlay != null)
+            {
+                this.effectLibraryOverlay.setVisible(false);
+                this.effectLibraryOverlay.removeFromParent();
+                this.effectLibraryOverlay = null;
+            }
+        });
+        this.effectLibraryOverlay.relative(this).x(0).y(0).w(1F).h(1F);
+        this.add(this.effectLibraryOverlay);
+        this.resize();
+    }
+
     private void openAssetBrowser(boolean replaceMode)
     {
         if (this.assetBrowser != null)
@@ -7481,6 +7508,11 @@ public class UICompositorPanel extends UIDashboardPanel
             catch (NumberFormatException ignored)
             {
             }
+        }
+
+        if (Boolean.getBoolean("bbsae.debugOpenEffectLibrary"))
+        {
+            this.openEffectLibrary();
         }
 
         switch (view)
@@ -9452,11 +9484,14 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void focusEffectLibrary()
     {
+        /* The full-screen library is the reference-style browser (previews, categories, search);
+         * the narrow left list stays available for quick keyboard-style use. */
         this.leftPage = 0;
         this.leftTabs.select(0);
         this.effectLibrary.setVisible(true);
         this.assetPanel.setVisible(false);
-        this.setStatus("在左侧效果库中双击效果，或选中后点“应用效果”");
+        this.openEffectLibrary();
+        this.setStatus("在效果库中单击效果即可叠加到当前轨道");
     }
 
     public void setInspectorPage(int page)

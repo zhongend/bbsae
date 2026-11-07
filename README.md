@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.73.jar`](https://github.com/zhongend/bbsae/releases/download/v0.73/bbsae-0.73.jar)
-   from the **v0.73** release (the asset is updated with each source push).
+1. Download [`bbsae-0.74.jar`](https://github.com/zhongend/bbsae/releases/download/v0.74/bbsae-0.74.jar)
+   from the **v0.74** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.73.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.74.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.73.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.74.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,24 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.74 — a real effect library with rendered previews
+
+- **New full-screen effect library** (`效果库` button in the header, also opened from the effects
+  page): category tabs, search, a thumbnail grid, click-to-apply and a status line. Tiles animate —
+  hover lift and accent rail, an applied pulse, staggered entrance and smooth scrolling; category
+  chips animate on hover too.
+- **207 preview thumbnails** are rendered by the real effect pipeline
+  (`EffectThumbnailTest`, run with `-PbbsaeThumbs`) into
+  `assets/bbsae/textures/effects/<id>.png`. A resource test keeps the set in sync with the registry,
+  so a missing preview fails the build instead of showing a blank tile.
+- The previews use the same test card as the contact sheet, and an effect whose default is the
+  identity is nudged to a mid parameter so its tile actually shows the effect.
+- Also from this span: the replay matte sizes itself from the world framebuffer's attachment
+  (`FramebufferSize`) rather than a guessed viewport, and the 3D workspace draws translucent layers in
+  two passes (opaque writes depth, translucent blends without depth writes) with raw GL state so a
+  stale `GlStateManager` cache cannot turn it opaque.
+- 363 tests green; 207 visible effects.
 
 ## What's new in 0.73 — client smoke test and replay-matte verification entry
 

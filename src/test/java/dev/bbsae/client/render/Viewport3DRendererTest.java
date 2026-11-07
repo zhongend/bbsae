@@ -132,6 +132,51 @@ public class Viewport3DRendererTest
         Viewport3DRenderer.draw(texture, world, projection, origin, origin, origin + size, origin + size, 1F);
     }
 
+    private static int[] renderPair(int farArgb, int nearArgb, boolean farFirst)
+    {
+        GlTexture farTexture = solid(farArgb);
+        GlTexture nearTexture = solid(nearArgb);
+        GlFramebuffer target = new GlFramebuffer(SIZE, SIZE, true);
+        Matrix4f projection = new Matrix4f().setOrtho(0F, SIZE, SIZE, 0F, -100F, 100F);
+
+        target.begin(0x00000000);
+
+        if (farFirst)
+        {
+            drawQuad(farTexture, projection, 0F);
+            drawQuad(nearTexture, projection, 40F);
+        }
+        else
+        {
+            drawQuad(nearTexture, projection, 40F);
+            drawQuad(farTexture, projection, 0F);
+        }
+
+        int[] pixels = target.readTopDown();
+
+        target.delete();
+        farTexture.delete();
+        nearTexture.delete();
+
+        return pixels;
+    }
+
+    @Test
+    public void translucentLayersBlendInsteadOfOccluding()
+    {
+        Assumptions.assumeTrue(Viewport3DRenderer.available(), "viewport 3D program unavailable");
+
+        int[] nearTranslucent = renderPair(0xFFFF0000, 0x600000FF, true);
+
+        assertTrue(((center(nearTranslucent) >> 16) & 0xFF) > 40,
+            "far red must show through a near translucent layer: " + Integer.toHexString(center(nearTranslucent)));
+        assertTrue((center(nearTranslucent) & 0xFF) > 40, "near blue must contribute");
+
+        int[] farTranslucent = renderPair(0x60FF0000, 0xFF0000FF, false);
+
+        assertEquals(0xFF0000FF, center(farTranslucent), "opaque near blue hides the translucent far red");
+    }
+
     @Test
     public void theNearerQuadWinsWhateverTheDrawOrder()
     {

@@ -56,6 +56,7 @@ public final class ShaderSources
         #version 150 core
         uniform sampler2D Source;
         uniform vec4 Tint;
+        uniform int AlphaMode;
         in vec2 vUv;
         out vec4 fragColor;
         void main()
@@ -63,6 +64,13 @@ public final class ShaderSources
             vec4 texel = texture(Source, vUv);
 
             if (texel.a < 0.004)
+            {
+                discard;
+            }
+
+            /* 0 = opaque pass (writes depth), 1 = translucent pass (blends, no depth write). A
+             * translucent layer must not occlude what is behind it. */
+            if (AlphaMode == 0 ? texel.a < 0.5 : texel.a >= 0.5)
             {
                 discard;
             }

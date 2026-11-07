@@ -42,7 +42,9 @@ public final class ImageTextureCache
             return null;
         }
 
-        if (path.startsWith("mc:") || path.startsWith("bbs:"))
+        /* Any resource-pack namespace (including this mod's "bbsae:") is loaded through the
+         * resource manager; project asset paths never contain a colon. */
+        if (path.indexOf(':') > 0 && !path.startsWith("/") && !path.contains("\\"))
         {
             return fromResource(path);
         }

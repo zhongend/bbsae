@@ -186,7 +186,7 @@ public class DepthPlaneCompositorTest
         Assumptions.assumeTrue(CompShaders.depthPlane != null && CompShaders.depthPlane.isValid(),
             "depth plane program unavailable");
 
-        int center = composeCenter(0xFFFF0000, 0x800000FF, true);
+        int center = composeCenter(0xFFFF0000, 0x600000FF, true);
 
         assertTrue(((center >> 16) & 0xFF) > 40, "the red far layer must remain visible through the translucent near one: " + Integer.toHexString(center));
         assertTrue((center & 0xFF) > 40, "the blue near layer must contribute: " + Integer.toHexString(center));
@@ -198,7 +198,7 @@ public class DepthPlaneCompositorTest
         Assumptions.assumeTrue(CompShaders.depthPlane != null && CompShaders.depthPlane.isValid(),
             "depth plane program unavailable");
 
-        int center = composeCenter(0x80FF0000, 0xFF0000FF, false);
+        int center = composeCenter(0x60FF0000, 0xFF0000FF, false);
 
         assertEquals(0xFF0000FF, center, "the opaque near layer owns the pixel");
     }

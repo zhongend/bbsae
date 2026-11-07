@@ -82,12 +82,12 @@ public final class Viewport3DRenderer
         GL15.glBufferData(GL15.GL_ARRAY_BUFFER, buffer, GL15.GL_STREAM_DRAW);
         MemoryUtil.memFree(buffer);
 
-        RenderSystem.enableDepthTest();
-        RenderSystem.depthFunc(GL11.GL_LEQUAL);
-        RenderSystem.depthMask(opacity >= 0.999F);
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.disableCull();
+        /* Raw GL, not GlStateManager: after a context change or a BBS raw-GL pass the cached state
+         * can claim blend/depth are already in the wanted state and skip the call, which left
+         * translucent layers opaque (and made GL tests order dependent). */
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GL11.glDisable(GL11.GL_CULL_FACE);
 
         program.use();
         PassRenderer.bindRaw(program, "Source", 0, texture.id);
@@ -95,7 +95,20 @@ public final class Viewport3DRenderer
         program.set("Tint", 1F, 1F, 1F, opacity);
 
         GL30.glBindVertexArray(vao);
+
+        /* Opaque part: writes depth so crossings resolve. */
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+        GL11.glDepthFunc(GL11.GL_LESS);
+        GL11.glDepthMask(opacity >= 0.999F);
+        program.set("AlphaMode", 0);
         GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
+
+        /* Translucent part: blends over what is already there, never writes depth. */
+        GL11.glDepthFunc(GL11.GL_LEQUAL);
+        GL11.glDepthMask(false);
+        program.set("AlphaMode", 1);
+        GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
+
         GL30.glBindVertexArray(0);
     }
 
