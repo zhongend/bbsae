@@ -2842,7 +2842,19 @@ public class UICompCurveEditor extends UIElement
              * pointer happens to be over a specific row. */
             if (CompInput.altDown())
             {
-                this.stepRowHeight(context.mouseWheel > 0 ? 2 : -2);
+                double wheel = context.mouseWheel;
+
+                if (Math.abs(wheel) < 0.0001D)
+                {
+                    wheel = context.mouseWheelHorizontal;
+                }
+
+                if (Math.abs(wheel) < 0.0001D)
+                {
+                    return super.subMouseScrolled(context);
+                }
+
+                this.stepRowHeight(wheel > 0D ? 2 : -2);
 
                 return true;
             }

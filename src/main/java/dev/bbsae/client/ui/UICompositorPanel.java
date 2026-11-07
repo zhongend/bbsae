@@ -4863,18 +4863,18 @@ public class UICompositorPanel extends UIDashboardPanel
         fitKeys.tooltip(IKey.constant("关键帧视图适配合成全长"));
 
         /* Visible XYZ-track row height controls, right in the drawer title bar. */
-        UIIcon drawerRowDown = new UIIcon(Icons.ARROW_DOWN, (icon) -> this.stepKeyframeRowHeight(-2));
-        UIIcon drawerRowUp = new UIIcon(Icons.ARROW_UP, (icon) -> this.stepKeyframeRowHeight(2));
+        UIIcon drawerZoomOut = new UIIcon(Icons.ARROW_DOWN, (icon) -> this.zoomKeyframeTime(-1));
+        UIIcon drawerZoomIn = new UIIcon(Icons.ARROW_UP, (icon) -> this.zoomKeyframeTime(1));
 
-        drawerRowDown.relative(this.keyframeDrawer).x(1F, -248).y(2).w(18).h(18);
-        drawerRowUp.relative(this.keyframeDrawer).x(1F, -228).y(2).w(18).h(18);
-        drawerRowDown.tooltip(IKey.constant("降低 XYZ 关键帧轨道高度（Alt+滚轮）"));
-        drawerRowUp.tooltip(IKey.constant("加高 XYZ 关键帧轨道高度（Alt+滚轮）"));
+        drawerZoomOut.relative(this.keyframeDrawer).x(1F, -248).y(2).w(18).h(18);
+        drawerZoomIn.relative(this.keyframeDrawer).x(1F, -228).y(2).w(18).h(18);
+        drawerZoomOut.tooltip(IKey.constant("缩小关键帧时间轴（Alt+滚轮）"));
+        drawerZoomIn.tooltip(IKey.constant("放大关键帧时间轴（Alt+滚轮）"));
 
         this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(1F, -22);
 
         this.keyframeDrawer.add(this.keyframeTitle, this.keyframeCurve, prevKey, addKey, nextKey, fitKeys,
-            closeKeyframes, drawerRowDown, drawerRowUp, this.keyframeEditor);
+            closeKeyframes, drawerZoomOut, drawerZoomIn, this.keyframeEditor);
 
         this.status = new UILabel(IKey.constant(""));
         this.status.color(0xFF8A94A6, false);
@@ -8448,6 +8448,13 @@ public class UICompositorPanel extends UIDashboardPanel
                     keyframes.debugSetTrackHeight(keyframeRowHeight);
                 }
 
+                int zoomSteps = Integer.getInteger("bbsae.keyframeZoomSteps", 0);
+
+                for (int i = 0; i < Math.abs(zoomSteps); i++)
+                {
+                    this.zoomKeyframeTime(zoomSteps > 0 ? 1 : -1);
+                }
+
                 return;
 
             case "onboarding":
@@ -10422,6 +10429,45 @@ public class UICompositorPanel extends UIDashboardPanel
     public void setInspectorPage(int page)
     {
         this.inspectorTabs.select(page);
+    }
+
+    /** Time-axis zoom for the keyframe drawer; the title-bar arrows call this. */
+    public void zoomKeyframeTime(int direction)
+    {
+        if (this.keyframeEditor.view == null)
+        {
+            return;
+        }
+
+        mchorse.bbs_mod.ui.utils.Scale axis = this.keyframeEditor.view.getXAxis();
+        double duration = Math.max(2D, this.getDurationTicks());
+        double min = axis.getMinValue();
+        double max = axis.getMaxValue();
+        double span = Math.max(1D, max - min);
+        double target = span * (direction > 0 ? 0.8D : 1.25D);
+
+        target = Math.max(2D, Math.min(duration, target));
+
+        double center = (min + max) * 0.5D;
+        double from = center - target * 0.5D;
+        double to = center + target * 0.5D;
+
+        if (from < 0D)
+        {
+            to -= from;
+            from = 0D;
+        }
+
+        if (to > duration)
+        {
+            from -= to - duration;
+            to = duration;
+        }
+
+        from = Math.max(0D, from);
+        axis.view(from, to);
+        this.setStatus(String.format(java.util.Locale.ROOT,
+            "关键帧时间轴 %s：%.0f–%.0f 帧", direction > 0 ? "放大" : "缩小", from, to));
     }
 
     /** Applies a dope-sheet row height from Settings or the editor's +/- buttons. */

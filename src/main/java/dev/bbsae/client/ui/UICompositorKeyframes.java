@@ -84,7 +84,22 @@ public class UICompositorKeyframes extends UIKeyframes
     {
         if (this.area.isInside(context) && CompInput.altDown())
         {
-            this.changeTrackHeight(context.mouseWheel > 0 ? 2 : -2);
+            /* The user asked for Alt+wheel to zoom the TIME axis from anywhere in the keyframe
+             * drawer, including over the XYZ track labels. BBS' dope sheet only zooms when the
+             * pointer is over the graph, so this path normalises the gesture. */
+            double wheel = context.mouseWheel;
+
+            if (Math.abs(wheel) < 0.0001D)
+            {
+                wheel = context.mouseWheelHorizontal;
+            }
+
+            if (Math.abs(wheel) < 0.0001D)
+            {
+                return super.subMouseScrolled(context);
+            }
+
+            this.panel.zoomKeyframeTime(wheel > 0D ? 1 : -1);
 
             return true;
         }

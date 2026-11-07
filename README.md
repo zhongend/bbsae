@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.85.jar`](https://github.com/zhongend/bbsae/releases/download/v0.85/bbsae-0.85.jar)
-   from the **v0.85** release (the asset is updated with each source push).
+1. Download [`bbsae-0.86.jar`](https://github.com/zhongend/bbsae/releases/download/v0.86/bbsae-0.86.jar)
+   from the **v0.86** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.85.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.86.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.85.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.86.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,19 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.86 — keyframe TIME-axis zoom
+
+- Clarified intent: the zoom needed in the XYZ keyframe drawer is the **time axis**, not row height.
+  The drawer title arrows now zoom the time axis in/out by setting the x-axis view around the current
+  centre, clamped to the composition duration.
+- Alt+wheel anywhere inside the keyframe drawer zooms the time axis, including over the XYZ track
+  labels; requests reported as a horizontal wheel are accepted too.
+- Row-height controls remain on the curve editor +/- buttons and the Settings sliders, independent of
+  time zoom.
+- Client screenshot: `docs/verify/round62-keyframe-timezoom.png` (ticks 0–10 s collapsed to a
+  120–350 frame window); project and prefs restored.
+- 375 tests green.
 
 ## What's new in 0.85 — drawer closes with the same slide
 
