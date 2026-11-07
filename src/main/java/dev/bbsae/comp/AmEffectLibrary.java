@@ -289,6 +289,111 @@ public final class AmEffectLibrary
             .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
             .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
 
+        add(new AmEffectDef("am_polar", "极坐标", "AM · 变形", """
+            void main()
+            {
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 p = (vUv - center) * 2.0;
+                float radius = length(p);
+                float angle = atan(p.y, p.x) + radians(u_angle);
+                vec2 polar = vec2(angle / 6.2831853 * max(u_repeat, 1.0) + 0.5,
+                                  radius * max(u_scale, 0.01));
+                polar = fract(polar);
+                vec2 warped = mix(vUv, polar, clamp(u_amount, 0.0, 1.0));
+                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0.5F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .p("angle", "旋转", -180F, 180F, 0F, 1F)
+            .p("scale", "半径缩放", 0.05F, 2F, 0.5F, 0.01F)
+            .p("repeat", "角向重复", 1F, 8F, 1F, 1F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_fractal_warp", "分形扭曲", "AM · 变形", """
+            void main()
+            {
+                vec2 warped = vUv;
+                vec2 noiseUv = vUv * max(u_scale, 0.01) + vec2(u_seed * 7.13);
+                float n1 = fbm(noiseUv, 4) - 0.5;
+                float n2 = fbm(noiseUv + 13.7, 4) - 0.5;
+                warped += vec2(n1, n2) * (u_amount / max(Size, vec2(1.0)));
+                vec4 c = texture(Source, clamp(warped, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0.5F, "amount")
+            .p("amount", "强度（像素）", 0F, 400F, 48F, 1F)
+            .p("scale", "细节", 0.5F, 40F, 6F, 0.1F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
+
+        add(new AmEffectDef("am_colorize", "色彩化", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = luma(c.rgb);
+                vec3 tinted = u_color.rgb * (0.25 + y * 1.5);
+                fragColor = vec4(clamp(mix(c.rgb, tinted, clamp(u_strength, 0.0, 1.0)), 0.0, 1.0), c.a);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 1F, 1F, 0.01F)
+            .c("color", "颜色", 0xFF4A90D9));
+
+        add(new AmEffectDef("am_replace_color", "替换颜色", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float distanceToTarget = length(c.rgb - u_target.rgb);
+                float hit = 1.0 - smoothstep(u_tolerance, u_tolerance + max(u_softness, 0.001), distanceToTarget);
+                vec3 rgb = mix(c.rgb, u_replacement.rgb, hit * clamp(u_strength, 0.0, 1.0));
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, "strength")
+            .p("tolerance", "容差", 0F, 1F, 0.15F, 0.01F)
+            .p("softness", "柔和度", 0.001F, 0.5F, 0.08F, 0.001F)
+            .p("strength", "强度", 0F, 1F, 1F, 0.01F)
+            .c("target", "目标颜色", 0xFF00FF00)
+            .c("replacement", "替换颜色", 0xFFFF8800));
+
+        add(new AmEffectDef("am_gradient_map", "渐变映射", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = clamp(luma(c.rgb), 0.0, 1.0);
+                vec3 mapped = mix(u_shadow.rgb, u_highlight.rgb, y);
+                vec3 rgb = mix(c.rgb, mapped, clamp(u_amount, 0.0, 1.0));
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .c("shadow", "阴影颜色", 0xFF101040)
+            .c("highlight", "高光颜色", 0xFFFFD070));
+
+        add(new AmEffectDef("am_radial_shadow", "径向阴影", "AM · 风格化", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 light = vec2(u_light_x, u_light_y);
+                vec2 toPixel = vUv - light;
+                float dist = length(toPixel);
+                vec2 direction = dist > 0.0001 ? toPixel / dist : vec2(0.0);
+                float size = u_size / max(Size.x, Size.y);
+                vec2 shadowUv = clamp(vUv + direction * size, 0.0, 1.0);
+                vec4 shadowSample = texture(Source, shadowUv);
+                float falloff = mix(1.0, clamp(1.0 - dist, 0.0, 1.0), clamp(u_fade, 0.0, 1.0));
+                float alpha = shadowSample.a * clamp(u_alpha, 0.0, 1.0) * falloff;
+                vec3 rgb = mix(u_color.rgb, c.rgb, c.a);
+                float outA = c.a + alpha * (1.0 - c.a);
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), clamp(outA, 0.0, 1.0));
+            }
+            """, 0.5F, "size")
+            .p("size", "距离", 0F, 300F, 30F, 1F)
+            .p("alpha", "不透明度", 0F, 1F, 0.6F, 0.01F)
+            .p("fade", "渐隐", 0F, 1F, 0.5F, 0.01F)
+            .p("light_x", "光源 X", 0F, 1F, 0.2F, 0.01F)
+            .p("light_y", "光源 Y", 0F, 1F, 0.2F, 0.01F)
+            .c("color", "阴影颜色", 0xFF000000));
+
         add(new AmEffectDef("am_pixelate", "像素化", "AM · 变形", """
             void main()
             {

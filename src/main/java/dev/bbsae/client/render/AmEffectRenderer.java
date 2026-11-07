@@ -160,6 +160,51 @@ public final class AmEffectRenderer
                 return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
             }
 
+            vec2 hash2(vec2 p)
+            {
+                p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+
+                return fract(sin(p) * 43758.5453);
+            }
+
+            float noise(vec2 p)
+            {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+
+                return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+                           mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+            }
+
+            float fbm(vec2 p, int octaves)
+            {
+                float value = 0.0;
+                float amplitude = 0.5;
+
+                for (int i = 0; i < 6; i++)
+                {
+                    if (i >= octaves)
+                    {
+                        break;
+                    }
+
+                    value += noise(p) * amplitude;
+                    p *= 2.03;
+                    amplitude *= 0.5;
+                }
+
+                return value;
+            }
+
+            mat2 rot(float a)
+            {
+                float s = sin(a);
+                float c = cos(a);
+
+                return mat2(c, s, -s, c);
+            }
+
             vec2 layerUv(vec2 uv)
             {
                 return vec2(dot(LayerU.xy, uv) + LayerU.z, dot(LayerV.xy, uv) + LayerV.z);

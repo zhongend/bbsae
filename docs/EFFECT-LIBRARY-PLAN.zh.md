@@ -45,9 +45,9 @@
 新增三层，效果不再需要写进 `EffectRenderer` 的巨型 switch：
 
 - `comp/AmEffectDef`：id、显示名、分类、参数表（float/color）、`main()` 片段、零点参数。
-- `comp/AmEffectLibrary`：13 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
-  弯曲、描边、收缩与膨胀、圆形波纹、万花筒、镜像、旋转扭曲、像素化），参数名/范围/默认值与
-  参考应用一致。
+- `comp/AmEffectLibrary`：19 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
+  弯曲、描边、收缩与膨胀、圆形波纹、万花筒、镜像、旋转扭曲、像素化、极坐标、分形扭曲、
+  色彩化、替换颜色、渐变映射、径向阴影），参数名/范围/默认值与参考应用一致。
 - `client/render/AmEffectRenderer`：按定义拼装完整 fragment（标准 uniform + 参数 uniform +
   共享 `luma/rgb2hsv/hsv2rgb/hash`），懒编译并缓存；`sources()` 供无头编译测试逐条验证。
 - `CompEffectRegistry` 在启动时把定义复制成普通条目，因此效果库、参数滑杆、颜色选择器、
@@ -136,8 +136,10 @@ switch 中拆出来：
 3. **模糊**：box/gaussian/directional/lens/radial/motion/chromatic/mask blur（复用已有两次
    ping-pong 模糊骨架，按 AM 的半径/质量参数暴露）
 4. **调色**：brightness/contrast、exposure、hue/sat、color balance、temperature、levels、
-   curves、posterize、threshold、gradient map、duotone/palette、long shadow、glow/shadow 家族
+   curves、posterize、threshold、gradient map（已完成）、colorize（已完成）、replace color
+   （已完成）、duotone/palette、glow/shadow 家族（径向阴影已完成）
 4.5 **零点审计与图标**（已完成；见 2.3 / 2.4）
+4.6 **第三批**（极坐标、分形扭曲、色彩化、替换颜色、渐变映射、径向阴影；已完成）
 5. **生成/风格化**：checker、grid、stripes、starfield、clouds、halftone、scanline、noise grain
    （噪点与颗粒按要求保持现状）
 6. **3D 与文字**：s3d-* 形状与 text 效果（依赖 3D 管线，放到最后一批）

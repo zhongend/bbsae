@@ -37,7 +37,7 @@ public class AmEffectLibraryTest
             assertTrue(definition.body.contains("fragColor"), "body writes no colour: " + definition.id);
         }
 
-        assertTrue(ids.size() >= 13, "the distort batch should have grown the catalogue");
+        assertTrue(ids.size() >= 19, "the catalogue should have grown with the third batch");
     }
 
     @Test
@@ -70,6 +70,12 @@ public class AmEffectLibraryTest
         assertNeutral("am_circular_ripple", "strength", 0F);
         assertNeutral("am_swirl", "angle", 0F);
         assertNeutral("am_mirror_warp", "strength", 0F);
+        assertNeutral("am_polar", "amount", 0F);
+        assertNeutral("am_fractal_warp", "amount", 0F);
+        assertNeutral("am_colorize", "strength", 0F);
+        assertNeutral("am_replace_color", "strength", 0F);
+        assertNeutral("am_gradient_map", "amount", 0F);
+        assertNeutral("am_radial_shadow", "size", 0F);
 
         CompEffect balance = CompEffectRegistry.create("am_color_balance", 1);
 
