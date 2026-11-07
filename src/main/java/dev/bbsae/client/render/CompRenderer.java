@@ -1338,8 +1338,11 @@ public final class CompRenderer
         /* A backdrop-reading effect must run after projection, where the accumulated composition
          * below the layer exists; the baked 3D raster has no backdrop to sample. */
         boolean comp = dev.bbsae.comp.AmEffectLibrary.usesComp(effect.type);
+        /* A mesh shape is projected with the layer's own world matrix, so baking it into a
+         * layer-local raster would apply that transform twice. */
+        boolean mesh = MeshRenderer.supports(effect.type);
 
-        return !effectsBaked || depth || comp;
+        return !effectsBaked || depth || comp || mesh;
     }
 
     /**

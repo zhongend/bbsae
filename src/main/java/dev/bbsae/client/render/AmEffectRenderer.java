@@ -110,6 +110,7 @@ public final class AmEffectRenderer
         program.set("Size", pixelWidth, pixelHeight);
         program.set("Texel", 1F / pixelWidth, 1F / pixelHeight);
         program.set("LayerTexel", 1F / Math.max(1F, space.width), 1F / Math.max(1F, space.height));
+        program.set("LocalSource", context != null && context.layerLocalPass ? 1 : 0);
         program.set("Time", context == null ? 0F : context.time);
 
         for (AmEffectDef.Param param : definition.params)
@@ -188,6 +189,7 @@ public final class AmEffectRenderer
             uniform vec2 LayerY;
             uniform vec2 LayerOrigin;
             uniform float Time;
+            uniform int LocalSource;
 
             in vec2 vUv;
             out vec4 fragColor;
@@ -283,6 +285,11 @@ public final class AmEffectRenderer
 
             vec4 sampleLayer(vec2 luv)
             {
+                if (LocalSource == 1)
+                {
+                    return texture(Source, clamp(luv, vec2(0.0), vec2(1.0)));
+                }
+
                 return texture(Source, clamp(localToCompUv(luv), vec2(0.0), vec2(1.0)));
             }
 

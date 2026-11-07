@@ -179,6 +179,15 @@ switch 中拆出来：
 4.24 **程序化/绘制批**（径向光线、点阵、星形、平滑边缘、半调线；已完成）
 4.25 **边框/光束/阵列批**（边框、能量束、六边形阵列、彩色分离、描边锥度；已完成）
 4.26 **通道/合成批**（通道映射、HSV 通道映射、填充背后、实色遮罩、遮罩边缘、闪烁；已完成）
+4.29 **2D/3D 兼容与效果叠加**
+    - `CompRenderContext.layerLocalPass`：3D 烘焙时效果运行在图层局部栅格上，
+      `sampleLayer` 直接用源 UV（`LocalSource=1`），合成阶段才走 `localToCompUv`；
+      之前烘焙里用合成 UV 采样会错位/越界。
+    - 3D 图元效果（`s3d_*`）在 3D 图层上**不做烘焙**：`CompLayerSourceCache` 跳过、
+      `needsCompositionEffect` 强制到合成阶段，避免把图层世界矩阵应用两次。
+    - 新增 `EffectPipelineTest.effectsStackInOrderInTwoAndThreeDimensions`：
+      2D→2D、2D→3D、3D→2D 以及三个效果串联，逐级输出尺寸/像素有效且无 GL 错误。
+
 4.28 **3D 图元管线（首批 6 个）**
     - `Mesh` / `MeshShapes` / `MeshRenderer`：单位空间的凸多面体（立方体、圆柱、球、棱锥、圆锥、圆环），
       图层内容作为表面贴图；

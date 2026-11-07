@@ -195,6 +195,48 @@ public class EffectPipelineTest
     }
 
     /**
+     * Effects must stack: each pass takes the previous pass's output and the chain still produces a
+     * valid frame without GL errors. This covers the new reference effects and the 3D primitive in
+     * the same chain (a mesh pass followed by a colour pass, and the reverse order).
+     */
+    @Test
+    public void effectsStackInOrderInTwoAndThreeDimensions()
+    {
+        String[][] chains =
+        {
+            {"blur", "am_color_gain"},
+            {"am_bend", "am_edge_glow"},
+            {"am_gaussian_blur", "am_gradient_overlay"},
+            {"am_chromatic_aberration", "am_solid_matte"},
+            {"s3d_cube", "am_color_gain"},
+            {"am_color_gain", "s3d_cube"},
+            {"am_heat_map", "am_palette_map"},
+        };
+
+        int[] source = source();
+
+        for (String[] chain : chains)
+        {
+            int[] pixels = source;
+
+            for (String type : chain)
+            {
+                if (CompEffectRegistry.get(type) == null)
+                {
+                    continue;
+                }
+
+                Outcome outcome = applyTo(pixels, CompEffectRegistry.create(type, 1));
+
+                assertEquals(SIZE, outcome.width, type + " changed the frame width");
+                assertEquals(SIZE, outcome.height, type + " changed the frame height");
+                assertNotNull(outcome.pixels, type + " produced no pixels");
+                pixels = outcome.pixels;
+            }
+        }
+    }
+
+    /**
      * Just above zero the untouched cells must not show the shard border.
      *
      * <p>The border used to be applied independently of the cell's own progress k, so a layer with

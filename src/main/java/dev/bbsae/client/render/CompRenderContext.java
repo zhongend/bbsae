@@ -62,6 +62,13 @@ public final class CompRenderContext
      */
     public GlFramebuffer backdrop;
 
+    /**
+     * True while effects run on a layer-local raster (the 3D bake) rather than on a
+     * composition-sized target. Layer-space shaders then address the source in its own 0..1 UVs
+     * instead of mapping layer pixels back through the composition.
+     */
+    public boolean layerLocalPass;
+
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> localCache = new java.util.IdentityHashMap<>();
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> worldCache = new java.util.IdentityHashMap<>();
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> modelCache = new java.util.IdentityHashMap<>();

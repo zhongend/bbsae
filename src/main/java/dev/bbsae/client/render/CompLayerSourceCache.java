@@ -522,6 +522,12 @@ public final class CompLayerSourceCache
             }
         }
 
+        boolean previousLocalPass = context.layerLocalPass;
+
+        context.layerLocalPass = true;
+
+        try
+        {
         if (hasEffects)
         for (CompEffect effect : layer.effects)
         {
@@ -536,7 +542,7 @@ public final class CompLayerSourceCache
              * effects need the accumulated comp below the layer - none of them exist inside the
              * layer-local bake, so they run once in the composition pass instead. */
             if (type.startsWith("depth_") || "shake".equals(type)
-                || dev.bbsae.comp.AmEffectLibrary.usesComp(type))
+                || dev.bbsae.comp.AmEffectLibrary.usesComp(type) || MeshRenderer.supports(type))
             {
                 continue;
             }
@@ -556,6 +562,11 @@ public final class CompLayerSourceCache
             {
                 dev.bbsae.BbsAeAddon.LOGGER.error("Viewport effect {} failed on layer {}", type, layer.id, e);
             }
+        }
+        }
+        finally
+        {
+            context.layerLocalPass = previousLocalPass;
         }
 
         /* Styles are part of what the layer looks like, not a post-projection annotation: a drop

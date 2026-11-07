@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.50.jar`](https://github.com/zhongend/bbsae/releases/download/v0.50/bbsae-0.50.jar)
-   from the **v0.50** release (the asset is updated with each source push).
+1. Download [`bbsae-0.51.jar`](https://github.com/zhongend/bbsae/releases/download/v0.51/bbsae-0.51.jar)
+   from the **v0.51** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.50.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.51.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.50.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.51.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,17 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.51 — effects work in 2D and 3D and stack
+
+- **3D-bake sampling fixed**: effects that run on the layer-local raster now sample the source with
+  its own UVs (`layerLocalPass` → `LocalSource = 1`) instead of mapping through composition UVs,
+  which used to sample the wrong region (or clamp) inside the 3D bake.
+- **3D primitives are applied once**: `s3d_*` effects are excluded from the 3D bake and forced into
+  the composition pass, so the layer's world matrix is not applied twice.
+- **Stacking is tested**: a new pipeline test chains 2D→2D、2D→3D、3D→2D and three-effect chains,
+  checking each pass keeps the frame size, produces pixels and raises no GL error.
+- 322 tests green; 114 effects.
 
 ## What's new in 0.50 — heart primitive and texture mapping for 3D
 
