@@ -61,7 +61,8 @@ public final class EffectRenderer
             types.add(definition.id);
         }
 
-        for (String shape : new String[] {"cube", "cylinder", "sphere", "pyramid", "cone", "torus"})
+        for (String shape : new String[] {"cube", "cylinder", "sphere", "pyramid", "cone", "torus",
+            "ring", "plus", "octahedron", "hexprism", "triprism", "starprism"})
         {
             types.add("s3d_" + shape);
         }

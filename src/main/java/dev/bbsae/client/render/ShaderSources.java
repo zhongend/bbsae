@@ -25,11 +25,15 @@ public final class ShaderSources
         #version 150 core
         in vec3 Position;
         in vec2 UV;
+        in vec3 Normal;
         uniform mat4 Mvp;
+        uniform mat4 NormalMatrix;
         out vec2 vUv;
+        out vec3 vNormal;
         void main()
         {
             vUv = UV;
+            vNormal = (NormalMatrix * vec4(Normal, 0.0)).xyz;
             gl_Position = Mvp * vec4(Position, 1.0);
         }
         """;
@@ -38,13 +42,23 @@ public final class ShaderSources
         #version 150 core
 
         uniform sampler2D Source;
+        uniform vec3 LightDir;
+        uniform float Ambient;
+        uniform float Intensity;
+        uniform float Shine;
 
         in vec2 vUv;
+        in vec3 vNormal;
         out vec4 fragColor;
 
         void main()
         {
-            fragColor = texture(Source, vUv);
+            vec4 texel = texture(Source, vUv);
+            float ndl = max(dot(normalize(vNormal), normalize(LightDir)), 0.0);
+            float diffuse = clamp(Ambient + Intensity * ndl, 0.0, 2.0);
+            float specular = pow(ndl, max(Shine, 1.0)) * 0.25 * Intensity;
+            vec3 rgb = clamp(texel.rgb * diffuse + vec3(specular), 0.0, 1.0);
+            fragColor = vec4(rgb, texel.a);
         }
         """;
 

@@ -20,8 +20,8 @@ import java.nio.IntBuffer;
  */
 public final class Mesh
 {
-    /** Position (3) + UV (2). */
-    static final int STRIDE = 5;
+    /** Position (3) + UV (2) + normal (3). */
+    static final int STRIDE = 8;
 
     final float[] data;
     final int[] indices;
@@ -80,6 +80,8 @@ public final class Mesh
         GL20.glVertexAttribPointer(0, 3, GL11.GL_FLOAT, false, STRIDE * 4, 0L);
         GL20.glEnableVertexAttribArray(1);
         GL20.glVertexAttribPointer(1, 2, GL11.GL_FLOAT, false, STRIDE * 4, 3L * 4L);
+        GL20.glEnableVertexAttribArray(2);
+        GL20.glVertexAttribPointer(2, 3, GL11.GL_FLOAT, false, STRIDE * 4, 5L * 4L);
 
         GL30.glBindVertexArray(0);
     }

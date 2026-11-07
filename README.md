@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.48.jar`](https://github.com/zhongend/bbsae/releases/download/v0.48/bbsae-0.48.jar)
-   from the **v0.48** release (the asset is updated with each source push).
+1. Download [`bbsae-0.49.jar`](https://github.com/zhongend/bbsae/releases/download/v0.49/bbsae-0.49.jar)
+   from the **v0.49** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.48.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.49.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.48.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.49.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,14 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.49 — twelve 3D primitives with lighting
+
+- Six more primitives: **环形, 十字棱柱, 八面体, 六棱柱, 三棱柱, 星形棱柱** (`AM · 3D 形状`).
+- Mesh vertices now carry **normals**; the fragment stage applies directional diffuse + specular
+  shading (光照角度/高度/强度、环境光、高光锐度) using a normal matrix derived from the MVP.
+- 113 effects total (101 2D + 12 3D); the contact sheet shows all twelve primitives rendering.
+- 321 tests green.
 
 ## What's new in 0.48 — real 3D primitives
 

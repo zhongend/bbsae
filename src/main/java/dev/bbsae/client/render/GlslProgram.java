@@ -38,6 +38,7 @@ public final class GlslProgram
         /* Mesh programs also use a UV attribute. Binding it here keeps every program on the same
          * attribute layout; programs without a UV input simply ignore it. */
         GL20.glBindAttribLocation(this.id, 1, "UV");
+        GL20.glBindAttribLocation(this.id, 2, "Normal");
         GL20.glLinkProgram(this.id);
         GL20.glDeleteShader(vs);
         GL20.glDeleteShader(fs);

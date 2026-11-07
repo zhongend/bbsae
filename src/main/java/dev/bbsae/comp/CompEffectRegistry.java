@@ -530,6 +530,12 @@ public final class CompEffectRegistry
         addS3d("pyramid", "棱锥");
         addS3d("cone", "圆锥");
         addS3d("torus", "圆环");
+        addS3d("ring", "环形");
+        addS3d("plus", "十字棱柱");
+        addS3d("octahedron", "八面体");
+        addS3d("hexprism", "六棱柱");
+        addS3d("triprism", "三棱柱");
+        addS3d("starprism", "星形棱柱");
     }
 
     private static void addS3d(String shape, String name)
@@ -539,7 +545,12 @@ public final class CompEffectRegistry
             .p("rotate_y", "旋转 Y", -180F, 180F, 35F, 1F)
             .p("rotate_z", "旋转 Z", -180F, 180F, 0F, 1F)
             .p("depth", "厚度", 0.05F, 2F, 0.5F, 0.01F)
-            .p("scale", "缩放", 0.1F, 3F, 1F, 0.01F));
+            .p("scale", "缩放", 0.1F, 3F, 1F, 0.01F)
+            .p("light_angle", "光照角度", -180F, 180F, 135F, 1F)
+            .p("light_elevation", "光照高度", -90F, 90F, 35F, 1F)
+            .p("light_intensity", "光照强度", 0F, 2F, 0.9F, 0.01F)
+            .p("ambient", "环境光", 0F, 1F, 0.35F, 0.01F)
+            .p("shine", "高光锐度", 1F, 128F, 24F, 1F));
     }
 
     private static void add(Definition definition)

@@ -21,7 +21,9 @@ import java.util.Map;
 public final class MeshRenderer
 {
     private static final Map<String, Mesh> MESHES = new HashMap<>();
-    private static final String[] SHAPES = {"cube", "cylinder", "sphere", "pyramid", "cone", "torus"};
+    private static final String[] SHAPES =
+        {"cube", "cylinder", "sphere", "pyramid", "cone", "torus", "ring", "plus", "octahedron",
+            "hexprism", "triprism", "starprism"};
 
     private MeshRenderer()
     {}
@@ -87,6 +89,18 @@ public final class MeshRenderer
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
         program.set("Mvp", mvp);
+
+        Matrix4f normalMatrix = new Matrix4f(mvp).invert().transpose();
+        program.set("NormalMatrix", normalMatrix);
+        float azimuth = (float) Math.toRadians(effect.valueF("light_angle", 135F));
+        float elevation = (float) Math.toRadians(effect.valueF("light_elevation", 35F));
+        program.set("LightDir",
+            (float) Math.cos(elevation) * (float) Math.cos(azimuth),
+            (float) Math.sin(elevation),
+            (float) Math.cos(elevation) * (float) Math.sin(azimuth));
+        program.set("Ambient", Math.max(0F, effect.valueF("ambient", 0.35F)));
+        program.set("Intensity", Math.max(0F, effect.valueF("light_intensity", 0.9F)));
+        program.set("Shine", Math.max(1F, effect.valueF("shine", 24F)));
         mesh.draw();
         GL11.glFrontFace(GL11.GL_CCW);
         GlStateManager._disableCull();
@@ -103,6 +117,12 @@ public final class MeshRenderer
             case "pyramid" -> MeshShapes.pyramid(4);
             case "cone" -> MeshShapes.cone(24);
             case "torus" -> MeshShapes.torus(24, 12);
+            case "ring" -> MeshShapes.ring(32);
+            case "plus" -> MeshShapes.plus();
+            case "octahedron" -> MeshShapes.octahedron();
+            case "hexprism" -> MeshShapes.prism(6);
+            case "triprism" -> MeshShapes.prism(3);
+            case "starprism" -> MeshShapes.starPrism(5);
             default -> MeshShapes.cube();
         });
     }
