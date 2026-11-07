@@ -512,7 +512,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private float gizmoDirX;
             private float gizmoDirY;
             private float gizmoPixelsPerUnit;
-            private int gizmoMode = GIZMO_MOVE;
+            private int gizmoMode = GIZMO_SCALE;
             private float gizmoStartScaleX;
             private float gizmoStartScaleY;
             private float gizmoStartScaleZ;
@@ -1224,23 +1224,34 @@ public class UICompositorPanel extends UIDashboardPanel
                             this.line(context, quad[i * 2], quad[i * 2 + 1], quad[j * 2], quad[j * 2 + 1], color);
                         }
 
-                        for (int i = 0; i < 4; i++)
+                        /* Handles belong to the scale mode: showing arrows and grips at the same time
+                         * was the main "too busy" complaint. BBS' placement gizmo likewise has one
+                         * box and its grips. */
+                        if (this.gizmoMode == GIZMO_SCALE)
                         {
-                            context.batcher.box(quad[i * 2] - 5F, quad[i * 2 + 1] - 5F,
-                                quad[i * 2] + 5F, quad[i * 2 + 1] + 5F, this.overlayColor(0xFF101418));
-                            context.batcher.box(quad[i * 2] - 4F, quad[i * 2 + 1] - 4F,
-                                quad[i * 2] + 4F, quad[i * 2 + 1] + 4F, this.overlayColor(0xFFFFFFFF));
-                        }
+                            for (int i = 0; i < 4; i++)
+                            {
+                                context.batcher.box(quad[i * 2] - 7F, quad[i * 2 + 1] - 7F,
+                                    quad[i * 2] + 7F, quad[i * 2 + 1] + 7F, this.overlayColor(0xFF101418));
+                                context.batcher.box(quad[i * 2] - 6F, quad[i * 2 + 1] - 6F,
+                                    quad[i * 2] + 6F, quad[i * 2 + 1] + 6F, this.overlayColor(0xFFFFFFFF));
+                            }
 
-                        /* Edge grips: the BBS placement gizmo's single-axis scale handles. */
-                        for (int i = 0; i < 4; i++)
-                        {
-                            int j = (i + 1) % 4;
-                            float mx = (quad[i * 2] + quad[j * 2]) * 0.5F;
-                            float my = (quad[i * 2 + 1] + quad[j * 2 + 1]) * 0.5F;
+                            for (int i = 0; i < 4; i++)
+                            {
+                                int j = (i + 1) % 4;
+                                float mx = (quad[i * 2] + quad[j * 2]) * 0.5F;
+                                float my = (quad[i * 2 + 1] + quad[j * 2 + 1]) * 0.5F;
 
-                            context.batcher.box(mx - 4F, my - 4F, mx + 4F, my + 4F, this.overlayColor(0xFF101418));
-                            context.batcher.box(mx - 3F, my - 3F, mx + 3F, my + 3F, this.overlayColor(0xFFFFFFFF));
+                                context.batcher.box(mx - 5F, my - 5F, mx + 5F, my + 5F, this.overlayColor(0xFF101418));
+                                context.batcher.box(mx - 4F, my - 4F, mx + 4F, my + 4F, this.overlayColor(0xFFFFFFFF));
+                            }
+
+                            float cx = (quad[0] + quad[2] + quad[4] + quad[6]) * 0.25F;
+                            float cy = (quad[1] + quad[3] + quad[5] + quad[7]) * 0.25F;
+
+                            context.batcher.box(cx - 7F, cy - 7F, cx + 7F, cy + 7F, this.overlayColor(0xFF101418));
+                            context.batcher.box(cx - 6F, cy - 6F, cx + 6F, cy + 6F, this.overlayColor(0xFFFFFFFF));
                         }
                     }
 
@@ -1510,7 +1521,8 @@ public class UICompositorPanel extends UIDashboardPanel
                                            CompRenderContext renderContext,
                                            dev.bbsae.client.render.CompViewportCamera camera)
             {
-                if (!CompPrefs.get().selectionBoxes || layer == null || layer.locked)
+                if (!CompPrefs.get().selectionBoxes || this.gizmoMode != GIZMO_SCALE
+                    || layer == null || layer.locked)
                 {
                     return -1;
                 }
@@ -1523,10 +1535,18 @@ public class UICompositorPanel extends UIDashboardPanel
                     return -1;
                 }
 
+                float cx = (quad[0] + quad[2] + quad[4] + quad[6]) * 0.25F;
+                float cy = (quad[1] + quad[3] + quad[5] + quad[7]) * 0.25F;
+
+                if (Math.abs(context.mouseX - cx) <= 12F && Math.abs(context.mouseY - cy) <= 12F)
+                {
+                    return 30;
+                }
+
                 for (int i = 0; i < 4; i++)
                 {
-                    if (Math.abs(context.mouseX - quad[i * 2]) <= 9F
-                        && Math.abs(context.mouseY - quad[i * 2 + 1]) <= 9F)
+                    if (Math.abs(context.mouseX - quad[i * 2]) <= 11F
+                        && Math.abs(context.mouseY - quad[i * 2 + 1]) <= 11F)
                     {
                         return 10 + i;
                     }
@@ -1538,7 +1558,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     float mx = (quad[i * 2] + quad[j * 2]) * 0.5F;
                     float my = (quad[i * 2 + 1] + quad[j * 2 + 1]) * 0.5F;
 
-                    if (Math.abs(context.mouseX - mx) <= 8F && Math.abs(context.mouseY - my) <= 8F)
+                    if (Math.abs(context.mouseX - mx) <= 10F && Math.abs(context.mouseY - my) <= 10F)
                     {
                         return 20 + i;
                     }
@@ -1572,6 +1592,18 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.startWorld.set(world);
                 this.startInverse.set(world).invert();
                 this.startPlaneValid = true;
+
+                float[] quad = dev.bbsae.client.render.CompViewportRenderer.layerQuad(
+                    renderContext, layer, camera, this.area.x, this.area.y);
+
+                if (quad != null)
+                {
+                    this.startScreenCenterX = (quad[0] + quad[2] + quad[4] + quad[6]) * 0.25F;
+                    this.startScreenCenterY = (quad[1] + quad[3] + quad[5] + quad[7]) * 0.25F;
+                    this.startScreenDistance = Math.max(1F, (float) Math.sqrt(
+                        (context.mouseX - this.startScreenCenterX) * (context.mouseX - this.startScreenCenterX)
+                        + (context.mouseY - this.startScreenCenterY) * (context.mouseY - this.startScreenCenterY)));
+                }
             }
 
             /**
@@ -1691,7 +1723,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 int x = this.area.x + 8;
                 /* Above the bottom HUD: the top strip belongs to the preview's own toolbar, and
                  * the first version of this bar was hidden underneath it. */
-                int y = this.area.ey() - 94;
+                int y = this.area.ey() - 100;
                 int width = 58;
                 int height = 18;
 
@@ -1716,7 +1748,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 String[] labels = {"W 移动", "E 缩放", "R 旋转"};
                 int x = this.area.x + 8;
-                int y = this.area.ey() - 94;
+                int y = this.area.ey() - 100;
 
                 for (int i = 0; i < 3; i++)
                 {
@@ -3081,6 +3113,22 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (this.dragMode == DRAG_BOX_3D)
                 {
+                    if (this.dragHandle == 30)
+                    {
+                        float distance = (float) Math.sqrt(
+                            (context.mouseX - this.startScreenCenterX) * (context.mouseX - this.startScreenCenterX)
+                            + (context.mouseY - this.startScreenCenterY) * (context.mouseY - this.startScreenCenterY));
+                        float factor = Math.max(0.01F, distance / Math.max(1F, this.startScreenDistance));
+                        float sx = Math.max(0.01F, Math.min(100F, this.startScaleX * factor));
+                        float sy = Math.max(0.01F, Math.min(100F, this.startScaleY * factor));
+
+                        this.writeTransform(layer, sx, sy, null);
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                            "等比缩放 X %.0f%%  Y %.0f%%", sx * 100F, sy * 100F));
+
+                        return;
+                    }
+
                     float[] boxLocal = this.viewportLocalPoint(context, layer,
                         this.viewportContext(), this.viewport(), this.startWorld);
 
