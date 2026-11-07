@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.56.jar`](https://github.com/zhongend/bbsae/releases/download/v0.56/bbsae-0.56.jar)
-   from the **v0.56** release (the asset is updated with each source push).
+1. Download [`bbsae-0.57.jar`](https://github.com/zhongend/bbsae/releases/download/v0.57/bbsae-0.57.jar)
+   from the **v0.57** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.56.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.57.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.56.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.57.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,16 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.57 — text inspector verified in the real client
+
+- Added `bbsae.debugSelectLayer`: a verification hook that selects a layer by name **or text
+  content**, so screenshots can show a page for that layer type without mouse input.
+- The debug demo scene now includes a text layer (`文字效果 Aa 123`) and applies `s3d_cube` to the
+  3D card, exercising the text inspector and the projected-pass mesh path in one launch.
+- `docs/verify/round30-textfx4.png` shows the 文字 page: 文字模式, 打字进度, 随机字符比例, 随机种子,
+  计数器偏移/倍率 — and the text rendering in the viewport.
+- 334 tests green; 130 effects.
 
 ## What's new in 0.56 — text content effects
 

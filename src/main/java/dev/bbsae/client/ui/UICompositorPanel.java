@@ -7409,6 +7409,27 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         }
 
+        /* Verification hook: select a layer by (case-insensitive) name substring so screenshots can
+         * show a page for that layer type without mouse input. */
+        String debugLayer = System.getProperty("bbsae.debugSelectLayer", "");
+
+        if (!debugLayer.isBlank() && this.doc != null)
+        {
+            for (CompLayer candidate : this.doc.layers)
+            {
+                String wanted = debugLayer.toLowerCase(java.util.Locale.ROOT);
+                String layerName = candidate == null || candidate.name == null ? "" : candidate.name.toLowerCase(java.util.Locale.ROOT);
+                String layerText = candidate == null || candidate.text == null ? "" : candidate.text.toLowerCase(java.util.Locale.ROOT);
+
+                if (candidate != null && (layerName.contains(wanted) || layerText.contains(wanted)))
+                {
+                    this.selectLayer(candidate);
+
+                    break;
+                }
+            }
+        }
+
         String debugScroll = System.getProperty("bbsae.debugInspectorScroll", "");
 
         if (!debugScroll.isBlank())
@@ -7901,6 +7922,19 @@ public class UICompositorPanel extends UIDashboardPanel
         shape.effects.add(gradient);
         this.doc.layers.add(shape);
 
+        /* Verification layer for the text-content features (timecode/counter/scramble/reveal):
+         * the 文字 inspector page needs a real text layer selected. */
+        CompLayer textDemo = new CompLayer("text_demo", "文字", "text");
+        textDemo.x = this.doc.width / 2F;
+        textDemo.y = this.doc.height / 2F + 180F;
+        textDemo.width = 900F;
+        textDemo.height = 160F;
+        textDemo.fontSize = 64F;
+        textDemo.text = "文字效果 Aa 123";
+        textDemo.color = 0xFFFFFFFF;
+        textDemo.out = this.doc.duration;
+        this.doc.layers.add(textDemo);
+
         CompLayer nullLayer = new CompLayer("null_ctrl", "Null Controller", "null");
         nullLayer.x = this.doc.width / 2F - 300F;
         nullLayer.y = this.doc.height / 2F - 200F;
@@ -7922,6 +7956,11 @@ public class UICompositorPanel extends UIDashboardPanel
         cardGradient.putColor("end", 0xFF06B6D4);
         cardGradient.put("angle", 45D);
         card3D.effects.add(cardGradient);
+
+        /* Verification scenario: a mesh effect on a 3D layer exercises the projected-pass path
+         * and the bake split in the real client. */
+        card3D.effects.add(CompEffectRegistry.create("s3d_cube", 1));
+
         this.doc.layers.add(card3D);
 
         CompLayer camera = new CompLayer("camera_3d", "3D Camera", "camera");
