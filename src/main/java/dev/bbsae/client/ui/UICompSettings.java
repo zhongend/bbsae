@@ -721,6 +721,20 @@ public class UICompSettings extends UIElement
             prefs.previewHints = value;
             CompPrefs.save();
         }), 170, "预览里的模式/摄像机 HUD、分辨率条和看穿提示；关闭后画面更干净"));
+        this.add(this.row("关键帧轨道高度", this.slider(prefs.keyframeRowHeight > 0 ? prefs.keyframeRowHeight : 24,
+            12F, 60F, (value) ->
+        {
+            prefs.keyframeRowHeight = (int) Math.round(value);
+            CompPrefs.markDirty();
+            this.panel.applyKeyframeRowHeight((int) Math.round(value));
+        }), 170, "关键帧编辑器左侧轨道行高；也可在编辑器右上角用 +/- 按钮或 Alt+滚轮"));
+        this.add(this.row("时间轴轨道高度", this.slider(prefs.timelineRowHeight > 0 ? prefs.timelineRowHeight : 26,
+            18F, 62F, (value) ->
+        {
+            prefs.timelineRowHeight = (int) Math.round(value);
+            CompPrefs.markDirty();
+            this.panel.applyTimelineRowHeight((int) Math.round(value));
+        }), 170, "主时间轴每条轨道的行高；Alt+滚轮也可调整"));
     }
 
     private void buildKeys()

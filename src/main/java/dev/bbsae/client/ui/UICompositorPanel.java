@@ -133,6 +133,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UICompTabBar inspectorTabs;
     private final UIScrollView inspector;
     private final UIKeyframeEditor keyframeEditor;
+    private final UIIcon keyframeRowUp;
+    private final UIIcon keyframeRowDown;
     private final UICompTrackTimeline trackTimeline;
     private final UIElement keyframeDrawer;
     private final UILabel keyframeTitle;
@@ -4786,6 +4788,17 @@ public class UICompositorPanel extends UIDashboardPanel
         });
         this.keyframeEditor.setUndoId("bbsae_compositor_timeline");
         this.keyframeEditor.view.resetView();
+
+        /* Obvious buttons for the dope-sheet track height. The Alt+wheel gesture exists, but the
+         * editor's own wheel handling can swallow it depending on which child is under the cursor;
+         * a visible control is the only reliable fix. */
+        this.keyframeRowUp = new UIIcon(Icons.ARROW_UP, (icon) -> this.stepKeyframeRowHeight(2));
+        this.keyframeRowDown = new UIIcon(Icons.ARROW_DOWN, (icon) -> this.stepKeyframeRowHeight(-2));
+        this.keyframeRowUp.relative(this.keyframeEditor).x(1F, -42).y(3).w(16).h(16);
+        this.keyframeRowDown.relative(this.keyframeEditor).x(1F, -24).y(3).w(16).h(16);
+        this.keyframeRowUp.tooltip(IKey.constant("加高关键帧轨道（Alt+滚轮）"));
+        this.keyframeRowDown.tooltip(IKey.constant("降低关键帧轨道（Alt+滚轮）"));
+        this.keyframeEditor.add(this.keyframeRowUp, this.keyframeRowDown);
 
         this.keyframeDrawer = new UIElement()
         {
@@ -10385,6 +10398,35 @@ public class UICompositorPanel extends UIDashboardPanel
     public void setInspectorPage(int page)
     {
         this.inspectorTabs.select(page);
+    }
+
+    /** Applies a dope-sheet row height from Settings or the editor's +/- buttons. */
+    public void applyKeyframeRowHeight(int height)
+    {
+        if (this.keyframeEditor.view instanceof UICompositorKeyframes keyframes)
+        {
+            keyframes.debugSetTrackHeight(Math.max(12, Math.min(60, height)));
+        }
+    }
+
+    public void stepKeyframeRowHeight(int delta)
+    {
+        if (this.keyframeEditor.view instanceof UICompositorKeyframes keyframes)
+        {
+            double current = this.keyframeEditor.view.getDopeSheet().getTrackHeight();
+            int next = (int) Math.round(Math.max(12D, Math.min(60D, current + delta)));
+
+            keyframes.debugSetTrackHeight(next);
+            CompPrefs.get().keyframeRowHeight = next;
+            CompPrefs.markDirty();
+            this.setStatus("关键帧轨道高度 " + next + "px");
+        }
+    }
+
+    public void applyTimelineRowHeight(int height)
+    {
+        this.trackTimeline.setRowHeight(Math.max(18, Math.min(62, height)));
+        this.trackTimeline.resize();
     }
 
     public void openKeyframes()

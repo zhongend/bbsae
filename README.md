@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.81.jar`](https://github.com/zhongend/bbsae/releases/download/v0.81/bbsae-0.81.jar)
-   from the **v0.81** release (the asset is updated with each source push).
+1. Download [`bbsae-0.82.jar`](https://github.com/zhongend/bbsae/releases/download/v0.82/bbsae-0.82.jar)
+   from the **v0.82** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.81.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.82.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.81.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.82.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,17 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.82 — visible keyframe track-height controls
+
+- The keyframe editor now has **+/- buttons in its top-right corner** that change the dope-sheet row
+  height directly, so resizing no longer depends on a wheel gesture that BBS' own scroll handling can
+  swallow.
+- Settings → 显示与线框 has sliders for **关键帧轨道高度** (12–60 px) and **时间轴轨道高度**
+  (18–62 px); moving them applies immediately and saves to prefs.
+- Alt+wheel / Alt+= / Alt+- remain as shortcuts; the buttons and sliders are the reliable fallback.
+- Client screenshot: `docs/verify/round58-keyframe-buttons.png`; project and prefs restored.
+- 375 tests green.
 
 ## What's new in 0.81 — one gizmo at a time, BBS box by default
 
