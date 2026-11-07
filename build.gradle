@@ -99,6 +99,10 @@ loom {
             vmArg "-Dbbsae.debugFontShotSize=" + (project.findProperty("bbsaeFontShotSize") ?: "54")
             vmArg "-Dbbsae.debugFonts=" + (project.findProperty("bbsaeDebugFonts") ?: "false")
             vmArg "-Dbbsae.debugQuitAfterShot=" + (project.findProperty("bbsaeQuitAfterShot") ?: "false")
+            vmArg "-Dbbsae.debugExpandEffects=" + (project.findProperty("bbsaeExpandEffects") ?: "false")
+            vmArg "-Dbbsae.debugInspectorPage=" + (project.findProperty("bbsaeInspectorPage") ?: "")
+            vmArg "-Dbbsae.debugWindow=" + (project.findProperty("bbsaeWindow") ?: "")
+            vmArg "-Dbbsae.debugInspectorScroll=" + (project.findProperty("bbsaeInspectorScroll") ?: "")
             programArgs "--quickPlaySingleplayer", "TestWorld"
             /* The panel is laid out for a 1920x1080 editor canvas. The default tiny dev window
              * (854x480) clips the timeline and the quick panel, which makes verification

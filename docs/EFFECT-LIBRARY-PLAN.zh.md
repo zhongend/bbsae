@@ -45,7 +45,7 @@
 新增三层，效果不再需要写进 `EffectRenderer` 的巨型 switch：
 
 - `comp/AmEffectDef`：id、显示名、分类、参数表（float/color）、`main()` 片段、零点参数。
-- `comp/AmEffectLibrary`：53 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
+- `comp/AmEffectLibrary`：56 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
   弯曲、描边、收缩与膨胀、圆形波纹、万花筒、镜像、旋转扭曲、像素化、极坐标、分形扭曲、
   色彩化、替换颜色、渐变映射、径向阴影），参数名/范围/默认值与参考应用一致。
 - `client/render/AmEffectRenderer`：按定义拼装完整 fragment（标准 uniform + 参数 uniform +
@@ -160,6 +160,13 @@ switch 中拆出来：
 4.10 **第五批**（分离色调、双色调、色彩映射、色相偏移、漏光、光包裹；已完成）
 4.11 **重复/风格批**（平铺、旋转平铺、脉动不透明度、棕褐色、色带、油画；已完成）
 4.12 **程序化/调色批**（热力图、色偏、云雾、等高线、六边形平铺、卷曲；已完成）
+4.13 **六边形位移/波纹/内发光**（已完成）
+4.14 **UI 里程碑验收**（真实客户端截图）
+    - 效果库：展开分类后每行左侧图标可见（`docs/verify/round09-ui-milestone.png`）；
+    - 检查器：跟踪器分区与「绑定/跟踪」分区之间的分割线可见
+      （`docs/verify/round09-ui-dividers.png`）；
+    - 新增仅调试用钩子：`bbsae.debugExpandEffects`、`bbsae.debugInspectorPage`、
+      `bbsae.debugInspectorScroll`、`bbsae.debugWindow`，方便以后一条命令截图验收。
     - `CompRenderContext.backdrop` 承载"当前图层下方的合成"，由 `CompRenderer` 在图层效果循环与
       调整层处理期间设置/恢复；
     - `AmEffectDef.comp()` 声明效果读取 `Comp`，渲染器绑定 backdrop（无 backdrop 时回退到自身输入）；

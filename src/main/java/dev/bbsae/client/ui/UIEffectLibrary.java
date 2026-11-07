@@ -64,6 +64,13 @@ public class UIEffectLibrary extends UIElement
             this.rebuild();
         });
 
+        /* Verification hook: the screenshot harness needs every category open to show the row
+         * icons; it is a single property read and never set in normal play. */
+        if (Boolean.getBoolean("bbsae.debugExpandEffects"))
+        {
+            this.expanded.addAll(CATEGORIES.keySet());
+        }
+
         this.list = new UIEffectList((selection) -> this.refreshStatus());
         this.list.background();
         /* A little more air per row. The old 14 px rows plus a 16 px thumbnail read as a dense

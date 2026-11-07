@@ -475,6 +475,68 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_hex_shift", "六边形位移", "AM · 变形", """
+            void main()
+            {
+                vec2 spacing = vec2(1.0, 1.7320508);
+                vec2 p = vUv * Size / max(u_size, 1.0) / spacing;
+                vec2 a = mod(p, spacing) - spacing * 0.5;
+                vec2 b = mod(p + vec2(0.5, 0.0), spacing) - spacing * 0.5;
+                vec2 local = dot(a, a) < dot(b, b) ? a : b;
+                vec2 center = p - local;
+                float h = hash(center + u_seed) * 6.2831853;
+                vec2 offset = vec2(cos(h), sin(h)) * u_amount / max(Size, vec2(1.0));
+                vec4 c = texture(Source, clamp(vUv + offset, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0.5F, "amount")
+            .p("amount", "位移（像素）", 0F, 200F, 20F, 1F)
+            .p("size", "六边形大小", 4F, 200F, 40F, 1F)
+            .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
+
+        add(new AmEffectDef("am_ripple_pulse", "波纹扩散", "AM · 变形", """
+            void main()
+            {
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = vUv - center;
+                float dist = length(d * Size);
+                float phase = dist / max(u_wavelength, 1.0) - Time * max(u_speed, 0.0) * 6.2831853;
+                float wave = sin(phase) * u_strength;
+                float falloff = 1.0 - smoothstep(u_radius * 0.5, u_radius, dist);
+                vec2 offset = dist > 0.0001 ? (d / dist) * wave * falloff / max(Size, vec2(1.0)) : vec2(0.0);
+                vec4 c = texture(Source, clamp(vUv + offset, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0.5F, "strength")
+            .p("strength", "强度（像素）", 0F, 80F, 10F, 0.5F)
+            .p("wavelength", "波长", 4F, 400F, 80F, 1F)
+            .p("speed", "速度", 0F, 10F, 0.6F, 0.01F)
+            .p("radius", "范围", 0.05F, 1.5F, 1F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_inner_glow", "内发光", "AM · 风格化", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float ring = 0.0;
+
+                for (int i = 0; i < 16; i++)
+                {
+                    float a = float(i) * 0.3926991;
+                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(Size, vec2(1.0)));
+                    ring = max(ring, texture(Source, clamp(vUv + offset, 0.0, 1.0)).a);
+                }
+
+                float inner = smoothstep(0.0, 1.0, ring) * (1.0 - c.a) * clamp(u_strength, 0.0, 2.0);
+                vec3 rgb = clamp(c.rgb + u_color.rgb * inner, 0.0, 1.0);
+                fragColor = vec4(rgb, c.a);
+            }
+            """, 0F, "radius")
+            .p("radius", "范围", 0F, 60F, 12F, 1F)
+            .p("strength", "强度", 0F, 2F, 1F, 0.01F)
+            .c("color", "发光颜色", 0xFFFFE08A));
+
         add(new AmEffectDef("am_heat_map", "热力图", "AM · 调色", """
             void main()
             {

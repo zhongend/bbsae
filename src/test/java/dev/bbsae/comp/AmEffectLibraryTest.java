@@ -37,7 +37,7 @@ public class AmEffectLibraryTest
             assertTrue(definition.body.contains("fragColor"), "body writes no colour: " + definition.id);
         }
 
-        assertTrue(ids.size() >= 53, "the catalogue should have grown with the procedural batch");
+        assertTrue(ids.size() >= 56, "the catalogue should have grown with the hex/ripple batch");
     }
 
     @Test
@@ -107,6 +107,9 @@ public class AmEffectLibraryTest
         assertNeutral("am_clouds", "alpha", 0F);
         assertNeutral("am_contour_lines", "alpha", 0F);
         assertNeutral("am_curl", "angle", 0F);
+        assertNeutral("am_hex_shift", "amount", 0F);
+        assertNeutral("am_ripple_pulse", "strength", 0F);
+        assertNeutral("am_inner_glow", "radius", 0F);
 
         CompEffect balance = CompEffectRegistry.create("am_color_balance", 1);
 

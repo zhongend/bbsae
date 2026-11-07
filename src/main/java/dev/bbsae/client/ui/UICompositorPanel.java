@@ -7392,6 +7392,36 @@ public class UICompositorPanel extends UIDashboardPanel
             this.importVideoFile(new java.io.File(video));
         }
 
+        /* Verification hook: jump to an inspector page so a screenshot can show the section
+         * dividers on a page with several groups (the effect page only has one). */
+        String debugPage = System.getProperty("bbsae.debugInspectorPage", "");
+
+        if (!debugPage.isBlank())
+        {
+            switch (debugPage)
+            {
+                case "layer" -> this.setInspectorPage(PAGE_LAYER);
+                case "mask" -> this.setInspectorPage(PAGE_MASK);
+                case "text" -> this.setInspectorPage(PAGE_TEXT);
+                case "comp" -> this.setInspectorPage(PAGE_COMP);
+                case "output" -> this.setInspectorPage(PAGE_OUTPUT);
+                default -> this.setInspectorPage(PAGE_EFFECTS);
+            }
+        }
+
+        String debugScroll = System.getProperty("bbsae.debugInspectorScroll", "");
+
+        if (!debugScroll.isBlank())
+        {
+            try
+            {
+                this.inspector.scroll.setScroll(Double.parseDouble(debugScroll));
+            }
+            catch (NumberFormatException ignored)
+            {
+            }
+        }
+
         switch (view)
         {
             case "settings":
