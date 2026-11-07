@@ -48,7 +48,8 @@ public final class EffectRenderer
 
     public static boolean supports(String type)
     {
-        return type != null && (SUPPORTED.contains(type) || AmEffectLibrary.supports(type));
+        return type != null && (SUPPORTED.contains(type) || AmEffectLibrary.supports(type)
+            || MeshRenderer.supports(type));
     }
 
     public static java.util.Set<String> supportedTypes()
@@ -58,6 +59,11 @@ public final class EffectRenderer
         for (dev.bbsae.comp.AmEffectDef definition : AmEffectLibrary.all())
         {
             types.add(definition.id);
+        }
+
+        for (String shape : new String[] {"cube", "cylinder", "sphere", "pyramid", "cone", "torus"})
+        {
+            types.add("s3d_" + shape);
         }
 
         return types;
@@ -392,6 +398,11 @@ public final class EffectRenderer
             case "depth_dof":
                 return depth(input, effect, context, type, space);
             default:
+                if (MeshRenderer.supports(type))
+                {
+                    return MeshRenderer.apply(layer, effect, input, context);
+                }
+
                 return AmEffectLibrary.supports(type)
                     ? AmEffectRenderer.apply(layer, effect, input, context, space)
                     : input;

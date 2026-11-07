@@ -30,6 +30,7 @@ public final class CompShaders
     public static GlslProgram repeat;
     public static GlslProgram entityKey;
     public static GlslProgram opaque;
+    public static GlslProgram mesh;
 
     private CompShaders()
     {}
@@ -67,6 +68,30 @@ public final class CompShaders
         repeat = make("repeat", ShaderSources.REPEAT);
         entityKey = make("entity_key", ShaderSources.ENTITY_KEY);
         opaque = make("opaque", ShaderSources.OPAQUE);
+        mesh = makeMesh();
+    }
+
+    private static GlslProgram makeMesh()
+    {
+        try
+        {
+            GlslProgram program = new GlslProgram("mesh", ShaderSources.MESH_VERTEX, ShaderSources.MESH_FRAGMENT);
+
+            if (!program.isValid())
+            {
+                BbsAeAddon.LOGGER.error("Composition mesh shader is unavailable");
+
+                return null;
+            }
+
+            return program;
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.error("Could not create the composition mesh shader", e);
+
+            return null;
+        }
     }
 
     private static GlslProgram make(String name, String fragment)
@@ -116,8 +141,9 @@ public final class CompShaders
         delete(repeat);
         delete(entityKey);
         delete(opaque);
+        delete(mesh);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = opaque = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = opaque = mesh = null;
         initialized = false;
     }
 

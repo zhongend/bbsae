@@ -1506,6 +1506,7 @@ public final class CompRenderer
         CompLayerSourceCache.clear();
         CompViewportRenderer.clearCaches();
         AmEffectRenderer.delete();
+        MeshRenderer.delete();
         FboPool.clear();
         CompRenderCache.clear();
         CompPrecache.clearAll();

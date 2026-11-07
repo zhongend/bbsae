@@ -94,6 +94,7 @@ public class EffectNeutralTest
         "gradient_ramp", "noise_gradient", "checkerboard", "grid", "circle",
         "chroma_key", "luma_key", "posterize", "threshold", "depth_matte",
         "kaleidoscope", "am_kaleidoscope", "am_rotate_tile", "am_hex_tile",
+        "s3d_cube", "s3d_cylinder", "s3d_sphere", "s3d_pyramid", "s3d_cone", "s3d_torus",
     };
 
     @Test

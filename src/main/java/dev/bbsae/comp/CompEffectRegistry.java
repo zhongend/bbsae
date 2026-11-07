@@ -521,6 +521,27 @@ public final class CompEffectRegistry
         }
     }
 
+    /** 3D primitives: the layer raster becomes the surface texture of a mesh. */
+    static
+    {
+        addS3d("cube", "立方体");
+        addS3d("cylinder", "圆柱体");
+        addS3d("sphere", "球体");
+        addS3d("pyramid", "棱锥");
+        addS3d("cone", "圆锥");
+        addS3d("torus", "圆环");
+    }
+
+    private static void addS3d(String shape, String name)
+    {
+        add(new Definition("s3d_" + shape, name, "AM · 3D 形状")
+            .p("rotate_x", "旋转 X", -180F, 180F, 20F, 1F)
+            .p("rotate_y", "旋转 Y", -180F, 180F, 35F, 1F)
+            .p("rotate_z", "旋转 Z", -180F, 180F, 0F, 1F)
+            .p("depth", "厚度", 0.05F, 2F, 0.5F, 0.01F)
+            .p("scale", "缩放", 0.1F, 3F, 1F, 0.01F));
+    }
+
     private static void add(Definition definition)
     {
         DEFS.put(definition.id, definition);

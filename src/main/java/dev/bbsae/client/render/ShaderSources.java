@@ -20,6 +20,34 @@ public final class ShaderSources
         }
         """;
 
+    /** Vertex stage for the 3D shape effects: real geometry, one MVP matrix, no fullscreen quad. */
+    public static final String MESH_VERTEX = """
+        #version 150 core
+        in vec3 Position;
+        in vec2 UV;
+        uniform mat4 Mvp;
+        out vec2 vUv;
+        void main()
+        {
+            vUv = UV;
+            gl_Position = Mvp * vec4(Position, 1.0);
+        }
+        """;
+
+    public static final String MESH_FRAGMENT = """
+        #version 150 core
+
+        uniform sampler2D Source;
+
+        in vec2 vUv;
+        out vec4 fragColor;
+
+        void main()
+        {
+            fragColor = texture(Source, vUv);
+        }
+        """;
+
     public static final String COMPOSITE = """
         #version 150 core
 
