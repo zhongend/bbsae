@@ -52,8 +52,8 @@ public class EffectOrderTest
     {
         List<CompEffect> effects = stack("blur", "am_bend", "s3d_cube", "am_color_gain", "am_glass");
 
-        assertEquals(2, CompRenderer.firstProjectedEffect(effects));
-        assertEquals(0, CompRenderer.firstProjectedEffect(stack("s3d_cube", "blur")));
+        assertEquals(4, CompRenderer.firstProjectedEffect(effects));
+        assertEquals(2, CompRenderer.firstProjectedEffect(stack("s3d_cube", "blur")));
         assertEquals(1, CompRenderer.firstProjectedEffect(stack("blur", "am_glass")));
         assertEquals(1, CompRenderer.firstProjectedEffect(stack("blur", "depth_fog")));
     }
@@ -75,7 +75,9 @@ public class EffectOrderTest
     @Test
     public void theClassificationMatchesTheRenderingRules()
     {
-        assertTrue(CompRenderer.requiresProjectedPass("s3d_cube"));
+        /* Mesh shape effects bake into the layer raster now: their pixels are layer-local, so
+         * running them after projection was what misplaced them. */
+        assertFalse(CompRenderer.requiresProjectedPass("s3d_cube"));
         assertTrue(CompRenderer.requiresProjectedPass("am_displace_map"));
         assertTrue(CompRenderer.requiresProjectedPass("depth_fog"));
         assertTrue(CompRenderer.requiresProjectedPass("shake"));

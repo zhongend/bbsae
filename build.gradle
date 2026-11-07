@@ -104,6 +104,10 @@ loom {
             vmArg "-Dbbsae.debugSelectLayer=" + (project.findProperty("bbsaeSelectLayer") ?: "")
             vmArg "-Dbbsae.debugOnlyLayer=" + (project.findProperty("bbsaeOnlyLayer") ?: "")
             vmArg "-Dbbsae.debugCube2D=" + (project.findProperty("bbsaeCube2D") ?: "false")
+            vmArg "-Dbbsae.debugCompShot=" + (project.findProperty("bbsaeCompShot") ?: "")
+            vmArg "-Dbbsae.debugShape=" + (project.findProperty("bbsaeShape") ?: "s3d_cube")
+            vmArg "-Dbbsae.debugMeshLog=" + (project.findProperty("bbsaeMeshLog") ?: "false")
+            vmArg "-Dbbsae.debugCompShotTicks=" + (project.findProperty("bbsaeCompShotTicks") ?: "300")
             vmArg "-Dbbsae.debugWindow=" + (project.findProperty("bbsaeWindow") ?: "")
             vmArg "-Dbbsae.debugInspectorScroll=" + (project.findProperty("bbsaeInspectorScroll") ?: "")
             programArgs "--quickPlaySingleplayer", "TestWorld"

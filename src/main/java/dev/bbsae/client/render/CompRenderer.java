@@ -1348,8 +1348,12 @@ public final class CompRenderer
 
     /**
      * True when the effect can only run on the projected frame: depth effects read the world depth
-     * buffer, shake samples the composition, backdrop effects need the accumulated comp and mesh
-     * effects are projected with the layer's world matrix (baking would apply it twice).
+     * buffer, shake samples the composition and backdrop effects need the accumulated comp.
+     *
+     * <p>Mesh shape effects are deliberately NOT here: they draw into the layer-local raster during
+     * the bake, so the projected quad carries them exactly like any other content effect. Running
+     * them after projection made the primitive use the composition matrix while its pixels were
+     * still a layer raster, which is what produced the tiny/offset 3D shapes.</p>
      */
     static boolean requiresProjectedPass(String type)
     {
@@ -1359,7 +1363,7 @@ public final class CompRenderer
         }
 
         return type.startsWith("depth_") || "shake".equals(type)
-            || dev.bbsae.comp.AmEffectLibrary.usesComp(type) || MeshRenderer.supports(type);
+            || dev.bbsae.comp.AmEffectLibrary.usesComp(type);
     }
 
     /** Index of the first effect that must run after projection, or the list size if none. */

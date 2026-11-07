@@ -7929,7 +7929,8 @@ public class UICompositorPanel extends UIDashboardPanel
         gradient.putColor("end", 0xFF06B6D4);
         gradient.put("angle", 45D);
         card.effects.add(gradient);
-        card.effects.add(CompEffectRegistry.create("s3d_cube", 1));
+        card.effects.add(CompEffectRegistry.create(
+            System.getProperty("bbsae.debugShape", "s3d_cube"), 1));
         this.doc.layers.add(card);
 
         CompLayer camera = new CompLayer("camera_3d", "3D Camera", "camera");
@@ -7965,6 +7966,59 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshSheets();
         this.trackTimeline.fit();
         this.updatePlayLabel();
+    }
+
+    /**
+     * Verification only: render the current composition's first frame through CompRenderer and
+     * write it as a PNG. This is the authoritative pixel result; the viewport also draws gizmos and
+     * editor overlays, which made a 3D-placement bug ambiguous.
+     */
+    public void debugRenderCompShot(String name)
+    {
+        if (this.project == null || this.doc == null)
+        {
+            return;
+        }
+
+        dev.bbsae.client.render.GlFramebuffer framebuffer =
+            dev.bbsae.client.render.CompRenderer.renderFrame(this.project, this.doc, 0, false, 1F);
+
+        if (framebuffer == null)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.warn("comp shot: the composition renderer returned no frame");
+
+            return;
+        }
+
+        try
+        {
+            int[] pixels = framebuffer.readTopDown();
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+                this.doc.width, this.doc.height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+
+            image.setRGB(0, 0, this.doc.width, this.doc.height, pixels, 0, this.doc.width);
+
+            java.io.File output = new java.io.File(
+                net.minecraft.client.MinecraftClient.getInstance().runDirectory, "screenshots/" + name + ".png");
+
+            output.getParentFile().mkdirs();
+            javax.imageio.ImageIO.write(image, "png", output);
+            dev.bbsae.BbsAeAddon.LOGGER.info("comp shot: {}", output.getAbsolutePath());
+        }
+        catch (Exception e)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.error("comp shot failed", e);
+        }
+        finally
+        {
+            dev.bbsae.client.render.FboPool.release(framebuffer);
+
+            if (Boolean.getBoolean("bbsae.debugQuitAfterShot"))
+            {
+                net.minecraft.client.MinecraftClient.getInstance().execute(
+                    net.minecraft.client.MinecraftClient.getInstance()::scheduleStop);
+            }
+        }
     }
 
     public void debugDemoEffects()

@@ -202,6 +202,29 @@ public class BbsAeClient implements BBSAddonMod
             });
         }
 
+        /* Composition-frame verification: writes the exact CompRenderer output (no viewport gizmos
+         * or editor overlays) so a 3D placement question can be answered from pixels. */
+        String compShot = System.getProperty("bbsae.debugCompShot", "");
+
+        if (!compShot.isBlank())
+        {
+            int at = Integer.getInteger("bbsae.debugCompShotTicks", 300);
+            final int[] compTicks = {0};
+
+            ClientTickEvents.END_CLIENT_TICK.register((client) ->
+            {
+                if (client.world == null || client.player == null || compositorPanel == null)
+                {
+                    return;
+                }
+
+                if (++compTicks[0] == at)
+                {
+                    compositorPanel.debugRenderCompShot(compShot);
+                }
+            });
+        }
+
         /* Font verification: renders a text sheet through the composition renderer, so the
          * "imported font does not show" report can be checked by looking at pixels. */
         String fontShot = System.getProperty("bbsae.debugFontShot", "");

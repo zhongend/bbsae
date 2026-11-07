@@ -24,7 +24,7 @@ public final class MeshRenderer
     private static final Map<String, Mesh> MESHES = new HashMap<>();
     private static final String[] SHAPES =
         {"cube", "cylinder", "sphere", "pyramid", "cone", "torus", "ring", "plus", "octahedron",
-            "hexprism", "triprism", "starprism", "heart", "hollowbox", "starpoly"};
+            "hexprism", "triprism", "starprism", "heart", "hollowbox", "starpoly", "quad"};
 
     private MeshRenderer()
     {}
@@ -67,23 +67,54 @@ public final class MeshRenderer
         Mesh mesh = mesh(shape);
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
 
-        /* The primitive is placed with the same model and projection LayerContentRenderer uses:
-         * the layer's local origin is its centre, so the mesh is centred there and scaled to the
-         * layer's size. CompScene.world additionally carries the spatial/camera transforms that
-         * the projected content already resolved, which double-transformed the primitive. */
-        Matrix4f projection = CompScene.projection(context, layer);
-        Matrix4f model = CompScene.model(context, layer);
-        float width = Math.max(1F, Math.abs(layer.width));
-        float height = Math.max(1F, Math.abs(layer.height));
+        /* Two coordinate spaces reach this renderer:
+         * - the layer-local bake (3D layers, styles): the input IS the layer raster, so the
+         *   primitive simply fills it with an ortho projection;
+         * - the composition pass (2D layers): the input is comp-space, so the primitive is placed
+         *   inside the layer's projected screen bounds.
+         * Using the camera/model matrix in the bake was the bug that made 3D shapes tiny and
+         * offset: their pixels were layer-local but the matrix was composition-space. */
+        boolean local = context.layerLocalPass;
+        float targetWidth = Math.max(1F, output.width);
+        float targetHeight = Math.max(1F, output.height);
+        Matrix4f projection;
+        float centreX;
+        float centreY;
+        float width;
+        float height;
+
+        if (local)
+        {
+            projection = new Matrix4f().setOrtho(0F, targetWidth, targetHeight, 0F, -10000F, 10000F);
+            centreX = targetWidth * 0.5F;
+            centreY = targetHeight * 0.5F;
+            width = targetWidth;
+            height = targetHeight;
+        }
+        else
+        {
+            projection = new Matrix4f().setOrtho(0F, targetWidth, targetHeight, 0F, -10000F, 10000F);
+            float halfW = Math.max(1F, Math.abs(layer.width)) * 0.5F;
+            float halfH = Math.max(1F, Math.abs(layer.height)) * 0.5F;
+            Vector2f centre = CompScene.project(context, layer, 0F, 0F, 0F);
+            float scaleX = targetWidth / Math.max(1F, context.width);
+            float scaleY = targetHeight / Math.max(1F, context.height);
+            centreX = centre.x * scaleX;
+            centreY = centre.y * scaleY;
+            width = Math.max(1F, halfW * 2F * scaleX);
+            height = Math.max(1F, halfH * 2F * scaleY);
+        }
+
         float depth = Math.max(1F, height * Math.max(0.05F, effect.valueF("depth", 0.5F)));
         float scale = Math.max(0.01F, effect.valueF("scale", 1F));
 
-        Matrix4f local = new Matrix4f()
+        Matrix4f localMatrix = new Matrix4f()
+            .translate(centreX, centreY, 0F)
             .rotateX((float) Math.toRadians(effect.valueF("rotate_x", 0F)))
             .rotateY((float) Math.toRadians(effect.valueF("rotate_y", 0F)))
             .rotateZ((float) Math.toRadians(effect.valueF("rotate_z", 0F)))
             .scale(width * scale, height * scale, depth * scale);
-        Matrix4f mvp = new Matrix4f(projection).mul(model).mul(local);
+        Matrix4f mvp = new Matrix4f(projection).mul(localMatrix);
 
         output.begin();
         GlStateManager._disableBlend();
@@ -134,6 +165,7 @@ public final class MeshRenderer
             case "heart" -> MeshShapes.heart(64);
             case "hollowbox" -> MeshShapes.hollowBox(0.08F);
             case "starpoly" -> MeshShapes.starPoly(5);
+            case "quad" -> MeshShapes.quad();
             default -> MeshShapes.cube();
         });
     }

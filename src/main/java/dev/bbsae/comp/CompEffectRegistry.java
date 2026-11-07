@@ -539,6 +539,7 @@ public final class CompEffectRegistry
         addS3d("heart", "心形");
         addS3d("hollowbox", "空心盒");
         addS3d("starpoly", "星形多面体");
+        addS3d("quad", "平面（验证）");
     }
 
     private static void addS3d(String shape, String name)

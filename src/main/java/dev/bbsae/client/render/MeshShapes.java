@@ -93,6 +93,20 @@ final class MeshShapes
         builder.quad(ids[0], ids[1], ids[2], ids[3]);
     }
 
+    /** A single flat quad in the XY plane (verification / billboard primitive). */
+    static Mesh quad()
+    {
+        Builder builder = new Builder();
+        int a = builder.vertex(-0.5F, -0.5F, 0F, 0F, 1F, 0F, 0F, 1F);
+        int b = builder.vertex(0.5F, -0.5F, 0F, 1F, 1F, 0F, 0F, 1F);
+        int c = builder.vertex(0.5F, 0.5F, 0F, 1F, 0F, 0F, 0F, 1F);
+        int d = builder.vertex(-0.5F, 0.5F, 0F, 0F, 0F, 0F, 0F, 1F);
+
+        builder.quad(a, b, c, d);
+
+        return builder.build();
+    }
+
     static Mesh cube()
     {
         Builder builder = new Builder();
