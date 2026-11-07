@@ -536,6 +536,7 @@ public final class CompEffectRegistry
         addS3d("hexprism", "六棱柱");
         addS3d("triprism", "三棱柱");
         addS3d("starprism", "星形棱柱");
+        addS3d("heart", "心形");
     }
 
     private static void addS3d(String shape, String name)
@@ -550,7 +551,11 @@ public final class CompEffectRegistry
             .p("light_elevation", "光照高度", -90F, 90F, 35F, 1F)
             .p("light_intensity", "光照强度", 0F, 2F, 0.9F, 0.01F)
             .p("ambient", "环境光", 0F, 1F, 0.35F, 0.01F)
-            .p("shine", "高光锐度", 1F, 128F, 24F, 1F));
+            .p("shine", "高光锐度", 1F, 128F, 24F, 1F)
+            .p("tex_repeat", "纹理重复", 0.01F, 8F, 1F, 0.01F)
+            .p("tex_offset_x", "纹理偏移 X", -2F, 2F, 0F, 0.01F)
+            .p("tex_offset_y", "纹理偏移 Y", -2F, 2F, 0F, 0.01F)
+            .p("tex_angle", "纹理旋转", -180F, 180F, 0F, 1F));
     }
 
     private static void add(Definition definition)

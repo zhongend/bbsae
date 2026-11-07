@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.49.jar`](https://github.com/zhongend/bbsae/releases/download/v0.49/bbsae-0.49.jar)
-   from the **v0.49** release (the asset is updated with each source push).
+1. Download [`bbsae-0.50.jar`](https://github.com/zhongend/bbsae/releases/download/v0.50/bbsae-0.50.jar)
+   from the **v0.50** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.49.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.50.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.49.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.50.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,15 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.50 — heart primitive and texture mapping for 3D
+
+- **心形** (`AM · 3D 形状`): a parametric heart outline extruded into a solid primitive.
+- Every 3D shape now exposes **texture mapping**: repeat, offset X/Y and rotation. Repeat values
+  other than 1 switch to `fract` tiling; otherwise the UV is clamped.
+- Fixed a real GLSL error found by the headless link test: comparing a `vec2` with a `float`
+  (`abs(TexRepeat) > 0.0001`) is invalid in GLSL 150 and had made the mesh program fail to link.
+- 114 effects total (101 2D + 13 3D); 321 tests green.
 
 ## What's new in 0.49 — twelve 3D primitives with lighting
 

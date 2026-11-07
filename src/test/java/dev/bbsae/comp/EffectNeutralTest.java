@@ -96,6 +96,7 @@ public class EffectNeutralTest
         "kaleidoscope", "am_kaleidoscope", "am_rotate_tile", "am_hex_tile",
         "s3d_cube", "s3d_cylinder", "s3d_sphere", "s3d_pyramid", "s3d_cone", "s3d_torus",
         "s3d_ring", "s3d_plus", "s3d_octahedron", "s3d_hexprism", "s3d_triprism", "s3d_starprism",
+        "s3d_heart",
     };
 
     @Test

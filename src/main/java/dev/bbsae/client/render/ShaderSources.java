@@ -46,6 +46,9 @@ public final class ShaderSources
         uniform float Ambient;
         uniform float Intensity;
         uniform float Shine;
+        uniform vec2 TexRepeat;
+        uniform vec2 TexOffset;
+        uniform float TexAngle;
 
         in vec2 vUv;
         in vec3 vNormal;
@@ -53,7 +56,13 @@ public final class ShaderSources
 
         void main()
         {
-            vec4 texel = texture(Source, vUv);
+            vec2 uv = vUv - 0.5;
+            float ca = cos(radians(TexAngle));
+            float sa = sin(radians(TexAngle));
+            uv = vec2(ca * uv.x - sa * uv.y, sa * uv.x + ca * uv.y);
+            uv = uv * max(TexRepeat, vec2(0.01)) + 0.5 + TexOffset;
+            uv = length(TexRepeat - vec2(1.0)) > 0.0001 ? fract(uv) : clamp(uv, 0.0, 1.0);
+            vec4 texel = texture(Source, uv);
             float ndl = max(dot(normalize(vNormal), normalize(LightDir)), 0.0);
             float diffuse = clamp(Ambient + Intensity * ndl, 0.0, 2.0);
             float specular = pow(ndl, max(Shine, 1.0)) * 0.25 * Intensity;

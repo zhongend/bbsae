@@ -23,7 +23,7 @@ public final class MeshRenderer
     private static final Map<String, Mesh> MESHES = new HashMap<>();
     private static final String[] SHAPES =
         {"cube", "cylinder", "sphere", "pyramid", "cone", "torus", "ring", "plus", "octahedron",
-            "hexprism", "triprism", "starprism"};
+            "hexprism", "triprism", "starprism", "heart"};
 
     private MeshRenderer()
     {}
@@ -101,6 +101,10 @@ public final class MeshRenderer
         program.set("Ambient", Math.max(0F, effect.valueF("ambient", 0.35F)));
         program.set("Intensity", Math.max(0F, effect.valueF("light_intensity", 0.9F)));
         program.set("Shine", Math.max(1F, effect.valueF("shine", 24F)));
+        program.set("TexRepeat", Math.max(0.01F, effect.valueF("tex_repeat", 1F)),
+            Math.max(0.01F, effect.valueF("tex_repeat", 1F)));
+        program.set("TexOffset", effect.valueF("tex_offset_x", 0F), effect.valueF("tex_offset_y", 0F));
+        program.set("TexAngle", effect.valueF("tex_angle", 0F));
         mesh.draw();
         GL11.glFrontFace(GL11.GL_CCW);
         GlStateManager._disableCull();
@@ -123,6 +127,7 @@ public final class MeshRenderer
             case "hexprism" -> MeshShapes.prism(6);
             case "triprism" -> MeshShapes.prism(3);
             case "starprism" -> MeshShapes.starPrism(5);
+            case "heart" -> MeshShapes.heart(64);
             default -> MeshShapes.cube();
         });
     }

@@ -418,6 +418,57 @@ final class MeshShapes
         return builder.build();
     }
 
+    static Mesh heart(int segments)
+    {
+        Builder builder = new Builder();
+        int n = Math.max(12, segments);
+        int[] front = new int[n];
+        int[] back = new int[n];
+
+        for (int i = 0; i < n; i++)
+        {
+            double a = Math.PI * 2 * i / n;
+            float x = (float) (Math.pow(Math.sin(a), 3) * 16);
+            float y = (float) (13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a));
+            x /= 34F;
+            y /= 34F;
+
+            front[i] = builder.vertex(x, -y, 0.5F, x + 0.5F, 0.5F + y, 0F, 0F, 1F);
+            back[i] = builder.vertex(x, -y, -0.5F, x + 0.5F, 0.5F + y, 0F, 0F, -1F);
+        }
+
+        int frontCentre = builder.vertex(0F, 0.15F, 0.5F, 0.5F, 0.35F, 0F, 0F, 1F);
+        int backCentre = builder.vertex(0F, 0.15F, -0.5F, 0.5F, 0.35F, 0F, 0F, -1F);
+
+        for (int i = 0; i < n; i++)
+        {
+            int next = (i + 1) % n;
+
+            builder.tri(frontCentre, front[i], front[next]);
+            builder.tri(backCentre, back[next], back[i]);
+
+            double a0 = Math.PI * 2 * i / n;
+            double a1 = Math.PI * 2 * (i + 1) / n;
+            float nx = (float) Math.cos((a0 + a1) * 0.5);
+            float ny = (float) Math.sin((a0 + a1) * 0.5);
+            int s0 = builder.vertex((float) (Math.pow(Math.sin(a0), 3) * 16) / 34F,
+                (float) -(13 * Math.cos(a0) - 5 * Math.cos(2 * a0) - 2 * Math.cos(3 * a0) - Math.cos(4 * a0)) / 34F,
+                0.5F, (float) i / n, 0F, nx, ny, 0F);
+            int s1 = builder.vertex((float) (Math.pow(Math.sin(a1), 3) * 16) / 34F,
+                (float) -(13 * Math.cos(a1) - 5 * Math.cos(2 * a1) - 2 * Math.cos(3 * a1) - Math.cos(4 * a1)) / 34F,
+                0.5F, (float) (i + 1) / n, 0F, nx, ny, 0F);
+            int s2 = builder.vertex((float) (Math.pow(Math.sin(a1), 3) * 16) / 34F,
+                (float) -(13 * Math.cos(a1) - 5 * Math.cos(2 * a1) - 2 * Math.cos(3 * a1) - Math.cos(4 * a1)) / 34F,
+                -0.5F, (float) (i + 1) / n, 1F, nx, ny, 0F);
+            int s3 = builder.vertex((float) (Math.pow(Math.sin(a0), 3) * 16) / 34F,
+                (float) -(13 * Math.cos(a0) - 5 * Math.cos(2 * a0) - 2 * Math.cos(3 * a0) - Math.cos(4 * a0)) / 34F,
+                -0.5F, (float) i / n, 1F, nx, ny, 0F);
+            builder.quad(s0, s1, s2, s3);
+        }
+
+        return builder.build();
+    }
+
     static Mesh pyramid(int sides)
     {
         Builder builder = new Builder();
