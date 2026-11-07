@@ -57,9 +57,12 @@ public final class AmEffectRenderer
                 : Math.max(1, Math.min(4, Math.round(effect.valueF(definition.iterationsKey, 1F))));
             GlFramebuffer blurred = input;
 
+            float texelX = context == null ? 1F / Math.max(1, input.width) : 1F / Math.max(1, context.width);
+            float texelY = context == null ? 1F / Math.max(1, input.height) : 1F / Math.max(1, context.height);
+
             for (int i = 0; i < iterations; i++)
             {
-                GlFramebuffer next = PassRenderer.blur(blurred, radius, definition.boxBlur);
+                GlFramebuffer next = PassRenderer.blur(blurred, radius, definition.boxBlur, texelX, texelY);
 
                 if (blurred != input)
                 {
@@ -96,8 +99,16 @@ public final class AmEffectRenderer
         }
 
         space.bind(program);
-        program.set("Size", input.width, input.height);
-        program.set("Texel", 1F / Math.max(1, input.width), 1F / Math.max(1, input.height));
+        /* Pixel parameters are authored in composition pixels, not framebuffer pixels. The proxy
+         * preview renders into a smaller FBO, so using its size here made every radius (blur,
+         * ripple, glass, shadows) shrink by the proxy scale - the effect looked weaker in preview
+         * than in the full-resolution export. FBO UVs still cover the whole composition, so the
+         * pixel -> UV conversion only needs the composition size. */
+        int pixelWidth = context == null ? input.width : Math.max(1, context.width);
+        int pixelHeight = context == null ? input.height : Math.max(1, context.height);
+
+        program.set("Size", pixelWidth, pixelHeight);
+        program.set("Texel", 1F / pixelWidth, 1F / pixelHeight);
         program.set("Time", context == null ? 0F : context.time);
 
         for (AmEffectDef.Param param : definition.params)

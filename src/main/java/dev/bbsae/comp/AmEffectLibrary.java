@@ -475,6 +475,29 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_lens_flare", "镜头光晕", "AM · 风格化", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 light = vec2(u_light_x, u_light_y);
+                vec2 d = (vUv - light) * vec2(Size.x / max(Size.y, 1.0), 1.0);
+                float dist = length(d);
+                float angle = atan(d.y, d.x);
+                float rays = pow(abs(sin(angle * max(u_rays, 1.0) + Time * u_speed)), 8.0) * exp(-dist * 6.0);
+                float core = smoothstep(max(u_size, 0.001), 0.0, dist);
+                float flare = (rays * 0.7 + core) * clamp(u_intensity, 0.0, 4.0);
+                vec3 rgb = clamp(c.rgb + u_color.rgb * flare, 0.0, 1.0);
+                fragColor = vec4(rgb, c.a);
+            }
+            """, 0F, "intensity")
+            .p("light_x", "光源 X", 0F, 1F, 0.7F, 0.01F)
+            .p("light_y", "光源 Y", 0F, 1F, 0.3F, 0.01F)
+            .p("size", "核心大小", 0.001F, 0.5F, 0.08F, 0.001F)
+            .p("rays", "光芒数", 1F, 24F, 6F, 1F)
+            .p("speed", "旋转速度", 0F, 10F, 0.4F, 0.01F)
+            .p("intensity", "强度", 0F, 4F, 1F, 0.01F)
+            .c("color", "光晕颜色", 0xFFFFE6B0));
+
         add(new AmEffectDef("am_edge_light", "边缘光", "AM · 风格化", """
             void main()
             {
