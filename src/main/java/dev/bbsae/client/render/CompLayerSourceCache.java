@@ -532,7 +532,11 @@ public final class CompLayerSourceCache
 
             String type = effect.type == null ? "" : effect.type;
 
-            if (type.startsWith("depth_") || "shake".equals(type))
+            /* Depth effects need the projected frame, shake samples the composition and backdrop
+             * effects need the accumulated comp below the layer - none of them exist inside the
+             * layer-local bake, so they run once in the composition pass instead. */
+            if (type.startsWith("depth_") || "shake".equals(type)
+                || dev.bbsae.comp.AmEffectLibrary.usesComp(type))
             {
                 continue;
             }

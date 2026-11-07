@@ -54,6 +54,14 @@ public final class CompRenderContext
     /** Cached {@link CompScene#spatial} answer for this frame. */
     public Boolean spatial;
     /** Per-frame scene graph caches: one matrix per layer, not one per call site. */
+    /**
+     * The accumulated composition below the layer currently being processed. Effect programmes
+     * that read the backdrop (displacement maps, glass, light wrap) sample this; it is null while
+     * no layer pass is active (for example inside the 3D layer bake), where such effects fall back
+     * to their own source texture.
+     */
+    public GlFramebuffer backdrop;
+
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> localCache = new java.util.IdentityHashMap<>();
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> worldCache = new java.util.IdentityHashMap<>();
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> modelCache = new java.util.IdentityHashMap<>();

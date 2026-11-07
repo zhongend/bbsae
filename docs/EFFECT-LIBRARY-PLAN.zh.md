@@ -45,7 +45,7 @@
 新增三层，效果不再需要写进 `EffectRenderer` 的巨型 switch：
 
 - `comp/AmEffectDef`：id、显示名、分类、参数表（float/color）、`main()` 片段、零点参数。
-- `comp/AmEffectLibrary`：32 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
+- `comp/AmEffectLibrary`：35 个效果的定义（色彩平衡、色温、高光与阴影、卡通、长阴影、
   弯曲、描边、收缩与膨胀、圆形波纹、万花筒、镜像、旋转扭曲、像素化、极坐标、分形扭曲、
   色彩化、替换颜色、渐变映射、径向阴影），参数名/范围/默认值与参考应用一致。
 - `client/render/AmEffectRenderer`：按定义拼装完整 fragment（标准 uniform + 参数 uniform +
@@ -148,6 +148,12 @@ switch 中拆出来：
 4.6 **第三批**（极坐标、分形扭曲、色彩化、替换颜色、渐变映射、径向阴影；已完成）
 4.7 **模糊批**（高斯/方框/动感/径向/镜头模糊；已完成，纯模糊效果走两次可分离 pass）
 4.8 **第四批**（彩色像差、移轴模糊、轴向拉伸、切片故障、四色渐变、条纹、网格、星空；已完成）
+4.9 **背景采样批**（置换图、渐变置换、玻璃；已完成）
+    - `CompRenderContext.backdrop` 承载"当前图层下方的合成"，由 `CompRenderer` 在图层效果循环与
+      调整层处理期间设置/恢复；
+    - `AmEffectDef.comp()` 声明效果读取 `Comp`，渲染器绑定 backdrop（无 backdrop 时回退到自身输入）；
+    - `needsCompositionEffect` 与 3D 烘焙的过滤条件都会跳过背景类效果，保证它们只在合成阶段
+      **执行一次**（3D 图层不会重复应用）。
 5. **生成/风格化**：checker、grid、stripes、starfield、clouds、halftone、scanline、noise grain
    （噪点与颗粒按要求保持现状）
 6. **3D 与文字**：s3d-* 形状与 text 效果（依赖 3D 管线，放到最后一批）

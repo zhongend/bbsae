@@ -687,6 +687,15 @@ public final class CompRenderer
                     ? java.util.Collections.emptyList()
                     : layer.effects;
 
+                /* Backdrop-reading effects (displacement maps, glass) sample what is already
+                 * composited below this layer. Keep the previous value so nested precomps and the
+                 * adjustment pass can restore their own. */
+                GlFramebuffer previousBackdrop = context.backdrop;
+
+                context.backdrop = accumulation;
+
+                try
+                {
                 for (CompEffect effect : effects)
                 {
                     if (!renderEffects || effect == null || !effect.enabled)
@@ -716,6 +725,11 @@ public final class CompRenderer
                         FboPool.release(content);
                         content = processed;
                     }
+                }
+                }
+                finally
+                {
+                    context.backdrop = previousBackdrop;
                 }
 
                 /* Styles were baked into the layer-space raster together with the effects; running
@@ -1202,26 +1216,36 @@ public final class CompRenderer
         GlFramebuffer processed = original;
         boolean changed = false;
         Matrix4f space = new Matrix4f();
+        GlFramebuffer previousBackdrop = context.backdrop;
 
-        for (CompEffect effect : layer.effects)
+        context.backdrop = original;
+
+        try
         {
-            if (effect == null || !effect.enabled)
+            for (CompEffect effect : layer.effects)
             {
-                continue;
-            }
-
-            GlFramebuffer next = EffectRenderer.apply(layer, layer.resolveEffect(effect, context.frame), processed, context, space);
-
-            if (next != processed)
-            {
-                if (processed != original)
+                if (effect == null || !effect.enabled)
                 {
-                    FboPool.release(processed);
+                    continue;
                 }
 
-                processed = next;
-                changed = true;
+                GlFramebuffer next = EffectRenderer.apply(layer, layer.resolveEffect(effect, context.frame), processed, context, space);
+
+                if (next != processed)
+                {
+                    if (processed != original)
+                    {
+                        FboPool.release(processed);
+                    }
+
+                    processed = next;
+                    changed = true;
+                }
             }
+        }
+        finally
+        {
+            context.backdrop = previousBackdrop;
         }
 
         if (!changed)
@@ -1311,8 +1335,11 @@ public final class CompRenderer
         }
 
         boolean depth = effect.type != null && effect.type.startsWith("depth_");
+        /* A backdrop-reading effect must run after projection, where the accumulated composition
+         * below the layer exists; the baked 3D raster has no backdrop to sample. */
+        boolean comp = dev.bbsae.comp.AmEffectLibrary.usesComp(effect.type);
 
-        return !effectsBaked || depth;
+        return !effectsBaked || depth || comp;
     }
 
     /**

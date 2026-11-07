@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.30.jar`](https://github.com/zhongend/bbsae/releases/download/v0.30/bbsae-0.30.jar)
-   from the **v0.30** release (the asset is updated with each source push).
+1. Download [`bbsae-0.31.jar`](https://github.com/zhongend/bbsae/releases/download/v0.31/bbsae-0.31.jar)
+   from the **v0.31** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.30.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.31.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.30.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.31.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,18 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.31 — backdrop-reading effects (displacement map, gradient displace, glass)
+
+- The effect pipeline now hands each layer the **composition below it**: `CompRenderContext.backdrop`
+  is set around the layer effect loop and the adjustment pass, and `AmEffectDef.comp()` marks
+  effects that sample it through `Comp`.
+- **置换图** (RG/GB/luminance channels, amount in layer pixels), **渐变置换** (composition gradient),
+  **玻璃** (refraction + tint + highlight) added under `AM · 变形` / `AM · 风格化`.
+- Backdrop effects are excluded from the layer-local 3D bake and run once after projection, so a 3D
+  plane cannot apply them twice; without a backdrop (isolated preview) they fall back to their own
+  input instead of failing.
+- 319 tests green.
 
 ## What's new in 0.30 — zero value is proven pixel by pixel
 

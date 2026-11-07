@@ -31,6 +31,8 @@ public final class AmEffectDef
     public String blurKey;
     public boolean boxBlur;
     public String iterationsKey;
+    /** True when the body samples the composition below the layer ({@code Comp}). */
+    public boolean usesComp;
 
     public final List<Param> params = new ArrayList<>();
     public final List<ColorParam> colors = new ArrayList<>();
@@ -61,6 +63,14 @@ public final class AmEffectDef
         {
             this.zeroKeys.add(key);
         }
+
+        return this;
+    }
+
+    /** Declares that the body samples the composition below the layer through {@code Comp}. */
+    public AmEffectDef comp()
+    {
+        this.usesComp = true;
 
         return this;
     }

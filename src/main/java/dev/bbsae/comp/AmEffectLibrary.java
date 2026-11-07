@@ -475,6 +475,74 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_displace_map", "置换图", "AM · 变形", """
+            void main()
+            {
+                vec4 map = texture(Comp, vUv);
+                vec2 offset;
+
+                if (u_mode < 0.5)
+                {
+                    offset = (map.rg - 0.5) * 2.0;
+                }
+                else if (u_mode < 1.5)
+                {
+                    offset = (map.gb - 0.5) * 2.0;
+                }
+                else
+                {
+                    float y = luma(map.rgb);
+                    offset = vec2(y - 0.5, y - 0.5) * 2.0;
+                }
+
+                vec2 uv = vUv + offset * (u_amount / max(Size, vec2(1.0)));
+                vec4 c = texture(Source, clamp(uv, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0.5F, "amount")
+            .comp()
+            .p("amount", "强度（像素）", 0F, 300F, 40F, 1F)
+            .p("mode", "通道（0 RG / 1 GB / 2 亮度）", 0F, 2F, 0F, 1F));
+
+        add(new AmEffectDef("am_gradient_displace", "渐变置换", "AM · 变形", """
+            void main()
+            {
+                float left = luma(texture(Comp, clamp(vUv - vec2(Texel.x, 0.0), 0.0, 1.0)).rgb);
+                float right = luma(texture(Comp, clamp(vUv + vec2(Texel.x, 0.0), 0.0, 1.0)).rgb);
+                float down = luma(texture(Comp, clamp(vUv - vec2(0.0, Texel.y), 0.0, 1.0)).rgb);
+                float up = luma(texture(Comp, clamp(vUv + vec2(0.0, Texel.y), 0.0, 1.0)).rgb);
+                vec2 gradient = vec2(right - left, up - down);
+                vec2 uv = vUv + gradient * (u_strength / max(Size, vec2(1.0)));
+                vec4 c = texture(Source, clamp(uv, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a);
+            }
+            """, 0.5F, "strength")
+            .comp()
+            .p("strength", "强度（像素）", 0F, 400F, 60F, 1F));
+
+        add(new AmEffectDef("am_glass", "玻璃", "AM · 风格化", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float left = luma(texture(Comp, clamp(vUv - vec2(Texel.x, 0.0), 0.0, 1.0)).rgb);
+                float right = luma(texture(Comp, clamp(vUv + vec2(Texel.x, 0.0), 0.0, 1.0)).rgb);
+                float down = luma(texture(Comp, clamp(vUv - vec2(0.0, Texel.y), 0.0, 1.0)).rgb);
+                float up = luma(texture(Comp, clamp(vUv + vec2(0.0, Texel.y), 0.0, 1.0)).rgb);
+                vec2 gradient = vec2(right - left, up - down);
+                vec2 offset = gradient * (u_strength / max(Size, vec2(1.0)));
+                vec3 refracted = texture(Source, clamp(vUv + offset, 0.0, 1.0)).rgb;
+                float brightness = dot(refracted, vec3(0.299, 0.587, 0.114));
+                vec3 tinted = mix(refracted, vec3(brightness) * u_tint.rgb * 2.0, clamp(u_tint_amount, 0.0, 1.0));
+                float shine = clamp(length(gradient) * u_shine, 0.0, 1.0);
+                fragColor = vec4(clamp(tinted + shine, 0.0, 1.0), c.a);
+            }
+            """, 0.5F, "strength")
+            .comp()
+            .p("strength", "折射强度", 0F, 200F, 24F, 1F)
+            .p("tint_amount", "着色", 0F, 1F, 0.15F, 0.01F)
+            .p("shine", "高光", 0F, 4F, 1.2F, 0.01F)
+            .c("tint", "玻璃颜色", 0xFF9FD8FF));
+
         add(new AmEffectDef("am_gaussian_blur", "高斯模糊", "AM · 模糊", """
             void main()
             {
@@ -711,6 +779,14 @@ public final class AmEffectLibrary
     public static boolean supports(String id)
     {
         return DEFS.containsKey(id);
+    }
+
+    /** True when this effect samples the composition below its layer. */
+    public static boolean usesComp(String id)
+    {
+        AmEffectDef definition = get(id);
+
+        return definition != null && definition.usesComp;
     }
 
     /** True when the effect cannot change the input at the current parameter values. */

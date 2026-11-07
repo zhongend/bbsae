@@ -85,6 +85,15 @@ public final class AmEffectRenderer
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
 
+        if (definition.usesComp)
+        {
+            /* The composition below the layer when the pipeline provides it; the effect's own
+             * input is the documented fallback for baked 3D layers and isolated previews. */
+            GlFramebuffer backdrop = context == null ? null : context.backdrop;
+
+            PassRenderer.bind(program, "Comp", 1, backdrop == null ? input : backdrop);
+        }
+
         space.bind(program);
         program.set("Size", input.width, input.height);
         program.set("Texel", 1F / Math.max(1, input.width), 1F / Math.max(1, input.height));
@@ -148,6 +157,7 @@ public final class AmEffectRenderer
             #version 150 core
 
             uniform sampler2D Source;
+            uniform sampler2D Comp;
             uniform vec2 Size;
             uniform vec2 Texel;
             uniform vec2 LayerSize;
