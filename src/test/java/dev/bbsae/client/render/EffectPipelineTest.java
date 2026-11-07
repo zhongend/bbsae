@@ -194,6 +194,78 @@ public class EffectPipelineTest
         return pixels;
     }
 
+    /**
+     * Just above zero the untouched cells must not show the shard border.
+     *
+     * <p>The border used to be applied independently of the cell's own progress k, so a layer with
+     * progress 0.02 (all cells still k = 0) was covered by a dark grid: "pulling the slider to zero
+     * does not restore the layer" in practice. The fix ties the border to k; this test allows
+     * resampling noise but not a 45% edge darkening.</p>
+     */
+    @Test
+    public void blockShatterNearZeroKeepsTheCellsIntact()
+    {
+        Outcome outcome = apply("block_shatter", (effect) -> effect.put("progress", 0.005D));
+        int[] source = source();
+
+        for (int i = 0; i < source.length; i++)
+        {
+            for (int shift = 0; shift <= 24; shift += 8)
+            {
+                int expected = (source[i] >> shift) & 0xFF;
+                int actual = (outcome.pixels[i] >> shift) & 0xFF;
+
+                assertTrue(Math.abs(expected - actual) <= 24,
+                    "block_shatter at progress 0.005 darkened pixel " + i + " channel " + shift
+                        + ": " + expected + " -> " + actual);
+            }
+        }
+    }
+
+    /**
+     * The user-facing zero contract, at pixel level: pulling the effect's main value to its
+     * identity must hand back the exact input image (not just "a similar" one). This is checked
+     * through the real renderer, so a shader that silently scales or darkens at zero fails here
+     * even if isNeutral() was not updated.
+     */
+    @Test
+    public void zeroValuesRestoreTheInputPixelForPixel()
+    {
+        String[][] cases =
+        {
+            {"block_shatter", "progress", "0"},
+            {"wave", "amplitude", "0"},
+            {"blur", "radius", "0"},
+            {"turbulent_displace", "amount", "0"},
+            {"am_bend", "amount", "0"},
+            {"am_gaussian_blur", "strength", "0"},
+            {"am_pinch_bulge", "strength", "0"},
+            {"am_circular_ripple", "strength", "0"},
+            {"am_swirl", "angle", "0"},
+            {"am_mirror_warp", "strength", "0"},
+            {"am_stretch_axis", "amount", "0"},
+            {"am_slice_glitch", "amount", "0"},
+            {"am_chromatic_aberration", "amount", "0"},
+        };
+
+        int[] source = source();
+
+        for (String[] entry : cases)
+        {
+            CompEffect effect = CompEffectRegistry.create(entry[0], 1);
+
+            effect.put(entry[1], Double.parseDouble(entry[2]));
+
+            Outcome outcome = applyTo(source, effect);
+
+            for (int i = 0; i < source.length; i++)
+            {
+                assertEquals(source[i], outcome.pixels[i],
+                    entry[0] + " changed pixel " + i + " at " + entry[1] + "=0");
+            }
+        }
+    }
+
     private static Outcome applyTo(int[] sourcePixels, CompEffect effect)
     {
         CompRenderContext context = context();

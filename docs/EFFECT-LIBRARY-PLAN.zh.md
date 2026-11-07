@@ -121,6 +121,12 @@ switch 中拆出来：
 ### 3.3 零点契约（「拉到 0 恢复原样」）
 
 - 每个新效果必须声明 `neutral(effect)`：主强度参数为 0 时返回输入 FBO，**不执行着色器**。
+- **像素级证明**：`EffectPipelineTest.zeroValuesRestoreTheInputPixelForPixel` 用真实 GL 管线跑
+  13 个代表效果（方块破碎、波浪、模糊、湍流置换、弯曲、高斯模糊、收缩膨胀、圆形波纹、旋转扭曲、
+  镜像、轴向拉伸、切片故障、彩色像差），在零点逐像素比对输入 —— 不是"看起来差不多"，是严格相等。
+- **接近零也不该变**：方块破碎的碎块描边原本与进度无关，进度 0.005 时所有碎块还没起飞，
+  却会被描边压暗 45%。现在描边强度乘以碎块自身进度 k（`mix(1, border, k)`），
+  `blockShatterNearZeroKeepsTheCellsIntact` 以 0.005 进度 + 24 级容差钉住这个回归。
 - 渲染层另有 `EffectRenderer.isNeutral` 白名单与 `STRENGTH` 通用交叉淡化双保险：
   即使某个效果在 0 处数值上不严格恒等，强度 0 仍逐像素还原。
 - 生成器类（渐变、棋盘、云）没有自然零点，统一用 `STRENGTH` 归零；

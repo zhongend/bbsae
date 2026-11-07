@@ -1895,9 +1895,12 @@ public final class ShaderSources
             vec2 src = (cell + 0.5 + srcRel) / grid;
             vec4 color = texture(Source, localToCompUv(clamp(src, vec2(0.0), vec2(1.0))));
 
-            /* Slight inner border so shards read as solid blocks rather than a UV warp. */
+            /* Slight inner border so shards read as solid blocks rather than a UV warp. The
+             * border fades in with the cell's own progress: at k = 0 the cell has not started
+             * flying yet and must stay pixel-identical to the input, otherwise a progress slider
+             * just above zero drew a dark grid over the untouched layer. */
             float edge = min(min(0.5 - abs(rel.x), 0.5 - abs(rel.y)), 0.5);
-            float border = smoothstep(0.0, 0.035, edge);
+            float border = mix(1.0, smoothstep(0.0, 0.035, edge), k);
             float alpha = color.a * mix(0.35, 1.0, border) * (1.0 - smoothstep(0.72, 1.0, k));
             vec3 rgb = color.rgb * mix(0.55, 1.0, border);
 
