@@ -37,7 +37,7 @@ public class AmEffectLibraryTest
             assertTrue(definition.body.contains("fragColor"), "body writes no colour: " + definition.id);
         }
 
-        assertTrue(ids.size() >= 35, "the catalogue should have grown with the backdrop batch");
+        assertTrue(ids.size() >= 41, "the catalogue should have grown with the colour/style batch");
     }
 
     @Test
@@ -92,6 +92,12 @@ public class AmEffectLibraryTest
         assertNeutral("am_displace_map", "amount", 0F);
         assertNeutral("am_gradient_displace", "strength", 0F);
         assertNeutral("am_glass", "strength", 0F);
+        assertNeutral("am_split_tone", "amount", 0F);
+        assertNeutral("am_duotone", "amount", 0F);
+        assertNeutral("am_palette_map", "amount", 0F);
+        assertNeutral("am_hue_shift", "amount", 0F);
+        assertNeutral("am_light_leak", "alpha", 0F);
+        assertNeutral("am_light_wrap", "strength", 0F);
 
         CompEffect balance = CompEffectRegistry.create("am_color_balance", 1);
 

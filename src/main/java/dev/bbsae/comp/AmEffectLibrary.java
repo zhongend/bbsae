@@ -475,6 +475,125 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_split_tone", "分离色调", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = clamp(luma(c.rgb) + u_balance * 0.35, 0.0, 1.0);
+                vec3 tinted = mix(u_shadow.rgb, u_highlight.rgb, smoothstep(0.0, 1.0, y));
+                vec3 rgb = mix(c.rgb, tinted * (0.35 + y * 1.3), clamp(u_amount, 0.0, 1.0));
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 0.6F, 0.01F)
+            .p("balance", "平衡", -1F, 1F, 0F, 0.01F)
+            .c("shadow", "阴影色调", 0xFF1B2A55)
+            .c("highlight", "高光色调", 0xFFFFD9A0));
+
+        add(new AmEffectDef("am_duotone", "双色调", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = clamp(luma(c.rgb), 0.0, 1.0);
+                vec3 mapped = mix(u_dark.rgb, u_light.rgb, y);
+                fragColor = vec4(mix(c.rgb, mapped, clamp(u_amount, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .c("dark", "暗部颜色", 0xFF20143A)
+            .c("light", "亮部颜色", 0xFFFFE9B0));
+
+        add(new AmEffectDef("am_palette_map", "色彩映射", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float y = clamp(luma(c.rgb), 0.0, 1.0);
+                vec4 palette[8];
+                palette[0] = u_color1;
+                palette[1] = u_color2;
+                palette[2] = u_color3;
+                palette[3] = u_color4;
+                palette[4] = u_color5;
+                palette[5] = u_color6;
+                palette[6] = u_color7;
+                palette[7] = u_color8;
+                float scaled = y * 7.0;
+                int index = int(floor(scaled));
+                int next = min(index + 1, 7);
+                vec3 mapped = mix(palette[index].rgb, palette[next].rgb, fract(scaled));
+                fragColor = vec4(mix(c.rgb, mapped, clamp(u_amount, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "amount")
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .c("color1", "色标 1", 0xFF050914)
+            .c("color2", "色标 2", 0xFF12275A)
+            .c("color3", "色标 3", 0xFF2F6FA8)
+            .c("color4", "色标 4", 0xFF74C7C1)
+            .c("color5", "色标 5", 0xFFF5E29B)
+            .c("color6", "色标 6", 0xFFF2A34E)
+            .c("color7", "色标 7", 0xFFE2603F)
+            .c("color8", "色标 8", 0xFF7C1E2E));
+
+        add(new AmEffectDef("am_hue_shift", "色相偏移", "AM · 调色", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec3 hsv = rgb2hsv(c.rgb);
+                hsv.x = fract(hsv.x + u_hue / 360.0);
+                vec3 shifted = hsv2rgb(hsv);
+                fragColor = vec4(mix(c.rgb, shifted, clamp(u_amount, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "amount")
+            .p("hue", "色相", -180F, 180F, 30F, 1F)
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_light_leak", "漏光", "AM · 风格化", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
+                float band = dot(vUv - 0.5, dir) + 0.5 + u_position;
+                float wave = sin(Time * max(u_speed, 0.0) + u_phase) * 0.08;
+                float leak = 1.0 - smoothstep(0.0, max(u_width, 0.01), abs(fract(band + wave) - 0.5));
+                leak = pow(clamp(leak, 0.0, 1.0), max(u_falloff, 0.01));
+                fragColor = vec4(clamp(c.rgb + u_color.rgb * leak * clamp(u_alpha, 0.0, 2.0), 0.0, 1.0), c.a);
+            }
+            """, 0F, "alpha")
+            .p("angle", "角度", -180F, 180F, 45F, 1F)
+            .p("position", "位置", -1F, 1F, 0F, 0.01F)
+            .p("width", "宽度", 0.01F, 1F, 0.35F, 0.01F)
+            .p("falloff", "衰减", 0.1F, 4F, 1.2F, 0.01F)
+            .p("speed", "流动速度", 0F, 10F, 0.6F, 0.01F)
+            .p("phase", "相位", -6.28F, 6.28F, 0F, 0.01F)
+            .p("alpha", "强度", 0F, 2F, 0.8F, 0.01F)
+            .c("color", "漏光颜色", 0xFFFFB45A));
+
+        add(new AmEffectDef("am_light_wrap", "光包裹", "AM · 风格化", """
+            void main()
+            {
+                vec4 c = texture(Source, vUv);
+                float edge = 0.0;
+                vec3 spill = vec3(0.0);
+
+                for (int i = 0; i < 12; i++)
+                {
+                    float a = float(i) * 0.5235988;
+                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(Size, vec2(1.0)));
+                    edge = max(edge, texture(Source, clamp(vUv + offset, 0.0, 1.0)).a);
+                    spill += texture(Comp, clamp(vUv + offset * 0.5, 0.0, 1.0)).rgb;
+                }
+
+                spill /= 12.0;
+                float wrap = clamp((edge - c.a) * u_strength, 0.0, 1.0);
+                vec3 rgb = mix(c.rgb, spill, wrap) + u_color.rgb * wrap * 0.15;
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0.5F, "strength")
+            .comp()
+            .p("radius", "范围", 0F, 80F, 18F, 1F)
+            .p("strength", "强度", 0F, 2F, 1F, 0.01F)
+            .c("color", "包裹颜色", 0xFFFFFFFF));
+
         add(new AmEffectDef("am_displace_map", "置换图", "AM · 变形", """
             void main()
             {

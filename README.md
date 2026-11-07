@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.31.jar`](https://github.com/zhongend/bbsae/releases/download/v0.31/bbsae-0.31.jar)
-   from the **v0.31** release (the asset is updated with each source push).
+1. Download [`bbsae-0.32.jar`](https://github.com/zhongend/bbsae/releases/download/v0.32/bbsae-0.32.jar)
+   from the **v0.32** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.31.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.32.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.31.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.32.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,15 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.32 — colour grading and light batch
+
+- **Six new effects**: 分离色调、双色调、色彩映射（8-stop palette）、色相偏移 in `AM · 调色`;
+  漏光（time-driven band）and 光包裹（backdrop spill around edges）in `AM · 风格化`.
+- Palette map indexes an eight-colour LUT by luminance; split tone and duotone keep the original
+  alpha and expose balance/amount sliders.
+- Neutral declarations (`amount`/`alpha`/`strength`) for all six; shader link + neutrality tests
+  cover them. 319 tests green.
 
 ## What's new in 0.31 — backdrop-reading effects (displacement map, gradient displace, glass)
 
