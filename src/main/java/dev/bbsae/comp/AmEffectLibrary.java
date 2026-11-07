@@ -495,6 +495,113 @@ public final class AmEffectLibrary
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_radial_rays", "径向光线", "AM · 生成", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = (luv - center) * vec2(LayerSize.x / max(LayerSize.y, 1.0), 1.0);
+                float angle = atan(d.y, d.x);
+                float rays = pow(abs(sin(angle * max(u_count, 1.0) + Time * u_speed)), max(u_sharpness, 0.1));
+                float falloff = 1.0 - smoothstep(0.0, max(u_radius, 0.001), length(d));
+                float alpha = rays * falloff * clamp(u_alpha, 0.0, 1.0);
+                fragColor = vec4(mix(c.rgb, u_color.rgb, alpha), c.a);
+            }
+            """, 0F, "alpha")
+            .p("count", "光线数", 1F, 48F, 12F, 1F)
+            .p("sharpness", "锐度", 0.1F, 12F, 4F, 0.1F)
+            .p("radius", "半径", 0.01F, 2F, 1F, 0.01F)
+            .p("speed", "旋转速度", 0F, 10F, 0.2F, 0.01F)
+            .p("alpha", "强度", 0F, 1F, 0.8F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F)
+            .c("color", "光线颜色", 0xFFFFE9B0));
+
+        add(new AmEffectDef("am_dots", "点阵", "AM · 生成", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 p = luv * max(u_spacing, 1.0) + vec2(u_offset_x, u_offset_y);
+                vec2 local = fract(p) - 0.5;
+                float radius = clamp(u_size, 0.01, 0.9);
+                float dotMask = smoothstep(radius, radius * 0.6, length(local));
+                fragColor = vec4(mix(c.rgb, u_color.rgb, dotMask * clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("spacing", "间距", 2F, 200F, 24F, 1F)
+            .p("size", "点大小", 0.01F, 0.9F, 0.35F, 0.01F)
+            .p("offset_x", "偏移 X", -1F, 1F, 0F, 0.01F)
+            .p("offset_y", "偏移 Y", -1F, 1F, 0F, 0.01F)
+            .p("alpha", "强度", 0F, 1F, 0.9F, 0.01F)
+            .c("color", "点颜色", 0xFFFFFFFF));
+
+        add(new AmEffectDef("am_star_shape", "星形", "AM · 生成", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = (luv - center) * vec2(LayerSize.x / max(LayerSize.y, 1.0), 1.0);
+                float angle = atan(d.y, d.x);
+                float radius = length(d);
+                float points = max(u_points, 3.0);
+                float starRadius = max(u_outer, 0.001) * (0.55 + 0.45 * abs(cos(angle * points * 0.5)));
+                float inside = 1.0 - smoothstep(starRadius - u_softness, starRadius, radius);
+                float shape = inside * clamp(u_alpha, 0.0, 1.0);
+                fragColor = vec4(mix(c.rgb, u_color.rgb, shape), c.a);
+            }
+            """, 0F, "alpha")
+            .p("points", "角数", 3F, 24F, 5F, 1F)
+            .p("outer", "半径", 0.01F, 1F, 0.4F, 0.01F)
+            .p("softness", "边缘柔和", 0.001F, 0.2F, 0.01F, 0.001F)
+            .p("alpha", "强度", 0F, 1F, 0.9F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F)
+            .c("color", "星形颜色", 0xFFFFD35A));
+
+        add(new AmEffectDef("am_smooth_edges", "平滑边缘", "AM · 绘制", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float sum = 0.0;
+
+                for (int i = 0; i < 12; i++)
+                {
+                    float a = float(i) * 0.5235988;
+                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(LayerSize, vec2(1.0)));
+                    sum += sampleLayer(luv + offset).a;
+                }
+
+                float averaged = sum / 12.0;
+                float alpha = mix(c.a, clamp(averaged * 1.6, 0.0, 1.0), clamp(u_strength, 0.0, 1.0));
+                fragColor = vec4(c.rgb, alpha);
+            }
+            """, 0F, "radius")
+            .p("radius", "范围（像素）", 0F, 40F, 2F, 0.5F)
+            .p("strength", "强度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_halftone_lines", "半调线", "AM · 绘制", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float y = luma(c.rgb);
+                float coord = luv.y * max(u_spacing, 1.0) + y * u_modulation;
+                float wave = abs(fract(coord) - 0.5) * 2.0;
+                float line = 1.0 - smoothstep(u_width, u_width + max(u_softness, 0.001), wave);
+                fragColor = vec4(mix(c.rgb, u_color.rgb, line * clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("spacing", "线密度", 2F, 200F, 40F, 1F)
+            .p("modulation", "亮度调制", 0F, 40F, 12F, 0.1F)
+            .p("width", "线宽", 0.01F, 0.99F, 0.4F, 0.01F)
+            .p("softness", "柔和", 0.001F, 0.5F, 0.05F, 0.001F)
+            .p("alpha", "强度", 0F, 1F, 0.8F, 0.01F)
+            .c("color", "线条颜色", 0xFF101820));
+
         add(new AmEffectDef("am_rgb_gamma", "RGB 伽马", "AM · 调色", """
             void main()
             {
