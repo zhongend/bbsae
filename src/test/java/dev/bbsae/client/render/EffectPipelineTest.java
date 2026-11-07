@@ -414,6 +414,80 @@ public class EffectPipelineTest
      * is how the gradient wipe's progress=1 bug was found: the predicate said "neutral" while the
      * shader still faded the sweep edge.</p>
      */
+    /**
+     * Effects whose identity is a <b>set</b> of zero parameters (colour tone's nine gains,
+     * highlight/shadow's two amounts) get the same shader-level treatment: set every declared key to
+     * zero, force the shader and compare.
+     */
+    @Test
+    public void everyDeclaredZeroSetIsIdentityInsideTheShader()
+    {
+        int[] source = opaqueSource();
+        List<String> failures = new ArrayList<>();
+
+        for (dev.bbsae.comp.AmEffectDef definition : dev.bbsae.comp.AmEffectLibrary.all())
+        {
+            if (definition.zeroKey != null || definition.neutralPredicate != null
+                || definition.zeroKeys().isEmpty())
+            {
+                continue;
+            }
+
+            CompEffect effect = CompEffectRegistry.create(definition.id, 1);
+
+            for (String key : definition.zeroKeys())
+            {
+                effect.put(key, 0.0);
+            }
+
+            CompRenderContext context = context();
+            CompLayer layer = layer();
+            GlFramebuffer input = new GlFramebuffer(SIZE, SIZE);
+
+            input.color.uploadTopDown(source);
+
+            GlFramebuffer output = AmEffectRenderer.applyForced(layer, effect, input, context,
+
+                EffectSpace.identity(context));
+
+            try
+            {
+                int[] pixels = output.readTopDown();
+                int mismatches = 0;
+                int first = -1;
+
+                for (int i = 0; i < pixels.length; i++)
+                {
+                    if (pixels[i] != source[i])
+                    {
+                        if (first < 0)
+                        {
+                            first = i;
+                        }
+
+                        mismatches++;
+                    }
+                }
+
+                if (mismatches > 0)
+                {
+                    failures.add(definition.id + " zero set differs at " + first + " (" + mismatches + " px)");
+                }
+            }
+            finally
+            {
+                if (output != input)
+                {
+                    FboPool.release(output);
+                }
+
+                FboPool.release(input);
+            }
+        }
+
+        assertTrue(failures.isEmpty(), "declared zero sets must be identities inside the shader: " + failures);
+    }
+
     @Test
     public void probeGradientMaskDefaults()
     {

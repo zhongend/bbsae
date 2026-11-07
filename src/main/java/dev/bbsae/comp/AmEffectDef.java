@@ -67,6 +67,12 @@ public final class AmEffectDef
     }
 
     /** Declares that the effect is an identity when every one of these parameters is zero. */
+    /** Zero-valued parameter set whose all-zero combination is the identity. */
+    public java.util.List<String> zeroKeys()
+    {
+        return java.util.List.copyOf(this.zeroKeys);
+    }
+
     public AmEffectDef z(String... keys)
     {
         for (String key : keys)

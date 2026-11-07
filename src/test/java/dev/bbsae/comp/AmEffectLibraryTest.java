@@ -167,6 +167,7 @@ public class AmEffectLibraryTest
         assertNeutral("am_luma_key", "strength", 0F);
         assertNeutral("am_grid_repeat", "amount", 0F);
         assertNeutral("am_line_repeat", "amount", 0F);
+        assertNeutral("am_contour", "alpha", 0F);
         assertNeutral("am_reflection", "strength", 0F);
         assertNeutral("am_inner_shadow", "opacity", 0F);
         assertNeutral("am_gloss", "intensity", 0F);

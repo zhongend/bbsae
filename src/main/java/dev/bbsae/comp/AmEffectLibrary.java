@@ -902,6 +902,27 @@ public final class AmEffectLibrary
             .p("intensity", "强度", 0F, 4F, 1.2F, 0.01F)
             .c("color", "光带颜色", 0xFFB0E4FF));
 
+        add(new AmEffectDef("am_contour", "轮廓线", "AM · 绘制", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float centre = luma(c.rgb);
+                float left = luma(sampleLayer(luv - vec2(LayerTexel.x, 0.0)).rgb);
+                float right = luma(sampleLayer(luv + vec2(LayerTexel.x, 0.0)).rgb);
+                float up = luma(sampleLayer(luv - vec2(0.0, LayerTexel.y)).rgb);
+                float down = luma(sampleLayer(luv + vec2(0.0, LayerTexel.y)).rgb);
+                float edge = length(vec2(right - left, down - up));
+                float line = smoothstep(u_threshold, u_threshold + max(u_softness, 0.001), edge);
+                float alpha = line * clamp(u_alpha, 0.0, 1.0);
+                fragColor = vec4(mix(c.rgb, u_color.rgb, alpha), c.a);
+            }
+            """, 0F, "alpha")
+            .p("threshold", "阈值", 0F, 1F, 0.08F, 0.01F)
+            .p("softness", "柔和", 0.001F, 0.5F, 0.08F, 0.001F)
+            .p("alpha", "强度", 0F, 1F, 1F, 0.01F)
+            .c("color", "线条颜色", 0xFF101010));
+
         add(new AmEffectDef("am_chroma_key", "色度键", "AM · 遮罩", """
             void main()
             {
