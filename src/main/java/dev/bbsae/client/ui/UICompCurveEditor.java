@@ -130,7 +130,15 @@ public class UICompCurveEditor extends UIElement
         addKey.relative(this.toolbar).x(1F, -84).y(barY).w(40).h(control);
         removeKey.relative(this.toolbar).x(1F, -40).y(barY).w(40).h(control);
 
-        this.toolbar.add(this.modeButton, easeRow, this.influence, fit, snap, solo, addKey, removeKey);
+        /* Visible row-height controls: Alt+wheel works, but the graph also handles wheel events, so
+         * a plain button is the only guaranteed way to resize the channel list. */
+        UIButton rowDown = CompUi.flat("-", "通道轨道行高 -2（Alt+滚轮也可）", () -> this.graph.stepRowHeight(-2));
+        UIButton rowUp = CompUi.flat("+", "通道轨道行高 +2（Alt+滚轮也可）", () -> this.graph.stepRowHeight(2));
+
+        rowDown.relative(this.toolbar).x(1F, -312).y(barY).w(18).h(control);
+        rowUp.relative(this.toolbar).x(1F, -292).y(barY).w(18).h(control);
+
+        this.toolbar.add(this.modeButton, easeRow, this.influence, fit, snap, solo, addKey, removeKey, rowDown, rowUp);
 
         this.graph.relative(this).x(0).y(24).w(1F).h(1F, -24);
 
@@ -154,6 +162,17 @@ public class UICompCurveEditor extends UIElement
     public void refresh()
     {
         this.graph.rebuild();
+    }
+
+    /** Applies a channel-row height from Settings or the toolbar +/- buttons. */
+    public void setRowHeight(int height)
+    {
+        this.graph.setRowHeight(height);
+    }
+
+    public int getRowHeight()
+    {
+        return this.graph.rowHeight;
     }
 
     public boolean isInteracting()
@@ -502,6 +521,25 @@ public class UICompCurveEditor extends UIElement
         {
             this.spanCache.clear();
             this.readoutFrame = Integer.MIN_VALUE;
+        }
+
+        void setRowHeight(int height)
+        {
+            int next = Math.max(ROW_MIN, Math.min(ROW_MAX, height));
+
+            if (next == this.rowHeight)
+            {
+                return;
+            }
+
+            this.rowHeight = next;
+            this.buildRows();
+            UICompCurveEditor.this.panel.setStatus("通道轨道高度 " + next + "px");
+        }
+
+        void stepRowHeight(int delta)
+        {
+            this.setRowHeight(this.rowHeight + delta);
         }
 
         private void buildRows()
@@ -2800,28 +2838,19 @@ public class UICompCurveEditor extends UIElement
                 return super.subMouseScrolled(context);
             }
 
+            /* Alt+wheel works anywhere in the editor (channel list or graph), not only when the
+             * pointer happens to be over a specific row. */
+            if (CompInput.altDown())
+            {
+                this.stepRowHeight(context.mouseWheel > 0 ? 2 : -2);
+
+                return true;
+            }
+
             this.updateAxis();
 
             if (this.listArea.isInside(context))
             {
-                if (CompInput.altDown())
-                {
-                    /* Alt+wheel is the NLE-standard vertical zoom of the track list. The old
-                     * editor only scrolled, so a channel list that was too tall or too cramped
-                     * could not be adjusted at all. */
-                    int next = Math.max(ROW_MIN, Math.min(ROW_MAX,
-                        this.rowHeight + (context.mouseWheel > 0 ? 1 : -1)));
-
-                    if (next != this.rowHeight)
-                    {
-                        this.rowHeight = next;
-                        this.buildRows();
-                        UICompCurveEditor.this.panel.setStatus("通道轨道高度 " + next + "px（Alt+滚轮）");
-                    }
-
-                    return true;
-                }
-
                 this.listScroll = Math.max(0, this.listScroll - (int) Math.signum(context.mouseWheel) * 18);
                 this.buildRows();
 

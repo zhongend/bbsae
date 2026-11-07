@@ -317,6 +317,9 @@ public class UICompositorPanel extends UIDashboardPanel
     private PanelResizeHandle timelineHandle;
     private PanelResizeHandle keyframeHandle;
     private int keyframeDrawerHeight = 154;
+    /** 0 = fully below the timeline, 1 = fully open; drives the slide-up drawer animation. */
+    private float keyframeDrawerSlide;
+    private long keyframeSlideNanos;
     private static final int KEYFRAME_DRAWER_MIN = 96;
     private UIStartScreen startScreen;
     private boolean startScreenOpen;
@@ -4805,9 +4808,18 @@ public class UICompositorPanel extends UIDashboardPanel
             @Override
             public void render(UIContext context)
             {
-                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF151A22);
-                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 1, 0xFF2A303A);
-                super.render(context);
+                context.batcher.clip(this.area, context);
+
+                try
+                {
+                    context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF151A22);
+                    context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 1, 0xFF2A303A);
+                    super.render(context);
+                }
+                finally
+                {
+                    context.batcher.unclip(context);
+                }
             }
         };
         this.keyframeDrawer.setVisible(false);
@@ -4850,9 +4862,19 @@ public class UICompositorPanel extends UIDashboardPanel
         fitKeys.relative(this.keyframeDrawer).x(1F, -46).y(2).w(18).h(18);
         fitKeys.tooltip(IKey.constant("关键帧视图适配合成全长"));
 
+        /* Visible XYZ-track row height controls, right in the drawer title bar. */
+        UIIcon drawerRowDown = new UIIcon(Icons.ARROW_DOWN, (icon) -> this.stepKeyframeRowHeight(-2));
+        UIIcon drawerRowUp = new UIIcon(Icons.ARROW_UP, (icon) -> this.stepKeyframeRowHeight(2));
+
+        drawerRowDown.relative(this.keyframeDrawer).x(1F, -248).y(2).w(18).h(18);
+        drawerRowUp.relative(this.keyframeDrawer).x(1F, -228).y(2).w(18).h(18);
+        drawerRowDown.tooltip(IKey.constant("降低 XYZ 关键帧轨道高度（Alt+滚轮）"));
+        drawerRowUp.tooltip(IKey.constant("加高 XYZ 关键帧轨道高度（Alt+滚轮）"));
+
         this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(1F, -22);
 
-        this.keyframeDrawer.add(this.keyframeTitle, this.keyframeCurve, prevKey, addKey, nextKey, fitKeys, closeKeyframes, this.keyframeEditor);
+        this.keyframeDrawer.add(this.keyframeTitle, this.keyframeCurve, prevKey, addKey, nextKey, fitKeys,
+            closeKeyframes, drawerRowDown, drawerRowUp, this.keyframeEditor);
 
         this.status = new UILabel(IKey.constant(""));
         this.status.color(0xFF8A94A6, false);
@@ -8102,6 +8124,8 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        this.tickKeyframeDrawerAnimation();
+
         boolean tracks = this.timelinePage == 0;
 
         if (this.curveEditor.isVisible() == tracks || this.trackTimeline.isVisible() != tracks)
@@ -10403,9 +10427,16 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Applies a dope-sheet row height from Settings or the editor's +/- buttons. */
     public void applyKeyframeRowHeight(int height)
     {
+        int clamped = Math.max(12, Math.min(60, height));
+
         if (this.keyframeEditor.view instanceof UICompositorKeyframes keyframes)
         {
-            keyframes.debugSetTrackHeight(Math.max(12, Math.min(60, height)));
+            keyframes.debugSetTrackHeight(clamped);
+        }
+
+        if (this.curveEditor != null)
+        {
+            this.curveEditor.setRowHeight(clamped);
         }
     }
 
@@ -10417,9 +10448,15 @@ public class UICompositorPanel extends UIDashboardPanel
             int next = (int) Math.round(Math.max(12D, Math.min(60D, current + delta)));
 
             keyframes.debugSetTrackHeight(next);
+
+            if (this.curveEditor != null)
+            {
+                this.curveEditor.setRowHeight(next);
+            }
+
             CompPrefs.get().keyframeRowHeight = next;
             CompPrefs.markDirty();
-            this.setStatus("关键帧轨道高度 " + next + "px");
+            this.setStatus("关键帧/曲线轨道高度 " + next + "px");
         }
     }
 
@@ -10446,6 +10483,12 @@ public class UICompositorPanel extends UIDashboardPanel
          * the drawer back. The old early return made the button say "open" while the drawer stayed
          * invisible until it was clicked twice. */
         this.keyframeOpen = open;
+        this.keyframeSlideNanos = System.nanoTime();
+
+        if (open)
+        {
+            this.keyframeDrawerSlide = 0F;
+        }
 
         if (!open)
         {
@@ -10501,29 +10544,33 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.keyframeDrawerHeight));
 
+        float slide = this.keyframeOpen ? Math.max(0F, Math.min(1F, this.keyframeDrawerSlide)) : 0F;
+        int shownHeight = Math.round(this.keyframeDrawerHeight * slide);
+
         /* Visibility is a function of the page and the open flag here, not a one-shot side effect
          * in setKeyframeOpen(). The page switch sets visible=false; restoring it here is what makes
          * "switch tabs and come back" reliable. */
-        this.keyframeDrawer.setVisible(this.keyframeOpen);
-        this.keyframeHandle.setVisible(this.keyframeOpen);
+        this.keyframeDrawer.setVisible(shownHeight > 1);
+        this.keyframeHandle.setVisible(shownHeight > 1);
 
-        if (this.keyframeOpen)
+        if (shownHeight > 1)
         {
-            this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26 - this.keyframeDrawerHeight);
-            this.keyframeDrawer.relative(this.timeline).x(0).y(1F, -this.keyframeDrawerHeight).w(1F).h(this.keyframeDrawerHeight);
-            this.keyframeHandle.relative(this.timeline).x(0).y(1F, -this.keyframeDrawerHeight - 2).w(1F).h(5);
+            this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26 - shownHeight);
+            this.keyframeDrawer.relative(this.timeline).x(0).y(1F, -shownHeight).w(1F).h(shownHeight);
+            this.keyframeHandle.relative(this.timeline).x(0).y(1F, -shownHeight - 2).w(1F).h(5);
         }
         else
         {
             this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
         }
 
-        this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(1F, -22);
+        this.keyframeEditor.setVisible(shownHeight > 30);
+        this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(Math.max(0, shownHeight - 22));
 
-        if (this.keyframeOpen)
+        if (shownHeight > 30)
         {
             /* A drawer that was hidden while the page was elsewhere has no meaningful area until
-             * it is laid out and resized. Do both here so the next draw cannot see 0×0. */
+             * it is laid out and resized. Do both here so the next draw cannot see 0x0. */
             this.keyframeEditor.resize();
 
             if (this.keyframeEditor.area.w > 0 && this.keyframeViewNeedsFit)
@@ -10533,6 +10580,39 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.keyframeViewNeedsFit = false;
             }
         }
+    }
+
+    /** Per-frame slide update; the drawer is a pure function of keyframeOpen + slide. */
+    private void tickKeyframeDrawerAnimation()
+    {
+        float target = this.keyframeOpen ? 1F : 0F;
+
+        if (Math.abs(this.keyframeDrawerSlide - target) < 0.002F)
+        {
+            if (this.keyframeDrawerSlide != target)
+            {
+                this.keyframeDrawerSlide = target;
+                this.layoutKeyframeDrawer();
+                this.timeline.resize();
+                this.keyframeDrawer.resize();
+                this.keyframeHandle.resize();
+            }
+
+            return;
+        }
+
+        long now = System.nanoTime();
+        float dt = this.keyframeSlideNanos == 0L ? 0.016F
+            : Math.min(0.05F, (now - this.keyframeSlideNanos) / 1_000_000_000F);
+
+        this.keyframeSlideNanos = now;
+        this.keyframeDrawerSlide = UiMotion.approach(this.keyframeDrawerSlide, target,
+            target > this.keyframeDrawerSlide ? 9F : 14F, dt);
+
+        this.layoutKeyframeDrawer();
+        this.timeline.resize();
+        this.keyframeDrawer.resize();
+        this.keyframeHandle.resize();
     }
 
     /* ------------------------------------------------------------- BBS camera flight */

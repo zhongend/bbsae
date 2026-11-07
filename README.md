@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.83.jar`](https://github.com/zhongend/bbsae/releases/download/v0.83/bbsae-0.83.jar)
-   from the **v0.83** release (the asset is updated with each source push).
+1. Download [`bbsae-0.84.jar`](https://github.com/zhongend/bbsae/releases/download/v0.84/bbsae-0.84.jar)
+   from the **v0.84** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.83.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.84.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.83.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.84.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,18 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.84 — XYZ track resizing and a sliding keyframe drawer
+
+- The **keyframe drawer** holding the position X/Y/Z rows now has up/down buttons in its title bar
+  that resize the dope-sheet tracks directly; the curve editor's channel list has its own +/−
+  buttons, and the Settings sliders drive both editors.
+- Alt+wheel now resizes rows anywhere inside the curve editor, not only when the pointer is over a
+  specific channel row. The buttons remain the guaranteed path.
+- The keyframe drawer **slides up from the timeline's bottom edge** (~300 ms ease-out) and slides
+  down before hiding, with its content clipped to the animated height.
+- Client screenshot: `docs/verify/round60-keyframe-drawer.png`; project and prefs restored.
+- 375 tests green.
 
 ## What's new in 0.83 — overlay presets in Settings
 
