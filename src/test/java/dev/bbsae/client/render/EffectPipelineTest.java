@@ -308,6 +308,80 @@ public class EffectPipelineTest
         }
     }
 
+    /**
+     * The zero-value contract must hold inside the shader, not only through the neutral early-out.
+     *
+     * <p>The renderer skips a pass entirely when {@code isNeutral} says so; that makes a
+     * "zero restores the source" pixel test pass even if the shader itself is not the identity. This
+     * test bypasses the early-out and calls {@link AmEffectRenderer} directly for every effect that
+     * declares a zero parameter, so a body whose zero value still changes pixels is caught.</p>
+     */
+    @Test
+    public void everyDeclaredZeroIsIdentityInsideTheShader()
+    {
+        int[] source = source();
+        List<String> failures = new ArrayList<>();
+
+        for (dev.bbsae.comp.AmEffectDef definition : dev.bbsae.comp.AmEffectLibrary.all())
+        {
+            if (definition.zeroKey == null || definition.neutralPredicate != null)
+            {
+                continue;
+            }
+
+            CompEffect effect = CompEffectRegistry.create(definition.id, 1);
+
+            effect.put(definition.zeroKey, 0.0);
+
+            CompRenderContext context = context();
+            CompLayer layer = layer();
+            GlFramebuffer input = new GlFramebuffer(SIZE, SIZE);
+
+            input.color.uploadTopDown(source);
+
+            GlFramebuffer output = AmEffectRenderer.apply(layer, effect, input, context,
+
+                EffectSpace.identity(context));
+
+            try
+            {
+                int[] pixels = output.readTopDown();
+                int mismatches = 0;
+                int first = -1;
+
+                for (int i = 0; i < pixels.length; i++)
+                {
+                    if (pixels[i] != source[i])
+                    {
+                        if (first < 0)
+                        {
+                            first = i;
+                        }
+
+                        mismatches++;
+                    }
+                }
+
+                if (mismatches > 0)
+                {
+                    failures.add(definition.id + " (" + definition.zeroKey + "=0) differs at "
+                        + first + " (" + mismatches + " px)");
+                }
+            }
+            finally
+            {
+                if (output != input)
+                {
+                    FboPool.release(output);
+                }
+
+                FboPool.release(input);
+            }
+        }
+
+        assertTrue(failures.isEmpty(), "zero values must be identities inside the shader: " + failures);
+    }
+
     private static Outcome applyTo(int[] sourcePixels, CompEffect effect)
     {
         CompRenderContext context = context();

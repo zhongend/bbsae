@@ -884,6 +884,107 @@ public final class AmEffectLibrary
             .p("intensity", "强度", 0F, 4F, 1.2F, 0.01F)
             .c("color", "光带颜色", 0xFFB0E4FF));
 
+        add(new AmEffectDef("am_chroma_key", "色度键", "AM · 遮罩", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float distance = length(c.rgb - u_key.rgb);
+                float keep = smoothstep(u_range, u_range + max(u_softness, 0.001), distance);
+                float alpha = mix(1.0, keep, clamp(u_strength, 0.0, 1.0));
+                float spill = clamp(u_spill, 0.0, 1.0);
+                vec3 rgb = c.rgb;
+
+                if (spill > 0.0001)
+                {
+                    float keyDominance = max(u_key.r, max(u_key.g, u_key.b));
+                    vec3 neutral = vec3((c.rgb.r + c.rgb.g + c.rgb.b) / 3.0);
+                    float amount = (1.0 - keep) * spill * keyDominance * clamp(u_strength, 0.0, 1.0);
+                    rgb = mix(c.rgb, neutral, amount);
+                }
+
+                fragColor = vec4(rgb, c.a * alpha);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 1F, 1F, 0.01F)
+            .p("range", "容差", 0F, 1F, 0.25F, 0.01F)
+            .p("softness", "边缘柔和", 0.001F, 0.5F, 0.08F, 0.001F)
+            .p("spill", "溢色抑制", 0F, 1F, 0.4F, 0.01F)
+            .c("key", "键控颜色", 0xFF00FF00));
+
+        add(new AmEffectDef("am_luma_key", "亮度键", "AM · 遮罩", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float y = luma(c.rgb);
+                float keep = smoothstep(u_threshold, u_threshold + max(u_softness, 0.001), y);
+
+                if (u_invert > 0.5)
+                {
+                    keep = 1.0 - keep;
+                }
+
+                float alpha = mix(1.0, keep, clamp(u_strength, 0.0, 1.0));
+                fragColor = vec4(c.rgb, c.a * alpha);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 1F, 1F, 0.01F)
+            .p("threshold", "阈值", 0F, 1F, 0.5F, 0.01F)
+            .p("softness", "边缘柔和", 0.001F, 0.5F, 0.1F, 0.001F)
+            .p("invert", "反转", 0F, 1F, 0F, 1F));
+
+        add(new AmEffectDef("am_grid_repeat", "网格平铺", "AM · 重复", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec2 grid = vec2(max(u_columns, 1.0), max(u_rows, 1.0));
+                vec2 local = fract(luv * grid);
+                vec2 cell = floor(luv * grid);
+                float gap = clamp(u_gap, 0.0, 0.45);
+
+                if (local.x < gap || local.x > 1.0 - gap || local.y < gap || local.y > 1.0 - gap)
+                {
+                    float alpha = mix(c.a, 0.0, clamp(u_amount, 0.0, 1.0));
+                    fragColor = vec4(c.rgb, alpha);
+
+                    return;
+                }
+
+                vec2 uv = (local - gap) / max(1.0 - gap * 2.0, 0.001);
+                vec4 tiled = sampleLayer(uv);
+                fragColor = vec4(mix(c.rgb, tiled.rgb, clamp(u_amount, 0.0, 1.0)),
+                    mix(c.a, tiled.a, clamp(u_amount, 0.0, 1.0)));
+            }
+            """, 0F, "amount")
+            .p("columns", "列数", 1F, 16F, 2F, 1F)
+            .p("rows", "行数", 1F, 16F, 2F, 1F)
+            .p("gap", "间距", 0F, 0.45F, 0.05F, 0.01F)
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_line_repeat", "线条重复", "AM · 重复", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float count = max(u_count, 1.0);
+                bool vertical = u_vertical > 0.5;
+                float axis = vertical ? luv.y : luv.x;
+                float other = vertical ? luv.x : luv.y;
+                float coord = fract(axis * count);
+                float line = step(coord, clamp(u_duty, 0.01, 1.0));
+                vec2 uv = vertical ? vec2(fract(other * count), luv.y) : vec2(luv.x, fract(other * count));
+                vec4 repeated = sampleLayer(uv);
+                float amount = clamp(u_amount, 0.0, 1.0) * line;
+                fragColor = vec4(mix(c.rgb, repeated.rgb, amount), mix(c.a, repeated.a, amount));
+            }
+            """, 0F, "amount")
+            .p("count", "重复数", 1F, 32F, 4F, 1F)
+            .p("duty", "占空比", 0.01F, 1F, 0.7F, 0.01F)
+            .p("amount", "强度", 0F, 1F, 1F, 0.01F)
+            .p("vertical", "垂直方向", 0F, 1F, 1F, 1F));
+
         add(new AmEffectDef("am_channel_map", "通道映射", "AM · 调色", """
             void main()
             {
