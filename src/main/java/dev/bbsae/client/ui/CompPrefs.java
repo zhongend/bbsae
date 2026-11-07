@@ -83,6 +83,9 @@ public final class CompPrefs
         /** Keep BBS' editor onion skins off while the compositor is open: their ghost frames can
          * bleed into the camera preview and read as duplicated shapes/text. */
         public boolean suppressOnionSkin = true;
+        /** Optional per-pixel depth in the main composition; off because it duplicated layer
+         * content in camera preview (free 3D viewport depth is unaffected). */
+        public boolean perPixelDepth = false;
 
         /** Saved vertical zoom of the two track editors; 0 = use the editor's default. */
         public int timelineRowHeight = 0;

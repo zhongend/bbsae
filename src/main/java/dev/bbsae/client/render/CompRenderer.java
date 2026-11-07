@@ -6,6 +6,7 @@ import dev.bbsae.BbsAeAddon;
 import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompEffect;
 import dev.bbsae.comp.CompLayer;
+import dev.bbsae.client.ui.CompPrefs;
 import dev.bbsae.comp.CompProject;
 import dev.bbsae.comp.CompStore;
 import dev.bbsae.comp.CompStyle;
@@ -616,7 +617,8 @@ public final class CompRenderer
         context.preview = preview;
         context.scale = Math.max(0.05F, Math.min(1F, scale));
 
-        if (CompScene.spatial(context))
+        if (CompScene.spatial(context)
+            && (CompPrefs.get().perPixelDepth || Boolean.getBoolean("bbsae.debugForceDepthPlane")))
         {
             context.spatialDepth = DepthPlaneCompositor.acquire(context.renderWidth(), context.renderHeight());
         }
@@ -851,7 +853,8 @@ public final class CompRenderer
 
                 GlFramebuffer blended;
 
-                if (context.spatialDepth != null && CompScene.usePerspective(context, layer))
+                if (context.spatialDepth != null && CompScene.usePerspective(context, layer)
+                    && !Boolean.getBoolean("bbsae.debugNoDepthPlane"))
                 {
                     /* 3D layers carry a plane; per-pixel depth resolves crossings that whole-layer
                      * painter order cannot. Blend mode/opacity still goes through PassRenderer. */

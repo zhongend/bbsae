@@ -228,6 +228,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private int previewGizmoModeOverride = -1;
     /** Previous BBS onion-skin state, non-null while the compositor has suppressed it. */
     private Boolean onionSkinRestore;
+    private boolean debugProjectLoaded;
     /** BBS-style camera flight: WASD/mouse free look, F enters and exits. */
     private boolean cameraFlying;
     private CompLayer flightCamera;
@@ -8408,6 +8409,14 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         }
 
+        String debugProject = System.getProperty("bbsae.debugProject", "");
+
+        if (!debugProject.isBlank() && !this.debugProjectLoaded)
+        {
+            this.debugProjectLoaded = true;
+            this.debugOpenProject(debugProject, Boolean.getBoolean("bbsae.debugCameraPreview"));
+        }
+
         if (Boolean.getBoolean("bbsae.debugOpenEffectLibrary"))
         {
             this.openEffectLibrary();
@@ -8751,6 +8760,45 @@ public class UICompositorPanel extends UIDashboardPanel
      * keyframe drawer open and the BBS interpolation entry point visible. Used for the quick
      * panel 3D rows and the curve picker screenshot.
      */
+    /** Loads a named project and optionally enters camera preview (verification only). */
+    public void debugOpenProject(String projectId, boolean cameraPreview)
+    {
+        CompProject project = CompStore.load(projectId);
+
+        if (project == null || project.comps == null || project.comps.isEmpty())
+        {
+            return;
+        }
+
+        CompDocument comp = project.getCompOrFirst(CompStore.DEFAULT_COMP);
+
+        if (comp == null)
+        {
+            comp = project.comps.get(0);
+        }
+
+        this.bindStandalone(project, comp);
+        this.cameraPreviewMode = cameraPreview;
+        this.project.settings.cameraPreviewMode = cameraPreview;
+        this.time = 0F;
+
+        if (cameraPreview)
+        {
+            this.viewportMode = true;
+            CompRenderContext context = new CompRenderContext(project, comp, 0F, null, null, null);
+            this.syncViewportSize();
+            this.viewportCamera.lookThrough(CompScene.camera(context));
+            this.viewportCamera.update();
+        }
+
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.trackTimeline.fit();
+        this.updatePlayLabel();
+        this.setStatus("调试工程：" + projectId + (cameraPreview ? " · 摄像机预览" : ""));
+    }
+
     private void debugQuick3D()
     {
         if (this.doc == null)

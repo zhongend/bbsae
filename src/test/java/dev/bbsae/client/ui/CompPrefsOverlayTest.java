@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The overlay keys must exist with sane defaults and survive a preferences round-trip. */
@@ -20,6 +21,7 @@ public class CompPrefsOverlayTest
         assertTrue(data.guides);
         assertTrue(data.previewHints);
         assertTrue(data.suppressOnionSkin);
+        assertFalse(data.perPixelDepth);
         assertEquals(1F, data.gizmoOpacity, 0.0001F);
         assertEquals(1F, data.gizmoThickness, 0.0001F);
     }

@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.88.jar`](https://github.com/zhongend/bbsae/releases/download/v0.88/bbsae-0.88.jar)
-   from the **v0.88** release (the asset is updated with each source push).
+1. Download [`bbsae-0.89.jar`](https://github.com/zhongend/bbsae/releases/download/v0.89/bbsae-0.89.jar)
+   from the **v0.89** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.88.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.89.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.88.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.89.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,18 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.89 — fix the camera-preview ghost by disabling the depth plane path
+
+- Reproduced with the user's project `____bug` locally: with the main compositor's per-pixel depth
+  enabled, the camera preview showed duplicated star/polygon layers and stripes; with
+  `DepthPlaneCompositor` disabled the same project renders correctly.
+- The free 3D workspace was always clean because it uses `Viewport3DRenderer`, a different path.
+- Per-pixel depth in the main composition is now **off by default** (Settings → 显示与线框 can enable
+  it again); the main composition falls back to whole-layer ordering, while the 3D workspace keeps
+  its depth-tested quads.
+- 0.87's opaque camera preview and 0.88's world-capture feedback guards remain.
+- 375 tests green.
 
 ## What's new in 0.88 — stop the BBS-preview feedback ghost
 

@@ -760,6 +760,11 @@ public class UICompSettings extends UIElement
             prefs.suppressOnionSkin = value;
             CompPrefs.save();
         }), 170, "摄像机预览出现多重残影时保持开启；它会在合成器打开期间临时关闭 BBS 编辑器的洋葱皮"));
+        this.add(this.row("3D 逐像素深度", this.toggle("", prefs.perPixelDepth, (value) ->
+        {
+            prefs.perPixelDepth = value;
+            CompPrefs.save();
+        }), 170, "默认关闭；开启后主合成器用逐像素深度解决 3D 平面相交，但部分工程在摄像机预览会出现重影"));
         this.add(this.row("关键帧轨道高度", this.slider(prefs.keyframeRowHeight > 0 ? prefs.keyframeRowHeight : 24,
             12F, 60F, (value) ->
         {
