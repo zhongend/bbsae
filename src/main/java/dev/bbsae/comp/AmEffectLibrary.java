@@ -629,6 +629,108 @@ public final class AmEffectLibrary
             .p("blocks", "方块数", 2F, 120F, 20F, 1F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
+        add(new AmEffectDef("am_feather", "羽化", "AM · 绘制", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float sum = 0.0;
+
+                for (int i = 0; i < 12; i++)
+                {
+                    float a = float(i) * 0.5235988;
+                    vec2 offset = vec2(cos(a), sin(a)) * (u_radius / max(LayerSize, vec2(1.0)));
+                    sum += sampleLayer(luv + offset).a;
+                }
+
+                float averaged = sum / 12.0;
+                fragColor = vec4(c.rgb, mix(c.a, clamp(averaged * 1.5, 0.0, 1.0), clamp(u_strength, 0.0, 1.0)));
+            }
+            """, 0F, "radius")
+            .p("radius", "范围（像素）", 0F, 40F, 4F, 0.5F)
+            .p("strength", "强度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_fade", "淡入淡出", "AM · 透明度", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                fragColor = vec4(c.rgb, c.a * clamp(u_progress, 0.0, 1.0));
+            }
+            """, 0F, null)
+            .neutralWhen((effect) -> effect.valueF("progress", 1F) >= 0.999F)
+            .p("progress", "进度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_blink", "眨眼", "AM · 透明度", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float phase = fract(Time * max(u_speed, 0.0));
+                float closed = step(0.5, phase) * clamp(u_amount, 0.0, 1.0);
+                fragColor = vec4(c.rgb, c.a * (1.0 - closed));
+            }
+            """, 0F, "amount")
+            .p("amount", "幅度", 0F, 1F, 1F, 0.01F)
+            .p("speed", "速度（次/秒）", 0F, 10F, 2F, 0.01F));
+
+        add(new AmEffectDef("am_halftone_dots", "半调点", "AM · 绘制", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float y = clamp(luma(c.rgb), 0.0, 1.0);
+                vec2 p = luv * LayerSize / max(u_spacing, 1.0);
+                vec2 cell = floor(p) + 0.5;
+                vec2 local = fract(p) - 0.5;
+                vec2 cellUv = cell * max(u_spacing, 1.0) / max(LayerSize, vec2(1.0));
+                float cellY = clamp(luma(sampleLayer(cellUv).rgb), 0.0, 1.0);
+                float radius = 0.55 * sqrt(cellY) * clamp(u_size, 0.05, 1.0);
+                float dotMask = smoothstep(radius, radius - 0.08, length(local));
+                fragColor = vec4(mix(c.rgb, u_color.rgb, dotMask * clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("spacing", "间距", 4F, 120F, 12F, 1F)
+            .p("size", "点大小", 0.05F, 1F, 0.7F, 0.01F)
+            .p("alpha", "强度", 0F, 1F, 1F, 0.01F)
+            .c("color", "点颜色", 0xFF101010));
+
+        add(new AmEffectDef("am_contour_grad", "等高线渐变", "AM · 绘制", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float y = clamp(luma(c.rgb), 0.0, 1.0);
+                float wave = sin((y + u_phase) * max(u_frequency, 0.1) * 6.2831853);
+                float line = 1.0 - smoothstep(0.0, max(u_thickness, 0.01), abs(wave));
+                vec3 grad = mix(u_color1.rgb, u_color2.rgb, y);
+                fragColor = vec4(mix(c.rgb, grad, line * clamp(u_alpha, 0.0, 1.0)), c.a);
+            }
+            """, 0F, "alpha")
+            .p("frequency", "密度", 0.1F, 30F, 8F, 0.1F)
+            .p("thickness", "线宽", 0.01F, 1F, 0.16F, 0.01F)
+            .p("phase", "相位", -1F, 1F, 0F, 0.01F)
+            .p("alpha", "强度", 0F, 1F, 0.9F, 0.01F)
+            .c("color1", "低亮度颜色", 0xFF102030)
+            .c("color2", "高亮度颜色", 0xFFFFD070));
+
+        add(new AmEffectDef("am_glow_scan", "光扫", "AM · 风格化", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                float position = fract(Time * max(u_speed, 0.0)) * 1.4 - 0.2;
+                float coord = (luv.y - position) / max(u_width, 0.001);
+                float band = exp(-coord * coord);
+                float intensity = band * clamp(u_intensity, 0.0, 4.0);
+                fragColor = vec4(clamp(c.rgb + u_color.rgb * intensity, 0.0, 1.0), c.a);
+            }
+            """, 0F, "intensity")
+            .p("width", "宽度", 0.001F, 0.5F, 0.06F, 0.001F)
+            .p("speed", "速度（次/秒）", 0F, 5F, 0.4F, 0.01F)
+            .p("intensity", "强度", 0F, 4F, 1.2F, 0.01F)
+            .c("color", "光带颜色", 0xFFB0E4FF));
+
         add(new AmEffectDef("am_channel_map", "通道映射", "AM · 调色", """
             void main()
             {
