@@ -102,6 +102,8 @@ loom {
             vmArg "-Dbbsae.debugExpandEffects=" + (project.findProperty("bbsaeExpandEffects") ?: "false")
             vmArg "-Dbbsae.debugInspectorPage=" + (project.findProperty("bbsaeInspectorPage") ?: "")
             vmArg "-Dbbsae.debugSelectLayer=" + (project.findProperty("bbsaeSelectLayer") ?: "")
+            vmArg "-Dbbsae.debugOnlyLayer=" + (project.findProperty("bbsaeOnlyLayer") ?: "")
+            vmArg "-Dbbsae.debugCube2D=" + (project.findProperty("bbsaeCube2D") ?: "false")
             vmArg "-Dbbsae.debugWindow=" + (project.findProperty("bbsaeWindow") ?: "")
             vmArg "-Dbbsae.debugInspectorScroll=" + (project.findProperty("bbsaeInspectorScroll") ?: "")
             programArgs "--quickPlaySingleplayer", "TestWorld"

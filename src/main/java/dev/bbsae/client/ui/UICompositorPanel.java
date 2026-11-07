@@ -7462,6 +7462,10 @@ public class UICompositorPanel extends UIDashboardPanel
                  * (filter dropdown, debug shots) without opening the curve editor. */
                 break;
 
+            case "cubetest":
+                this.debugCubeTest();
+                return;
+
             case "onboarding":
                 this.openOnboarding();
                 return;
@@ -7897,6 +7901,72 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
+    /**
+     * Verification only: one 3D layer with a mesh effect, nothing else. This isolates whether the
+     * projected mesh output is composited at all, without relying on layer visibility flags.
+     */
+    public void debugCubeTest()
+    {
+        this.project = CompStore.demo("cube-test");
+        this.doc = this.project.getComp(CompStore.DEFAULT_COMP);
+        this.doc.width = 1280;
+        this.doc.height = 720;
+        this.doc.layers.clear();
+
+        CompLayer card = new CompLayer("cube_card", "Cube Card", "shape");
+        card.x = this.doc.width / 2F;
+        card.y = this.doc.height / 2F;
+        card.width = 480F;
+        card.height = 320F;
+        card.threeD = !Boolean.getBoolean("bbsae.debugCube2D");
+        card.z = 120F;
+        card.rotationY = card.threeD ? 24F : 0F;
+        card.rotationX = card.threeD ? -12F : 0F;
+        card.shapes.add(CompShape.rect("cube_shape", 0F, 0F, 420F, 260F, 0xFFFFFFFF));
+        CompEffect gradient = CompEffectRegistry.create("gradient_ramp", 1);
+
+        gradient.putColor("start", 0xFF7C3AED);
+        gradient.putColor("end", 0xFF06B6D4);
+        gradient.put("angle", 45D);
+        card.effects.add(gradient);
+        card.effects.add(CompEffectRegistry.create("s3d_cube", 1));
+        this.doc.layers.add(card);
+
+        CompLayer camera = new CompLayer("camera_3d", "3D Camera", "camera");
+
+        camera.width = 100F;
+        camera.height = 100F;
+        camera.threeD = true;
+        camera.camera3D = true;
+        camera.z = this.defaultCameraZ();
+        camera.cameraZ = camera.z;
+        camera.cameraTargetX = this.doc.width / 2F;
+        camera.cameraTargetY = this.doc.height / 2F;
+        camera.cameraTargetZ = 0F;
+        this.doc.layers.add(camera);
+        this.doc.activeCameraId = camera.id;
+        this.project.settings.cameraPreviewMode = true;
+        this.cameraPreviewMode = true;
+        this.selectedLayer = card;
+        this.selectedIds.clear();
+        this.selectedIds.add(card.id);
+        this.time = 2F;
+        this.startScreenOpen = false;
+
+        if (this.startScreen != null)
+        {
+            this.startScreen.setVisible(false);
+        }
+
+        this.inspectorPage = PAGE_EFFECTS;
+        dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.trackTimeline.fit();
+        this.updatePlayLabel();
+    }
+
     public void debugDemoEffects()
     {
         this.project = CompStore.demo("dev-effects");
@@ -8017,6 +8087,22 @@ public class UICompositorPanel extends UIDashboardPanel
 
             mask.visible = false;
             mask.guide = true;
+        }
+
+        /* Verification helper: hide everything except the named layer (and the camera) so a
+         * screenshot shows exactly one effect result. */
+        String onlyLayer = System.getProperty("bbsae.debugOnlyLayer", "");
+
+        if (!onlyLayer.isBlank())
+        {
+            for (CompLayer candidate : this.doc.layers)
+            {
+                boolean keep = "camera".equals(candidate.type)
+                    || onlyLayer.equals(candidate.id)
+                    || (candidate.name != null && candidate.name.contains(onlyLayer));
+
+                candidate.visible = keep;
+            }
         }
 
         this.selectedLayer = card3D;

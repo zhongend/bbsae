@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import dev.bbsae.comp.CompEffect;
 import dev.bbsae.comp.CompLayer;
 import org.joml.Matrix4f;
+import org.joml.Vector2f;
 import org.lwjgl.opengl.GL11;
 
 import java.util.HashMap;
@@ -66,20 +67,23 @@ public final class MeshRenderer
         Mesh mesh = mesh(shape);
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
 
+        /* The primitive is placed with the same model and projection LayerContentRenderer uses:
+         * the layer's local origin is its centre, so the mesh is centred there and scaled to the
+         * layer's size. CompScene.world additionally carries the spatial/camera transforms that
+         * the projected content already resolved, which double-transformed the primitive. */
         Matrix4f projection = CompScene.projection(context, layer);
-        Matrix4f world = CompScene.world(context, layer);
+        Matrix4f model = CompScene.model(context, layer);
         float width = Math.max(1F, Math.abs(layer.width));
         float height = Math.max(1F, Math.abs(layer.height));
-        float depth = Math.max(1F, layer.height * Math.max(0.05F, effect.valueF("depth", 0.5F)));
+        float depth = Math.max(1F, height * Math.max(0.05F, effect.valueF("depth", 0.5F)));
         float scale = Math.max(0.01F, effect.valueF("scale", 1F));
 
         Matrix4f local = new Matrix4f()
-            .translate(width * 0.5F, height * 0.5F, 0F)
             .rotateX((float) Math.toRadians(effect.valueF("rotate_x", 0F)))
             .rotateY((float) Math.toRadians(effect.valueF("rotate_y", 0F)))
             .rotateZ((float) Math.toRadians(effect.valueF("rotate_z", 0F)))
-            .scale(width * scale, height * scale, depth);
-        Matrix4f mvp = new Matrix4f(projection).mul(world).mul(local);
+            .scale(width * scale, height * scale, depth * scale);
+        Matrix4f mvp = new Matrix4f(projection).mul(model).mul(local);
 
         output.begin();
         GlStateManager._disableBlend();
