@@ -679,6 +679,40 @@ public class UICompSettings extends UIElement
 
     /* ---------------------------------------------------------------- overlay */
 
+    private void applyOverlayPreset(boolean visible)
+    {
+        CompPrefs.Data prefs = CompPrefs.get();
+
+        prefs.gizmos = visible;
+        prefs.selectionBoxes = visible;
+        prefs.cameraGizmos = visible;
+        prefs.guides = visible;
+        prefs.previewHints = visible;
+        CompPrefs.save();
+        this.rebuild();
+        this.panel.setStatus(visible ? "已显示全部线框与提示" : "已进入纯净预览");
+    }
+
+    private void resetOverlayPrefs()
+    {
+        CompPrefs.Data prefs = CompPrefs.get();
+
+        prefs.gizmos = true;
+        prefs.gizmoOpacity = 1F;
+        prefs.gizmoThickness = 1F;
+        prefs.selectionBoxes = true;
+        prefs.cameraGizmos = true;
+        prefs.guides = true;
+        prefs.previewHints = true;
+        prefs.timelineRowHeight = 0;
+        prefs.keyframeRowHeight = 0;
+        CompPrefs.save();
+        this.panel.applyKeyframeRowHeight(24);
+        this.panel.applyTimelineRowHeight(26);
+        this.rebuild();
+        this.panel.setStatus("外观设置已恢复默认");
+    }
+
     private void buildOverlay()
     {
         CompPrefs.Data prefs = CompPrefs.get();
@@ -735,6 +769,14 @@ public class UICompSettings extends UIElement
             CompPrefs.markDirty();
             this.panel.applyTimelineRowHeight((int) Math.round(value));
         }), 170, "主时间轴每条轨道的行高；Alt+滚轮也可调整"));
+
+        this.add(this.section("快捷预设"));
+        this.add(this.fullButton("纯净预览（隐藏线框与文字）", "一键关闭 Gizmo、选择框、摄像机线框、参考线和预览文字",
+            () -> this.applyOverlayPreset(false)));
+        this.add(this.fullButton("显示全部线框与提示", "重新打开所有辅助显示",
+            () -> this.applyOverlayPreset(true)));
+        this.add(this.fullButton("恢复默认外观设置", "不透明度/粗细回到 1，行高回到默认，所有开关打开",
+            this::resetOverlayPrefs));
     }
 
     private void buildKeys()

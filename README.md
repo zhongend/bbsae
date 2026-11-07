@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.82.jar`](https://github.com/zhongend/bbsae/releases/download/v0.82/bbsae-0.82.jar)
-   from the **v0.82** release (the asset is updated with each source push).
+1. Download [`bbsae-0.83.jar`](https://github.com/zhongend/bbsae/releases/download/v0.83/bbsae-0.83.jar)
+   from the **v0.83** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.82.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.83.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.82.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.83.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,13 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.83 — overlay presets in Settings
+
+- 显示与线框 gains three one-click buttons: **纯净预览** (hide gizmos, boxes, camera wireframes,
+  guides and preview text), **显示全部线框与提示**, and **恢复默认外观设置** (opacity/thickness back
+  to 1, row heights back to defaults, all switches on).
+- These complement the per-control sliders/toggles and give an immediate way to declutter or reset.
 
 ## What's new in 0.82 — visible keyframe track-height controls
 
