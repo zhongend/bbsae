@@ -529,23 +529,21 @@ public final class CompLayerSourceCache
         try
         {
         if (hasEffects)
-        for (CompEffect effect : layer.effects)
         {
-            if (effect == null || !effect.enabled)
+        /* Split point: the bake covers the leading run of layer-space effects; the rest of the
+         * stack runs after projection in its original order. */
+        int projectedStart = CompRenderer.firstProjectedEffect(layer.effects);
+
+        for (int effectIndex = 0; effectIndex < layer.effects.size(); effectIndex++)
+        {
+            CompEffect effect = layer.effects.get(effectIndex);
+
+            if (effect == null || !effect.enabled || effectIndex >= projectedStart)
             {
                 continue;
             }
 
             String type = effect.type == null ? "" : effect.type;
-
-            /* Depth effects need the projected frame, shake samples the composition and backdrop
-             * effects need the accumulated comp below the layer - none of them exist inside the
-             * layer-local bake, so they run once in the composition pass instead. */
-            if (type.startsWith("depth_") || "shake".equals(type)
-                || dev.bbsae.comp.AmEffectLibrary.usesComp(type) || MeshRenderer.supports(type))
-            {
-                continue;
-            }
 
             try
             {
@@ -562,6 +560,7 @@ public final class CompLayerSourceCache
             {
                 dev.bbsae.BbsAeAddon.LOGGER.error("Viewport effect {} failed on layer {}", type, layer.id, e);
             }
+        }
         }
         }
         finally

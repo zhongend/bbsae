@@ -686,6 +686,13 @@ public final class CompRenderer
                 java.util.List<CompEffect> effects = layer.effects == null
                     ? java.util.Collections.emptyList()
                     : layer.effects;
+                /* Effects that need the projected frame (depth, shake, backdrop, mesh) split the
+                 * stack: everything before the first such effect is baked into the layer raster,
+                 * everything from it onward runs here, in the author's order. Previously only the
+                 * projected effects themselves ran here, which reordered them after later baked
+                 * effects (a mesh followed by a blur ended up blurred before the mesh). */
+                int projectedStart = effectsBaked ? firstProjectedEffect(effects) : 0;
+                int effectIndex = 0;
 
                 /* Backdrop-reading effects (displacement maps, glass) sample what is already
                  * composited below this layer. Keep the previous value so nested precomps and the
@@ -710,7 +717,9 @@ public final class CompRenderer
                      * depth_dof silently did nothing on 3D layers. */
                     boolean depthEffect = effect.type != null && effect.type.startsWith("depth_");
 
-                    if (!needsCompositionEffect(effectsBaked, effect))
+                    int index = effectIndex++;
+
+                    if (effectsBaked && index < projectedStart)
                     {
                         continue;
                     }
@@ -1334,15 +1343,44 @@ public final class CompRenderer
             return false;
         }
 
-        boolean depth = effect.type != null && effect.type.startsWith("depth_");
-        /* A backdrop-reading effect must run after projection, where the accumulated composition
-         * below the layer exists; the baked 3D raster has no backdrop to sample. */
-        boolean comp = dev.bbsae.comp.AmEffectLibrary.usesComp(effect.type);
-        /* A mesh shape is projected with the layer's own world matrix, so baking it into a
-         * layer-local raster would apply that transform twice. */
-        boolean mesh = MeshRenderer.supports(effect.type);
+        return !effectsBaked || requiresProjectedPass(effect.type);
+    }
 
-        return !effectsBaked || depth || comp || mesh;
+    /**
+     * True when the effect can only run on the projected frame: depth effects read the world depth
+     * buffer, shake samples the composition, backdrop effects need the accumulated comp and mesh
+     * effects are projected with the layer's world matrix (baking would apply it twice).
+     */
+    static boolean requiresProjectedPass(String type)
+    {
+        if (type == null)
+        {
+            return false;
+        }
+
+        return type.startsWith("depth_") || "shake".equals(type)
+            || dev.bbsae.comp.AmEffectLibrary.usesComp(type) || MeshRenderer.supports(type);
+    }
+
+    /** Index of the first effect that must run after projection, or the list size if none. */
+    static int firstProjectedEffect(java.util.List<CompEffect> effects)
+    {
+        if (effects == null)
+        {
+            return 0;
+        }
+
+        for (int i = 0; i < effects.size(); i++)
+        {
+            CompEffect effect = effects.get(i);
+
+            if (effect != null && effect.enabled && requiresProjectedPass(effect.type))
+            {
+                return i;
+            }
+        }
+
+        return effects.size();
     }
 
     /**
