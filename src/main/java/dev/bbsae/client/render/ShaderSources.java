@@ -37,6 +37,42 @@ public final class ShaderSources
         in vec2 vUv;
         out vec4 fragColor;
 
+        const vec3 luminanceWeights = vec3(0.2126, 0.7152, 0.0722);
+
+        vec3 rgb2hsv(vec3 c)
+        {
+            vec4 k = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+            vec4 p = mix(vec4(c.bg, k.wz), vec4(c.gb, k.xy), step(c.b, c.g));
+            vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+            float d = q.x - min(q.w, q.y);
+            float e = 1.0e-10;
+
+            return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+        }
+
+        vec3 hsv2rgb(vec3 c)
+        {
+            vec4 k = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+            vec3 p = abs(fract(c.xxx + k.xyz) * 6.0 - k.www);
+
+            return c.z * mix(k.xxx, clamp(p - k.xxx, 0.0, 1.0), c.y);
+        }
+
+        /* Luma/chroma split for the colour, hue and luminance modes. */
+        vec3 rgb2yuv(vec3 c)
+        {
+            return vec3(dot(c, vec3(0.299, 0.587, 0.114)),
+                        dot(c, vec3(-0.14713, -0.28886, 0.436)),
+                        dot(c, vec3(0.615, -0.51499, -0.10001)));
+        }
+
+        vec3 yuv2rgb(vec3 c)
+        {
+            return vec3(c.x + 1.13983 * c.z,
+                        c.x - 0.39465 * c.y - 0.58060 * c.z,
+                        c.x + 2.03211 * c.y);
+        }
+
         vec3 blendColor(vec3 b, vec3 s)
         {
             if (Blend == 1) return min(b + s, vec3(1.0));
@@ -63,6 +99,28 @@ public final class ShaderSources
             if (Blend == 11) return clamp(b / max(1.0 - s, vec3(0.0001)), 0.0, 1.0);
             if (Blend == 12) return 1.0 - clamp((1.0 - b) / max(s, vec3(0.0001)), 0.0, 1.0);
 
+            /* Remaining blend set. The formulas follow the standard separated-blend definitions
+             * (the same ones every compositor documents); mask and exclude are alpha operations
+             * and are handled in main() before this function runs. */
+            if (Blend == 15) return clamp(s + b - 1.0, 0.0, 1.0);                       /* linear burn */
+            if (Blend == 16) return clamp(s + b, 0.0, 1.0);                            /* linear dodge */
+            if (Blend == 17) return clamp(mix(b + 2.0 * s - 1.0, b + 2.0 * (s - 0.5), step(0.5, s)), 0.0, 1.0);
+            if (Blend == 18) return clamp(mix(b * (1.0 - 2.0 * s), 1.0 - (1.0 - b) * (2.0 * (s - 0.5)), step(0.5, s)), 0.0, 1.0);
+            if (Blend == 19) return clamp(mix(min(b, 2.0 * s), max(b, 2.0 * (s - 0.5)), step(0.5, s)), 0.0, 1.0);
+            if (Blend == 20)
+            {
+                return mix(b * (s + 0.5), 1.0 - (1.0 - b) * (1.0 - (s - 0.5)), step(0.5, b));
+            }
+            if (Blend == 21) return clamp(b - s, 0.0, 1.0);
+            if (Blend == 22) return clamp(b / max(s, vec3(0.0001)), 0.0, 1.0);
+            if (Blend == 23) return length(luminanceWeights * s) > length(luminanceWeights * b) ? b : s;
+            if (Blend == 24) return length(luminanceWeights * s) > length(luminanceWeights * b) ? s : b;
+            if (Blend == 25) return hsv2rgb(vec3(rgb2hsv(s).x, rgb2hsv(b).yz));
+            if (Blend == 26) return hsv2rgb(vec3(rgb2hsv(b).x, rgb2hsv(s).y, rgb2hsv(b).z));
+            if (Blend == 27) return yuv2rgb(vec3(rgb2yuv(b).x, rgb2yuv(s).yz));
+            if (Blend == 28) return yuv2rgb(vec3(rgb2yuv(s).x, rgb2yuv(b).yz));
+            if (Blend == 29) return s * b;
+
             return s;
         }
 
@@ -83,6 +141,27 @@ public final class ShaderSources
             float m = maskValue(vUv);
             float a = clamp(s.a * Opacity * m, 0.0, 1.0);
 
+            /* Mask / exclude are alpha operations, not colour maths: the backdrop keeps its
+             * colour and only its coverage changes. Mask shows the backdrop through the layer;
+             * exclude cuts the layer's shape out of the backdrop. Handling them before the
+             * backdrop blend keeps them independent of the colour formulas above. */
+            if (Blend == 13 || Blend == 14)
+            {
+                if (UseBackdrop == 0)
+                {
+                    fragColor = vec4(0.0);
+
+                    return;
+                }
+
+                vec4 back = texture(Backdrop, vUv);
+                float maskA = Blend == 13 ? back.a * a : back.a * (1.0 - a);
+
+                fragColor = vec4(back.rgb, maskA);
+
+                return;
+            }
+
             /* Layer content is stored with straight alpha. Effect passes and the compositor
              * therefore never divide by alpha here; only the content/display boundaries
              * convert between BBS's premultiplied drawing and straight-alpha compositing. */
@@ -100,7 +179,7 @@ public final class ShaderSources
             /* A blend mode only applies where the backdrop actually has coverage. Without this
              * mix, multiply/screen/overlay over the transparent part of the comp produce black
              * or white, which reads as "blend modes do nothing / destroy the layer". */
-            vec3 blended = mix(srcRgb, blendColor(b.rgb, srcRgb), b.a);
+            vec3 blended = clamp(mix(srcRgb, blendColor(b.rgb, srcRgb), b.a), 0.0, 1.0);
             float outA = a + b.a * (1.0 - a);
             vec3 outRgb = outA > 0.0001 ? (blended * a + b.rgb * b.a * (1.0 - a)) / outA : vec3(0.0);
 

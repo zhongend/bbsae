@@ -42,6 +42,30 @@ public class CompLayer
     public static final int BLEND_COLOR_DODGE = 11;
     public static final int BLEND_COLOR_BURN = 12;
 
+    /* The rest of the blend set, in the order the reference compositor exposes it: two mask
+     * operations first, then the remaining colour maths. Saved projects keep their numeric ids,
+     * so these are appended instead of reordering the modes above. */
+    public static final int BLEND_MASK = 13;
+    public static final int BLEND_EXCLUDE = 14;
+    public static final int BLEND_LINEAR_BURN = 15;
+    public static final int BLEND_LINEAR_DODGE = 16;
+    public static final int BLEND_LINEAR_LIGHT = 17;
+    public static final int BLEND_VIVID_LIGHT = 18;
+    public static final int BLEND_PIN_LIGHT = 19;
+    public static final int BLEND_SOFT_OVERLAY = 20;
+    public static final int BLEND_SUBTRACT = 21;
+    public static final int BLEND_DIVIDE = 22;
+    public static final int BLEND_DARKER_COLOR = 23;
+    public static final int BLEND_LIGHTER_COLOR = 24;
+    public static final int BLEND_HUE = 25;
+    public static final int BLEND_SATURATION = 26;
+    public static final int BLEND_COLOR = 27;
+    public static final int BLEND_LUMINANCE = 28;
+    public static final int BLEND_COLOR_MULTIPLY = 29;
+
+    /** Highest blend id the shader and the UI know about. */
+    public static final int BLEND_MAX = BLEND_COLOR_MULTIPLY;
+
     public static final int MATTE_ALPHA = 0;
     public static final int MATTE_LUMA = 1;
     public static final int MATTE_ALPHA_INVERTED = 2;

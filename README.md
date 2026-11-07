@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.24.jar`](https://github.com/zhongend/bbsae/releases/download/v0.24/bbsae-0.24.jar)
-   from the **v0.24** release (the asset is updated with each source push).
+1. Download [`bbsae-0.25.jar`](https://github.com/zhongend/bbsae/releases/download/v0.25/bbsae-0.25.jar)
+   from the **v0.25** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.24.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.25.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.24.jar` SHA-256: `E042C8269DE2459131BB548C4BB709C37984367C190A57204D399C299D6A8759`.
+`bbsae-0.25.jar` SHA-256: `9BFB6141B07C962B0FF975112F3B8C748331BFE1DE24A9D987FB0D2DA2D0A929`.
 
 ## Gallery
 
@@ -185,6 +185,18 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.25 — the full blend set and clearer inspector groups
+
+- **Blend modes 13 → 30.** The layer blending list now also has 蒙版 / 排除（蒙版） as alpha
+  operations (the backdrop keeps its colour, only coverage changes), plus 线性加深、线性减淡、
+  线性光、亮光、点光、柔光叠加、减去、划分、较暗颜色、较亮颜色、色相、饱和度、颜色、明度、
+  颜色相乘. Existing project files keep their numeric mode ids.
+- **Every blend formula is pinned by a pixel test.** `BlendModesTest` composites 1×1 pixels through
+  the real GLSL and compares them with the documented formula, including the two mask modes.
+- **Inspector dividers.** Each collapsible section is preceded by a two-pixel hairline groove, so
+  the right-hand panel reads as groups instead of one long run of headers.
+- Research and roadmap for the effect-library parity work: [`docs/EFFECT-LIBRARY-PLAN.zh.md`](docs/EFFECT-LIBRARY-PLAN.zh.md).
 
 ## What's new in 0.24 — wave/chroma/itrp/蒙版 fix round + 点跟踪器
 

@@ -41,6 +41,7 @@ import mchorse.bbs_mod.ui.dashboard.UIDashboard;
 import mchorse.bbs_mod.ui.dashboard.panels.UIDashboardPanel;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.IFocusedUIElement;
+import mchorse.bbs_mod.ui.framework.elements.IUIElement;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.UIScrollView;
 import mchorse.bbs_mod.ui.framework.elements.UISection;
@@ -11277,6 +11278,7 @@ public class UICompositorPanel extends UIDashboardPanel
             default -> this.addEffectControls();
         }
 
+        this.decorateInspector();
         this.inspector.resize();
         this.buildingInspector = false;
         this.lastInspectorTime = this.time;
@@ -11285,6 +11287,40 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.curveEditor != null)
         {
             this.curveEditor.refresh();
+        }
+    }
+
+    /**
+     * Inserts a hairline groove before every inspector section.
+     *
+     * <p>Sections are built in a dozen different methods, so instead of touching every builder the
+     * decoration happens once after the page is assembled: the children are detached, re-added in
+     * their original order with a {@link UIInspectorDivider} in front of each section after the
+     * first one. Plain labels and rows keep their existing rhythm, and the divider only appears
+     * where a new group really starts.</p>
+     */
+    private void decorateInspector()
+    {
+        java.util.List<IUIElement> children = new java.util.ArrayList<>(this.inspector.getChildren());
+
+        if (children.isEmpty())
+        {
+            return;
+        }
+
+        this.inspector.removeAll();
+
+        boolean first = true;
+
+        for (IUIElement child : children)
+        {
+            if (!first && child instanceof UISection)
+            {
+                this.inspector.add(new UIInspectorDivider());
+            }
+
+            this.inspector.add(child);
+            first = false;
         }
     }
 
@@ -12004,11 +12040,11 @@ public class UICompositorPanel extends UIDashboardPanel
         section.remember(this.sectionFolds, "opacity", true);
         section.fields.add(this.animatedSliderRow("不透明度", layer, "opacity", layer.opacityFrame(this.getFrame()), (value) -> this.setOpacity(layer, value.floatValue()), 0F, 1F));
 
-        /* A dropdown instead of a click-to-cycle button: 13 modes are impossible to aim at by
-         * clicking through them, and the user needs to see what the modes are called. */
+        /* A dropdown instead of a click-to-cycle button: clicking through a couple of dozen modes
+         * is impossible to aim at, and the user needs to see what the modes are called. */
         java.util.List<Integer> blendModes = new java.util.ArrayList<>();
 
-        for (int i = 0; i < 13; i++)
+        for (int i = 0; i <= CompLayer.BLEND_MAX; i++)
         {
             blendModes.add(i);
         }
@@ -16760,6 +16796,23 @@ public class UICompositorPanel extends UIDashboardPanel
             case CompLayer.BLEND_LIGHTEN -> "变亮";
             case CompLayer.BLEND_COLOR_DODGE -> "颜色减淡";
             case CompLayer.BLEND_COLOR_BURN -> "颜色加深";
+            case CompLayer.BLEND_MASK -> "蒙版";
+            case CompLayer.BLEND_EXCLUDE -> "排除（蒙版）";
+            case CompLayer.BLEND_LINEAR_BURN -> "线性加深";
+            case CompLayer.BLEND_LINEAR_DODGE -> "线性减淡";
+            case CompLayer.BLEND_LINEAR_LIGHT -> "线性光";
+            case CompLayer.BLEND_VIVID_LIGHT -> "亮光";
+            case CompLayer.BLEND_PIN_LIGHT -> "点光";
+            case CompLayer.BLEND_SOFT_OVERLAY -> "柔光叠加";
+            case CompLayer.BLEND_SUBTRACT -> "减去";
+            case CompLayer.BLEND_DIVIDE -> "划分";
+            case CompLayer.BLEND_DARKER_COLOR -> "较暗颜色";
+            case CompLayer.BLEND_LIGHTER_COLOR -> "较亮颜色";
+            case CompLayer.BLEND_HUE -> "色相";
+            case CompLayer.BLEND_SATURATION -> "饱和度";
+            case CompLayer.BLEND_COLOR -> "颜色";
+            case CompLayer.BLEND_LUMINANCE -> "明度";
+            case CompLayer.BLEND_COLOR_MULTIPLY -> "颜色相乘";
             default -> "正常";
         };
     }
