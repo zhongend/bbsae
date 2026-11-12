@@ -1821,18 +1821,22 @@ public final class ShaderSources
 
         uniform sampler2D Source;
         uniform vec2 Size;         /* composition pixels (for pixel-authored offsets) */
-        uniform int Mode;          /* 0 = grid, 1 = line, 2 = scatter */
-        uniform vec2 Grid;         /* copies per axis; line mode uses Grid.x */
-        uniform vec2 CopySize;     /* the layer box in composition UV (1,1 = whole composition) */
+        uniform int Mode;          /* 0 = grid, 1 = line, 2 = comp scatter, 3 = repeat, 4 = ring, 5 = scatter */
+        uniform vec2 Grid;         /* copies per axis; line/repeat/ring/scatter use Grid.x */
         uniform float Gap;         /* shrink each copy to leave a gap (0..0.9) */
-        uniform float Scale;       /* per-copy scale */
-        uniform float Rotation;    /* per-copy rotation, radians */
-        uniform float Randomness;  /* scatter jitter, 0..1 */
+        uniform float Scale;       /* per-copy scale / progression factor */
+        uniform float Rotation;    /* per-copy rotation, radians (progression step) */
+        uniform float Randomness;  /* scatter jitter, 0..1 (grid scatter mode) */
         uniform float Seed;
         uniform float Opacity;
         uniform vec2 Offset;       /* content offset inside each copy, in composition UV */
         uniform int Vertical;      /* line mode axis: 0 horizontal, 1 vertical */
         uniform vec2 Center;       /* composition UV of the layer centre */
+        uniform vec2 Step;         /* repeat mode: composition-UV offset between copies */
+        uniform vec2 RadiusUv;     /* ring/scatter mode: radius in composition UV (x, y) */
+        uniform float StartAngle;  /* ring mode: start angle, radians */
+        uniform float Sweep;       /* ring mode: total sweep, radians */
+        uniform float BaseScale;   /* ring mode: base copy scale */
 
         in vec2 vUv;
         out vec4 fragColor;
@@ -1857,6 +1861,21 @@ public final class ShaderSources
             return vec2(c * p.x - s * p.y, s * p.x + c * p.y);
         }
 
+        /* Composite one copy of the layer over the accumulator. `copy` is the copy centre in
+         * composition UV, `rot` its rotation and `sc` the inverse sampling scale (1 = original
+         * size). The source content spans the same composition extent as the copy, so a 1:1 copy
+         * needs no size factor at all. */
+        void accumulate(inout vec4 acc, vec2 copy, float rot, float sc, float weight)
+        {
+            vec2 delta = rotate(vUv - copy, -rot) / max(sc, 0.0001);
+            vec2 uv = Center + delta + Offset;
+            vec4 texel = texture(Source, clamp(uv, vec2(0.0), vec2(1.0)));
+            float a = texel.a * weight;
+
+            acc.rgb = texel.rgb * a + acc.rgb * (1.0 - a);
+            acc.a = a + acc.a * (1.0 - a);
+        }
+
         void main()
         {
             float alpha = clamp(Opacity, 0.0, 1.0);
@@ -1868,16 +1887,65 @@ public final class ShaderSources
                 return;
             }
 
+            float copyScale = max(max(Scale, 0.02) * (1.0 - clamp(Gap, 0.0, 0.9)), 0.0001);
+            vec4 acc = vec4(0.0);
+
+            if (Mode >= 3)
+            {
+                int count = int(clamp(Grid.x, 1.0, 32.0));
+                int n = count;
+
+                for (int i = 0; i < 32; i++)
+                {
+                    if (i >= n)
+                    {
+                        break;
+                    }
+
+                    float k = float(i);
+                    vec2 copy = Center;
+                    float rot = Rotation * k;
+                    float sc = 1.0;
+
+                    if (Mode == 3)
+                    {
+                        /* Repeat: copies march along the offset direction, each rotated/scaled a
+                         * step further than the previous one. */
+                        copy += Step * (k - (float(n) - 1.0) * 0.5);
+                        sc = pow(max(Scale, 0.02), k) * (1.0 - clamp(Gap, 0.0, 0.9));
+                    }
+                    else if (Mode == 4)
+                    {
+                        /* Ring: copies distributed over the arc, each with a per-copy transform. */
+                        float t = float(n) <= 1.0 ? 0.0 : k / float(n);
+                        float angle = StartAngle + Sweep * t;
+                        copy += vec2(cos(angle) * RadiusUv.x, sin(angle) * RadiusUv.y);
+                        sc = BaseScale * pow(max(Scale, 0.02), k) * (1.0 - clamp(Gap, 0.0, 0.9));
+                    }
+                    else
+                    {
+                        /* Scatter: random point in the disk; the copy size stays uniform so the
+                         * zero contract (count 1 / radius 0) is the exact identity. */
+                        vec2 rnd = hash22(vec2(k, Seed) + 1.7);
+                        float angle = rnd.x * 6.2831853;
+                        float r = sqrt(rnd.y);
+
+                        copy += vec2(cos(angle) * RadiusUv.x, sin(angle) * RadiusUv.y) * r;
+                        sc = pow(max(Scale, 0.02), k) * (1.0 - clamp(Gap, 0.0, 0.9));
+                    }
+
+                    accumulate(acc, copy, rot, max(sc, 0.0001), alpha);
+                }
+
+                fragColor = vec4(acc.rgb, acc.a);
+
+                return;
+            }
+
             vec2 grid = max(Grid, vec2(1.0));
             int cols = int(clamp(grid.x, 1.0, 8.0));
             int rows = Mode == 1 ? 1 : int(clamp(grid.y, 1.0, 8.0));
             float copies = float(cols * rows);
-            /* The source content spans CopySize in composition UV as well (the copy is the same
-             * layer), so a 1:1 copy needs no size factor at all: scale and gap only shrink the copy
-             * on screen relative to that content. Dividing by CopySize here zoomed every copy 8x
-             * into itself — only the copy centres carried pixels ("重复后只剩几个点"). */
-            float copyScale = max(max(Scale, 0.02) * (1.0 - clamp(Gap, 0.0, 0.9)), 0.0001);
-            vec4 acc = vec4(0.0);
 
             for (int j = 0; j < 8; j++)
             {
@@ -1925,13 +1993,7 @@ public final class ShaderSources
                         copy = mix(Center, copy, copies > 1.0 ? 1.0 : 0.0);
                     }
 
-                    vec2 delta = rotate(vUv - copy, -Rotation) / copyScale;
-                    vec2 uv = Center + delta + Offset;
-                    vec4 texel = texture(Source, clamp(uv, vec2(0.0), vec2(1.0)));
-                    float a = texel.a * weight;
-
-                    acc.rgb = texel.rgb * a + acc.rgb * (1.0 - a);
-                    acc.a = a + acc.a * (1.0 - a);
+                    accumulate(acc, copy, Rotation, copyScale, weight);
                 }
             }
 

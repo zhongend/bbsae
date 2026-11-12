@@ -36,6 +36,14 @@ public final class AmEffectDef
     /** Extra identity test for effects whose neutral value is not "all keys zero". */
     public java.util.function.Predicate<CompEffect> neutralPredicate;
 
+    /**
+     * Neutral parameter configuration for effects whose identity is a <b>combination</b> of values
+     * that is not "all zero" — e.g. a replicator is the identity with one copy, no offset/rotation,
+     * scale 1 and full alpha. Declared through {@link #neutralAt(String, double)}; the predicate is
+     * generated from these values so the headless identity audits can rebuild (and verify) it.
+     */
+    public java.util.LinkedHashMap<String, Double> neutralValues;
+
     public final List<Param> params = new ArrayList<>();
     public final List<ColorParam> colors = new ArrayList<>();
     /** Parameters that must all be zero for the effect to be an identity. */
@@ -64,6 +72,42 @@ public final class AmEffectDef
         this.neutralPredicate = predicate;
 
         return this;
+    }
+
+    /**
+     * Adds one key/value pair to the neutral configuration. When every declared pair matches, the
+     * effect returns the input unchanged. Chained: {@code .neutralAt("count", 1).neutralAt("scale", 1)}.
+     */
+    public AmEffectDef neutralAt(String key, double value)
+    {
+        if (this.neutralValues == null)
+        {
+            this.neutralValues = new java.util.LinkedHashMap<>();
+            this.neutralPredicate = this::matchesNeutralValues;
+        }
+
+        this.neutralValues.put(key, value);
+
+        return this;
+    }
+
+    /** True when the effect is exactly at its declared neutral configuration. */
+    public boolean isNeutralConfiguration(CompEffect effect)
+    {
+        return this.neutralValues != null && matchesNeutralValues(effect);
+    }
+
+    private boolean matchesNeutralValues(CompEffect effect)
+    {
+        for (java.util.Map.Entry<String, Double> entry : this.neutralValues.entrySet())
+        {
+            if (Math.abs(effect.valueF(entry.getKey(), 0F) - entry.getValue()) > 0.0001F)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /** Declares that the effect is an identity when every one of these parameters is zero. */

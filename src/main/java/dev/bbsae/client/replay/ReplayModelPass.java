@@ -16,9 +16,12 @@ import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.VertexConsumerProvider;
+import net.minecraft.client.texture.NativeImage;
+import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 
@@ -41,6 +44,12 @@ import java.util.Map;
  * replay keyframes, form properties, shadows off (there is no ground), name tags off (they would
  * only overlap the model), relative anchors honoured.</p>
  *
+ * <h2>Which actors are drawn</h2>
+ * <p>{@link ReplayEditSession#isReplayVisible(int)} decides. The viewport updates the visibility
+ * list once per frame with a frustum test ({@link ReplayCulling}); this pass draws the selected
+ * actor plus every visible one, and skips the rest before paying for a pose application. On a
+ * small film the list is all-true, so nothing changes for the common case.</p>
+ *
  * <h2>State</h2>
  * <p>Everything is wrapped in a {@link GlStateGuard}; the only things restored by hand are the
  * projection and model-view matrices, which the guard does not own. The vertex buffer is
@@ -53,13 +62,35 @@ public final class ReplayModelPass
     private static GlFramebuffer target;
     private static int targetWidth;
     private static int targetHeight;
-    private static boolean loggedFailure;
+
+    /**
+     * A 16x16 fully white texture bound to the entity shaders' light-map slot (Sampler2).
+     *
+     * <p>The world light map is not bound during the UI pass, so every actor drawn here sampled a
+     * black/undefined light map and came out as a black silhouette — the bug the first
+     * real-machine screenshot showed. BBS solves the same problem for its particle editor
+     * ({@code UIParticleSchemeRenderer}) with exactly this white light map; binding it makes any
+     * light-map coordinate sample white, i.e. full-bright, which is what an editor viewport wants
+     * (the film preview renders the real lighting in the world pass).</p>
+     */
+    private static NativeImageBackedTexture whiteLightmapTexture;
+
+    private static final Vector3f LIGHT0 = new Vector3f(0.2F, -1F, 0.3F);
+    private static final Vector3f LIGHT1 = new Vector3f(-0.2F, 1F, -0.3F);
+
+    private static final ReplayLogLimiter FAILURES = new ReplayLogLimiter();
+
+    private static volatile String lastError;
+    private static volatile long lastErrorMs;
+    private static int lastDrawn;
+    private static int lastAttempted;
+    private static int lastSkipped;
 
     private ReplayModelPass()
     {}
 
     /**
-     * Renders every enabled replay of the session's film into the viewport rectangle and blits it.
+     * Renders every visible actor of the session's film into the viewport rectangle and blits it.
      *
      * @return how many actors were drawn
      */
@@ -91,6 +122,8 @@ public final class ReplayModelPass
         Map<String, IEntity> entities = session.entities();
         float transition = session.transition();
         int drawn = 0;
+        int attempted = 0;
+        int skipped = 0;
 
         /* The batch queued for the panel must reach the screen before the framebuffer changes,
          * or those vertices land in the 3D target instead of the UI. */
@@ -113,19 +146,34 @@ public final class ReplayModelPass
             GL11.glDisable(GL11.GL_SCISSOR_TEST);
             GL11.glDisable(GL11.GL_CULL_FACE);
 
+            /* Geometry produced by FilmEntityRenderer is camera-relative WORLD space (blocks): the
+             * matrix stack it fills holds each actor's camera-relative placement, and the view is
+             * expected to arrive through RenderSystem's model-view matrix exactly like BBS' world
+             * pass. So the model-view is the mapped camera view (blocks → comp → view), NOT
+             * identity: with identity the actors stayed at the origin in block units, far outside
+             * the projection's pixel-scale frustum, and the viewport looked empty. */
             modelView.push();
-            modelView.peek().getPositionMatrix().identity();
+            modelView.peek().getPositionMatrix().set(viewCamera.view);
             RenderSystem.applyModelViewMatrix();
             RenderSystem.setProjectionMatrix(viewCamera.projection, VertexSorter.BY_Z);
             RenderSystem.setInverseViewRotationMatrix(new Matrix3f(viewCamera.view).invert());
+
+            /* See whiteLightmapTexture: without this every actor is a black silhouette in the UI
+             * pass. The light directions are explicit for the same reason — world rendering last
+             * set them, but a UI pass must not rely on leftovers from another pipeline. */
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+            RenderSystem.setShaderTexture(2, whiteLightmapId());
+            RenderSystem.setShaderLights(LIGHT0, LIGHT1);
 
             MatrixStack stack = new MatrixStack();
             VertexConsumerProvider consumers = client.getBufferBuilders().getEntityVertexConsumers();
 
             if (entities != null)
             {
-                for (Replay replay : session.film().replays.getList())
+                for (int i = 0; i < session.film().replays.getList().size(); i++)
                 {
+                    Replay replay = session.film().replays.getList().get(i);
+
                     if (replay == null || !Boolean.TRUE.equals(replay.enabled.get()))
                     {
                         continue;
@@ -135,6 +183,15 @@ public final class ReplayModelPass
 
                     if (entity == null || entity.getForm() == null)
                     {
+                        continue;
+                    }
+
+                    attempted += 1;
+
+                    if (!session.isReplayVisible(i))
+                    {
+                        skipped += 1;
+
                         continue;
                     }
 
@@ -153,10 +210,13 @@ public final class ReplayModelPass
                     }
                     catch (RuntimeException e)
                     {
-                        if (!loggedFailure)
+                        long now = System.currentTimeMillis();
+
+                        if (FAILURES.allow(now))
                         {
-                            loggedFailure = true;
-                            BbsAeAddon.LOGGER.warn("Replay mode could not render replay {}", replay.getId(), e);
+                            recordError("render replay " + replay.getId() + ": " + e.getMessage());
+                            BbsAeAddon.LOGGER.warn("Replay mode could not render replay {}{}",
+                                replay.getId(), FAILURES.describeSuppressed(), e);
                         }
                     }
                 }
@@ -174,11 +234,16 @@ public final class ReplayModelPass
             RenderSystem.setInverseViewRotationMatrix(previousInverse);
             modelView.pop();
             RenderSystem.applyModelViewMatrix();
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
 
             GlStateManager._depthMask(true);
             GlStateManager._depthFunc(GL11.GL_LEQUAL);
             GlStateManager._disableDepthTest();
             BufferRenderer.resetCurrentVertexBuffer();
+
+            lastDrawn = drawn;
+            lastAttempted = attempted;
+            lastSkipped = skipped;
         }
 
         batcher.texturedBox(buffer.color.id, 0xFFFFFFFF,
@@ -210,11 +275,44 @@ public final class ReplayModelPass
         }
         catch (RuntimeException e)
         {
+            recordError("create framebuffer " + width + "x" + height + ": " + e.getMessage());
             BbsAeAddon.LOGGER.warn("Replay mode could not create its model framebuffer", e);
             target = null;
         }
 
         return target;
+    }
+
+    private static void recordError(String message)
+    {
+        lastError = message;
+        lastErrorMs = System.currentTimeMillis();
+    }
+
+    /**
+     * Lazily builds the full-bright light map (16x16, every texel white). Created on the render
+     * thread from this pass; released in {@link #release()}.
+     */
+    private static int whiteLightmapId()
+    {
+        if (whiteLightmapTexture == null)
+        {
+            NativeImageBackedTexture texture = new NativeImageBackedTexture(16, 16, false);
+            NativeImage image = texture.getImage();
+
+            for (int y = 0; y < 16; y++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    image.setColor(x, y, -1);
+                }
+            }
+
+            texture.upload();
+            whiteLightmapTexture = texture;
+        }
+
+        return whiteLightmapTexture.getGlId();
     }
 
     /** Releases the persistent target; called when the client stops. */
@@ -226,9 +324,59 @@ public final class ReplayModelPass
             target = null;
         }
 
+        if (whiteLightmapTexture != null)
+        {
+            int id = whiteLightmapTexture.getGlId();
+
+            whiteLightmapTexture.close();
+
+            if (id > 0)
+            {
+                GL11.glDeleteTextures(id);
+            }
+
+            whiteLightmapTexture = null;
+        }
+
         targetWidth = 0;
         targetHeight = 0;
-        loggedFailure = false;
+        FAILURES.reset();
+        lastError = null;
+        lastErrorMs = 0L;
+        lastDrawn = 0;
+        lastAttempted = 0;
+        lastSkipped = 0;
+    }
+
+    /** Last render/creation failure, or null. Stale entries are ignored by the panel HUD. */
+    public static String lastError()
+    {
+        return lastError;
+    }
+
+    public static long lastErrorMs()
+    {
+        return lastErrorMs;
+    }
+
+    public static boolean hasRecentError()
+    {
+        return lastError != null && System.currentTimeMillis() - lastErrorMs < 6000L;
+    }
+
+    public static int lastDrawn()
+    {
+        return lastDrawn;
+    }
+
+    public static int lastAttempted()
+    {
+        return lastAttempted;
+    }
+
+    public static int lastSkipped()
+    {
+        return lastSkipped;
     }
 
     /** Diagnostics hook: the target's GL id, or 0. */

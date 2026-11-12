@@ -2,6 +2,7 @@ package dev.bbsae.client.ui;
 
 import dev.bbsae.comp.CompEffectRegistry;
 import dev.bbsae.comp.CompLayer;
+import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
@@ -9,6 +10,7 @@ import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
 import mchorse.bbs_mod.ui.framework.elements.input.list.UIList;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
+import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
@@ -43,6 +45,27 @@ public class UIEffectLibrary extends UIElement
 
     private String filter = "";
     private final Set<String> expanded = new LinkedHashSet<>();
+    /** One clock for the whole panel: the list only reads channels, it never ticks its own. */
+    private final UiMotion motion = new UiMotion();
+    private int motionFrames;
+
+    @Override
+    public void render(UIContext context)
+    {
+        this.tickMotion();
+        super.render(context);
+    }
+
+    private void tickMotion()
+    {
+        this.motion.tickFrame();
+
+        if (++this.motionFrames >= UICompButton.PRUNE_EVERY)
+        {
+            this.motionFrames = 0;
+            this.motion.prune(UICompButton.PRUNE_IDLE);
+        }
+    }
 
     public UIEffectLibrary(UICompositorPanel panel)
     {
@@ -163,6 +186,10 @@ public class UIEffectLibrary extends UIElement
 
     private void rebuild()
     {
+        /* Search results / collapsed categories are a new list: replay the staggered entrance so
+         * the content reads as being laid out rather than pasted in. */
+        this.motion.replay();
+
         List<EffectRow> rows = new ArrayList<>();
         boolean filtering = !this.filter.isEmpty();
 
@@ -272,11 +299,19 @@ public class UIEffectLibrary extends UIElement
     {
         final String category;
         final CompEffectRegistry.Definition definition;
+        /** Motion channels are keyed by the row's stable id, built once with the row. */
+        final String hoverKey;
+        final String selectKey;
 
         private EffectRow(String category, CompEffectRegistry.Definition definition)
         {
             this.category = category;
             this.definition = definition;
+
+            String base = definition != null ? "fx:" + definition.id : "cat:" + category;
+
+            this.hoverKey = base + ":h";
+            this.selectKey = base + ":s";
         }
 
         static EffectRow category(String name)
@@ -327,27 +362,74 @@ public class UIEffectLibrary extends UIElement
             return super.rowContentX(element) + (element.definition == null ? 0 : 18);
         }
 
+        /**
+         * Draws the row itself instead of BBS's boolean {@code RowStyle} so hover, pick and the
+         * staggered entrance can all be interpolated. The wash is the same vocabulary RowStyle
+         * uses (accent gradient from the left, 2 px bar for the pick), only approached over time.
+         */
         @Override
-        protected void renderElementPart(UIContext context, EffectRow element, int index, int x, int y,
-                                         boolean hover, boolean selected)
+        public void renderListElement(UIContext context, EffectRow element, int index, int x, int y,
+                                      boolean hover, boolean selected)
         {
-            super.renderElementPart(context, element, index, x, y, hover, selected);
+            UIEffectLibrary library = UIEffectLibrary.this;
+            UiMotion motion = library.motion;
+            int height = this.rowHeight();
+            float intro = UiStagger.progress(motion, index, 0.012F, 0.2F);
+            float appear = UiStagger.alpha(intro);
+            float hov = motion.anim(element.hoverKey, hover ? 1F : 0F, 26F);
+            float sel = motion.anim(element.selectKey, selected ? 1F : 0F, 22F);
+            int drawY = y + UiStagger.offsetPx(intro, Math.round(2F * motion.intensity()));
+            float lit = Math.max(hov, sel);
+            int accent = BBSSettings.primaryColor() & 0xFFFFFF;
 
-            if (element.definition == null)
+            if (lit > 0.004F)
             {
-                return;
+                float near = Math.max(hov * 0.22F, sel * 0.50F) * appear;
+                float far = Math.max(hov * 0.03F, sel * 0.08F) * appear;
+
+                if (near > 0.001F || far > 0.001F)
+                {
+                    context.batcher.gradientHBox(x, drawY, x + this.area.w, drawY + height,
+                        UiMotion.alpha(accent, near), UiMotion.alpha(accent, far));
+                }
             }
 
-            Icon icon = EffectIcons.forDefinition(element.definition);
-
-            if (icon == null || icon == Icons.NONE)
+            if (sel > 0.01F)
             {
-                return;
+                context.batcher.box(x, drawY, x + 2, drawY + height,
+                    UiMotion.alpha(accent, sel * appear));
             }
 
-            int top = y + Math.max(0, (this.rowHeight() - 16) / 2);
+            this.renderRowContent(context, element, index, x, drawY, lit, appear, height);
+        }
 
-            context.batcher.icon(icon, x + 3, top);
+        private void renderRowContent(UIContext context, EffectRow element, int index, int x, int y,
+                                      float lit, float appear, int height)
+        {
+            FontRenderer font = context.batcher.getFont();
+            int textX = x + this.rowContentX(element) + (this.branch(element) != null ? ARROW_SLOT : 0);
+
+            this.renderArrow(context, element, x, y, lit > 0.5F);
+
+            if (element.definition != null)
+            {
+                Icon icon = EffectIcons.forDefinition(element.definition);
+
+                if (icon != null && icon != Icons.NONE)
+                {
+                    int top = y + Math.max(0, (height - 16) / 2);
+
+                    context.batcher.icon(icon, UiMotion.alpha(0xFFFFFFFF, appear), x + 3, top);
+                }
+            }
+
+            /* RowStyle's rest text is 85% white; hovering/selecting lifts it to white. */
+            int color = UiMotion.lerpColor(UiMotion.alpha(0xFFFFFFFF, 0.85F), 0xFFFFFFFF, lit);
+
+            color = UiMotion.alpha(color, appear);
+
+            context.batcher.textShadow(this.elementToString(context, index, element), textX,
+                y + (height - font.getHeight()) / 2, color);
         }
 
         @Override

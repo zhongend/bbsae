@@ -114,6 +114,14 @@ public class BbsAeClient implements BBSAddonMod
                     return;
                 }
 
+                /* The replay verification run drives the dashboard itself (it has to fill a film
+                 * into the film panel before the screen opens), so the compositor view must not
+                 * grab the panel first. -PbbsaeView=replay sets both properties. */
+                if (dev.bbsae.client.replay.ReplayDebugHook.isRequested())
+                {
+                    return;
+                }
+
                 if (!opened[0] && ++ticks[0] > 120 && compositorPanel != null)
                 {
                     opened[0] = true;
@@ -177,6 +185,12 @@ public class BbsAeClient implements BBSAddonMod
                 }
             });
         }
+
+        /* Replay-mode verification run: loads a film into the dashboard's single film panel and
+         * opens the 3D replay editor, so the model pass / camera / gizmo can be screenshotted.
+         * Inert unless -Dbbsae.debugReplayFilm=<id> or -Dbbsae.debugView=replay is present.
+         * See dev.bbsae.client.replay.ReplayDebugHook for the properties. */
+        dev.bbsae.client.replay.ReplayDebugHook.install();
 
         /* Verification hook: save one screenshot after a fixed number of ticks, so a rendering
          * change can be checked by looking at it instead of by trusting a log line.
@@ -317,9 +331,13 @@ public class BbsAeClient implements BBSAddonMod
      */
     private static void saveVerificationShot(net.minecraft.client.MinecraftClient client, String name)
     {
+        /* The name comes from a -P property; give it its extension so the PNG lands where the
+         * caller/documentation expects it (a name without ".png" was saved as a bare file). */
+        String fileName = name.toLowerCase(java.util.Locale.ROOT).endsWith(".png") ? name : name + ".png";
+
         net.minecraft.client.util.ScreenshotRecorder.saveScreenshot(
             client.runDirectory,
-            name,
+            fileName,
             client.getFramebuffer(),
             (text) ->
             {

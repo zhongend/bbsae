@@ -329,7 +329,7 @@ public final class CompUi
             left = leftPositions(w, c, showTitle, showReplay, showPlay, showTimecode, showFrames);
             right = rightPositions(w, c, showRender, showExport, showSave);
 
-            if (left[9] + 8 <= right[5] || (!showTitle && !showReplay && !showPlay && !showTimecode && !showFrames))
+            if (left[9] + 8 <= right[6] || (!showTitle && !showReplay && !showPlay && !showTimecode && !showFrames))
             {
                 break;
             }
@@ -430,6 +430,12 @@ public final class CompUi
 
         right = settingsX - 8;
 
+        /* The dock-layout control sits next to settings (it is always visible: it is the only way
+         * to unlock panel dragging). Everything optional moves further left. */
+        int layoutX = right - 48;
+
+        right = layoutX - 8;
+
         int renderX = -1;
         int exportX = -1;
         int saveX = -1;
@@ -455,11 +461,12 @@ public final class CompUi
         int start = focusX;
 
         if (settingsX < start) start = settingsX;
+        if (layoutX < start) start = layoutX;
         if (renderX >= 0 && renderX < start) start = renderX;
         if (exportX >= 0 && exportX < start) start = exportX;
         if (saveX >= 0 && saveX < start) start = saveX;
 
-        return new int[] {focusX, settingsX, renderX, exportX, saveX, start};
+        return new int[] {focusX, settingsX, layoutX, renderX, exportX, saveX, start};
     }
 
     /** Resolved top-bar layout. All X values are relative to the 24 px header. */
@@ -486,6 +493,7 @@ public final class CompUi
         public final int timecodeW;
         public final int focusX;
         public final int settingsX;
+        public final int layoutX;
         public final int renderX;
         public final int exportX;
         public final int saveX;
@@ -519,10 +527,11 @@ public final class CompUi
 
             this.focusX = right[0];
             this.settingsX = right[1];
-            this.renderX = right[2];
-            this.exportX = right[3];
-            this.saveX = right[4];
-            this.rightStart = right[5];
+            this.layoutX = right[2];
+            this.renderX = right[3];
+            this.exportX = right[4];
+            this.saveX = right[5];
+            this.rightStart = right[6];
         }
     }
 

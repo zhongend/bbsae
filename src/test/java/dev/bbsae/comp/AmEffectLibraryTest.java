@@ -244,6 +244,92 @@ public class AmEffectLibraryTest
         assertEquals(step, found.step, 0.0001F, id + "." + key + " step");
     }
 
+    /**
+     * The AM repeat family is neutral exactly in its "one copy, no transform" configuration, not
+     * when every parameter is zero (count 0 is not a thing and radius 0 with count 1 is still the
+     * identity).
+     */
+    @Test
+    public void repeatFamilyNeutralIsASingleUntransformedCopy()
+    {
+        CompEffect repeat = CompEffectRegistry.create("am_repeat", 1);
+
+        repeat.put("count", 1D);
+        repeat.put("offset_x", 0D);
+        repeat.put("offset_y", 0D);
+        repeat.put("angle", 0D);
+        repeat.put("scale", 1D);
+        repeat.put("alpha", 1D);
+        assertTrue(AmEffectLibrary.isNeutral(repeat), "am_repeat with one untransformed copy is the input");
+        repeat.put("count", 2D);
+        assertFalse(AmEffectLibrary.isNeutral(repeat), "two copies must not report neutral");
+
+        CompEffect radial = CompEffectRegistry.create("am_repeat_radial", 1);
+
+        radial.put("count", 1D);
+        radial.put("radius", 0D);
+        radial.put("angle", 0D);
+        radial.put("base_scale", 1D);
+        radial.put("scale", 1D);
+        radial.put("offset_x", 0D);
+        radial.put("offset_y", 0D);
+        radial.put("alpha", 1D);
+        assertTrue(AmEffectLibrary.isNeutral(radial), "one copy at radius 0 is the input");
+        radial.put("radius", 120D);
+        assertFalse(AmEffectLibrary.isNeutral(radial), "a copy pushed off-centre is not the input");
+
+        CompEffect scatter = CompEffectRegistry.create("am_repeat_scatter", 1);
+
+        scatter.put("count", 1D);
+        scatter.put("radius", 0D);
+        scatter.put("angle", 0D);
+        scatter.put("scale", 1D);
+        scatter.put("offset_x", 0D);
+        scatter.put("offset_y", 0D);
+        scatter.put("alpha", 1D);
+        assertTrue(AmEffectLibrary.isNeutral(scatter), "one copy with zero scatter radius is the input");
+        scatter.put("radius", 80D);
+        assertFalse(AmEffectLibrary.isNeutral(scatter), "scattered copies are not the input");
+    }
+
+    /** The P1 colour batch: an identity colour triple and a fill with a real zero alpha. */
+    @Test
+    public void colourMixerAndSolidFillHaveZeroConfigurations()
+    {
+        CompEffect mixer = CompEffectRegistry.create("am_rgb_mixer", 1);
+
+        assertTrue(AmEffectLibrary.isNeutral(mixer),
+            "the RGB mixer defaults are the red/green/blue identity triple");
+
+        mixer.put("gamma", 2D);
+        assertFalse(AmEffectLibrary.isNeutral(mixer), "a non-unit gamma is not the identity");
+
+        CompEffect solid = CompEffectRegistry.create("am_solid_color", 1);
+
+        solid.put("alpha", 0D);
+        assertTrue(AmEffectLibrary.isNeutral(solid), "a solid fill at alpha 0 is the identity");
+
+        solid.put("alpha", 1D);
+        assertFalse(AmEffectLibrary.isNeutral(solid), "an opaque solid fill changes the layer");
+    }
+
+    /**
+     * The new repeat effects are registered through the same data path as every other entry, and
+     * the library previews require a thumbnail for each of them.
+     */
+    @Test
+    public void repeatFamilyIsPartOfTheCatalogue()    {
+        for (String id : new String[] {"am_repeat", "am_repeat_radial", "am_repeat_scatter"})
+        {
+            AmEffectDef definition = AmEffectLibrary.get(id);
+
+            assertNotNull(definition, "missing definition " + id);
+            assertEquals("AM · 重复", definition.category, id + " category");
+            assertTrue(definition.params.size() >= 6, id + " should expose the AM repeat controls");
+            assertTrue(EffectRenderer.supports(id), id + " has no renderer");
+        }
+    }
+
     private static void assertNeutral(String id, String key, float value)
     {
         CompEffect effect = CompEffectRegistry.create(id, 1);

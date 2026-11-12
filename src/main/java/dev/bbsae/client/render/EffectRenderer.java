@@ -1225,7 +1225,9 @@ public final class EffectRenderer
     static boolean isReplication(String type)
     {
         return "grid_repeat".equals(type) || "random_repeat".equals(type)
-            || "am_grid_repeat".equals(type) || "am_line_repeat".equals(type);
+            || "am_grid_repeat".equals(type) || "am_line_repeat".equals(type)
+            || "am_repeat".equals(type) || "am_repeat_radial".equals(type)
+            || "am_repeat_scatter".equals(type);
     }
 
     /**
@@ -1261,6 +1263,9 @@ public final class EffectRenderer
 
         boolean line = "am_line_repeat".equals(type);
         boolean scatter = "random_repeat".equals(type);
+        boolean repeat = "am_repeat".equals(type);
+        boolean ring = "am_repeat_radial".equals(type);
+        boolean scatterRing = "am_repeat_scatter".equals(type);
         float columns = 1F;
         float rows = 1F;
         float gap = 0F;
@@ -1272,8 +1277,67 @@ public final class EffectRenderer
         float offsetX = 0F;
         float offsetY = 0F;
         int vertical = 0;
+        int mode = line ? 1 : scatter ? 2 : 0;
+        float stepX = 0F;
+        float stepY = 0F;
+        float radiusX = 0F;
+        float radiusY = 0F;
+        float startAngle = 0F;
+        float sweep = 0F;
+        float baseScale = 1F;
+        int compW = refWidth(space, input);
+        int compH = refHeight(space, input);
 
-        if (line)
+        if (repeat)
+        {
+            /* AM repeat: `count` copies marching along `offset`, each stepped by `angle` and
+             * multiplied by `scale`. Offsets are authored in composition pixels. */
+            float count = clamp(effect.valueF("count", 5F), 1F, 32F);
+
+            columns = count;
+            stepX = effect.valueF("offset_x", 48F) / Math.max(1F, compW);
+            stepY = -effect.valueF("offset_y", 0F) / Math.max(1F, compH);
+            rotation = (float) Math.toRadians(effect.valueF("angle", 0F));
+            scale = clamp(effect.valueF("scale", 1F), 0.01F, 10F);
+            opacity = clamp(effect.valueF("alpha", 1F), 0F, 1F);
+        }
+        else if (ring)
+        {
+            /* AM repeat.radial: `count` copies on an arc of `radius`, from `startAngle` over
+             * `sweep`, each stepped by `angle` / `baseScale` × `scale`. */
+            float count = clamp(effect.valueF("count", 8F), 1F, 32F);
+            float radius = Math.max(0F, effect.valueF("radius", 300F));
+
+            columns = count;
+            radiusX = radius / Math.max(1F, compW);
+            radiusY = radius / Math.max(1F, compH);
+            startAngle = (float) Math.toRadians(effect.valueF("orientation", 0F)
+                + effect.valueF("start_angle", 0F));
+            sweep = (float) Math.toRadians(effect.valueF("sweep", 360F));
+            rotation = (float) Math.toRadians(effect.valueF("angle", 0F));
+            scale = clamp(effect.valueF("scale", 1F), 0.01F, 10F);
+            baseScale = clamp(effect.valueF("base_scale", 1F), 0.01F, 10F);
+            opacity = clamp(effect.valueF("alpha", 1F), 0F, 1F);
+            offsetX = effect.valueF("offset_x", 0F) / Math.max(1F, compW);
+            offsetY = -effect.valueF("offset_y", 0F) / Math.max(1F, compH);
+        }
+        else if (scatterRing)
+        {
+            /* AM repeat.scatter: `count` copies on random points of a `radius` disk. */
+            float count = clamp(effect.valueF("count", 12F), 1F, 32F);
+            float radius = Math.max(0F, effect.valueF("radius", 300F));
+
+            columns = count;
+            radiusX = radius / Math.max(1F, compW);
+            radiusY = radius / Math.max(1F, compH);
+            rotation = (float) Math.toRadians(effect.valueF("angle", 0F));
+            scale = clamp(effect.valueF("scale", 1F), 0.01F, 10F);
+            opacity = clamp(effect.valueF("alpha", 1F), 0F, 1F);
+            seed = effect.valueF("scatter_seed", 0F) + effect.valueF("evolution", 0F) * 0.37F;
+            offsetX = effect.valueF("offset_x", 0F) / Math.max(1F, compW);
+            offsetY = -effect.valueF("offset_y", 0F) / Math.max(1F, compH);
+        }
+        else if (line)
         {
             float count = clamp(effect.valueF("count", 4F), 1F, 8F);
             float duty = clamp(effect.valueF("duty", 0.7F), 0.05F, 1F);
@@ -1319,10 +1383,9 @@ public final class EffectRenderer
         GlStateManager._disableBlend();
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
-        program.set("Size", refWidth(space, input), refHeight(space, input));
-        program.set("Mode", line ? 1 : scatter ? 2 : 0);
+        program.set("Size", compW, compH);
+        program.set("Mode", line ? 1 : scatter ? 2 : repeat ? 3 : ring ? 4 : scatterRing ? 5 : 0);
         program.set("Grid", columns, rows);
-        program.set("CopySize", space.sizeU, space.sizeV);
         program.set("Gap", gap);
         program.set("Scale", Math.max(0.02F, scale));
         program.set("Rotation", rotation);
@@ -1332,6 +1395,11 @@ public final class EffectRenderer
         program.set("Offset", offsetX, offsetY);
         program.set("Vertical", vertical);
         program.set("Center", space.centerU, space.centerV);
+        program.set("Step", stepX, stepY);
+        program.set("RadiusUv", radiusX, radiusY);
+        program.set("StartAngle", startAngle);
+        program.set("Sweep", sweep);
+        program.set("BaseScale", baseScale);
         program.drawFullscreen();
 
         return output;

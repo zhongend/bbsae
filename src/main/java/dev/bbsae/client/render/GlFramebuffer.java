@@ -88,6 +88,13 @@ public final class GlFramebuffer
     public void clearColorOnly(int clearColor)
     {
         this.bindOnly();
+        /* A raw glColorMask(false, ...) somewhere in the render graph leaves GlStateManager's
+         * cached mask claiming "true"; bindOnly's cached _colorMask(true) is then skipped and the
+         * clear below silently clears nothing. That is exactly what kept the per-pixel-depth
+         * colour target alive across layers/frames (the camera-preview ghost). Force the real
+         * mask first, then re-sync the cache. */
+        GL11.glColorMask(true, true, true, true);
+        GlStateManager._colorMask(true, true, true, true);
         GlStateManager._clearColor(((clearColor >> 16) & 0xFF) / 255F, ((clearColor >> 8) & 0xFF) / 255F,
             (clearColor & 0xFF) / 255F, ((clearColor >>> 24) & 0xFF) / 255F);
         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);

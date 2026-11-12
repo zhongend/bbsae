@@ -8,6 +8,7 @@ import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.utils.InterfaceBlur;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
+import net.minecraft.client.util.math.MatrixStack;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -61,6 +62,10 @@ public class UIImportBrowser extends UIElement
 
     private int laidOutWidth = -1;
     private int laidOutHeight = -1;
+
+    /** One clock for the overlay; the row list reads its channels and never ticks its own. */
+    private final UiMotion motion = new UiMotion();
+    private int motionFrames;
 
     public UIImportBrowser(String title, String[] extensions, Consumer<File> onPick, Runnable onClose)
     {
@@ -259,10 +264,55 @@ public class UIImportBrowser extends UIElement
     public void render(UIContext context)
     {
         this.layout();
+        this.motion.tickFrame();
+
+        if (++this.motionFrames >= UICompButton.PRUNE_EVERY)
+        {
+            this.motionFrames = 0;
+            this.motion.prune(UICompButton.PRUNE_IDLE);
+        }
+
+        /* Opening the browser is a mode switch: the dim backdrop fades in and the dialog box
+         * slides up 8 px instead of appearing complete in one frame. */
+        float fade = this.motion.anim("fade", 1F, 8F);
+        float slide = (1F - fade) * 8F * this.motion.intensity();
+        MatrixStack stack = slide > 0.01F ? context.batcher.getContext().getMatrices() : null;
 
         InterfaceBlur.applyUnder();
-        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0x66000000);
-        super.render(context);
+        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
+            UiGfx.mulA(0x66000000, fade));
+
+        if (stack != null)
+        {
+            stack.push();
+            stack.translate(0F, slide, 0F);
+        }
+
+        try
+        {
+            super.render(context);
+        }
+        finally
+        {
+            if (stack != null)
+            {
+                stack.pop();
+            }
+        }
+    }
+
+    /** Row index under the cursor; pure so the scroll arithmetic can be pinned headlessly. */
+    static int rowIndexAt(int mouseY, int areaY, int scrollY, int rowHeight)
+    {
+        return (mouseY - areaY + scrollY) / Math.max(1, rowHeight);
+    }
+
+    /** Keeps a pixel scroll offset inside its content; pure for the same reason. */
+    static int clampScrollOffset(int contentHeight, int viewHeight, int scrollY)
+    {
+        int max = Math.max(0, contentHeight - viewHeight);
+
+        return Math.max(0, Math.min(max, scrollY));
     }
 
     private void layout()
@@ -509,9 +559,7 @@ public class UIImportBrowser extends UIElement
 
         void clampScroll()
         {
-            int max = Math.max(0, this.contentHeight() - this.area.h);
-
-            this.scrollY = Math.max(0, Math.min(max, this.scrollY));
+            this.scrollY = clampScrollOffset(this.contentHeight(), this.area.h, this.scrollY);
         }
 
         Entry selected()
@@ -586,6 +634,12 @@ public class UIImportBrowser extends UIElement
                     Entry entry = this.rows.get(i);
                     int y = this.area.y + i * ROW_H - this.scrollY;
                     boolean active = i == this.selected;
+                    /* Rows arrive a few milliseconds apart; the delay is computed per visible row,
+                     * so a folder with 500 entries still costs the same. */
+                    float intro = UiStagger.progress(UIImportBrowser.this.motion, i, 0.014F, 0.2F);
+                    float appear = UiStagger.alpha(intro);
+                    int ty = y + UiStagger.offsetPx(intro,
+                        Math.round(2F * UIImportBrowser.this.motion.intensity()));
 
                     if (active)
                     {
@@ -594,20 +648,26 @@ public class UIImportBrowser extends UIElement
 
                     if (entry.folder)
                     {
-                        context.batcher.icon(Icons.FOLDER, 0xFFD6B36A, this.area.x + 4, y + 3);
-                        context.batcher.text(trim(entry.name, 44), this.area.x + 22, y + 4, active ? 0xFFFFFFFF : 0xFFD6DEEB);
+                        context.batcher.icon(Icons.FOLDER, UiMotion.alpha(0xFFD6B36A, appear), this.area.x + 4, ty + 3);
+                        context.batcher.text(trim(entry.name, 44), this.area.x + 22, ty + 4,
+                            UiMotion.alpha(active ? 0xFFFFFFFF : 0xFFD6DEEB, appear));
                     }
                     else
                     {
-                        context.batcher.icon(Icons.IMAGE, 0xFF7FA8D8, this.area.x + 4, y + 3);
-                        context.batcher.text(trim(entry.name, 44), this.area.x + 22, y + 4, active ? 0xFFFFFFFF : 0xFFC3CCDA);
-                        context.batcher.text(entry.detail, this.area.ex() - 52, y + 4, 0xFF6F7A8A);
+                        context.batcher.icon(Icons.IMAGE, UiMotion.alpha(0xFF7FA8D8, appear), this.area.x + 4, ty + 3);
+                        context.batcher.text(trim(entry.name, 44), this.area.x + 22, ty + 4,
+                            UiMotion.alpha(active ? 0xFFFFFFFF : 0xFFC3CCDA, appear));
+                        context.batcher.text(entry.detail, this.area.ex() - 52, ty + 4,
+                            UiMotion.alpha(0xFF6F7A8A, appear));
                     }
                 }
 
                 if (this.rows.isEmpty())
                 {
-                    context.batcher.text("这个目录没有可导入的文件", this.area.x + 6, this.area.y + 6, 0xFF7C8798);
+                    float appear = UiStagger.alpha(UiStagger.progress(UIImportBrowser.this.motion, 0, 0.014F, 0.2F));
+
+                    context.batcher.text("这个目录没有可导入的文件", this.area.x + 6, this.area.y + 6,
+                        UiMotion.alpha(0xFF7C8798, appear));
                 }
             }
             finally
@@ -652,7 +712,7 @@ public class UIImportBrowser extends UIElement
             this.pressScroll = this.scrollY;
             this.dragged = false;
 
-            int index = (context.mouseY - this.area.y + this.scrollY) / ROW_H;
+            int index = rowIndexAt(context.mouseY, this.area.y, this.scrollY, ROW_H);
 
             if (index >= 0 && index < this.rows.size())
             {

@@ -98,9 +98,9 @@
 | P1 绘制状态机（落点/拖手柄/闭合/橡皮筋/Enter/Esc/续画/段上加点//**Shift 45°**/撤销粒度） | ✅ | 全部实现；每点/每次闭合各一步 undo |
 | P2 编辑（命中/多选/框选/拖点/拖手柄镜像+Alt 断开+邻居钳制/Delete/双击·右键转换点/闭合断开） | ✅ | 框选为 **Ctrl+拖**（AE 的钢笔墨水临时选择工具）；双击 = 右键菜单转换点（见使用说明） |
 | P3 2D/3D（普通预览 2D 仿射、3D 透视射线-平面、3D 工作区 `CompViewportCamera`） | ✅ | 关键：用 `CompScene.usePerspective` 而非 `layer.threeD`；3D 图层+正交相机的逆映射用“正交射线-图层平面”而非 4×4 逆 |
-| P4 路径动画最低要求（已动画路径禁止增删点并提示） | ✅ | 段上加点 / Delete 均拦截，状态栏说明 |
+| P4 路径动画最低要求（已动画路径**不再**禁止增删点） | ✅（Round 2 已升级） | 见 §9：求值 → CountOp → 回写全部通道，曲线在关键帧处保形 |
 | P4 “整条路径打关键帧”助手 | ✅ | 检查器按钮/右键菜单：对 6N 通道在播放头 `insert`，一步 undo |
-| P4 求值→CountOp→回写全部关键帧的通道重映射 | ❌ | 本期不做（计划取舍 4-A 的 B 方案，风险高，见 §5-6） |
+| P4 求值→CountOp→回写全部关键帧的通道重映射 | ✅（Round 2） | 段上加点/末尾加点/删除点（含 Multi-delete）全支持；详见 §9 |
 | 逐点羽化（Mask Feather 工具） | ❌ | 数据模型缺 `FeatherPoint`，单独立项 |
 | RotoBezier / Convert To Bezier / Set First Vertex / Free Transform Points | ❌ | 依赖通道重排，后置 |
 | AE Contents 形状组（Group→Path/Fill/Stroke 嵌套） | ❌ | 数据模型是扁平 `shapes`，不做（计划取舍 2-A） |
@@ -117,12 +117,14 @@
 2. **渲染画面会变（修的是 bug）**：椭圆/圆形蒙版现在渲染完整 1/4 缺失部分；旋转图层蒙版不再镜像；带手柄的闭合形状路径最后一段变成曲线。真机需逐项截图核对（§6 第 10、11 项）。
 3. **3D 工作区钢笔是“新路径”**：`is3DSpace()` 下点击需要先选中图层；平面侧对屏幕/相机后返回 null 并提示，不落点。
 4. **性能**：拖拽时每次 `setScalar` → `save()`（去抖 600ms）+ 每帧重栅格化蒙版（`MaskCache` LRU 24，全分辨率）。本期**未做**拖拽降采样/性能基准；50 路径×40 点的叠加层为 O(路径×段×12) 屏幕投影，未测 <0.3ms 预算。
-5. **动画路径语义**：逐点通道模型，增删点会错位 → 已禁止；拖动/手柄/转换点安全（走 `setScalar` 打键）。给已有动画的路径“整条路径打关键帧”会与现有通道合并（插入同帧键），符合预期但需真机确认。
-6. **撤销粒度**：拖拽一帧一次 `save()`（进度条去抖），一次拖拽=一次 undo（`beginAction` 只在按下时），与现有蒙版拖拽一致；快速连续落点会被 1 秒采样合并的风险与旧行为相同。
+5. **动画路径语义（Round 2 起为“重映射”而非“禁止”）**：增删点会按 §9 把 6N 个标量通道重映射到新索引。保证：**每个既有动画关键帧处曲线逐像素不变**；关键帧之间是“重映射后各通道各自插值”的近似（与 AE 的整条 Path 值插值存在理论差异），若相邻通道是贝塞尔插值、误差可能可见但仅存在于两键之间。另：通道上的重复循环（KeyframeLoop）在索引搬移时会丢失（点通道一般不用 loop）。
+6. **撤销粒度**：拖拽一帧一次 `save()`（进度条去抖），一次拖拽=一次 undo（`beginAction` 只在按下时），与现有蒙版拖拽一致；**动画重映射的一次操作 = 一步 undo**（在改通道前只 `beginAction` 一次）。
 7. **框选范围**：只对“当前编辑的那一条路径”框选（AE 是同一图层的所有路径）；跨路径多选未做。
 8. **右键菜单文案**是 effectcraft 已验证命令集的意译，AE 画布右键逐项文本未真机核对。
 9. **`G` 硬编码**：若与其他面板/输入法冲突，可在 dock 重构后迁到 `CompKeybinds`。
 10. **没有持久化调试开关/环境变量**：钢笔状态全部在内存（`CompPenSession`），`forget()/cancel()` 在换层/换合成/进出 3D/关闭工具时调用，无残留。
+11. **检查器“添加/删除点”按钮仍绕过重映射**：`UICompositorPanel.maskSection` / `shapeSection` 的“添加蒙版点/添加路径点/删除最后一点”直接改 `points` 列表（不是走钢笔 session）。本轮禁止改 `UICompositorPanel`，已在 §10 给出 1 行替换补丁；**Lead 未集成前，对已动画路径使用这三个检查器按钮仍会打乱通道**。
+12. **“Preserve Constant Vertex Count”没有开关**：AE 有设置项可关（关时不重映射其他键）。本项目当前**始终开启**（更安全、符合用户预期）；如果以后要 AE 1:1，可在 `CompPrefs`/`CompProject` 加开关（不在本轮写域）。
 
 ---
 
@@ -133,7 +135,7 @@
 1. **2D 蒙版绘制**：solid 图层上选钢笔 → 点 4 下 → 期间图层**始终可见**（第 2 点不消失）→ 点起点闭合（闭合后只显示蒙版内内容）。
 2. **橡皮筋/闭合提示**：画到第 3 点移动鼠标应有虚线；靠近起点出现高亮圈。
 3. **平滑点与手柄**：第 2 点按下拖动 → 拖出对称手柄；选中点显示入/出柄；按住 Alt 拖一侧 → 另一侧不动；镜像长度不超过相邻锚点距离。
-4. **段上加点**：闭合路径段中间 Ctrl/钢笔点击 → 点数 +1、轮廓不变（前后截图 diff 应为 0）；动画路径上点击 → 状态栏提示“已有动画关键帧…”，点数不变。
+4. **段上加点**：闭合路径段中间钢笔点击 → 点数 +1、轮廓不变（前后截图 diff 应为 0）；**已动画路径**上同样点击 → 点数 +1，检查 0/24/48 帧轮廓与加点前一致（重映射），撤销一步回到原点数。
 5. **开放路径**：Esc 结束 → 叠加层为开放轮廓、不参与遮罩；点末点续画；右键“闭合路径”。
 6. **形状路径**：形状层用钢笔 → 生成 PATH 形状（不是蒙版）；开放路径描边端点为圆头、无接缝；填充仍在。
 7. **旋转/非均匀缩放图层**：2D 图层 rotation 30°、scaleX 1.5 → 钢笔点跟手；**蒙版/形状渲染与叠加层位置一致**（验证转置修复）。
@@ -143,9 +145,10 @@
 11. **相机工具互斥**：开启 AE 摄像机工具 → 点钢笔按钮 → 摄像机工具自动关闭；钢笔按下/拖动不会被摄像机工具吞掉。
 12. **撤销/重做**：落 3 点 + 闭合 + 拖动一个点 → 逐次 Ctrl+Z 精确回退（每点一步、闭合一步、拖动一步）。
 13. **保存/重开**：开放/闭合状态保持；中文蒙版名正常；旧工程（无 closed 字段）打开后画面与升级前一致。
-14. **动画路径**：检查器“整条路径打关键帧”→ 0/24/48 帧形状连续；之后尝试加点被拒绝。
+14. **动画路径**：检查器“整条路径打关键帧”→ 0/24/48 帧形状连续；在段上加点 → 三个帧的轮廓不变、撤销一步；删除一个点 → 剩余点位置在所有帧保持、撤销一步。
 15. **splitter 拖动**：拖动分栏时预览内不落点。
 16. **性能**：40 点蒙版拖拽预览不卡顿（>30fps 代理）；退出钢笔后无每帧额外开销。
+17. **动画路径 + 检查器加点（等 §10 补丁集成后）**：对已打关键帧的蒙版点检查器“添加蒙版点/删除最后一点” → 关键帧处轮廓仍连续。
 
 ---
 
@@ -158,6 +161,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 test --offline --console=plain `
   --tests "dev.bbsae.comp.CompPathGeometryTest" `
   --tests "dev.bbsae.comp.CompPenSessionTest" `
+  --tests "dev.bbsae.comp.AnimatedPathRemapTest" `
   --tests "dev.bbsae.comp.PenPathPersistenceTest" `
   --tests "dev.bbsae.client.render.MaskPathRasterTest" `
   --tests "dev.bbsae.client.render.MaskGlRenderTest" `
@@ -165,14 +169,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
   --tests "dev.bbsae.client.ui.PenProjectionTest"
 ```
 
-结果（2026-11-12 23:1x）：
+结果：
 
-- `compileJava` / `compileTestJava`：BUILD SUCCESSFUL。
-- 上述 7 个类：BUILD SUCCESSFUL，**62 tests / 0 failures / 0 errors**：
-  - CompPathGeometryTest 11、CompPenSessionTest 15、PenPathPersistenceTest 5、
-    MaskPathRasterTest 12、MaskGlRenderTest 7、ShapeOpenPathTest 6、PenProjectionTest 6。
+- Round 1（2026-11-12 23:1x）`compileJava` / `compileTestJava`：BUILD SUCCESSFUL；当时 7 类 **62 tests / 0 fail**。
+- Round 2（2026-11-12 23:4x）新增 `AnimatedPathRemapTest`（12 个用例：段内/闭合末段/播放头非关键帧的保形加点、单/多删点索引重映射、末尾加点、无动画路径行为不变、无通道访问拒绝、关键 tick 不丢失、采样 tick = 键 ∪ 播放头、检查器 API），与既有 7 类合计 **74 tests / 0 fail**（`compileJava`/`compileTestJava` BUILD SUCCESSFUL）。
+- Round 2 全量 `gradle-run.ps1 test`：**97 suites / 565 tests / 0 failures / 0 errors**（含 effects/replay 队友本轮改动；本机串行包装器下）。
 - 受 `MaskCache`/`ShapeRasterizer` 改动影响的既有测试回归：`CompLayerSourceCacheTest`、`MaskCombineTest`、`EntityMaskSizingTest`、`ReplayEntityMaskRequestTest`、`CompScenePlaneDepthTest` 全绿。
-- 全量 `gradle-run.ps1 test`：Lead 侧 89 suites / 500 tests，剩余 6 个失败均在 effects 的 REPLICATE/padding 代码（与本任务无关）；钢笔相关无失败。
+- Round 1 全量 `gradle-run.ps1 test`：Lead 侧 89 suites / 500 tests，剩余 6 个失败均在 effects 的 REPLICATE/padding 代码（与本任务无关）；钢笔相关无失败。
 
 ---
 
@@ -203,4 +206,69 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 
 **目标选择**：选中**形状图层**时钢笔画**形状路径**（`PATH` shape）；其它有像素的图层画**蒙版**；摄像机/调整层拒绝。检查器“蒙版”/“形状”区有“用钢笔编辑”“闭合路径/断开路径”“整条路径打关键帧”按钮。
 
-**动画限制（本期）**：路径已有逐点关键帧时**禁止增删锚点**（会打乱 `p/<i>` 通道索引），状态栏会说明；拖动/手柄/转换点/整条打关键帧仍可用。
+**动画路径（Round 2 起）**：路径已有逐点关键帧时**可以正常增删锚点**：
+- 段上加点 → 每个既有动画键处都会把该段按 de Casteljau 分割，曲线在关键帧处保形；
+- 末尾加点（续画/检查器）→ 其它关键帧取最后一段的中点（形状不变）；
+- 删点 → 删除点在所有键处移除，其余点的关键帧原样保留；
+- 以上操作均为**一步 undo**；关键帧之间的过渡是“重映射后逐通道插值”，与 AE 的整条 Path 值插值存在理论差异（仅影响键之间，不影响键帧画面）。
+- 检查器“添加蒙版点/添加路径点/删除最后一点”目前仍直接改列表（未走重映射），待 §10 的 1 行补丁集成后同样安全。
+
+---
+
+## 9. Round 2：动画路径通道重映射（P4 收尾）
+
+### 9.1 语义（对齐 AE / effectcraft）
+
+| 操作 | 对此前已有动画的路径 |
+|---|---|
+| **段上加点**（钢笔点段 / 检查器 API） | 收集受影响段两条端点各 6 个通道的**所有关键时间**（并上播放头）→ 每个时间求值整条路径 → de Casteljau 分割（**播放头用用户点的参数**，其它键固定 **t=0.5**，任何参数都保形且 0.5 不会退化）→ 把新增点/两端点修改后的手柄值写回这些时间 → 未受影响的点通道**整体搬到新索引**（键、tick、插值、手柄、style、duration 全保留）。结果：**每个既有动画键处曲线逐像素不变**。 |
+| **末尾加点**（续画 / 检查器） | 播放头落用户点；其它关键时间取**最后一段 t=0.5 的中点**（effectcraft `CountOp::Insert` 规则）→ 曲线在其它键处不变。 |
+| **删除点**（Delete / 检查器） | 该点 6 通道清空，后面的点通道**整体下移**；剩余点在所有键处的值保持原样，路径数同步。剩余 <3 点自动断开闭合（原逻辑）。 |
+| **无动画路径** | 完全走原路径（不建通道、不改行为），行为与 Round 1 逐字节一致。 |
+| **有动画但拿不到通道** | 返回 false + 状态栏提示“路径动画通道不可用”，绝不半改数据。 |
+
+### 9.2 实现位置（本轮写域内）
+
+| 文件 | 改动 |
+|---|---|
+| `comp/CompPenSession.java` | 新增 `Animation` 接口（hasKey/base/valueAt/keyTicks/moveChannels/clearChannels/setKey）与 `Target.animation()`（默认 null）；`setTick()`；`remapInsertOnSegment` / `remapAppend` / `remapDelete` / `remapTicks` / `remapSplit` / `remapPointAt`；新增 `appendPoint(x,y)`、`deletePoint(index)` 检查器 API；`pressDrawing` 的追加、`insertOnSegment`、`deleteSelection` 三条路径接入重映射。 |
+| `client/ui/UIPenTool.java` | 新增抽象 `ChannelAnimation`（唯一知道 `mask/<id>/p/<i>/x…` 与 `shape/<id>/p/<i>/x…` 的地方；`moveChannel` 用 `insert`+`copyOverExtra` 保真搬移）；`MaskTarget` / `ShapeTarget` 懒创建 `animation()`；`onPress`/`onKey`/`activate` 设置 `session.setTick(panel.getFrame())`；新增 4 个检查器入口 `appendMaskPoint/appendShapePoint/removeMaskPoint/removeShapePoint`。 |
+| `src/test/java/dev/bbsae/comp/AnimatedPathRemapTest.java` | 12 用例（见 §7）。 |
+
+### 9.3 已知取舍
+
+1. **关键帧之间是近似**（见 §5-5）；键帧处精确。测试用线性插值通道验证：0/6/12/18/24 帧轮廓偏差 < 0.05px。
+2. **总是开启**“保持顶点数”语义（AE 有开关）；当前没有关闭入口。
+3. 点通道上的 **KeyframeLoop 会在索引搬移时丢失**（`KeyframeChannel.removeAll` 会清 loops）；点通道通常不用 loop。
+4. 重映射只采样**受影响段端点的 8 个通道**的关键 tick（加播放头）。其它点的通道不动，因此它们的关键 tick 不需要进入采样集。
+5. 播放头不在任何键上时，新点的通道会多一个“播放头 tick”键；这是有意的（恢复用户点击位置）。
+
+---
+
+## 10. 需要 Lead 集成的 UI 钩子（精确补丁）
+
+```diff
+--- a/src/main/java/dev/bbsae/client/ui/UICompositorPanel.java
++++ b/src/main/java/dev/bbsae/client/ui/UICompositorPanel.java
+```
+
+**(A) `maskSection()` 里的“添加蒙版点 / 删除最后一点”（锚点：`this.smallButton("添加蒙版点"`）**
+
+```java
+                this.smallButton("添加蒙版点", () ->
+                    this.penTool().appendMaskPoint(layer, mask, layer.width / 2F, layer.height / 2F)),
+                this.smallButton("删除最后一点", () ->
+                    this.penTool().removeMaskPoint(layer, mask, mask.points.size() - 1))
+```
+
+**(B) `shapeSection()` PATH 分支的“添加路径点 / 删除最后一点”（锚点：`this.smallButton("添加路径点"`）**
+
+```java
+                    this.smallButton("添加路径点", () ->
+                        this.penTool().appendShapePoint(layer, shape, 0F, 0F)),
+                    this.smallButton("删除最后一点", () ->
+                        this.penTool().removeShapePoint(layer, shape, shape.points.size() - 1))
+```
+
+> 说明：这两个 API 会走 `CompPenSession`，因此已动画路径会自动重映射；未动画路径行为不变。原按钮里的 `beginAction/refreshInspector/save` 由 session 的 listener 负责（一次操作一步 undo），面板侧不需要再调。
+> 未集成前：**钢笔/右键菜单/Delete 的所有增删点都已安全**；只有这三个检查器按钮对“已动画路径”仍不安全（见 §5-11）。

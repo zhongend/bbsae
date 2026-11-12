@@ -597,6 +597,20 @@ public class EffectPipelineTest
 
         candidates.add(CompEffectRegistry.create(definition.id, 1));
 
+        /* Effects with a declared neutral configuration (e.g. a replicator with one copy) cannot be
+         * reached by editing a single parameter; rebuild that exact configuration from the data. */
+        if (definition.neutralValues != null)
+        {
+            CompEffect preset = CompEffectRegistry.create(definition.id, 1);
+
+            for (java.util.Map.Entry<String, Double> entry : definition.neutralValues.entrySet())
+            {
+                preset.put(entry.getKey(), entry.getValue());
+            }
+
+            candidates.add(preset);
+        }
+
         CompEffect progress = CompEffectRegistry.create(definition.id, 1);
 
         progress.put("progress", 1.0);

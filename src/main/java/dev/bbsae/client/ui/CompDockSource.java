@@ -17,11 +17,17 @@ import java.util.function.Supplier;
  * reuses it instead of inventing a second layout toolkit; this class is the only project-specific
  * part — it maps {@link ILayoutSource} onto {@link CompProject.CompSettings}.</p>
  *
- * <p>Write batching matters: {@code UIDockLayout} calls {@link #setRoot} on every splitter frame,
- * and encoding the tree plus marking the project dirty at 60 Hz would allocate a string per frame
- * and push every mouse move into the autosave/undo path. The tree is therefore cached in memory and
- * written back once by {@link #flush()} (the panel calls it when the drag settles / on save). Same
- * for hidden panels.</p>
+ * <p>Two details matter:</p>
+ * <ul>
+ *   <li><b>the settings can change under us</b> (the compositor panel exists before a project is
+ *       opened), so the settings object is resolved through a supplier and the cached tree is
+ *       dropped when the project changes (or {@link #reload()} is called);</li>
+ *   <li><b>writes are batched</b>: {@code UIDockLayout} calls {@link #setRoot} on every splitter
+ *       frame, and encoding the tree / marking the project dirty at 60 Hz would allocate a string
+ *       per frame and push every mouse move into the autosave/undo path. The tree is therefore
+ *       cached in memory and written back once by {@link #flush()} (the panel calls it when the
+ *       drag settles / on save).</li>
+ * </ul>
  */
 public final class CompDockSource implements ILayoutSource
 {
@@ -30,30 +36,52 @@ public final class CompDockSource implements ILayoutSource
     public static final String PANEL_INSPECTOR = "inspector";
     public static final String PANEL_TIMELINE = "timeline";
 
-    private final CompProject.CompSettings settings;
+    private final Supplier<CompProject.CompSettings> settingsSupplier;
     private final Supplier<EditorLayoutNode> defaults;
     private final Runnable onChange;
 
+    private CompProject.CompSettings settings;
     private EditorLayoutNode cachedRoot;
     private boolean rootLoaded;
     private Set<String> cachedHidden;
     private boolean hiddenLoaded;
     private boolean dirty;
 
-    public CompDockSource(CompProject.CompSettings settings, Supplier<EditorLayoutNode> defaults, Runnable onChange)
+    public CompDockSource(Supplier<CompProject.CompSettings> settingsSupplier,
+                          Supplier<EditorLayoutNode> defaults, Runnable onChange)
     {
-        this.settings = settings;
+        this.settingsSupplier = settingsSupplier;
         this.defaults = defaults;
         this.onChange = onChange;
+    }
+
+    private CompProject.CompSettings settings()
+    {
+        CompProject.CompSettings resolved = this.settingsSupplier == null ? null : this.settingsSupplier.get();
+
+        if (resolved != this.settings)
+        {
+            /* A different project: the old tree/hidden set belong to the previous file. */
+            this.settings = resolved;
+            this.rootLoaded = false;
+            this.hiddenLoaded = false;
+            this.cachedRoot = null;
+            this.cachedHidden = null;
+            this.dirty = false;
+        }
+
+        return resolved;
     }
 
     @Override
     public EditorLayoutNode getRoot()
     {
+        CompProject.CompSettings settings = this.settings();
+
         if (!this.rootLoaded)
         {
             this.rootLoaded = true;
-            this.cachedRoot = parse(this.settings == null ? "" : this.settings.dockLayout);
+            this.cachedRoot = parse(settings == null ? "" : settings.dockLayout);
         }
 
         return this.cachedRoot != null ? this.cachedRoot : this.defaults.get();
@@ -67,6 +95,7 @@ public final class CompDockSource implements ILayoutSource
             return;
         }
 
+        this.settings();
         this.cachedRoot = root;
         this.rootLoaded = true;
         this.dirty = true;
@@ -81,14 +110,16 @@ public final class CompDockSource implements ILayoutSource
     @Override
     public Set<String> getHiddenPanels()
     {
+        CompProject.CompSettings settings = this.settings();
+
         if (!this.hiddenLoaded)
         {
             this.hiddenLoaded = true;
             this.cachedHidden = new LinkedHashSet<>();
 
-            if (this.settings != null && this.settings.dockHiddenPanels != null)
+            if (settings != null && settings.dockHiddenPanels != null)
             {
-                for (String part : this.settings.dockHiddenPanels.split(","))
+                for (String part : settings.dockHiddenPanels.split(","))
                 {
                     String id = part.trim();
 
@@ -106,6 +137,7 @@ public final class CompDockSource implements ILayoutSource
     @Override
     public void setHiddenPanels(Set<String> hidden)
     {
+        this.settings();
         this.cachedHidden = new LinkedHashSet<>();
 
         if (hidden != null)
@@ -135,7 +167,9 @@ public final class CompDockSource implements ILayoutSource
      */
     public void flush()
     {
-        if (!this.dirty || this.settings == null)
+        CompProject.CompSettings settings = this.settings();
+
+        if (!this.dirty || settings == null)
         {
             return;
         }
@@ -145,11 +179,11 @@ public final class CompDockSource implements ILayoutSource
         String root = encode(this.getRoot());
         String hidden = join(this.cachedHidden == null ? Set.of() : this.cachedHidden);
 
-        boolean changed = !root.equals(this.settings.dockLayout == null ? "" : this.settings.dockLayout)
-            || !hidden.equals(this.settings.dockHiddenPanels == null ? "" : this.settings.dockHiddenPanels);
+        boolean changed = !root.equals(settings.dockLayout == null ? "" : settings.dockLayout)
+            || !hidden.equals(settings.dockHiddenPanels == null ? "" : settings.dockHiddenPanels);
 
-        this.settings.dockLayout = root;
-        this.settings.dockHiddenPanels = hidden;
+        settings.dockLayout = root;
+        settings.dockHiddenPanels = hidden;
 
         if (changed && this.onChange != null)
         {
@@ -160,6 +194,7 @@ public final class CompDockSource implements ILayoutSource
     /** Re-reads both fields, e.g. after a project switch. */
     public void reload()
     {
+        this.settings = null;
         this.rootLoaded = false;
         this.hiddenLoaded = false;
         this.cachedRoot = null;
@@ -238,5 +273,42 @@ public final class CompDockSource implements ILayoutSource
                     new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
                     new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
             new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
+    }
+
+    /** Focus mode: preview over the timeline, side panels hidden (transient, not persisted). */
+    public static EditorLayoutNode focusLayout()
+    {
+        return new EditorLayoutNode.SplitterNode(true, 0.84F,
+            new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
+            new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
+    }
+
+    /**
+     * Workspace presets mapped onto dock trees so "界面布局" keeps working in dock mode.
+     *
+     * <p>Standard / focal / compact / wide mirror the four onboarding cards: the ratios change, the
+     * panels stay the same. The density tier itself is still applied by the panel.</p>
+     */
+    public static EditorLayoutNode presetLayout(int preset)
+    {
+        return switch (preset)
+        {
+            case 1 -> focusLayout();
+            case 2 -> new EditorLayoutNode.SplitterNode(true, 0.70F,
+                new EditorLayoutNode.SplitterNode(false, 0.11F,
+                    new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
+                    new EditorLayoutNode.SplitterNode(false, 0.78F,
+                        new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
+                        new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
+                new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
+            case 3 -> new EditorLayoutNode.SplitterNode(true, 0.74F,
+                new EditorLayoutNode.SplitterNode(false, 0.15F,
+                    new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
+                    new EditorLayoutNode.SplitterNode(false, 0.82F,
+                        new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
+                        new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
+                new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
+            default -> defaultLayout();
+        };
     }
 }

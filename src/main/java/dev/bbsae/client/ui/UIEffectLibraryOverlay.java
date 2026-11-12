@@ -16,9 +16,11 @@ import mchorse.bbs_mod.ui.utils.keys.KeyAction;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -49,15 +51,18 @@ public class UIEffectLibraryOverlay extends UIElement
     private final Grid grid;
 
     private final UiMotion motion = new UiMotion();
+    private int motionFrames;
 
     private final List<CompEffectRegistry.Definition> all = new ArrayList<>();
     private final List<CompEffectRegistry.Definition> filtered = new ArrayList<>();
     private final List<String> categories = new ArrayList<>();
+    /** Channel names built when a list is rebuilt: render never concatenates a key. */
+    private final List<String> tileKeys = new ArrayList<>();
+    private final Map<String, String> chipKeys = new HashMap<>();
 
     private String category = "全部";
     private String query = "";
     private String appliedId = "";
-    private long appliedAt;
     private int laidOutWidth = -1;
     private int laidOutHeight = -1;
 
@@ -139,6 +144,28 @@ public class UIEffectLibraryOverlay extends UIElement
         {
             this.categories.add(1, "最近使用");
         }
+
+        for (String label : this.categories)
+        {
+            this.chipKeys.put(label, "chip:" + label);
+        }
+    }
+
+    /** Stable channel names for the current filtered tiles; called from rebuild(), not render(). */
+    private void rebuildTileKeys()
+    {
+        this.tileKeys.clear();
+
+        for (int i = 0; i < this.filtered.size(); i++)
+        {
+            this.tileKeys.add("tile:" + i);
+        }
+    }
+
+    /** Same gate {@link UiMotion} uses for channels, for the few values driven by raw time. */
+    private boolean animationsOn()
+    {
+        return CompPrefs.animating() && CompPrefs.intensity() > 0.001F;
     }
 
     private void rebuild()
@@ -162,6 +189,7 @@ public class UIEffectLibraryOverlay extends UIElement
                 }
             }
 
+            this.rebuildTileKeys();
             this.updateStatus();
             this.grid.scrollToTop();
 
@@ -195,6 +223,7 @@ public class UIEffectLibraryOverlay extends UIElement
             this.grid.scrollToTop();
         }
 
+        this.rebuildTileKeys();
         this.updateStatus();
     }
 
@@ -217,8 +246,19 @@ public class UIEffectLibraryOverlay extends UIElement
 
         this.motion.tickFrame();
 
+        if (++this.motionFrames >= UICompButton.PRUNE_EVERY)
+        {
+            this.motionFrames = 0;
+            /* Tiles/chips are rebuilt on every search/category change; without this the channel
+             * maps would keep every tile that was ever hovered for the whole session. */
+            this.motion.prune(UICompButton.PRUNE_IDLE);
+        }
+
+        float veil = this.motion.anim("veil", 1F, 8F);
+
         InterfaceBlur.applyUnder();
-        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0x66000000);
+        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
+            UiGfx.mulA(0x66000000, veil));
         super.render(context);
     }
 
@@ -273,7 +313,9 @@ public class UIEffectLibraryOverlay extends UIElement
     {
         this.panel.applyEffect(definition.id);
         this.appliedId = definition.id;
-        this.appliedAt = System.currentTimeMillis();
+        /* One short pulse on the applied tile's accent rail: the only "it worked" feedback that
+         * does not need a toast or replaying the grid entrance. */
+        this.motion.flash("applied");
         this.status.label = IKey.constant("已应用：" + definition.name);
     }
 
@@ -298,7 +340,9 @@ public class UIEffectLibraryOverlay extends UIElement
                     boolean active = label.equals(UIEffectLibraryOverlay.this.category);
                     boolean hover = context.mouseX >= x && context.mouseX <= x + chipWidth
                         && this.area.isInside(context);
-                    float amount = UIEffectLibraryOverlay.this.motion.hover("chip:" + label, hover ? "hot" : null);
+                    String chipKey = UIEffectLibraryOverlay.this.chipKeys.get(label);
+                    float amount = chipKey == null ? 0F
+                        : UIEffectLibraryOverlay.this.motion.anim(chipKey, hover ? 1F : 0F, 22F);
                     int fill = UiMotion.lerpColor(0xFF20262F, 0xFF2A3442, amount);
 
                     if (active)
@@ -373,7 +417,8 @@ public class UIEffectLibraryOverlay extends UIElement
         private int scrollY;
         private float scrollSmooth;
         private boolean smoothReady;
-        private String hot;
+        /** Visible index of the hovered tile, or -1; an int so no key is built per frame. */
+        private int hotIndex = -1;
         private int pressY = Integer.MIN_VALUE;
         private int pressScroll;
 
@@ -441,9 +486,7 @@ public class UIEffectLibraryOverlay extends UIElement
                 ? UiMotion.approach(this.scrollSmooth, this.scrollY, 18F * CompPrefs.speed(), UIEffectLibraryOverlay.this.motion.dt)
                 : this.scrollY;
 
-            int hotIndex = this.indexAt(context.mouseX, context.mouseY);
-
-            this.hot = hotIndex >= 0 ? "tile:" + hotIndex : null;
+            this.hotIndex = this.indexAt(context.mouseX, context.mouseY);
 
             if (this.pressY != Integer.MIN_VALUE)
             {
@@ -496,12 +539,14 @@ public class UIEffectLibraryOverlay extends UIElement
 
         private void renderTile(UIContext context, CompEffectRegistry.Definition definition, int index, int x, int y)
         {
-            String key = "tile:" + index;
-            boolean hovered = key.equals(this.hot);
-            float hover = UIEffectLibraryOverlay.this.motion.hover(key, this.hot);
+            String key = index < UIEffectLibraryOverlay.this.tileKeys.size()
+                ? UIEffectLibraryOverlay.this.tileKeys.get(index) : "tile:" + index;
+            boolean hovered = index == this.hotIndex;
+            float hover = UIEffectLibraryOverlay.this.motion.anim(key, hovered ? 1F : 0F, 22F);
             float intro = UIEffectLibraryOverlay.this.motion.intro(Math.min(0.36F, index * 0.004F));
-            float pulse = definition.id.equals(UIEffectLibraryOverlay.this.appliedId)
-                ? Math.max(0F, 1F - (System.currentTimeMillis() - UIEffectLibraryOverlay.this.appliedAt) / 380F)
+            boolean justApplied = definition.id.equals(UIEffectLibraryOverlay.this.appliedId);
+            float pulse = justApplied && UIEffectLibraryOverlay.this.animationsOn()
+                ? Math.max(0F, 1F - UIEffectLibraryOverlay.this.motion.flash("applied", 0.38F))
                 : 0F;
             int drawY = y + Math.round((1F - intro) * 9F * UIEffectLibraryOverlay.this.motion.intensity());
             float lift = hover * 3F * UIEffectLibraryOverlay.this.motion.intensity();

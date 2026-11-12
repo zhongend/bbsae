@@ -1,5 +1,114 @@
 # BBS AE 更新日记
 
+## 0.93 — 2026-11-13
+
+这一轮把用户八条需求里剩下的硬骨头做完了：**面板像 BBS 原版一样可停靠/组合**（需求 8-B，
+直接复用 BBS `UIDockLayout`）、**逐像素深度重影本体修复**（需求 3，找到颜色附件从未被真正
+清空的根因）、**AM repeat 家族 + 调色首批**（需求 2-d）、**钢笔动画路径增删点安全**（需求 6 收尾）、
+**实体回放真机可验证性/性能/空状态**（需求 5 收尾）、**12 个 UI 文件的非线性动效**（需求 8-C）。
+所有改动都经过无头测试 + 真机截图验证。
+
+**测试**：96 个测试套件 / 565 项测试全绿（0.92 基线 90 / 511，1 skipped）；真机截图见
+`docs/verify/round48-*.png`。
+
+### 面板停靠/组合（需求 8-B，重大 UI 改造）
+
+- **直接复用 BBS 2.7 原生 `UIDockLayout`**（`UIFilmPanel` 同款系统，不是仿写）：效果/素材栏、
+  预览、属性栏、时间轴变成 4 个可停靠面板——拖动标题条/标签即可拆分、合并成标签堆叠、
+  隐藏、最大化；分栏可拖拽；布局锁可一键锁定；布局撤销/重置齐全。
+- `CompDockSource`（新增）把 dock 树映射到工程文件（`dockLayout`/`dockHiddenPanels`/`dockUnlocked`），
+  按帧批量 flush：拖分栏不会每帧写盘、不会产生 undo 步、不会清预渲染缓存；项目切换自动重载。
+- 顶栏新增「布局」按钮（始终可见）：**左键锁定/解锁拖拽**，**右键菜单**含重置默认布局、
+  撤销布局改动、最大化鼠标下窗口、恢复隐藏面板；快捷键 **Ctrl+Alt+Z** 撤销布局、
+  **Ctrl+空格** 最大化鼠标下面板。
+- **工作区预设映射成 dock 树**：标准/聚焦/紧凑/宽屏四个 onboarding 预设仍然有效；聚焦预览
+  用临时树（预览+时间轴）且不写入工程布局；按 F 恢复。
+- 快速变换面板保留在时间轴面板内部右侧（随选择显隐、随面板拖动），不单独注册成 dock 面板。
+- **回退开关**：设置 → 开发者 →「停靠式面板（BBS 原版）」可关闭，退回 0.92 的固定三栏
+  splitter（旧 `applyLayout` 完整保留为 `applyLegacyLayout()`），切换后重开合成器面板生效。
+- 页面切换动效接线：左栏三页 / 属性七页 / 时间轴曲线页切换时有 0.16–0.18s 的非线性 veil
+  （`UiPageTransition`），受 `CompPrefs.animations` 控制。
+- 真机验证：`docs/verify/round48-dock-layout.png`（默认停靠布局）、
+  `round48-dock-stack.png`（左栏与属性栏标签堆叠、解锁拖拽条）。
+- 计划/实施记录：`docs/DOCK-LAYOUT-PLAN.zh.md`。
+
+### 逐像素深度重影本体修复（需求 3）
+
+- **根因不是深度平面数学**：`DepthPlaneCompositor` 复用的 FBO 颜色附件从未被真正清空。
+  深度预写 pass 用裸 `glColorMask(false,…)` 后，`GlStateManager` 的 COLOR_MASK 缓存仍是 true，
+  随后 `clearColorOnly` 的 `_colorMask(true,…)` 被缓存短路 → `glClear(GL_COLOR_BUFFER_BIT)`
+  静默失效；target 池化复用导致「当前层 ∪ 历史所有层/帧残留」被每层末尾再合成一次。
+  摄像机移动时就是星形/多边形重复、半透明边缘叠条带。
+- 修复：每次 composite 前真正清颜色（深度保留跨层共享）；target 写入期间显式关混合（混合只由
+  `PassRenderer.draw` 做一次）；颜色掩码改走 `GlStateManager`；保存/恢复深度/混合状态；
+  `GlFramebuffer.clearColorOnly()` 先裸 `glColorMask(true)` 再同步缓存。
+- 新增像素级回归 `DepthPlaneGhostRegressionTest`（4 个：静态帧 depth-on==depth-off、移动相机
+  逐帧不累积、池化 target 不残留上一帧、半透明层每像素只合成一次）；修复前 4/4 失败。
+- 真机 A/B 截图（强制开启逐像素深度、`____bug` 工程）：`docs/verify/round48-depth-on.png`，
+  星形/多边形单帧干净无重复。`perPixelDepth` 默认值仍保持关闭，留待用户真机确认性能后开启
+  （建议随后改 true；见 `docs/DEPTH-GHOST-FIX.zh.md`）。
+
+### 图层效果：AM repeat 家族 + 调色首批（需求 2-d）
+
+- 新增 5 个数据驱动效果（`AmEffectDef.neutralAt` 支持「恒等不是全 0」的零点契约）：
+  - P0 repeat 家族：`am_repeat`（重复：count/offset/递增 angle/scale/alpha）、
+    `am_repeat_radial`（环形：radius/orientation/start_angle/sweep）、
+    `am_repeat_scatter`（圆盘随机散布：radius/evolution/seed）——复用合成空间 REPLICATE
+    pass，2D/3D 都真正无限延伸，不受图层矩形裁剪；
+  - P1 调色首批：`am_rgb_mixer`（RGB 混合/gamma/offset，红色恒等三元组零点）、
+    `am_solid_color`（纯色，alpha=0 严格恒等）。
+- 缩略图生成器修复：旧规则会接受「全空/近乎单色」的退化预览并落盘空白图；现在要求可见且非
+  近乎单色，失败则缩小像素参数重试。重新生成 5 张新缩略图 + 修正 4 张旧退化图。
+- AM gap 审计更新：AM 127 条定义、自动匹配 94、真正缺失降至 64（`docs/EFFECTS-AM-GAP.zh.md`，
+  逐条清单 `.generated.md`）。未做：`repeat.path`（需路径几何接入效果参数域）、剩余模糊/变形/文字批。
+
+### 钢笔动画路径增删点安全（需求 6 收尾）
+
+- 已动画路径不再禁止增删点：收集受影响段两端点 8 个通道的所有关键 tick ∪ 播放头，逐 tick
+  求值整条路径 → de Casteljau 保形分割 → 回写新点/手柄，未受影响点的通道对象整体搬移
+  （tick/值/插值/手柄/style/duration 全保留）。**每个既有动画键处曲线逐像素不变**（测试用
+  点到折线距离 < 0.05px 验证）。
+- 末尾加点按 effectcraft `CountOp::Insert` 规则（其它键取最后一段 t=0.5 中点）；删点清空该点
+  通道、后续索引整体下移，剩余点在键帧处值精确不变；`<3` 点自动断开闭合；每次增删点仍是一步 undo。
+- 检查器按钮接入动画安全 API：`UIPenTool.appendMaskPoint/appendShapePoint/removeMaskPoint/removeShapePoint`。
+- 12 个新测试（`AnimatedPathRemapTest`）；报告 `docs/PEN-TOOL-REPORT.zh.md` §9/§10。
+
+### 实体回放模式真机验证/健壮性（需求 5 收尾）
+
+- 新增真机验证钩子 `ReplayDebugHook`：`-PbbsaeView=replay` 时在 60 tick 自动用 dashboard 唯一
+  `UIFilmPanel` 填充影片并打开实体回放页（不 new 面板、主线程同步 load），影片来源依次为
+  `-Dbbsae.debugReplayFilm` → 磁盘上有 replay 的影片 → 内存合成 3 个原版生物 replay，保证
+  fresh run 也能截到模型/gizmo；日志 grep `Replay debug`。
+- 性能：`ReplayCulling` 视锥裁剪（>阈值才裁剪、选中回放永远画、颜色/拾取共用一次可见性）、
+  `ReplayLogLimiter` 失败日志限流（5s + 抑制计数）。
+- 标定：`ReplayCalibration` 集中 `pixelsPerBlock/flipZ/yawOffset/pitchOffset/cull*`，
+  全部系统属性可覆盖且严格解析（非法回落/越界 clamp），HUD 显示裁剪计数。
+- 空状态/健壮性：无影片/无回放/未选中/无模型/视野外/FBO 失败均有可读文案（失败红字带原因）；
+  修复换影片再进面板不重绑；修复「鼠标不在视口内时截图没有 gizmo」（stencil pass 始终跑，
+  读回按光标位置决定）。
+- **修复 P0 崩溃**：`selectReplay` 无条件 `scrollToReplay`，而 BBS `scrollToReplay` 会同步触发
+  列表选择回调 → `selectReplay` → 递归到 StackOverflowError（一点第一条 replay 就崩）。现在
+  区分入口（列表回调不滚动、程序化选择滚动）+ re-entrancy guard。
+- 真机验证：`docs/verify/round48-replay-models.png`（模型 + 原版三轴 gizmo + 列表/属性/dope sheet）。
+
+### 非线性动效覆盖（需求 8-C）
+
+- 12 个独立 UI 文件统一接入 `UiMotion`：按钮 hover 上浮/按下内缩回弹/禁用渐隐
+  （含丢失 release 的物理键轮询兜底）、图标按钮缩放、tab 下划线下沉、效果库行 hover/选中插值 +
+  错峰入场、渲染队列状态呼吸、导入浏览器背板淡入 + 行错峰、预设卡片错峰、曲线点/色轮 hover
+  插值、clip bar hover/吸附线脉冲、快捷面板分组揭示、效果浮层统一 prune。
+- 纪律：每帧每宿主只 tick 一次；`animations=false` 或强度 0 立即归位；位移/缩放乘
+  `motion.intensity()`；稳定 key 不每帧拼字符串；每 60 帧 prune + 上限清理防泄漏；不改 BBS
+  原生控件、不改命中区域、不写工程数据/不进 undo/不影响导出。
+- 新增 10 个纯逻辑测试（`UiFeedbackMotionTest`）；报告 `docs/UI-MOTION-REPORT.zh.md`。
+
+### 其它
+
+- 顶栏右侧新增「布局」按钮后，`CompUi.headerLayout` 重新排布并加测试防重叠。
+- `CompDockSourceTest` 覆盖供应商式 settings、项目切换 reload、预设/聚焦树只引用已注册面板。
+- 开发者页新增停靠式面板开关；新增 `-PbbsaeDebugDock`/`-PbbsaeForceDepthPlane` 验证钩子
+  （仅调试，正常游戏不生效）。
+
 ## 0.92 — 2026-11-12
 
 本轮处理用户八条需求里最核心的六条：3D 摄像机逻辑、图层效果、实体回放、钢笔工具、

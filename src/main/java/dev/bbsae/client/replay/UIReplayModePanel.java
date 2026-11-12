@@ -91,9 +91,20 @@ public class UIReplayModePanel extends UIDashboardPanel
     private boolean tracksDirty;
     private boolean primed;
     private boolean lastPlaying;
+    /** Re-entrancy guard for {@link #applySelection(Replay, boolean)}; see the method's comment. */
+    private boolean selectingReplay;
     private String selectedPart = "";
     private String cachedStatus = "";
     private int knownReplayCount = -1;
+
+    /* Verification setup requested by ReplayDebugHook; applied once the viewport has framed. */
+    private boolean debugCameraPending;
+    private boolean debugTickPending;
+    private int debugReplayIndex;
+    private int debugTick;
+    private float debugYaw = Float.NaN;
+    private float debugPitch = Float.NaN;
+    private float debugDistance = Float.NaN;
 
     public UIReplayModePanel(UIDashboard dashboard)
     {
@@ -154,22 +165,50 @@ public class UIReplayModePanel extends UIDashboardPanel
 
     /* ------------------------------------------------------------ binding */
 
-    /** Attaches the panel to the film the dashboard's film editor currently has open. */
+    /**
+     * Attaches the panel to the film the dashboard's film editor currently has open.
+     *
+     * <p>This runs on every {@code onAppear}, not only the first one: the dashboard has a single
+     * film panel whose data can change between two visits (open film A, leave, open film B, come
+     * back to the replay page), and the panel must follow it instead of showing film A forever.
+     * It is also the fallback path when the user opens the panel from the dashboard bar rather
+     * than through the compositor button.</p>
+     */
     public void bindFromDashboard()
     {
-        if (this.built || this.dashboard == null)
+        if (this.dashboard == null)
         {
             return;
         }
 
         UIFilmPanel panel = this.dashboard.getPanel(UIFilmPanel.class);
 
-        if (panel == null || panel.getData() == null)
+        if (panel == null)
         {
             return;
         }
 
-        this.bind(panel, panel.getData(), panel.replayEditor == null ? null : panel.replayEditor.getReplay());
+        Film current = panel.getData();
+        Replay currentReplay = panel.replayEditor == null ? null : panel.replayEditor.getReplay();
+
+        if (current == null)
+        {
+            /* No film: keep whatever was bound last, but make the header/status say how to get
+             * one. bind() is not called so a still-open film's data is never replaced by null. */
+            return;
+        }
+
+        if (this.built && current == this.film)
+        {
+            if (currentReplay != null && currentReplay != this.replay)
+            {
+                this.selectReplay(currentReplay);
+            }
+
+            return;
+        }
+
+        this.bind(panel, current, currentReplay);
     }
 
     /**
@@ -187,6 +226,11 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.filmPanel = panel;
         this.film = film;
+
+        if (filmChanged)
+        {
+            this.selectedPart = "";
+        }
 
         if (!this.built)
         {
@@ -218,7 +262,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             {
                 if (!selected.isEmpty())
                 {
-                    this.selectReplay(selected.get(0));
+                    this.selectReplayFromList(selected.get(0));
                 }
             },
             (form) ->
@@ -284,13 +328,32 @@ public class UIReplayModePanel extends UIDashboardPanel
     private Replay firstReplay(Film film)
     {
         List<Replay> replays = film.replays.getList();
+        Replay enabledFallback = null;
 
         for (Replay candidate : replays)
         {
-            if (candidate != null && Boolean.TRUE.equals(candidate.enabled.get()))
+            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+            {
+                continue;
+            }
+
+            if (enabledFallback == null)
+            {
+                enabledFallback = candidate;
+            }
+
+            /* Prefer a replay that can actually be seen: films contain placement-only replays
+             * (no form) too, and selecting one on open showed a gizmo with no model under it in
+             * the first real-machine screenshot. */
+            if (this.session != null && this.session.hasModel(candidate))
             {
                 return candidate;
             }
+        }
+
+        if (enabledFallback != null)
+        {
+            return enabledFallback;
         }
 
         return replays.isEmpty() ? null : replays.get(0);
@@ -306,28 +369,71 @@ public class UIReplayModePanel extends UIDashboardPanel
         }
     }
 
+    /**
+     * Selection coming from the original replay list's own callback.
+     *
+     * <p>No {@code scrollToReplay} here: BBS' {@code UIReplayList.scrollToReplay()} re-picks the
+     * row, which fires this very callback again. Scrolling from the callback is the infinite
+     * recursion that crashed the first real-machine run (StackOverflowError: scrollToReplay →
+     * callback → selectReplay → scrollToReplay…). The list already has the row in view when the
+     * user picked it, so scrolling is only needed on programmatic/3D-pick selections.</p>
+     */
+    private void selectReplayFromList(Replay replay)
+    {
+        this.applySelection(replay, false);
+    }
+
+    /**
+     * Selects a replay from outside the list (dashboard bind, 3D pick, debug hook) and keeps the
+     * list scrolled to it.
+     */
     public void selectReplay(Replay replay)
     {
-        this.replay = replay;
+        this.applySelection(replay, true);
+    }
 
-        if (this.session != null)
+    private void applySelection(Replay replay, boolean scrollList)
+    {
+        /* Belt for every path: any callback fired below (list pick, body-part forms, property
+         * editors) that comes back here must not re-enter the selection code. */
+        if (this.selectingReplay)
         {
-            this.session.setReplay(replay);
+            return;
         }
 
-        if (this.replayProperties != null)
-        {
-            this.replayProperties.setReplay(replay);
-        }
+        this.selectingReplay = true;
 
-        if (this.replaysList != null && replay != null)
+        try
         {
-            this.selectedPart = this.replaysList.setBodyPartsReplay(replay, this.selectedPart);
-            this.replaysList.replays.scrollToReplay(replay);
+            this.replay = replay;
+
+            if (this.session != null)
+            {
+                this.session.setReplay(replay);
+            }
+
+            if (this.replayProperties != null)
+            {
+                this.replayProperties.setReplay(replay);
+            }
+
+            if (this.replaysList != null && replay != null)
+            {
+                this.selectedPart = this.replaysList.setBodyPartsReplay(replay, this.selectedPart);
+
+                if (scrollList && this.film != null && this.film.replays.getList().contains(replay))
+                {
+                    this.replaysList.replays.scrollToReplay(replay);
+                }
+            }
+            else if (this.replaysList != null)
+            {
+                this.replaysList.setBodyPartsReplay(null, "");
+            }
         }
-        else if (this.replaysList != null)
+        finally
         {
-            this.replaysList.setBodyPartsReplay(null, "");
+            this.selectingReplay = false;
         }
 
         this.tracksDirty = true;
@@ -430,6 +536,7 @@ public class UIReplayModePanel extends UIDashboardPanel
     {
         this.checkReplayListChanged();
         this.ensureTracks();
+        this.applyDebugSetup();
         this.refreshStatus();
 
         super.render(context);
@@ -492,18 +599,135 @@ public class UIReplayModePanel extends UIDashboardPanel
     {
         if (this.filmPanel == null || this.film == null)
         {
-            return "没有打开的影片：先在影片编辑器打开一个影片，或从合成器点「实体回放」";
+            return "没有打开的影片：先在影片编辑器打开一个影片，或从合成器点「实体回放」"
+                + "（调试可用 -Dbbsae.debugReplayFilm=<影片 id>）";
         }
 
         int count = this.film.replays.getList().size();
         int index = this.replay == null ? -1 : this.film.replays.getList().indexOf(this.replay);
         int tick = this.session == null ? 0 : this.session.tick();
         int duration = this.session == null ? 0 : this.session.durationTicks();
-
-        return "影片 " + this.film.getId()
+        String base = "影片 " + this.film.getId()
             + " · 回放 " + (index < 0 ? "-" : String.valueOf(index + 1)) + "/" + count
             + " · tick " + tick + "/" + duration
             + (this.session != null && this.session.isPlaying() ? " · 播放中" : "");
+
+        if (count == 0)
+        {
+            return base + " · 没有回放：点「原版回放编辑」在 BBS 原版编辑器里添加回放";
+        }
+
+        if (this.replay == null)
+        {
+            return base + " · 未选择回放";
+        }
+
+        if (this.session != null && !this.session.hasModel(this.replay))
+        {
+            return base + " · 该回放没有模型：在左侧选一条有模型的回放，或点「模型库」选择一个 BBS 模型";
+        }
+
+        return base;
+    }
+
+    /* ------------------------------------------------------------ debug hooks */
+
+    /**
+     * Verification setup used by {@code ReplayDebugHook}: pick a replay, seek the playhead and
+     * (optionally) place the free camera, once the panel has been laid out.
+     *
+     * <p>Kept on the panel rather than the debug hook so the hook only has to find a film; the
+     * camera can only be applied after the viewport framed the scene on its first real frame, so
+     * the request is parked here and applied from {@link #render(UIContext)}.</p>
+     */
+    public void debugPrepare(int replayIndex, int tick, float yaw, float pitch, float distance)
+    {
+        /* A negative index means "pick a replay that actually has a model": the first real-machine
+         * screenshot selected a placement-only replay and showed a gizmo floating above nothing. */
+        this.debugReplayIndex = replayIndex >= 0 ? replayIndex : this.firstPlayableReplayIndex();
+        this.debugTick = tick;
+        this.debugTickPending = true;
+        this.debugCameraPending = true;
+        this.debugYaw = yaw;
+        this.debugPitch = pitch;
+        this.debugDistance = distance;
+
+        if (this.built)
+        {
+            this.selectReplayFromIndex(this.debugReplayIndex);
+        }
+
+        BbsAeAddon.LOGGER.info("Replay debug: booked select={} tick={} yaw={} pitch={} distance={}",
+            this.debugReplayIndex, tick, yaw, pitch, distance);
+    }
+
+    /** List index of the first replay with a form, or 0 when the film has none. */
+    public int firstPlayableReplayIndex()
+    {
+        if (this.film != null)
+        {
+            List<Replay> replays = this.film.replays.getList();
+
+            for (int i = 0; i < replays.size(); i++)
+            {
+                if (this.session != null && this.session.hasModel(replays.get(i)))
+                {
+                    return i;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    private void applyDebugSetup()
+    {
+        if (this.session == null || !this.built)
+        {
+            return;
+        }
+
+        if (this.debugTickPending)
+        {
+            this.session.setPlaying(false);
+            this.session.seek(this.debugTick);
+            this.debugTickPending = false;
+            BbsAeAddon.LOGGER.info("Replay debug: playhead tick {}", this.session.tick());
+        }
+
+        if (!this.debugCameraPending || !this.session.isFramed())
+        {
+            return;
+        }
+
+        this.debugCameraPending = false;
+        this.selectReplayFromIndex(this.debugReplayIndex);
+
+        dev.bbsae.client.render.CompViewportCamera camera = this.session.camera();
+
+        if (!Float.isNaN(this.debugYaw) && !Float.isNaN(this.debugPitch) && !Float.isNaN(this.debugDistance))
+        {
+            camera.setPose(this.debugYaw, this.debugPitch, this.debugDistance);
+        }
+        else if (!Float.isNaN(this.debugYaw) && !Float.isNaN(this.debugPitch))
+        {
+            camera.setPose(this.debugYaw, this.debugPitch, camera.distance);
+        }
+
+        camera.update();
+
+        BbsAeAddon.LOGGER.info("Replay debug ready: film={} replays={} placeable={} selected={} tick={} yaw={} pitch={} distance={}",
+            this.film == null ? "-" : this.film.getId(),
+            this.session.replayCount(),
+            this.session.placeableCount(),
+            this.session.replayIndex(this.replay),
+            this.session.tick(),
+            camera.yaw, camera.pitch, camera.distance);
+    }
+
+    public UIReplayViewport viewport()
+    {
+        return this.viewport;
     }
 
     /* ------------------------------------------------------------ transport */

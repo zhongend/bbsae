@@ -36,22 +36,25 @@ import org.joml.Vector3f;
 public final class ReplaySceneSpace
 {
     /** 64 composition pixels per block puts a 1.8-block player at roughly 115 px — fight-frame-ish. */
-    public static final float DEFAULT_PIXELS_PER_BLOCK = 64F;
+    public static final float DEFAULT_PIXELS_PER_BLOCK = ReplayCalibration.DEFAULT_PIXELS_PER_BLOCK;
 
-    /** Composition pixels per Minecraft block. */
-    public float pixelsPerBlock = DEFAULT_PIXELS_PER_BLOCK;
+    /** Composition pixels per Minecraft block (system property {@code bbsae.replayPixelsPerBlock}). */
+    public float pixelsPerBlock = ReplayCalibration.pixelsPerBlock();
 
     /** Where the world origin lands in composition space. */
     public final Vector3f anchor = new Vector3f();
 
     /**
      * Z sign: {@code true} maps world Z to {@code −S·z} (positive determinant, culling safe),
-     * {@code false} to {@code +S·z} (a mirror; diagnostic calibration only).
+     * {@code false} to {@code +S·z} (a mirror; diagnostic calibration only). Default comes from
+     * {@code -Dbbsae.replayFlipZ}.
      */
-    public boolean flipZ = true;
+    public boolean flipZ = ReplayCalibration.flipZ();
 
     public ReplaySceneSpace()
-    {}
+    {
+        this(ReplayCalibration.pixelsPerBlock());
+    }
 
     public ReplaySceneSpace(float pixelsPerBlock)
     {
@@ -71,6 +74,23 @@ public final class ReplaySceneSpace
     public Matrix4f worldFromComp()
     {
         return this.compFromWorld().invert();
+    }
+
+    /**
+     * The rotation/scale part of {@link #compFromWorld()} with no translation.
+     *
+     * <p>BBS' {@code Camera.view} is a rotation-only matrix (the eye position lives in
+     * {@code Camera.position}) and the film actor pass receives camera-relative geometry, so the
+     * viewport camera's block→view matrix must be exactly this product without any translation.
+     * Using the full {@code compFromWorld} (which carries the framing anchor) shifts the actors by
+     * the target distance — the "viewport is empty" bug of the real-machine runs.</p>
+     */
+    public Matrix4f linearFromWorld()
+    {
+        float s = this.pixelsPerBlock;
+        float z = this.flipZ ? -s : s;
+
+        return new Matrix4f().scale(s, -s, z);
     }
 
     public Vector3f toComp(Vector3d world)

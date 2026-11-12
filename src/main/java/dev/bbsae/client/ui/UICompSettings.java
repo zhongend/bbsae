@@ -985,6 +985,19 @@ public class UICompSettings extends UIElement
 
         this.add(UI.label(IKey.constant("开发者设置：兼容旧工程、排查渲染问题。普通编辑不需要改这里。"), 13));
 
+        /* Global (not project) because the layout engine is chosen when the compositor panel is
+         * constructed; the project-specific dock tree lives in CompSettings.dockLayout. */
+        this.add(this.section("界面布局引擎"));
+        this.add(this.row("停靠式面板（BBS 原版）", this.toggle("", CompPrefs.get().dockLayout, (value) ->
+        {
+            CompPrefs.get().dockLayout = value;
+            CompPrefs.save();
+            this.panel.setStatus(value
+                ? "已启用停靠式面板：重开合成器面板后生效（可拖拽组合/标签堆叠/分栏）"
+                : "已回退到旧版三栏布局：重开合成器面板后生效");
+        }), 170, "启用后复用 BBS 原版 UIDockLayout：拖动面板标题条/标签即可拆分或堆叠；"
+            + "布局锁与重置在合成器顶栏的「布局」按钮。切换后需重开合成器面板生效"));
+
         if (settings == null)
         {
             this.add(this.section("当前没有打开工程"));

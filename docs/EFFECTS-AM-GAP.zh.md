@@ -18,13 +18,13 @@
 | --- | --- |
 | AM 非 internal 定义（去重 token） | 277 |
 | 其中有可执行 shader | 180 |
-| 本项目 AM 定义 | 122 |
-| 自动匹配（同名/历史别名） | 89 |
+| 本项目 AM 定义 | 127（0.93 新增 3 个 repeat 家族 + 2 个调色条目） |
+| 自动匹配（同名/历史别名） | 94 |
 | 未匹配：deprecated 旧版本 | 72 |
-| 未匹配：非 shader（图层属性 / 复制器） | 23 |
+| 未匹配：非 shader（图层属性 / 复制器） | 20 |
 | 未匹配：3D 图元（本项目 `s3d_*` + MeshRenderer） | 19 |
 | 未匹配：同族旧版本（boxblur→boxblur3 等） | 8 |
-| 未匹配：可执行 shader、真正缺失 | 66 |
+| 未匹配：可执行 shader、真正缺失 | 64 |
 
 自动匹配覆盖了大部分"效果语义"，没有覆盖的 66 条多数是成员限定/冷门 procedural（grunge、ominodiff、
 voronoi、turbulence、ribbons 等）与 drawing 家族（electricedges、roughenedges、smoothbevel）。
@@ -95,16 +95,47 @@ generated 文件第 2 节按"AM 直接参数 vs 本项目同名键"列出。缺�
 
 | 优先级 | AM id | 类别 | 参数数 | 备注 |
 | --- | --- | --- | --- | --- |
-| **P0（重复）** | `repeat` / `radial` / `scatter` / `path` | repeat | 6/21/19/19 | 非 shader；本轮 REPLICATE 机制已能直接承载，下一批最便宜 |
+| **P0（重复）✅ 0.93** | `repeat` / `radial` / `scatter` | repeat | 6/21/19 | 非 shader；已用 REPLICATE 机制补齐为 `am_repeat` / `am_repeat_radial` / `am_repeat_scatter`（见第 3 节） |
+| P0（重复） | `path` | repeat | 19 | 非 shader；沿**路径**复制，需要给效果提供路径几何（本项目文字/图形路径数据在 `CompShape`/排版层，不进效果参数表），本轮未做，列出接口方案后再定 |
 | P0（重复） | `shapefield` | repeat | 18 | shader 版重复，可随后 |
 | P1（模糊） | `unsharpmask` | blur | 5 | 本项目已有经典 `unsharp_mask`，可改造成 AM 参数版 |
 | P1（模糊） | `lensblur2` / `spinblur2` / `streakstrips` / `warpblur` / `chromaticzoomblur` | blur | 6/6/5/12/3 | 镜头/旋转/条纹模糊变体 |
-| P1（调色） | `rgb-mixer` / `spectralmap` / `softglow` / `darkglow` / `lightglow` / `colorhot` / `solidcolor` | color | 6/9/11/9/11/1/4 | 调色家族补全 |
+| P1（调色） | `rgb-mixer` ✅ / `solidcolor` ✅ | color | 6/4 | 0.93 已补：`am_rgb_mixer`、`am_solid_color`（数据驱动 body，恒等三元组/alpha=0 零点契约） |
+| P1（调色） | `spectralmap` / `softglow` / `darkglow` / `lightglow` / `colorhot` | color | 9/11/9/11/1 | 待下一批（softglow/darkglow/lightglow 需 blur 基元；colorhot 无参数、零点契约需另设计） |
 | P1（变形） | `pinchbulge2` / `pinchbulgeinside` / `swirl4` / `hexrotate` / `ominoglass` / `wavewarp2` / `turbulentdisplace3` / `tileshift2` / `stretchsegment` | distort | 4–23 | 已有同族条目，补新版参数即可 |
 | P1（文字） | `texttransform` / `textspacing` / `textprogress` / `textrand` / `timecode` / `counter` | text | 16/2/3/6/0/2 | **非 shader**；本项目 4.34 已用"文字内容/文字动画器"实现同等能力，但不在效果库里。补进效果库需要 UI 写域（`UICompositorPanel`），本轮不做 |
 | P2 | drawing 家族 `electricedges/roughenedges/smoothbevel/findedges`、procedural `voronoi2/ridges2/turbulence2/noise3/lightning/ribbon/volumetricclouds` 等 | drawing/procedural | 3–27 | 冷门/高性能开销，后续按需 |
 
 ## 3. 本轮已修复（参数/语义）
+
+### 3.1 0.93（AM P0 repeat 家族补齐）
+
+- 新增三个数据驱动定义（`comp/AmEffectLibrary.java`），全部走 `AmEffectDef`/`CompEffectRegistry`
+  机制，效果库/参数面板/关键帧通道自动获得：
+  | id | 名称 | AM 对应 | 参数 | 零点契约 |
+  | --- | --- | --- | --- | --- |
+  | `am_repeat` | 重复 | `com.alightcreative.effects.repeat` | count, offset_x/y（像素）, angle（每复制体递增）, scale（每复制体递增）, alpha | count=1 + offset/angle=0 + scale=1 + alpha=1 → 输入原样 |
+  | `am_repeat_radial` | 环形重复 | `...effects.repeat.radial` | count, radius, orientation, start_angle, sweep, base_scale, offset_x/y, angle, scale, alpha | count=1 + radius=0 + 旋转/缩放/偏移中性 + alpha=1 |
+  | `am_repeat_scatter` | 散布重复 | `...effects.repeat.scatter` | count, radius, evolution, scatter_seed, offset_x/y, angle, scale, alpha | count=1 + radius=0 + 其它中性 |
+- 渲染由 `EffectRenderer` 的合成空间 REPLICATE pass 承载（`ShaderSources.REPLICATE` 新增
+  Mode 3/4/5：递增复制、环形复制、圆盘内随机散布）；3D 图层经 `isCompositionSpace` 在投影后执行，
+  2D 直接在合成尺寸内容上执行。每个复制体按 `angle/scale` 逐份递增，`alpha` 为复制体不透明度。
+- 与 AM 的已知差异：`repeat.time`（按时间偏移复制体内容）未实现——单帧全屏 pass 只能采样同一帧，
+  需要多帧 feed 才能对齐；已在参数表省略而不是放一个无效滑杆。
+- 测试：`EffectRepeatTest` 新增 5 个像素/契约测试（递增复制位置、环形四方位、散布越界、
+  家族零点返回输入），`AmEffectLibraryTest` 新增 3 个（零点判据 / 目录与渲染器注册 / P1 调色零点）。
+  缩略图重新生成（3 张）。
+
+### 3.1b 0.93（P1 调色首批：2 个）
+
+- `am_rgb_mixer`（RGB 混合）：AM `rgb-mixer` 的 6 参数（rmix/gmix/bmix 三色 + gamma + offset），
+  恒等值 = 红→红/绿→绿/蓝→蓝三元组（与已有 `am_channel_map` 同一约定），零点契约用
+  `neutralWhen` 声明在"恒等三元组 + gamma=1 + offset=0"。
+- `am_solid_color`（纯色）：AM `solidcolor` 的 color + alpha + blend（0 正常/1 相乘/2 滤色），
+  `alpha=0` 是严格恒等（real zeroKey）。
+- 两者都走 `AmEffectDef` 数据驱动机制（无新增 shader 家族），已进效果库/参数面板/关键帧通道。
+
+### 3.2 0.92（上一轮）
 
 1. **重复类语义**（需求 c）：`grid_repeat` / `random_repeat` / `am_grid_repeat` / `am_line_repeat`
    从"图层内平铺"改为 AM repeat 家族语义的**合成空间图层复制**（`ShaderSources.REPLICATE`）。

@@ -95,6 +95,7 @@ public class CompUiResponsiveTest
                 int[][] right = {
                     {layout.focusX, control, 1},
                     {layout.settingsX, 48, 1},
+                    {layout.layoutX, 48, 1},
                     {layout.renderX, 54, layout.showRender ? 1 : 0},
                     {layout.exportX, 54, layout.showExport ? 1 : 0},
                     {layout.saveX, 48, layout.showSave ? 1 : 0}

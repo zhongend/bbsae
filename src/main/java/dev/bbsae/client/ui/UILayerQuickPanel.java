@@ -76,18 +76,22 @@ public class UILayerQuickPanel extends UIElement
     private int resizeStartX;
     private int resizeStartWidth;
     private final UiMotion motion = new UiMotion();
+    private int motionFrames;
 
     private static final class Row
     {
         final String label;
         final UITrackpad field;
         final int y;
+        /** Stable channel name; the row list is rebuilt, not rebuilt per frame. */
+        final String hoverKey;
 
-        Row(String label, UITrackpad field, int y)
+        Row(String label, UITrackpad field, int y, String hoverKey)
         {
             this.label = label;
             this.field = field;
             this.y = y;
+            this.hoverKey = hoverKey;
         }
     }
 
@@ -230,6 +234,10 @@ public class UILayerQuickPanel extends UIElement
         y = this.row("", this.opacity, y);
 
         this.hint.relative(this).x(PAD).y(y + 2).w(1F, -PAD * 2).h(12);
+
+        /* A different row set (2D ↔ 3D, or a fresh layer) is a new panel content: replay the
+         * staggered reveal so the eye can follow the rows that appeared. */
+        this.motion.replay();
     }
 
     private int group(String label, UICompButton key, int y)
@@ -244,7 +252,9 @@ public class UILayerQuickPanel extends UIElement
 
     private int row(String label, UITrackpad field, int y)
     {
-        this.rows.add(new Row(label, field, y));
+        Row row = new Row(label, field, y, "qp-row:" + this.rows.size() + ":h");
+
+        this.rows.add(row);
 
         field.relative(this).x(PAD + LABEL).y(y).w(1F, -(PAD + LABEL + KEY + PAD + 2)).h(ROW);
         field.setVisible(true);
@@ -315,9 +325,18 @@ public class UILayerQuickPanel extends UIElement
             }
         }
 
+        /* A new selected layer is a content change: the group/row reveal replays once. Scrubbing
+         * the playhead only changes numbers, so it must not re-animate the whole panel. */
+        boolean layerChanged = !id.equals(this.shownLayer);
+
         this.shownLayer = id;
         this.shownFrame = frame;
         this.title.label = IKey.constant(this.panel.layerLabel(layer) + (threeD ? " · 3D" : ""));
+
+        if (layerChanged)
+        {
+            this.motion.replay();
+        }
 
         this.x.setValue(nx);
         this.y.setValue(ny);
@@ -348,42 +367,83 @@ public class UILayerQuickPanel extends UIElement
         this.syncFields();
         this.applyResize(context);
         this.motion.tickFrame();
+
+        if (++this.motionFrames >= UICompButton.PRUNE_EVERY)
+        {
+            this.motionFrames = 0;
+            this.motion.prune(UICompButton.PRUNE_IDLE);
+        }
+
         this.motion.markShown();
 
+        /* Replayed on selection/dimensionality change, so a new layer's rows are laid out in
+         * front of the user instead of appearing complete. */
+        float reveal = this.motion.intro(0.04F);
+        float appear = 0.35F + 0.65F * reveal;
+        float intensity = this.motion.intensity();
         int accent = mchorse.bbs_mod.BBSSettings.primaryColor() | 0xFF000000;
 
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF11151C);
         UiGfx.gradientV(context.batcher, this.area.x, this.area.y, this.area.w, 42,
-            UiGfx.alpha(accent, 0.06F), 0x00FFFFFF);
+            UiGfx.alpha(accent, 0.06F * appear), 0x00FFFFFF);
         context.batcher.box(this.area.x, this.area.y, this.area.x + 1, this.area.ey(), 0xFF2A303A);
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 1, 0xFF2A303A);
 
-        if (this.motion.time < 0.55F && CompPrefs.get().glow)
+        if (reveal < 0.999F && CompPrefs.get().glow)
         {
-            float intro = this.motion.intro(0.08F);
-
             context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 2,
-                UiGfx.alpha(accent, 0.35F * (1F - intro)));
+                UiGfx.alpha(accent, 0.35F * (1F - reveal)));
         }
 
         FontRenderer font = context.batcher.getFont();
         int groupColor = 0xFF9FB2C8;
         int labelColor = 0xFF8A94A6;
 
-        for (Group group : this.groups)
+        for (int g = 0; g < this.groups.size(); g++)
         {
-            context.batcher.textShadow(group.label, this.area.x + PAD, this.area.y + group.y
-                + (GROUP - font.getHeight()) / 2F, groupColor);
+            Group group = this.groups.get(g);
+            float stagger = UiStagger.progress(this.motion, g, 0.02F, 0.14F);
+            float alpha = 0.35F + 0.65F * stagger;
+            float textY = this.area.y + group.y + (GROUP - font.getHeight()) / 2F
+                + UiStagger.offsetPx(stagger, Math.round(2F * intensity));
+
+            context.batcher.textShadow(group.label, this.area.x + PAD, textY,
+                UiMotion.alpha(groupColor, alpha));
             context.batcher.box(this.area.x + PAD - 4, this.area.y + group.y + 4,
-                this.area.x + PAD - 2, this.area.y + group.y + GROUP - 4, 0x554C9AFF);
+                this.area.x + PAD - 2, this.area.y + group.y + GROUP - 4,
+                UiMotion.alpha(0x4C9AFF, 0.33F * alpha));
         }
 
-        for (Row row : this.rows)
+        int rowBase = this.groups.size();
+
+        for (int r = 0; r < this.rows.size(); r++)
         {
+            Row row = this.rows.get(r);
+            float stagger = UiStagger.progress(this.motion, rowBase + r, 0.012F, 0.18F);
+            float alpha = 0.35F + 0.65F * stagger;
+            /* The value widgets are BBS controls (their internals must not be touched); the row
+             * label this panel draws itself can still answer the cursor. */
+            boolean rowHover = !row.label.isEmpty()
+                && context.mouseX >= this.area.x + PAD
+                && context.mouseX < this.area.x + PAD + LABEL
+                && context.mouseY >= this.area.y + row.y
+                && context.mouseY < this.area.y + row.y + ROW;
+            float hov = this.motion.anim(row.hoverKey, rowHover ? 1F : 0F, 24F);
+
+            if (hov > 0.01F)
+            {
+                context.batcher.box(this.area.x + PAD + 2, this.area.y + row.y + 3,
+                    this.area.x + PAD + 4, this.area.y + row.y + ROW - 3,
+                    UiMotion.alpha(0x4C9AFF, 0.55F * hov * alpha));
+            }
+
             if (!row.label.isEmpty())
             {
+                int color = UiMotion.alpha(UiMotion.lerpColor(labelColor, 0xFFEAF3FF, hov), alpha);
+
                 context.batcher.textShadow(row.label, this.area.x + PAD + 8, this.area.y + row.y
-                    + (ROW - font.getHeight()) / 2F, labelColor);
+                    + (ROW - font.getHeight()) / 2F
+                    + UiStagger.offsetPx(stagger, Math.round(2F * intensity)), color);
             }
         }
 

@@ -34,6 +34,19 @@ public class UIColorWheel extends UIElement
     private int color = 0xFF808080;
     private boolean draggingDisk;
     private boolean draggingValue;
+    private final UiMotion motion = new UiMotion();
+    private int motionFrames;
+
+    /**
+     * Side of the colour disk for a widget size.
+     *
+     * <p>The strip underneath needs 30 px (label + value bar), hence the subtraction. Pure so the
+     * draw path and the click path can be kept in step by a test instead of by memory.</p>
+     */
+    static int diskSide(int width, int height)
+    {
+        return Math.min(width - 4, height - 30);
+    }
 
     public UIColorWheel(String label, int color, IntConsumer callback)
     {
@@ -66,15 +79,30 @@ public class UIColorWheel extends UIElement
         int x = this.area.x;
         int y = this.area.y;
         int w = this.area.w;
-        int diskSide = Math.min(w - 4, this.area.h - 30);
+        int diskSide = diskSide(w, this.area.h);
 
         if (diskSide < 24)
         {
             return;
         }
 
+        this.motion.tickFrame();
+
+        if (++this.motionFrames >= UICompButton.PRUNE_EVERY)
+        {
+            this.motionFrames = 0;
+            this.motion.prune(UICompButton.PRUNE_IDLE);
+        }
+
+        float hover = this.motion.anim("hover", this.area.isInside(context) ? 1F : 0F, 20F);
+        float drag = this.motion.spring("drag",
+            this.draggingDisk || this.draggingValue ? 1F : 0F, 520F, 30F);
+        float intensity = UiMotion.clamp01(this.motion.intensity());
+        int handleGrowth = Math.round(drag * intensity);
+
         this.ensureDisk(128);
-        context.batcher.textShadow(this.label, x + 1, y, Colors.setA(Colors.WHITE, 0.75F));
+        context.batcher.textShadow(this.label, x + 1, y,
+            UiMotion.lerpColor(Colors.setA(Colors.WHITE, 0.75F), Colors.WHITE, hover));
 
         int cx = x + (w - diskSide) / 2;
         int cy = y + 13;
@@ -90,15 +118,24 @@ public class UIColorWheel extends UIElement
             context.batcher.box(cx, cy, cx + diskSide, cy + diskSide, 0xFF303844);
         }
 
+        /* Hover ring: the wheel is the only target here, so a thin accent ring is enough to say
+         * "draggable" without repainting the baked texture. */
+        if (hover > 0.01F)
+        {
+            context.batcher.outline(cx - 2, cy - 2, cx + diskSide + 2, cy + diskSide + 2,
+                UiMotion.alpha(0xFF4C86D8, 0.35F * hover * intensity));
+        }
+
         /* Hue ring + saturation handle. */
         float[] hsv = toHsv(this.color);
         double angle = Math.toRadians(hsv[0] * 360D);
         float radius = diskSide * 0.5F - 3F;
         float hx = cx + diskSide * 0.5F + (float) Math.cos(angle) * radius * hsv[1];
         float hy = cy + diskSide * 0.5F - (float) Math.sin(angle) * radius * hsv[1];
+        int handle = 3 + handleGrowth;
 
-        context.batcher.box(hx - 4, hy - 4, hx + 4, hy + 4, 0xFF101418);
-        context.batcher.box(hx - 3, hy - 3, hx + 3, hy + 3, 0xFFFFFFFF);
+        context.batcher.box(hx - handle - 1, hy - handle - 1, hx + handle + 1, hy + handle + 1, 0xFF101418);
+        context.batcher.box(hx - handle, hy - handle, hx + handle, hy + handle, 0xFFFFFFFF);
 
         /* Value strip. */
         int barY = cy + diskSide + 4;
@@ -113,8 +150,11 @@ public class UIColorWheel extends UIElement
         }
 
         float vx = cx + hsv[2] * diskSide;
-        context.batcher.box(vx - 1, barY - 2, vx + 1, barY + barH + 2, 0xFFFFFFFF);
-        context.batcher.outline(cx, barY, cx + diskSide, barY + barH, 0xFF11151B);
+        float thumb = 1F + handleGrowth;
+
+        context.batcher.box(vx - thumb, barY - 2, vx + thumb, barY + barH + 2, 0xFFFFFFFF);
+        context.batcher.outline(cx, barY, cx + diskSide, barY + barH,
+            UiMotion.lerpColor(0xFF11151B, 0xFF4C86D8, 0.55F * Math.max(hover, drag) * intensity));
 
         this.drag(context, cx, cy, diskSide, barY, barH);
 
@@ -165,7 +205,7 @@ public class UIColorWheel extends UIElement
             return super.subMouseClicked(context);
         }
 
-        int diskSide = Math.min(this.area.w - 4, this.area.h - 30);
+        int diskSide = diskSide(this.area.w, this.area.h);
         int cx = this.area.x + (this.area.w - diskSide) / 2;
         int cy = this.area.y + 13;
         int barY = cy + diskSide + 4;

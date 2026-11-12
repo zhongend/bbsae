@@ -33,6 +33,7 @@ final class DepthPlaneCompositor
         this.height = Math.max(1, height);
         this.target = new GlFramebuffer(this.width, this.height, true);
         this.clearDepth();
+        this.target.clearColorOnly(0);
     }
 
     void clearDepth()
@@ -45,6 +46,19 @@ final class DepthPlaneCompositor
     /**
      * Draws one 3D layer with a depth test against the layers already drawn, then blends the
      * surviving pixels onto {@code accumulation}.
+     *
+     * <p>The colour attachment is cleared at the start of every call. It used to be cleared only
+     * between the depth pre-write and the colour passes, through a {@code glColorMask(false)} that
+     * desynchronised {@code GlStateManager}'s cached mask, so the clear silently did nothing. The
+     * target is pooled and reused across layers, frames and edits while the camera moves, which
+     * turned it into a palimpsest: every frame re-composited all older frames' layer silhouettes
+     * together with itself. That was the "camera preview duplicates the star/polygon layers and
+     * shows stripes" ghost.</p>
+     *
+     * <p>All target writes run with blending off: the target holds the current layer's straight
+     * alpha pixels, and {@link PassRenderer#draw} is the one place that blends them onto the
+     * accumulation (blend modes and opacity unchanged). The depth buffer deliberately survives
+     * across calls — that is the shared depth of the composition.</p>
      */
     GlFramebuffer composite(GlFramebuffer layer, Matrix4f world, CompCamera camera,
                             GlFramebuffer accumulation, int blendMode, float opacity)
@@ -79,34 +93,68 @@ final class DepthPlaneCompositor
         program.set("PlaneN", viewNormal.x, viewNormal.y, viewNormal.z);
         program.set("PlaneD", planeD);
 
-        /* 1) Depth-only pass for the opaque part: a translucent layer must not occlude what is
-         * behind it, so only alpha >= 0.5 writes depth. */
-        this.target.bindOnly();
-        org.lwjgl.opengl.GL11.glColorMask(false, false, false, false);
-        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
-        org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_LESS);
-        org.lwjgl.opengl.GL11.glDepthMask(true);
-        program.set("Mode", 0);
-        program.drawFullscreen();
+        /* Snapshot the pipeline state this method changes. The target is not the screen, so its
+         * writes are raw, but the next layer/effect/UI pass must see the state it had before. */
+        boolean previousDepthTest = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+        int previousDepthFunc = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_DEPTH_FUNC);
+        boolean previousDepthMask = org.lwjgl.opengl.GL11.glGetBoolean(org.lwjgl.opengl.GL11.GL_DEPTH_WRITEMASK);
+        boolean previousBlend = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_BLEND);
 
-        /* 2) Opaque colour at equality: only the fragments the depth pass accepted survive. */
-        this.target.clearColorOnly(0);
-        org.lwjgl.opengl.GL11.glColorMask(true, true, true, true);
-        org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_EQUAL);
-        org.lwjgl.opengl.GL11.glDepthMask(false);
-        program.set("Mode", 1);
-        program.drawFullscreen();
+        try
+        {
+            /* Fresh colour for this layer only; the shared depth buffer is left untouched. */
+            this.target.clearColorOnly(0);
+            this.target.bindOnly();
+            com.mojang.blaze3d.platform.GlStateManager._disableBlend();
 
-        /* 3) Translucent colour, less-or-equal against the depth of the layers behind it and no
-         * depth writes: a semitransparent layer blends over nearer opaque pixels only when it is
-         * actually in front of them. */
-        org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_LEQUAL);
-        org.lwjgl.opengl.GL11.glDepthMask(false);
-        program.set("Mode", 2);
-        program.drawFullscreen();
+            /* 1) Depth-only pass for the opaque part: a translucent layer must not occlude what is
+             * behind it, so only alpha >= 0.5 writes depth. */
+            org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+            org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_LESS);
+            org.lwjgl.opengl.GL11.glDepthMask(true);
+            com.mojang.blaze3d.platform.GlStateManager._colorMask(false, false, false, false);
+            program.set("Mode", 0);
+            program.drawFullscreen();
 
-        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
-        org.lwjgl.opengl.GL11.glDepthMask(true);
+            /* 2) Opaque colour at equality: only the fragments the depth pass accepted survive. */
+            com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
+            org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_EQUAL);
+            org.lwjgl.opengl.GL11.glDepthMask(false);
+            program.set("Mode", 1);
+            program.drawFullscreen();
+
+            /* 3) Translucent colour, less-or-equal against the depth of the layers behind it and no
+             * depth writes: a semitransparent layer blends over nearer opaque pixels only when it is
+             * actually in front of them. */
+            org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_LEQUAL);
+            org.lwjgl.opengl.GL11.glDepthMask(false);
+            program.set("Mode", 2);
+            program.drawFullscreen();
+        }
+        finally
+        {
+            com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
+            org.lwjgl.opengl.GL11.glDepthMask(previousDepthMask);
+            org.lwjgl.opengl.GL11.glDepthFunc(previousDepthFunc);
+
+            if (previousDepthTest)
+            {
+                org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+            }
+            else
+            {
+                org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+            }
+
+            if (previousBlend)
+            {
+                org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_BLEND);
+            }
+            else
+            {
+                org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_BLEND);
+            }
+        }
 
         return PassRenderer.draw(this.target, accumulation, null, blendMode, opacity, 0F, 0F, 0xFFFFFF);
     }
@@ -135,7 +183,11 @@ final class DepthPlaneCompositor
         }
         else
         {
+            /* Both attachments must be neutral on hand-out: what the previous render left in the
+             * colour buffer used to be composited into this frame (the ghost), and a stale depth
+             * buffer would reject layers outright. */
             compositor.clearDepth();
+            compositor.target.clearColorOnly(0);
         }
 
         return compositor;
@@ -160,6 +212,7 @@ final class DepthPlaneCompositor
         }
 
         compositor.clearDepth();
+        compositor.target.clearColorOnly(0);
         free.addFirst(compositor);
     }
 

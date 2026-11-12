@@ -87,6 +87,13 @@ public final class CompPrefs
          * content in camera preview (free 3D viewport depth is unaffected). */
         public boolean perPixelDepth = false;
 
+        /**
+         * BBS-native dockable panel layout in the compositor (splitter drag, drag-to-dock, tab
+         * stacks). Read when the compositor panel is constructed: toggling it takes effect the next
+         * time the panel is created. Off falls back to the fixed three-column splitter layout.
+         */
+        public boolean dockLayout = true;
+
         /** Saved vertical zoom of the two track editors; 0 = use the editor's default. */
         public int timelineRowHeight = 0;
         public int keyframeRowHeight = 0;

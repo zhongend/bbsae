@@ -276,6 +276,144 @@ public class EffectRepeatTest
         assertTrue(alphaAt(pixels, 48, 32) > 200, "second copy along the horizontal axis");
     }
 
+    /**
+     * AM repeat: `count` copies marching along `offset`, each rotated/scaled one step further.
+     * Composition is 64 px, so a 16 px offset puts three copies at x = 16 / 32 / 48.
+     */
+    @Test
+    public void amRepeatDrawsAProgressiveLineOfCopies()
+    {
+        CompEffect effect = effect("am_repeat");
+
+        effect.put("count", 3D);
+        effect.put("offset_x", 16D);
+        effect.put("offset_y", 0D);
+        effect.put("angle", 0D);
+        effect.put("scale", 1D);
+        effect.put("alpha", 1D);
+
+        int[] pixels = applyProjected(effect, centreBlock());
+
+        assertTrue(alphaAt(pixels, 16, 32) > 200, "first copy one step left of centre");
+        assertTrue(alphaAt(pixels, 32, 32) > 200, "the centre copy stays in place");
+        assertTrue(alphaAt(pixels, 48, 32) > 200, "last copy one step right of centre");
+    }
+
+    /**
+     * AM repeat.radial: copies sit on an arc of `radius`. With 4 copies and a full sweep the
+     * quarter angles land on the four cardinal points (composition UV is bottom-up, so the
+     * +Y copy is 16 px above the centre).
+     */
+    @Test
+    public void amRepeatRadialPlacesCopiesOnTheRing()
+    {
+        CompEffect effect = effect("am_repeat_radial");
+
+        effect.put("count", 4D);
+        effect.put("radius", 16D);
+        effect.put("orientation", 0D);
+        effect.put("start_angle", 0D);
+        effect.put("sweep", 360D);
+        effect.put("base_scale", 1D);
+        effect.put("angle", 0D);
+        effect.put("scale", 1D);
+        effect.put("alpha", 1D);
+
+        int[] pixels = applyProjected(effect, centreBlock());
+
+        assertTrue(alphaAt(pixels, 48, 32) > 200, "right copy of the ring");
+        assertTrue(alphaAt(pixels, 32, 16) > 200, "top copy of the ring");
+        assertTrue(alphaAt(pixels, 16, 32) > 200, "left copy of the ring");
+        assertTrue(alphaAt(pixels, 32, 48) > 200, "bottom copy of the ring");
+    }
+
+    /** AM repeat.scatter: copies land on deterministic random points of a disk. */
+    @Test
+    public void amRepeatScatterSpreadsCopiesAcrossTheDisk()
+    {
+        CompEffect effect = effect("am_repeat_scatter");
+
+        effect.put("count", 10D);
+        effect.put("radius", 24D);
+        effect.put("evolution", 0D);
+        effect.put("scatter_seed", 0D);
+        effect.put("angle", 0D);
+        effect.put("scale", 1D);
+        effect.put("alpha", 1D);
+
+        int[] pixels = applyProjected(effect, centreBlock());
+        int visible = 0;
+        int outside = 0;
+
+        for (int y = 0; y < SIZE; y++)
+        {
+            for (int x = 0; x < SIZE; x++)
+            {
+                if (alphaAt(pixels, x, y) > 200)
+                {
+                    visible += 1;
+
+                    if (x < 24 || x >= 40 || y < 24 || y >= 40)
+                    {
+                        outside += 1;
+                    }
+                }
+            }
+        }
+
+        /* Ten 8x8 copies, several of which must land outside the original 8x8 layer box. */
+        assertTrue(visible >= 10 * 16, "scatter copies must be visible, got " + visible + " px");
+        assertTrue(outside >= 8 * 8, "at least one copy must leave the layer rectangle, got " + outside);
+    }
+
+    @Test
+    public void repeatFamilyNeutralReturnsTheInput()
+    {
+        CompRenderContext context = context();
+        CompLayer layer = new CompLayer("solid", "Repeat", "solid");
+
+        layer.width = BLOCK;
+        layer.height = BLOCK;
+        layer.anchorX = 0.5F;
+        layer.anchorY = 0.5F;
+
+        EffectSpace space = EffectSpace.identity(context, 0.5F, 0.5F, BLOCK / (float) SIZE, BLOCK / (float) SIZE);
+        String[][] cases =
+        {
+            {"am_repeat", "count"},
+            {"am_repeat_radial", "radius"},
+            {"am_repeat_scatter", "radius"},
+        };
+
+        for (String[] entry : cases)
+        {
+            CompEffect effect = effect(entry[0]);
+
+            effect.put("count", 1D);
+            effect.put("radius", 0D);
+            effect.put("offset_x", 0D);
+            effect.put("offset_y", 0D);
+            effect.put("angle", 0D);
+            effect.put("scale", 1D);
+            effect.put("base_scale", 1D);
+            effect.put("alpha", 1D);
+
+            GlFramebuffer input = new GlFramebuffer(SIZE, SIZE);
+
+            input.color.uploadTopDown(centreBlock());
+
+            try
+            {
+                assertSame(input, EffectRenderer.apply(layer, effect, input, context, space),
+                    entry[0] + " must be the identity in its neutral configuration");
+            }
+            finally
+            {
+                FboPool.release(input);
+            }
+        }
+    }
+
     @Test
     public void zeroOpacityLeavesTheInputUntouched()
     {

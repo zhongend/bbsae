@@ -107,6 +107,10 @@ loom {
             vmArg "-Dbbsae.debugFilmId=" + (project.findProperty("bbsaeFilmId") ?: "A2(MAIN)_")
             vmArg "-Dbbsae.debugOpenEffectLibrary=" + (project.findProperty("bbsaeOpenEffectLibrary") ?: "false")
             vmArg "-Dbbsae.debugGizmo3D=" + (project.findProperty("bbsaeDebugGizmo3D") ?: "false")
+            /* Dock-layout diagnostics: logs panel rectangles when a dock flex pass settles. */
+            vmArg "-Dbbsae.debugDock=" + (project.findProperty("bbsaeDebugDock") ?: "false")
+            /* Depth-plane A/B: forces per-pixel depth for one client run without touching prefs. */
+            vmArg "-Dbbsae.debugForceDepthPlane=" + (project.findProperty("bbsaeForceDepthPlane") ?: "false")
             vmArg "-Dbbsae.gizmoMode=" + (project.findProperty("bbsaeGizmoMode") ?: "move")
             vmArg "-Dbbsae.keyframeRowHeight=" + (project.findProperty("bbsaeKeyframeRowHeight") ?: "0")
             vmArg "-Dbbsae.keyframeZoomSteps=" + (project.findProperty("bbsaeKeyframeZoomSteps") ?: "0")

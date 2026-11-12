@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.92.jar`](https://github.com/zhongend/bbsae/releases/download/v0.92/bbsae-0.92.jar)
-   from the **v0.92** release (the asset is updated with each source push).
+1. Download [`bbsae-0.93.jar`](https://github.com/zhongend/bbsae/releases/download/v0.93/bbsae-0.93.jar)
+   from the **v0.93** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.92.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.93.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.92.jar` SHA-256: `900B1AB0A23FAAED5B95E4F9C041ABF22E2808C4326C79C6F3F55447F146A00F` (3,185,356 bytes).
+`bbsae-0.93.jar` SHA-256: `7F145BAC77BA37C720AB3AB4C4ACE64E0597C5403BD0D8FEFC020632F78F31BB` (3,277,276 bytes).
 
 ## Gallery
 
@@ -2085,3 +2085,4 @@ sheet. An older exported MP4 frame is still available at
 MIT.
 - **Round 45 (imported fonts display, .ttc extraction, v0.22.1):** [`docs/ROUND45-FONT-DISPLAY.zh.md`](docs/ROUND45-FONT-DISPLAY.zh.md)
 - **Round 47 (AE 3D layer logic / AE camera tool / effect fixes / entity replay / pen tool / UI gesture fixes, v0.92):** [`docs/ROUND47-MOTION-CAMERA.zh.md`](docs/ROUND47-MOTION-CAMERA.zh.md)
+- **Round 48 (BBS dockable panels / per-pixel-depth ghost root fix / AM repeat family / animated pen paths / replay verification / UI motion, v0.93):** [`docs/ROUND48-DOCK-DEPTH.zh.md`](docs/ROUND48-DOCK-DEPTH.zh.md)

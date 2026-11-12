@@ -1,6 +1,6 @@
 # AM 参数对齐差异清单（自动生成）
 
-对比对象：`_research/am/effects.json`（AM apk 提取的 277 条非 internal 定义）与 `comp/AmEffectLibrary.java`（数据驱动效果库，122 条定义）。
+对比对象：`_research/am/effects.json`（AM apk 提取的 277 条非 internal 定义）与 `comp/AmEffectLibrary.java`（数据驱动效果库，127 条定义）。
 参数 `kind` 覆盖：本项目 `AmEffectDef` 直接表达 `spinner/slider/color`；AM 的 `point/selector/texture` 在移植时被拆成两个 float 键或数值模式键，这属于既定的模式差异，不算缺失（但在第 2 节逐条标出）。
 
 ## 0. 规模
@@ -8,15 +8,15 @@
 | 指标 | 数量 |
 | --- | --- |
 | AM 非 internal 定义（去重后 token） | 277 |
-| 本项目 AM 定义 | 122 |
-| 自动匹配（同名/别名） | 89 |
+| 本项目 AM 定义 | 127 |
+| 自动匹配（同名/别名） | 94 |
 | 缺失：deprecated 旧版本 | 72 |
-| 缺失：非 shader（图层属性/复制器） | 23 |
+| 缺失：非 shader（图层属性/复制器） | 20 |
 | 缺失：3D 图元（本项目 MeshRenderer） | 19 |
 | 缺失：同族旧版本（boxblur→boxblur3 等） | 8 |
-| 缺失：可执行 shader 效果（候选） | 66 |
+| 缺失：可执行 shader 效果（候选） | 64 |
 
-## 1. 已匹配（89 条）的参数差异
+## 1. 已匹配（94 条）的参数差异
 
 ### `am_bend` ↔ `bendwarp`（弯曲）
 
@@ -80,7 +80,7 @@
 
 ### `am_four_color_gradient` ↔ `fourcolorgradient`（四色渐变）
 
-- `alpha`: default: 本项目 1 / AM 0.75；step: 本项目 0.01 / AM 0.001
+- `alpha`: default: 本项目 1 / AM 0.75
 
 ### `am_fractal_warp` ↔ `fractalwarp4`（分形扭曲）
 
@@ -96,7 +96,7 @@
 
 ### `am_glow` ↔ `glow`（发光）
 
-- `radius`: max: 本项目 80 / AM 400；default: 本项目 12 / AM 100；step: 本项目 1 / AM 0.1
+- `radius`: default: 本项目 12 / AM 100；step: 本项目 0.5 / AM 0.1
 
 ### `am_gradient_displace` ↔ `gradientdisplace`（渐变置换）
 
@@ -110,16 +110,16 @@
 
 ### `am_hex_array` ↔ `hexarray`（六边形阵列）
 
-- `size`: min: 本项目 4 / AM 0.5；default: 本项目 36 / AM 10；step: 本项目 1 / AM 0.1
+- `size`: default: 本项目 36 / AM 10
 
 ### `am_hex_shift` ↔ `hexshift`（六边形位移）
 
-- `size`: min: 本项目 4 / AM 0.5；default: 本项目 40 / AM 10；step: 本项目 1 / AM 0.1
+- `size`: default: 本项目 40 / AM 10
 - `seed`: max: 本项目 9999 / AM 5；step: 本项目 1 / AM 0.01
 
 ### `am_hex_tile` ↔ `hextile`（六边形平铺）
 
-- `size`: min: 本项目 4 / AM 0.5；default: 本项目 40 / AM 30；step: 本项目 1 / AM 0.1
+- `size`: default: 本项目 40 / AM 30
 
 ### `am_highlight_shadow` ↔ `highlightshadow`（高光与阴影）
 
@@ -128,8 +128,8 @@
 
 ### `am_hue_shift` ↔ `hueshift`（色相偏移）
 
-- `hue`: min: 本项目 -180 / AM 0；max: 本项目 180 / AM 360；default: 本项目 30 / AM 0
-- `hue`: min: 本项目 -180 / AM 0；max: 本项目 180 / AM 3600；default: 本项目 30 / AM 0；step: 本项目 1 / AM 0.5
+- `hue`: default: 本项目 30 / AM 0
+- `hue`: max: 本项目 360 / AM 3600；default: 本项目 30 / AM 0
 
 ### `am_inner_blur` ↔ `innerblur`（内模糊）
 
@@ -137,7 +137,7 @@
 
 ### `am_inner_glow` ↔ `inner-glow`（内发光）
 
-- `radius`: max: 本项目 60 / AM 400；default: 本项目 12 / AM 50；step: 本项目 1 / AM 0.1
+- `radius`: default: 本项目 12 / AM 50；step: 本项目 0.5 / AM 0.1
 
 ### `am_jitter` ↔ `jitter`（抖动）
 
@@ -175,7 +175,7 @@
 
 ### `am_pixelate` ↔ `pixelate2`（像素化）
 
-- `size`: max: 本项目 128 / AM 500；default: 本项目 16 / AM 20
+- `size`: default: 本项目 16 / AM 20
 - `saturation`: min: 本项目 -1 / AM 0
 
 ### `am_polar` ↔ `polar`（极坐标）
@@ -211,6 +211,30 @@
 - `seed`: max: 本项目 9999 / AM 5；step: 本项目 1 / AM 0.01
 - `seed`: max: 本项目 9999 / AM 10
 
+### `am_repeat` ↔ `repeat`（重复）
+
+- `count`: min: 本项目 1 / AM 0；max: 本项目 32 / AM 9999；default: 本项目 5 / AM 10
+- `angle`: step: 本项目 0.5 / AM 0.1
+- `scale`: min: 本项目 0.01 / AM 0
+- `alpha`: step: 本项目 0.01 / AM 0.001
+
+### `am_repeat_radial` ↔ `radial`（环形重复）
+
+- `count`: min: 本项目 1 / AM 0；max: 本项目 32 / AM 150
+- `orientation`: step: 本项目 0.5 / AM 1
+- `sweep`: step: 本项目 0.5 / AM 1
+- `angle`: step: 本项目 0.5 / AM 1
+- `scale`: min: 本项目 0.01 / AM 0
+- `alpha`: step: 本项目 0.01 / AM 0.001
+
+### `am_repeat_scatter` ↔ `scatter`（散布重复）
+
+- `count`: min: 本项目 1 / AM 0；max: 本项目 32 / AM 150；default: 本项目 12 / AM 20
+- `evolution`: min: 本项目 -999 / AM 0；max: 本项目 999 / AM 2000
+- `angle`: step: 本项目 0.5 / AM 1
+- `scale`: min: 本项目 0.01 / AM 0
+- `alpha`: step: 本项目 0.01 / AM 0.001
+
 ### `am_rotate_tile` ↔ `tilerotate2`（旋转平铺）
 
 - `angle`: min: 本项目 -180 / AM 0；max: 本项目 180 / AM 3600；step: 本项目 1 / AM 0.5
@@ -235,7 +259,7 @@
 ### `am_stripes` ↔ `stripes`（条纹）
 
 - `width`: min: 本项目 0.01 / AM 0；max: 本项目 0.99 / AM 1
-- `angle`: min: 本项目 -180 / AM 0；max: 本项目 180 / AM 3600；default: 本项目 0 / AM 45；step: 本项目 1 / AM 0.5
+- `angle`: min: 本项目 -180 / AM 0；max: 本项目 180 / AM 3600；default: 本项目 0 / AM 45
 - `phase`: min: 本项目 -1 / AM 0；max: 本项目 1 / AM 1000
 
 ### `am_swing` ↔ `swing`（摇摆）
@@ -253,7 +277,7 @@
 
 ### `am_tile` ↔ `tile`（平铺）
 
-- `scale`: min: 本项目 0.1 / AM 0.005；max: 本项目 12 / AM 20；default: 本项目 2 / AM 1；step: 本项目 0.01 / AM 0.005
+- `scale`: default: 本项目 2 / AM 1
 
 ### `am_zoom_blur` ↔ `zoomblur2`（径向模糊）
 
@@ -314,8 +338,11 @@
 | `am_radial_shadow` | `radialshadow` | 9 | 3 | `color`, `fill`, `lightColor`, `lightIntensity`, `lightSize`, `solidity` |
 | `am_radial_wipe` | `radialwipe` | 6 | 1 | `end`, `feather`, `offset`, `repeatCount`, `start` |
 | `am_random_displace` | `randomdisplace` | 7 | 1 | `evolution`, `freq`, `mag`, `scatter` |
+| `am_repeat_radial` | `radial` | 19 | 7 | `baseScale`, `blend`, `easeIn`, `easeOut`, `end`, `fillColor`, `overlap`, `phase` |
+| `am_repeat_scatter` | `scatter` | 17 | 6 | `blend`, `easeIn`, `easeOut`, `end`, `fillColor`, `overlap`, `phase`, `scatterSeed` |
 | `am_replace_color` | `replacecolor` | 5 | 0 | `alpha`, `feather`, `newcolor`, `oldcolor`, `threshold` |
 | `am_rgb_gamma` | `rgb-gamma` | 3 | 0 | `blueGamma`, `greenGamma`, `redGamma` |
+| `am_rgb_mixer` | `rgb-mixer` | 5 | 2 | `bmix`, `gmix`, `rmix` |
 | `am_rotate_tile` | `tilerotate2` | 6 | 1 | `amount`, `offset`, `rotation`, `seed`, `strength` |
 | `am_sat_vib` | `satvib` | 5 | 1 | `brightness`, `contrast`, `hue`, `vib` |
 | `am_scale_assist` | `scaleassist` | 2 | 0 | `damp`, `scale` |
@@ -341,15 +368,15 @@
 
 `motionblur4`、`spinblur2`、`zoomblur3`、`radialshadow2`、`spotcolor2`、`pinchbulge2`、`swirl4`、`starfield3`
 
-### 3.3 非 shader 效果（AM 用图层属性/复制器实现）（23 条）
+### 3.3 非 shader 效果（AM 用图层属性/复制器实现）（20 条）
 
-`parenthelper`、`timequant`、`progress`、`strokecolor`、`echokf`、`path`、`radial`、`repeat`、`scatter`、`counter`、`textprogress`、`textrand`、`textspacing`、`texttransform`、`timecode`、`growparts`、`morphpath`、`movealongpath3`、`oscillate3`、`pulsate2`、`shake2`、`shakeparts`、`swing2`
+`parenthelper`、`timequant`、`progress`、`strokecolor`、`echokf`、`path`、`counter`、`textprogress`、`textrand`、`textspacing`、`texttransform`、`timecode`、`growparts`、`morphpath`、`movealongpath3`、`oscillate3`、`pulsate2`、`shake2`、`shakeparts`、`swing2`
 
 ### 3.4 3D 图元（本项目由 `s3d_*` + MeshRenderer 实现）（19 条）
 
 `box`、`cube2`、`cylinder`、`ellipsoid`、`extrude`、`heart2`、`hexprism`、`hollowbox`、`octahedron`、`pagecurl`、`plus`、`pyramid`、`ring`、`spherize2`、`starpoly`、`starprism`、`torus`、`triprism2`、`tunnel`
 
-### 3.5 可执行 shader 效果：真正缺失（候选批次）（66 条）
+### 3.5 可执行 shader 效果：真正缺失（候选批次）（64 条）
 
 | AM id | 类别 | 参数数 | 备注 |
 | --- | --- | --- | --- |
@@ -367,10 +394,8 @@
 | `rays` | color | 10 | 高优先级 |
 | `darkglow` | color | 9 | 高优先级 |
 | `spectralmap` | color | 9 | 高优先级 |
-| `rgb-mixer` | color | 6 | 高优先级 |
 | `exposure` | color | 5 | 高优先级 |
 | `rgbsep` | color | 5 | 高优先级 |
-| `solidcolor` | color | 4 | 高优先级 |
 | `threshold` | color | 4 | 高优先级 |
 | `brightcont2` | color | 3 | 高优先级 |
 | `posterize` | color | 3 | 高优先级 |

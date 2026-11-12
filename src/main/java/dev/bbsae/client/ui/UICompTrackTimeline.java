@@ -20,8 +20,10 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * The composition's real track editor.
@@ -70,6 +72,11 @@ public class UICompTrackTimeline extends UIElement
     private int scrollY;
     private int rowHeight = ROW_DEFAULT;
     private final UiMotion motion = new UiMotion();
+    private int motionFrames;
+    /** Per-layer motion channel names, built once — a 200-track timeline must not allocate keys. */
+    private final Map<String, String[]> channelKeys = new HashMap<>();
+    /** Last snap guide a flash was started for; a repeated frame must not re-trigger it. */
+    private float lastSnapGuide = Float.NaN;
     private boolean viewReady;
     private boolean fitMode = true;
     private float knownDuration = -1F;
@@ -633,12 +640,27 @@ public class UICompTrackTimeline extends UIElement
     public void render(UIContext context)
     {
         this.motion.tickFrame();
+
+        if (++this.motionFrames >= UICompButton.PRUNE_EVERY)
+        {
+            this.motionFrames = 0;
+            this.motion.prune(UICompButton.PRUNE_IDLE);
+
+            /* Layers are created and deleted for the whole session; their channel names are small
+             * but not free. Rebuilding the cache is cheaper than remembering every deleted layer. */
+            if (this.channelKeys.size() > 512)
+            {
+                this.channelKeys.clear();
+            }
+        }
+
         this.updateAreas();
         this.ensureView();
         this.clampScroll();
 
         this.snapGuide = Float.NaN;
         this.handleDrag(context);
+        this.updateSnapFlash();
 
         this.renderSurfaces(context);
         this.renderGrid(context);
@@ -652,6 +674,36 @@ public class UICompTrackTimeline extends UIElement
         super.render(context);
 
         this.updateCursor(context);
+    }
+
+    /** Channel names for a layer: head selection, lane selection, clip-bar hover. */
+    private String[] channels(CompLayer layer)
+    {
+        String id = layer.id == null ? "" : layer.id;
+        String[] channels = this.channelKeys.get(id);
+
+        if (channels == null)
+        {
+            channels = new String[] {
+                "track-head:" + id, "track-lane:" + id, "track-clip:" + id
+            };
+            this.channelKeys.put(id, channels);
+        }
+
+        return channels;
+    }
+
+    /** Starts a short flash whenever dragging picks a new snap point (same point = no new flash). */
+    private void updateSnapFlash()
+    {
+        boolean changed = !Float.isNaN(this.snapGuide) && this.snapGuide != this.lastSnapGuide;
+
+        this.lastSnapGuide = this.snapGuide;
+
+        if (changed && CompPrefs.animating() && CompPrefs.intensity() > 0.001F)
+        {
+            this.motion.flash("snap");
+        }
     }
 
     private void renderSurfaces(UIContext context)
@@ -968,7 +1020,7 @@ public class UICompTrackTimeline extends UIElement
 
     private void renderHeaderRow(UIContext context, CompLayer layer, int y, boolean selected, boolean hover)
     {
-        float sel = this.motion.select("track-head:" + layer.id, selected);
+        float sel = this.motion.select(this.channels(layer)[0], selected);
         int bottom = Math.min(y + this.rowHeight, this.laneArea.ey());
 
         context.batcher.clip(this.headerArea, context);
@@ -1050,7 +1102,8 @@ public class UICompTrackTimeline extends UIElement
 
     private void renderLaneRow(UIContext context, CompLayer layer, int y, boolean selected)
     {
-        float sel = this.motion.select("track-lane:" + layer.id, selected);
+        String[] channels = this.channels(layer);
+        float sel = this.motion.select(channels[1], selected);
         int bottom = Math.min(y + this.rowHeight, this.laneArea.ey());
         int barY = y + 3;
         int barH = Math.max(10, this.rowHeight - 6);
@@ -1077,19 +1130,37 @@ public class UICompTrackTimeline extends UIElement
                 finish = start + 2;
             }
 
+            /* Clip-bar hover is a paint-time highlight only: the hit geometry below is unchanged,
+             * so a bar that is mid-brighten still starts its drag exactly where it looks like it
+             * should. */
+            boolean barHover = context.mouseX >= start && context.mouseX <= finish
+                && context.mouseY >= barY && context.mouseY < barY + barH
+                && this.laneArea.isInside(context);
+            float clipHover = this.motion.anim(channels[2], barHover ? 1F : 0F, 24F);
             int color = this.barColor(layer);
             int alpha = layer.visible ? 0xFF : 0x66;
 
             color = (color & 0x00FFFFFF) | (alpha << 24);
 
+            if (clipHover > 0.005F)
+            {
+                color = UiMotion.lerpColor(color, Colors.mulRGB(color, 1.22F), clipHover);
+            }
+
             context.batcher.box(start, barY, finish, barY + barH, color);
-            context.batcher.box(start, barY, finish, barY + 2, 0x55FFFFFF);
+            context.batcher.box(start, barY, finish, barY + 2,
+                UiMotion.lerpColor(0x55FFFFFF, 0x99FFFFFF, clipHover));
             context.batcher.box(start, barY + barH - 1, finish, barY + barH, 0x33000000);
 
             if (sel > 0.01F)
             {
                 context.batcher.outline(start, barY, finish, barY + barH,
                     UiGfx.mulA(0xFFEAF3FF, sel));
+            }
+            else if (clipHover > 0.01F)
+            {
+                context.batcher.outline(start, barY, finish, barY + barH,
+                    UiGfx.mulA(0xFFEAF3FF, 0.55F * clipHover));
             }
 
             /* Trim grips: visible whenever the bar is wide enough, brighter when selected */
@@ -1282,7 +1353,20 @@ public class UICompTrackTimeline extends UIElement
             return;
         }
 
-        context.batcher.box(x, this.laneArea.y, x + 1, this.laneArea.ey(), 0xE6FFFFFF);
+        /* The line is solid while snapping; the flash is a short envelope that fires when a new
+         * snap point is picked, which is the feedback that says "it caught here". */
+        float flash = 1F - this.motion.flash("snap", 0.32F);
+        float intensity = this.motion.intensity();
+        int glow = Math.round(3F * flash * intensity);
+
+        if (glow > 0)
+        {
+            context.batcher.box(x - glow, this.laneArea.y, x + 1 + glow, this.laneArea.ey(),
+                UiMotion.alpha(0xFFFFFFFF, 0.28F * flash * intensity));
+        }
+
+        context.batcher.box(x, this.laneArea.y, x + 1, this.laneArea.ey(),
+            UiMotion.alpha(0xFFFFFFFF, 0.88F + 0.12F * flash));
     }
 
     private void renderScrollbar(UIContext context)
@@ -1306,7 +1390,12 @@ public class UICompTrackTimeline extends UIElement
 
     private void renderDragHud(UIContext context)
     {
-        if (this.dragMode == MODE_NONE || this.dragMode == MODE_SCRUB || this.dragId == null)
+        boolean active = this.dragMode != MODE_NONE && this.dragMode != MODE_SCRUB && this.dragId != null;
+        /* The target is always animated (not only while active) so ending a drag lets the HUD
+         * fade out and the next drag starts from 0 instead of popping in at full alpha. */
+        float hud = this.motion.anim("drag-hud", active ? 1F : 0F, 26F);
+
+        if (!active || hud < 0.01F)
         {
             return;
         }
@@ -1319,8 +1408,10 @@ public class UICompTrackTimeline extends UIElement
         }
 
         String text = String.format(Locale.ROOT, "入 %.2fs   出 %.2fs   时长 %.2fs", layer.in, layer.out, Math.max(0F, layer.out - layer.in));
+        int offset = Math.round((1F - hud) * 6F * this.motion.intensity());
 
-        context.batcher.textCard(text, context.mouseX + 12, context.mouseY + 14, Colors.WHITE, 0xE010141A, 3);
+        context.batcher.textCard(text, context.mouseX + 12, context.mouseY + 14 + offset,
+            UiMotion.alpha(Colors.WHITE, hud), UiMotion.alpha(0xE010141A, hud), 3);
     }
 
     /* Input */

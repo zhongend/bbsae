@@ -1,10 +1,10 @@
 # 停靠式面板布局计划（BBS `UIDockLayout`，需求 8-B）
 
+> **状态：0.93 已实现（默认启用）**。本节保留设计依据与实施记录；实现细节见文末「实施记录」。
+>
 > 结论先行：**BBS 2.7 自带完整的停靠布局系统** `mchorse.bbs_mod.ui.framework.elements.layout.UIDockLayout`
 > （分栏拖拽、拖拽停靠、标签堆叠、隐藏面板、布局锁、布局撤销、最大化）。「面板像 BBS 原版一样拖拽组合」
 > 不需要自研，直接把合成器的四个区域注册成 dock 面板即可；`UIFilmPanel` 已用这套系统（`UIFilmPanel:308-324`）。
->
-> 本文是下一轮（0.93）的实施计划；本轮（0.92）先修掉 splitters 命中 bug（`CompUi.timelineSplitterSpan`）。
 
 ## 1. 已核对的 API（jar `libs/bbs-2.7-1.20.1.jar`，javap 无缺口）
 
@@ -117,3 +117,28 @@ public boolean dockUnlocked = false;
   必须恰好是四个已知 id（防手滑写错字符串）。
 - 真机验证清单：拖动左栏到预览右侧成标签堆叠；拖动时间轴到顶部；分栏拖拽；锁定后不可拖；
   隐藏/恢复面板；重置布局；旧工程打开用默认布局；重启后布局保留。
+
+---
+
+## 实施记录（0.93）
+
+**开关**：`CompPrefs.Data.dockLayout`（默认 true；设置 → 开发者 →「停靠式面板（BBS 原版）」，
+切换后重开合成器面板生效）。关闭时回退到旧版固定三栏 splitter（原 `applyLayout` 完整保留为
+`applyLegacyLayout()`）。
+
+**文件**：
+
+| 文件 | 作用 |
+| --- | --- |
+| `client/ui/CompDockSource.java` | `ILayoutSource` → `CompProject.CompSettings.dockLayout/dockHiddenPanels/dockUnlocked`；批量 flush（拖 splitter 不每帧写盘）；默认/聚焦/四套预设树；项目切换自动重载 |
+| `client/ui/layout/CompositorLayout.java` | 旧版固定布局的纯函数几何（0.92 已加）；dock 模式下作为像素最小宽参考（BBS dock 用比例） |
+| `UICompositorPanel` | 构造：注册 4 个面板 → `mount()`；`applyDockLayout()` 只摆 header/status/render 页；`resize()` override 里 `dock.setupFlex(true)`；`syncDockDerivedLayout()` 摆预览栏/快捷面板/关键帧抽屉；布局按钮（左键锁/解锁，右键菜单：重置/撤销/最大化/隐藏面板）；Ctrl+Alt+Z 布局撤销、Ctrl+空格 最大化；焦点模式用临时树（preview+timeline）；工作区预设映射为 dock 树 |
+| `CompUi` | 顶栏右侧集群新增「布局」按钮（始终可见），`headerLayout()` 几何 + 单测防重叠 |
+
+**与旧布局的差异（如实说明）**：
+1. dock 是**比例分栏**，不是像素分栏：窗口变窄时属性栏会比旧的 296px 下限更窄（BBS 原版同款行为）。
+2. 快速面板（快捷变换）保留在时间轴面板**内部**右侧，不单独注册为 dock 面板；它随选择显示/隐藏，
+   拖动时间轴时跟着走。若用户需要它独立停靠，后续可注册第 5 个面板。
+3. 锁定时拖动标题条无效（BBS 原版默认锁定）；解锁后每个面板顶部 20px 是拖拽条，BBS 会自动把
+   面板内容下移，不需要宿主处理。
+4. 布局改动不再进入文档 undo（`saveUiState()` 只触发防抖写盘，不置 `documentDirty`、不清预渲染缓存）。

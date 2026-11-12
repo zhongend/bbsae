@@ -20,6 +20,8 @@ import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.keys.KeyAction;
+import mchorse.bbs_mod.utils.keyframes.Keyframe;
+import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
 import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
@@ -269,6 +271,9 @@ public final class UIPenTool implements CompPenSession.Listener
 
         this.mouseX = context.mouseX;
         this.mouseY = context.mouseY;
+        /* The vertex-count remap splits the path differently at the playhead (user's click
+         * parameter) than at every other key (0.5), so the session needs the current tick. */
+        this.session.setTick(this.panel.getFrame());
 
         if (button == 1)
         {
@@ -512,6 +517,8 @@ public final class UIPenTool implements CompPenSession.Listener
             return false;
         }
 
+        this.session.setTick(this.panel.getFrame());
+
         if (!this.session.key(command))
         {
             return false;
@@ -649,6 +656,73 @@ public final class UIPenTool implements CompPenSession.Listener
         this.panel.penSave();
         this.panel.penRefreshInspector();
         this.panel.setStatus("已给整条路径打关键帧（" + count + " 点 × 6 通道）；此后不能再增删点");
+    }
+
+    /**
+     * Inspector shortcut: append a point to a mask path without entering draw mode. Routed through
+     * the session so an animated path gets its channels remapped instead of corrupted.
+     */
+    public boolean appendMaskPoint(CompLayer layer, CompMask mask, float localX, float localY)
+    {
+        int index = layer == null || mask == null ? -1 : layer.masks.indexOf(mask);
+
+        if (index < 0)
+        {
+            return false;
+        }
+
+        this.activate(layer, KIND_MASK, index);
+        this.session.setTick(this.panel.getFrame());
+
+        return this.session.appendPoint(localX, localY);
+    }
+
+    /** Inspector shortcut: append a point to a shape path (animation safe). */
+    public boolean appendShapePoint(CompLayer layer, CompShape shape, float localX, float localY)
+    {
+        int index = layer == null || shape == null ? -1 : layer.shapes.indexOf(shape);
+
+        if (index < 0 || !CompShape.PATH.equals(shape.type))
+        {
+            return false;
+        }
+
+        this.activate(layer, KIND_SHAPE, index);
+        this.session.setTick(this.panel.getFrame());
+
+        return this.session.appendPoint(localX, localY);
+    }
+
+    /** Inspector shortcut: remove one mask vertex (animation safe). */
+    public boolean removeMaskPoint(CompLayer layer, CompMask mask, int pointIndex)
+    {
+        int index = layer == null || mask == null ? -1 : layer.masks.indexOf(mask);
+
+        if (index < 0)
+        {
+            return false;
+        }
+
+        this.activate(layer, KIND_MASK, index);
+        this.session.setTick(this.panel.getFrame());
+
+        return this.session.deletePoint(pointIndex);
+    }
+
+    /** Inspector shortcut: remove one shape path vertex (animation safe). */
+    public boolean removeShapePoint(CompLayer layer, CompShape shape, int pointIndex)
+    {
+        int index = layer == null || shape == null ? -1 : layer.shapes.indexOf(shape);
+
+        if (index < 0 || !CompShape.PATH.equals(shape.type))
+        {
+            return false;
+        }
+
+        this.activate(layer, KIND_SHAPE, index);
+        this.session.setTick(this.panel.getFrame());
+
+        return this.session.deletePoint(pointIndex);
     }
 
     /** Inspector shortcut: key a mask's whole path at the playhead without entering draw mode. */
@@ -1508,6 +1582,8 @@ public final class UIPenTool implements CompPenSession.Listener
         {
             this.session.setTarget(adapter);
         }
+
+        this.session.setTick(this.panel.getFrame());
     }
 
     private CompPenSession.Target makeTarget(CompLayer layer, int kind, int index)
@@ -1709,12 +1785,153 @@ public final class UIPenTool implements CompPenSession.Listener
 
     /* ------------------------------------------------------------------ adapters */
 
+    private static final String[] COMPONENT_NAMES = {"x", "y", "inX", "inY", "outX", "outY"};
+    private static final float[] EMPTY_TICKS = new float[0];
+
+    /**
+     * Scalar-channel adapter for the animated vertex-count remap.
+     *
+     * <p>The session never touches {@code CompLayer} or the keyframe classes: it asks for key
+     * ticks, values at a tick, and moves/clears/writes channel keys. This class is the only place
+     * that knows a path point is six {@code p/<i>/(x|y|inX|inY|outX|outY)} scalar channels.</p>
+     */
+    private abstract class ChannelAnimation implements CompPenSession.Animation
+    {
+        protected abstract CompLayer channelLayer();
+
+        /** {@code "mask/<id>/p/"} or {@code "shape/<id>/p/"}. */
+        protected abstract String channelBase();
+
+        /** The authored (non-animated) value of one component. */
+        protected abstract float baseValue(int point, int component);
+
+        private String channelPath(int point, int component)
+        {
+            return this.channelBase() + point + "/" + COMPONENT_NAMES[component];
+        }
+
+        @Override
+        public boolean hasKey(int point, int component)
+        {
+            return this.channelLayer().hasScalarChannel(this.channelPath(point, component));
+        }
+
+        @Override
+        public float base(int point, int component)
+        {
+            return this.baseValue(point, component);
+        }
+
+        @Override
+        public float valueAt(int point, int component, float tick)
+        {
+            String path = this.channelPath(point, component);
+
+            return this.channelLayer().scalarAt(path, this.baseValue(point, component), tick);
+        }
+
+        @Override
+        public float[] keyTicks(int point, int component)
+        {
+            CompLayer layer = this.channelLayer();
+            String path = this.channelPath(point, component);
+
+            if (!layer.hasScalarChannel(path))
+            {
+                return EMPTY_TICKS;
+            }
+
+            java.util.List<Keyframe<Float>> keys = layer.scalarChannel(path).getKeyframes();
+            float[] ticks = new float[keys.size()];
+
+            for (int i = 0; i < keys.size(); i++)
+            {
+                ticks[i] = keys.get(i).getTick();
+            }
+
+            return ticks;
+        }
+
+        @Override
+        public void moveChannels(int from, int to)
+        {
+            for (int component = 0; component < CompPenSession.COMPONENT_COUNT; component++)
+            {
+                this.moveChannel(this.channelPath(from, component), this.channelPath(to, component));
+            }
+        }
+
+        @Override
+        public void clearChannels(int point)
+        {
+            CompLayer layer = this.channelLayer();
+
+            for (int component = 0; component < CompPenSession.COMPONENT_COUNT; component++)
+            {
+                String path = this.channelPath(point, component);
+
+                if (layer.hasScalarChannel(path))
+                {
+                    layer.scalarChannel(path).removeAll();
+                }
+            }
+        }
+
+        @Override
+        public void setKey(int point, int component, float tick, float value)
+        {
+            /* insertInheriting copies the left neighbour's interpolation/style/handles onto a new
+             * key, so a remap does not flatten a hand-shaped curve onto the default interpolation. */
+            this.channelLayer().scalarChannel(this.channelPath(point, component)).insertInheriting(tick, value);
+        }
+
+        /**
+         * Moves one channel, preserving ticks, values, interpolation, handles, style and duration.
+         * Used for index shifts during a vertex-count change; the destination is cleared first so
+         * a half-written channel can never mix two vertices' keys.
+         */
+        private void moveChannel(String fromPath, String toPath)
+        {
+            CompLayer layer = this.channelLayer();
+
+            if (!layer.hasScalarChannel(fromPath))
+            {
+                if (layer.hasScalarChannel(toPath))
+                {
+                    layer.scalarChannel(toPath).removeAll();
+                }
+
+                return;
+            }
+
+            KeyframeChannel<Float> source = layer.scalarChannel(fromPath);
+            java.util.List<Keyframe<Float>> keys = new java.util.ArrayList<>(source.getKeyframes());
+            KeyframeChannel<Float> destination = layer.scalarChannel(toPath);
+
+            destination.removeAll();
+
+            for (Keyframe<Float> key : keys)
+            {
+                int index = destination.insert(key.getTick(), key.getValue());
+                Keyframe<Float> copy = destination.get(index);
+
+                if (copy != null && copy != key)
+                {
+                    copy.copyOverExtra(key);
+                }
+            }
+
+            source.removeAll();
+        }
+    }
+
     /** Pen adapter over a mask: reads base values, writes through the animation-aware scalar path. */
     private final class MaskTarget implements CompPenSession.Target
     {
         private final CompLayer layer;
         private final CompMask mask;
         final java.util.Set<Integer> handles;
+        private CompPenSession.Animation animation;
 
         MaskTarget(CompLayer layer, CompMask mask, java.util.Set<Integer> handles)
         {
@@ -1828,6 +2045,46 @@ public final class UIPenTool implements CompPenSession.Listener
         {
             return "蒙版 " + (this.mask.name == null || this.mask.name.isEmpty() ? this.mask.id : this.mask.name);
         }
+
+        @Override
+        public CompPenSession.Animation animation()
+        {
+            if (this.animation == null)
+            {
+                this.animation = new ChannelAnimation()
+                {
+                    @Override
+                    protected CompLayer channelLayer()
+                    {
+                        return MaskTarget.this.layer;
+                    }
+
+                    @Override
+                    protected String channelBase()
+                    {
+                        return "mask/" + MaskTarget.this.mask.id + "/p/";
+                    }
+
+                    @Override
+                    protected float baseValue(int point, int component)
+                    {
+                        CompMask.CompMaskPoint value = MaskTarget.this.point(point);
+
+                        return switch (component)
+                        {
+                            case CompPenSession.COMPONENT_X -> value.x;
+                            case CompPenSession.COMPONENT_Y -> value.y;
+                            case CompPenSession.COMPONENT_IN_X -> value.inX;
+                            case CompPenSession.COMPONENT_IN_Y -> value.inY;
+                            case CompPenSession.COMPONENT_OUT_X -> value.outX;
+                            default -> value.outY;
+                        };
+                    }
+                };
+            }
+
+            return this.animation;
+        }
     }
 
     /** Pen adapter over a shape path. */
@@ -1836,6 +2093,7 @@ public final class UIPenTool implements CompPenSession.Listener
         private final CompLayer layer;
         private final CompShape shape;
         final java.util.Set<Integer> handles;
+        private CompPenSession.Animation animation;
 
         ShapeTarget(CompLayer layer, CompShape shape, java.util.Set<Integer> handles)
         {
@@ -1950,6 +2208,46 @@ public final class UIPenTool implements CompPenSession.Listener
         public String label()
         {
             return "路径 " + this.shape.id;
+        }
+
+        @Override
+        public CompPenSession.Animation animation()
+        {
+            if (this.animation == null)
+            {
+                this.animation = new ChannelAnimation()
+                {
+                    @Override
+                    protected CompLayer channelLayer()
+                    {
+                        return ShapeTarget.this.layer;
+                    }
+
+                    @Override
+                    protected String channelBase()
+                    {
+                        return "shape/" + ShapeTarget.this.shape.id + "/p/";
+                    }
+
+                    @Override
+                    protected float baseValue(int point, int component)
+                    {
+                        CompShape.Point value = ShapeTarget.this.point(point);
+
+                        return switch (component)
+                        {
+                            case CompPenSession.COMPONENT_X -> value.x;
+                            case CompPenSession.COMPONENT_Y -> value.y;
+                            case CompPenSession.COMPONENT_IN_X -> value.inX;
+                            case CompPenSession.COMPONENT_IN_Y -> value.inY;
+                            case CompPenSession.COMPONENT_OUT_X -> value.outX;
+                            default -> value.outY;
+                        };
+                    }
+                };
+            }
+
+            return this.animation;
         }
     }
 }

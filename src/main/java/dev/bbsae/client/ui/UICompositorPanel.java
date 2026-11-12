@@ -55,6 +55,7 @@ import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeEditor;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeSheet;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
+import mchorse.bbs_mod.ui.framework.elements.layout.UIDockLayout;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIListOverlayPanel;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIOverlay;
 import mchorse.bbs_mod.ui.framework.elements.overlay.UIPromptOverlayPanel;
@@ -114,7 +115,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIIcon addLayer;
 
     private final UIElement header;
-    private final UIElement body;
+    private UIElement body;
     private final UIElement timeline;
     private final UIElement timelineHeader;
     private final UIElement effectColumn;
@@ -317,6 +318,12 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private static final int TIMELINE_HEIGHT = 250;
 
+    /* One-shot page switch motion (left tabs / inspector page / timeline page). The veil hides the
+     * hard cut without animating BBS controls' alpha; see UiPageTransition. */
+    private final UiPageTransition leftPageMotion = new UiPageTransition(0.16F, 6F);
+    private final UiPageTransition inspectorPageMotion = new UiPageTransition(0.16F, 6F);
+    private final UiPageTransition timelinePageMotion = new UiPageTransition(0.18F, 8F);
+
     /* Last size the three-column layout was computed for. The panel is laid out once during bind(),
      * when the dashboard has not given it a real area yet, so the body kept its 160 px floor and a
      * blank strip sat between the preview and the timeline until something forced a re-layout
@@ -333,6 +340,24 @@ public class UICompositorPanel extends UIDashboardPanel
     private PanelResizeHandle rightHandle;
     private PanelResizeHandle timelineHandle;
     private PanelResizeHandle keyframeHandle;
+
+    /* BBS-native dockable panel layout. Null when the legacy fixed three-column splitter layout is
+     * used (Settings → 开发者 → 停靠式面板, read when the panel is constructed). */
+    private UIDockLayout dock;
+    private CompDockSource dockSource;
+    /** Header button: left click locks/unlocks the dock, right click opens the layout menu. */
+    private UIButton layoutButton;
+    private boolean dockLayoutEnabled;
+    /** Dock structure/visibility changed this frame; the source is flushed once per frame. */
+    private boolean dockLayoutDirty;
+    private long lastDockFlushMs;
+    private static final long DOCK_FLUSH_THROTTLE_MS = 250L;
+    private boolean flushingDock;
+    /** Snapshot used by the transient focus mode (preview-only tree). */
+    private mchorse.bbs_mod.settings.values.ui.EditorLayoutNode focusReturnRoot;
+    private java.util.Set<String> focusReturnHidden;
+    /** Guards the dock flex pass against re-entering resize() through the dock's own children. */
+    private boolean layoutPass;
     private int keyframeDrawerHeight = 154;
     /** 0 = fully below the timeline, 1 = fully open; drives the slide-up drawer animation. */
     private float keyframeDrawerSlide;
@@ -396,6 +421,20 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.settingsButton = CompUi.flat("设置", "合成器设置：导出时长、默认图层时长、界面密度、快捷键方案", () -> this.showSettings());
 
+        this.layoutButton = CompUi.flat("布局",
+            "面板布局：左键锁定/解锁拖拽；右键菜单可重置布局/隐藏面板/撤销布局改动", () ->
+        {
+            if (this.dock != null)
+            {
+                this.toggleDockLock();
+            }
+            else
+            {
+                this.setStatus("当前是旧版固定分栏：可在 设置 → 开发者 → 停靠式面板 启用后重开面板");
+            }
+        });
+        this.layoutButton.context((manager) -> this.dockLayoutMenu(manager));
+
         this.header = new UIElement();
         this.header.h(24);
 
@@ -414,7 +453,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.focusButton.relative(this.header).x(1F, -40).y(inset).w(control).h(control);
 
         this.header.add(this.title, this.replaySelector, this.play, this.prevFrame, this.nextFrame,
-            this.timecode, this.effectLibraryButton, this.projectsButton, this.save, this.exportFilm, this.renderMode, this.settingsButton, this.focusButton);
+            this.timecode, this.effectLibraryButton, this.projectsButton, this.save, this.exportFilm,
+            this.renderMode, this.settingsButton, this.layoutButton, this.focusButton);
 
         /* Left column: the two panels an editor actually browses from - effects and media.
          * The layer stack lives in the timeline's track headers; keeping a second layer list
@@ -470,6 +510,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.effectLibrary.setVisible(index == 0);
             this.assetPanel.setVisible(index == 1);
             this.presetBrowser.setVisible(index == 2);
+            this.beginPageMotion(this.leftPageMotion, "left:" + index);
 
             if (index == 2)
             {
@@ -5132,6 +5173,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.inspectorTabs.onSelect((index) ->
         {
             this.inspectorPage = index;
+            this.beginPageMotion(this.inspectorPageMotion, "inspector:" + index);
             this.refreshInspector();
         });
         this.inspectorTabs.active(() -> this.inspectorPage);
@@ -5375,14 +5417,25 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.renderPanel.add(queueTitle, queueFields, this.queue, queueButtons, this.renderStatus);
 
-        this.body = new UIElement();
-        this.body.add(this.effectColumn, this.preview, this.inspectorColumn);
+        this.dockLayoutEnabled = CompPrefs.get().dockLayout;
 
-        this.leftHandle = new PanelResizeHandle(0);
-        this.rightHandle = new PanelResizeHandle(1);
-        this.timelineHandle = new PanelResizeHandle(2);
-        this.body.add(this.leftHandle, this.rightHandle, this.timelineHandle);
-        this.body.relative(this).x(0).y(24).w(1F).h(1F, -292);
+        if (this.dockLayoutEnabled)
+        {
+            /* BBS's own dockable layout. Panels are registered after they are built (below); the
+             * legacy body stays null so no code accidentally positions the panels twice. */
+            this.dock = new UIDockLayout();
+        }
+        else
+        {
+            this.body = new UIElement();
+            this.body.add(this.effectColumn, this.preview, this.inspectorColumn);
+
+            this.leftHandle = new PanelResizeHandle(0);
+            this.rightHandle = new PanelResizeHandle(1);
+            this.timelineHandle = new PanelResizeHandle(2);
+            this.body.add(this.leftHandle, this.rightHandle, this.timelineHandle);
+            this.body.relative(this).x(0).y(24).w(1F).h(1F, -292);
+        }
 
         this.renderPanel.relative(this).x(0).y(24).w(1F).h(1F, -292);
 
@@ -5465,6 +5518,7 @@ public class UICompositorPanel extends UIDashboardPanel
             boolean grow = index != 0 && this.timelinePage == 0;
 
             this.timelinePage = index;
+            this.beginPageMotion(this.timelinePageMotion, "timeline:" + index);
             this.applyTimelinePage(grow);
         });
         fitTimeline.tooltip(IKey.constant("时间轴适配全长（\\）"));
@@ -5508,6 +5562,34 @@ public class UICompositorPanel extends UIDashboardPanel
         this.keyframeHandle.setVisible(false);
 
         this.timeline.add(this.timelineHeader, this.trackTimeline, this.curveEditor, this.keyframeDrawer, this.keyframeHandle);
+
+        if (this.dock != null)
+        {
+            /* The quick transform panel belongs to the timeline: it shares the timeline's dock
+             * panel, so dragging the timeline to another edge/tab keeps it with its tracks. */
+            this.quickPanel.relative(this.timeline).x(1F, -210).y(26).w(210).h(1F, -26);
+
+            this.timeline.add(this.quickPanel);
+
+            this.dock
+                .source(this.dockSource = new CompDockSource(this::dockSettings,
+                    CompDockSource::defaultLayout, this::onDockLayoutSaved))
+                .locked(!this.dockUnlocked())
+                .frameless(CompDockSource.PANEL_PREVIEW)
+                .onChanged(() -> this.dockLayoutDirty = true)
+                .onLayoutSettled(this::onDockLayoutSettled);
+
+            this.dock.addPanel(CompDockSource.PANEL_EFFECTS, this.effectColumn, Icons.MATERIAL,
+                IKey.constant("效果 / 素材"));
+            this.dock.addPanel(CompDockSource.PANEL_PREVIEW, this.preview, Icons.CAMERA,
+                IKey.constant("预览"));
+            this.dock.addPanel(CompDockSource.PANEL_INSPECTOR, this.inspectorColumn, Icons.PROPERTIES,
+                IKey.constant("属性"));
+            this.dock.addPanel(CompDockSource.PANEL_TIMELINE, this.timeline, Icons.FILM,
+                IKey.constant("时间轴"));
+            this.dock.mount();
+        }
+
         this.applyLayout();
 
         this.header.relative(this).x(0).y(0).w(1F).h(24);
@@ -5577,8 +5659,16 @@ public class UICompositorPanel extends UIDashboardPanel
         this.settingsOverlay.relative(this).x(0).y(0).w(1F).h(1F);
         this.settingsOverlay.setVisible(false);
 
-        this.add(this.header, this.body, this.renderPanel, this.timeline, this.quickPanel, this.status,
-            this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay);
+        if (this.dock != null)
+        {
+            this.add(this.header, this.dock, this.renderPanel, this.status,
+                this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay);
+        }
+        else
+        {
+            this.add(this.header, this.body, this.renderPanel, this.timeline, this.quickPanel, this.status,
+                this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay);
+        }
 
         this.focusButton.h(18);
 
@@ -6692,6 +6782,26 @@ public class UICompositorPanel extends UIDashboardPanel
 
         CompPrefs.get().layoutPreset = preset;
         CompPrefs.save();
+
+        if (this.dock != null && this.dockSource != null)
+        {
+            /* Workspace presets are dock trees in dock mode; the side panels stay registered, the
+             * focus preset instead hides them so the ensure pass does not re-add empty slots. */
+            this.dockSource.setRoot(CompDockSource.presetLayout(preset));
+
+            java.util.Set<String> hidden = new java.util.LinkedHashSet<>();
+
+            if (preset == UIOnboarding.LAYOUT_FOCUS)
+            {
+                hidden.add(CompDockSource.PANEL_EFFECTS);
+                hidden.add(CompDockSource.PANEL_INSPECTOR);
+            }
+
+            this.dockSource.setHiddenPanels(hidden);
+            this.dock.refresh();
+            this.dockLayoutDirty = true;
+        }
+
         this.applyLayout();
         this.savePanelLayout();
         this.setStatus("工作区布局：" + UIOnboarding.LAYOUT_NAMES[Math.max(0, Math.min(UIOnboarding.LAYOUT_NAMES.length - 1, preset))]);
@@ -8384,6 +8494,20 @@ public class UICompositorPanel extends UIDashboardPanel
         dev.bbsae.client.render.CompPrecache.markDirty();
     }
 
+    /**
+     * Persists UI-only state (dock layout, panel sizes, editor modes) without marking the document
+     * edited.
+     *
+     * <p>Panel sizes and the dock tree live in the project file for convenience, but they are not
+     * composition data: dragging a splitter must not create an undo step or invalidate the
+     * pre-rendered frames. {@link #save()} is for content edits; this is for the workspace.</p>
+     */
+    void saveUiState()
+    {
+        this.saveRequested = true;
+        this.saveRequestedMs = System.currentTimeMillis();
+    }
+
     /** Writes now. Called on panel close, before export, and by the debounce timer. */
     void flushSave()
     {
@@ -8393,6 +8517,11 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.saveRequested = false;
+
+        if (this.dockSource != null)
+        {
+            this.dockSource.flush();
+        }
 
         if (this.project != null)
         {
@@ -8466,7 +8595,10 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.curveEditor.refresh();
 
-            if (grow && this.area.h > 0)
+            /* In dock mode the timeline's height is a dock ratio; the user drags the splitter to make
+             * the graph bigger, so the old "steal 55% of the panel" one-shot only exists in the
+             * legacy fixed layout. */
+            if (grow && this.dock == null && this.area.h > 0)
             {
                 int max = Math.max(140, this.area.h - 24 - 160 - 18);
                 int target = Math.min(max, Math.max(this.timelinePanelHeight, Math.round(this.area.h * 0.55F)));
@@ -9026,6 +9158,29 @@ public class UICompositorPanel extends UIDashboardPanel
                  * bbsae's 3D space. */
                 BbsAeClient.openReplayMode(this.dashboard, this);
                 break;
+
+            case "docktest":
+            {
+                /* Verification view: a tab-stacked dock tree (effects + inspector share a slot),
+                 * which is the arrangement plain screenshots cannot reach without mouse dragging. */
+                if (this.dock != null && this.dockSource != null)
+                {
+                    this.dockSource.setRoot(new mchorse.bbs_mod.settings.values.ui.EditorLayoutNode.SplitterNode(true, 0.72F,
+                        new mchorse.bbs_mod.settings.values.ui.EditorLayoutNode.SplitterNode(false, 0.24F,
+                            new mchorse.bbs_mod.settings.values.ui.EditorLayoutNode.StackNode(
+                                java.util.List.of(CompDockSource.PANEL_EFFECTS, CompDockSource.PANEL_INSPECTOR),
+                                CompDockSource.PANEL_EFFECTS),
+                            new mchorse.bbs_mod.settings.values.ui.EditorLayoutNode.PanelNode(CompDockSource.PANEL_PREVIEW)),
+                        new mchorse.bbs_mod.settings.values.ui.EditorLayoutNode.PanelNode(CompDockSource.PANEL_TIMELINE)));
+                    this.dockSource.setHiddenPanels(new java.util.LinkedHashSet<>());
+                    this.dock.locked(false);
+                    this.dock.refresh();
+                    this.dockLayoutDirty = true;
+                    this.setStatus("停靠布局验证：左栏与属性栏已堆叠成标签；布局已解锁");
+                }
+
+                break;
+            }
 
             case "curve":
             default:
@@ -11055,13 +11210,23 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         /* The curve editor owns the whole strip; the keyframe drawer belongs to the track view. */
+        int quickWidth = this.dock != null && this.quickPanel != null && this.quickPanel.isVisible()
+            ? Math.max(0, CompUi.quickWidth(this.timeline.area.w, this.quickPanelWidth))
+            : 0;
+        int stripWidth = Math.max(1, this.timeline.area.w - quickWidth);
+
+        if (quickWidth > 0)
+        {
+            this.quickPanel.relative(this.timeline).x(1F, -quickWidth).y(26)
+                .w(quickWidth).h(1F, -26);
+        }
+
         if (this.timelinePage != 0)
         {
             if (this.curveEditor != null)
             {
-                this.curveEditor.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
+                this.curveEditor.relative(this.timeline).x(0).y(26).w(stripWidth).h(1F, -26);
             }
-
             this.keyframeDrawer.setVisible(false);
             this.keyframeHandle.setVisible(false);
             this.keyframeDrawerSlide = 0F;
@@ -11069,7 +11234,8 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        int max = Math.max(KEYFRAME_DRAWER_MIN, this.timelinePanelHeight - 96);
+        int timelineHeight = this.dock != null ? Math.max(0, this.timeline.area.h) : this.timelinePanelHeight;
+        int max = Math.max(KEYFRAME_DRAWER_MIN, timelineHeight - 96);
 
         this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.keyframeDrawerHeight));
 
@@ -11086,13 +11252,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (shownHeight > 1)
         {
-            this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26 - shownHeight);
-            this.keyframeDrawer.relative(this.timeline).x(0).y(1F, -shownHeight).w(1F).h(shownHeight);
-            this.keyframeHandle.relative(this.timeline).x(0).y(1F, -shownHeight - 2).w(1F).h(5);
+            this.trackTimeline.relative(this.timeline).x(0).y(26).w(stripWidth).h(1F, -26 - shownHeight);
+            this.keyframeDrawer.relative(this.timeline).x(0).y(1F, -shownHeight).w(stripWidth).h(shownHeight);
+            this.keyframeHandle.relative(this.timeline).x(0).y(1F, -shownHeight - 2).w(stripWidth).h(5);
         }
         else
         {
-            this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
+            this.trackTimeline.relative(this.timeline).x(0).y(26).w(stripWidth).h(1F, -26);
         }
 
         this.keyframeEditor.setVisible(shownHeight > 30);
@@ -11689,6 +11855,16 @@ public class UICompositorPanel extends UIDashboardPanel
         this.renderView = !this.renderView;
         this.renderMode.label = IKey.constant(this.renderView ? "返回编辑" : "渲染");
 
+        if (this.dock != null)
+        {
+            /* Dock mode: the dock hides as a whole; the render queue page takes the same body
+             * rectangle. Panel visibility inside the dock is preserved for the return trip. */
+            this.applyLayout();
+            this.applyTimelinePage();
+
+            return;
+        }
+
         this.body.setVisible(!this.renderView);
         this.timeline.setVisible(!this.renderView);
         this.renderPanel.setVisible(this.renderView);
@@ -11702,21 +11878,121 @@ public class UICompositorPanel extends UIDashboardPanel
     private void toggleFocusMode()
     {
         this.focusMode = !this.focusMode;
+
+        if (this.dock != null)
+        {
+            this.applyDockFocusMode();
+
+            return;
+        }
+
         this.effectColumn.setVisible(!this.focusMode && !this.renderView);
         this.inspectorColumn.setVisible(!this.focusMode && !this.renderView);
         this.applyLayout();
     }
 
-    /** Absolute three-column layout; the old row(6) divided the width equally and ignored w(). */
+    /**
+     * Focus mode in dock mode: a transient preview-over-timeline tree.
+     *
+     * <p>Simply hiding the side panel elements would leave empty dock slots; the layout tree has to
+     * change. The previous tree/hidden set are remembered for the return trip and are not written
+     * into the project layout (focus is a view, not an edit).</p>
+     */
+    private void applyDockFocusMode()
+    {
+        if (this.dock == null || this.dockSource == null)
+        {
+            return;
+        }
+
+        if (this.focusMode)
+        {
+            this.focusReturnRoot = this.dock.getLayoutRoot();
+            this.focusReturnHidden = this.dockSource.getHiddenPanels();
+
+            this.dockSource.setRoot(CompDockSource.focusLayout());
+
+            java.util.Set<String> hidden = this.dockSource.getHiddenPanels();
+
+            hidden.add(CompDockSource.PANEL_EFFECTS);
+            hidden.add(CompDockSource.PANEL_INSPECTOR);
+            this.dockSource.setHiddenPanels(hidden);
+            this.dock.refresh();
+            this.setStatus("聚焦预览：按 F 或右上角按钮恢复面板布局");
+        }
+        else
+        {
+            if (this.focusReturnRoot != null)
+            {
+                this.dockSource.setRoot(this.focusReturnRoot);
+            }
+
+            if (this.focusReturnHidden != null)
+            {
+                this.dockSource.setHiddenPanels(this.focusReturnHidden);
+            }
+
+            this.focusReturnRoot = null;
+            this.focusReturnHidden = null;
+            this.dock.refresh();
+            this.setStatus("已恢复面板布局");
+        }
+
+        this.dockLayoutDirty = true;
+        this.syncDockDerivedLayout();
+    }
+
+    /**
+     * Panel layout entry point. Two engines share the same chrome:
+     *
+     * <ul>
+     *   <li><b>dock</b> (default) — BBS's {@code UIDockLayout} owns the four panel rectangles:
+     *       splitter drag, drag-to-dock, tab stacks, hidden panels. Only the header, status and
+     *       render-queue page are positioned here.</li>
+     *   <li><b>legacy</b> — the fixed three-column + timeline splitter layout, kept behind
+     *       Settings → 开发者 for projects/users that prefer it (and as a safety net).</li>
+     * </ul>
+     */
     private void applyLayout()
     {
-        if (this.body == null || this.preview == null || this.timeline == null)
+        if (this.preview == null || this.timeline == null)
         {
             return;
         }
 
         this.layoutHeader();
         this.updateFilterButton();
+
+        if (this.dock != null)
+        {
+            this.applyDockLayout();
+        }
+        else
+        {
+            this.applyLegacyLayout();
+        }
+    }
+
+    /** Dock mode: the dock owns the panel rectangles; the rest of the chrome is positioned here. */
+    private void applyDockLayout()
+    {
+        int bodyHeight = Math.max(1, this.area.h - 24 - 18);
+
+        this.header.relative(this).x(0).y(0).w(1F).h(24);
+        this.status.relative(this).x(0).y(1F, -18).w(1F).h(16);
+        this.dock.relative(this).x(0).y(24).w(1F).h(bodyHeight);
+        this.dock.setVisible(!this.renderView);
+        this.renderPanel.relative(this).x(0).y(24).w(1F).h(bodyHeight);
+        this.renderPanel.setVisible(this.renderView);
+
+        /* super.resize() propagates the chrome rectangles; the dock's own flex pass runs in the
+         * resize() override below (it needs a real area before it can divide it). */
+        this.resize();
+    }
+
+    /** Legacy fixed layout: three columns in a body, timeline below, splitter handles between. */
+    private void applyLegacyLayout()
+    {
         boolean left = this.effectColumn.isVisible();
         boolean right = this.inspectorColumn.isVisible();
         int lw = left ? this.leftPanelWidth : 0;
@@ -11781,6 +12057,197 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.layoutKeyframeDrawer();
         this.resize();
+    }
+
+    /**
+     * Every size change ends here. In dock mode the dock has to re-divide its area and re-apply the
+     * pixel minimums before the derived overlays (preview bar, quick panel, keyframe drawer) can be
+     * positioned inside their panels.
+     *
+     * <p>The guard matters: {@code setupFlex()} resizes the dock, the dock resizes its slots, the
+     * slots resize their panels — one of them is this panel, whose {@code resize()} would start the
+     * flex pass again. Only the outermost call may run it.</p>
+     */
+    @Override
+    public void resize()
+    {
+        super.resize();
+
+        if (this.dock == null || this.layoutPass || this.dock.area.w <= 0 || this.dock.area.h <= 0)
+        {
+            return;
+        }
+
+        this.layoutPass = true;
+
+        try
+        {
+            this.dock.setupFlex(true);
+            this.syncDockDerivedLayout();
+        }
+        finally
+        {
+            this.layoutPass = false;
+        }
+    }
+
+    /** Positions the things that live inside a dock panel (they are not dock panels themselves). */
+    private void syncDockDerivedLayout()
+    {
+        if (this.dock == null || this.preview == null || this.timeline == null)
+        {
+            return;
+        }
+
+        this.layoutPreviewBar(Math.max(48, this.preview.area.w));
+        this.syncViewportSize();
+        this.layoutKeyframeDrawer();
+    }
+
+    private CompProject.CompSettings dockSettings()
+    {
+        return this.project == null ? null : this.project.settings;
+    }
+
+    /** Starts a page-switch transition unless the user disabled UI motion. */
+    private void beginPageMotion(UiPageTransition motion, String page)
+    {
+        if (motion != null && CompPrefs.animating())
+        {
+            motion.begin(page);
+        }
+    }
+
+    private boolean dockUnlocked()
+    {
+        CompProject.CompSettings settings = this.dockSettings();
+
+        return settings != null && settings.dockUnlocked;
+    }
+
+    /** Called by the dock source once per settled layout change; batches the project write. */
+    private void onDockLayoutSaved()
+    {
+        this.dockLayoutDirty = true;
+    }
+
+    /** Called by the dock when visibility / active stack tab changed: keep the chrome in sync. */
+    private void onDockLayoutChanged()
+    {
+        this.dockLayoutDirty = true;
+    }
+
+    private void onDockLayoutSettled()
+    {
+        this.syncDockDerivedLayout();
+        this.dockLayoutDirty = true;
+
+        if (Boolean.getBoolean("bbsae.debugDock") && this.dock != null)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.info("dock settled: {}x{} locked={} effectsActive={} effectsVis={} effectsArea={}x{}@{},{}",
+                this.dock.area.w, this.dock.area.h, this.dock.isLocked(),
+                this.dock.isPanelActive(CompDockSource.PANEL_EFFECTS), this.effectColumn.isVisible(),
+                this.effectColumn.area.w, this.effectColumn.area.h, this.effectColumn.area.x, this.effectColumn.area.y);
+            dev.bbsae.BbsAeAddon.LOGGER.info("dock children: tabs={}x{}@{},{} tabsVis={} list={}x{}@{},{} listVis={} preview={}x{}@{},{} timeline={}x{}@{},{}",
+                this.leftTabs.area.w, this.leftTabs.area.h, this.leftTabs.area.x, this.leftTabs.area.y,
+                this.leftTabs.isVisible(),
+                this.effectLibrary.area.w, this.effectLibrary.area.h, this.effectLibrary.area.x, this.effectLibrary.area.y,
+                this.effectLibrary.isVisible(),
+                this.preview.area.w, this.preview.area.h, this.preview.area.x, this.preview.area.y,
+                this.timeline.area.w, this.timeline.area.h, this.timeline.area.x, this.timeline.area.y);
+        }
+    }
+
+    /** Flushes a dock layout change without treating it as a document edit (no undo step). */
+    private void flushDockLayout()
+    {
+        if (this.flushingDock)
+        {
+            return;
+        }
+
+        this.dockLayoutDirty = false;
+
+        if (this.dockSource == null)
+        {
+            return;
+        }
+
+        this.flushingDock = true;
+
+        try
+        {
+            this.dockSource.flush();
+
+            CompProject.CompSettings settings = this.dockSettings();
+
+            if (settings != null)
+            {
+                settings.dockUnlocked = this.dock != null && !this.dock.isLocked();
+            }
+
+            this.saveUiState();
+        }
+        finally
+        {
+            this.flushingDock = false;
+        }
+    }
+
+    private void toggleDockLock()
+    {
+        if (this.dock == null)
+        {
+            return;
+        }
+
+        this.dock.toggleLock();
+
+        CompProject.CompSettings settings = this.dockSettings();
+
+        if (settings != null)
+        {
+            settings.dockUnlocked = !this.dock.isLocked();
+        }
+
+        this.saveUiState();
+        this.setStatus(this.dock.isLocked()
+            ? "面板布局已锁定：拖动标题条不会再改变布局"
+            : "面板布局已解锁：拖动面板标题条/标签即可拆分或堆叠（Esc 取消拖动）");
+    }
+
+    /** Right-click menu of the header 「布局」 button. */
+    private void dockLayoutMenu(ContextMenuManager manager)
+    {
+        if (this.dock == null)
+        {
+            manager.action(Icons.HELP, IKey.constant("当前是旧版固定分栏（设置 → 开发者 可启用停靠式面板）"), () -> {});
+            return;
+        }
+
+        manager.action(this.dock.isLocked() ? Icons.UNLOCKED : Icons.LOCKED,
+            IKey.constant(this.dock.isLocked() ? "解锁布局（可拖拽面板）" : "锁定布局"), this::toggleDockLock);
+        manager.action(Icons.REFRESH, IKey.constant("重置为默认布局"), () ->
+        {
+            this.dock.resetLayout();
+            this.dockLayoutDirty = true;
+            this.setStatus("面板布局已重置");
+        });
+        manager.action(Icons.UNDO, IKey.constant("撤销布局改动（Ctrl+Alt+Z）"), () ->
+        {
+            if (this.dock.undoLayout())
+            {
+                this.dockLayoutDirty = true;
+                this.setStatus("已撤销一次布局改动");
+            }
+        });
+        manager.action(Icons.MAXIMIZE, IKey.constant("最大化鼠标下的面板（Ctrl+空格）"),
+            () -> this.dock.toggleMaximizeUnderCursor());
+
+        /* Hidden panels: hiding happens on the panel's own title-bar context menu while unlocked;
+         * every hidden panel gets a "show" entry here so it can always be recovered. */
+        manager.action(Icons.HELP, IKey.constant("隐藏面板：解锁后右键面板标题条 → 隐藏"), () -> {});
+        this.dock.fillHiddenPanelsMenu(manager);
     }
 
     /**
@@ -11919,6 +12386,7 @@ public class UICompositorPanel extends UIDashboardPanel
         /* Focus and settings are always visible: they are the two actions the header exists for. */
         this.focusButton.relative(this.header).x(layout.focusX).y(inset).w(control).h(control);
         this.settingsButton.relative(this.header).x(layout.settingsX).y(inset).w(48).h(control);
+        this.layoutButton.relative(this.header).x(layout.layoutX).y(inset).w(48).h(control);
 
         if (layout.showRender)
         {
@@ -12008,7 +12476,19 @@ public class UICompositorPanel extends UIDashboardPanel
         this.project.settings.cameraPreviewMode = this.cameraPreviewMode;
         this.project.settings.timelinePage = this.timelinePage;
         this.saveViewportPose();
-        this.save();
+
+        if (this.dockSource != null)
+        {
+            this.dockSource.flush();
+        }
+
+        if (this.dock != null)
+        {
+            this.project.settings.dockUnlocked = !this.dock.isLocked();
+        }
+
+        /* Workspace state, not composition content: no undo step, no pre-cache invalidation. */
+        this.saveUiState();
     }
 
     /**
@@ -12061,15 +12541,34 @@ public class UICompositorPanel extends UIDashboardPanel
             this.timelinePage = Math.max(0, Math.min(1, this.project.settings.timelinePage));
         }
 
+        if (this.dock != null)
+        {
+            /* A different project may carry a different dock tree / hidden-panel set / lock state. */
+            if (this.dockSource != null)
+            {
+                this.dockSource.reload();
+            }
+
+            this.dock.locked(!this.dockUnlocked());
+            this.focusReturnRoot = null;
+            this.focusReturnHidden = null;
+            this.dock.refresh();
+        }
+
         this.inspector.column(CompUi.gap()).padding(CompUi.gap());
         this.applyLayout();
         this.applyTimelinePage();
     }
 
     /** A 4px splitter. Drag updates one of the three layout sizes and persists on release. */
-    /** True while one of the four column/drawer splitters is being dragged. */
+    /** True while a column/drawer splitter is being dragged (legacy handles or BBS dock splitters). */
     public boolean isPanelResizing()
     {
+        if (this.dock != null && this.dock.isAnySplitterDragging())
+        {
+            return true;
+        }
+
         return (this.leftHandle != null && this.leftHandle.isDragging())
             || (this.rightHandle != null && this.rightHandle.isDragging())
             || (this.timelineHandle != null && this.timelineHandle.isDragging())
@@ -16183,18 +16682,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 section.fields.add(UI.row(
                     this.smallButton("添加路径点", () ->
-                    {
-                        shape.points.add(new CompShape.Point(0F, 0F));
-                        this.refreshInspector();
-                    }),
+                        this.penTool().appendShapePoint(layer, shape, 0F, 0F)),
                     this.smallButton("删除最后一点", () ->
-                    {
-                        if (!shape.points.isEmpty())
-                        {
-                            shape.points.remove(shape.points.size() - 1);
-                        }
-                        this.refreshInspector();
-                    })
+                        this.penTool().removeShapePoint(layer, shape, shape.points.size() - 1))
                 ));
             }
         }
@@ -16367,22 +16857,9 @@ public class UICompositorPanel extends UIDashboardPanel
             }));
             section.fields.add(UI.row(
                 this.smallButton("添加蒙版点", () ->
-                {
-                    this.beginAction("添加蒙版点");
-                    mask.points.add(new CompMask.CompMaskPoint(layer.width / 2F, layer.height / 2F));
-                    this.refreshInspector();
-                    this.save();
-                }),
+                    this.penTool().appendMaskPoint(layer, mask, layer.width / 2F, layer.height / 2F)),
                 this.smallButton("删除最后一点", () ->
-                {
-                    if (!mask.points.isEmpty())
-                    {
-                        this.beginAction("删除蒙版点");
-                        mask.points.remove(mask.points.size() - 1);
-                        this.refreshInspector();
-                        this.save();
-                    }
-                })
+                    this.penTool().removeMaskPoint(layer, mask, mask.points.size() - 1))
             ));
         }
 
@@ -17933,6 +18410,31 @@ public class UICompositorPanel extends UIDashboardPanel
             return super.subKeyPressed(context);
         }
 
+        /* BBS dock shortcuts (same keys as the film editor): undo layout change / maximize panel. */
+        if (pressed && this.dock != null && !typing)
+        {
+            if (ctrl && alt && key == GLFW.GLFW_KEY_Z)
+            {
+                if (this.dock.undoLayout())
+                {
+                    this.dockLayoutDirty = true;
+                    this.setStatus("已撤销一次布局改动");
+                }
+
+                return true;
+            }
+
+            if (ctrl && !alt && key == GLFW.GLFW_KEY_SPACE)
+            {
+                if (this.dock.toggleMaximizeUnderCursor())
+                {
+                    this.dockLayoutDirty = true;
+                }
+
+                return true;
+            }
+        }
+
         /* Pen gestures (Enter/Esc/Delete) must win over the generic Esc handling below: ending the
          * path is not "deselect the layer". */
         if (!typing && this.penTool != null && this.penTool.onKey(context))
@@ -18777,6 +19279,17 @@ public class UICompositorPanel extends UIDashboardPanel
             this.flushSave();
         }
 
+        /* A dock layout change is workspace state: flush it once the drag settled, never mid-drag
+         * (the tree is re-encoded for the project file, which must not happen 60 times a second).
+         * The throttle also keeps a window resize from encoding the tree on every frame. */
+        if (this.dockLayoutDirty
+            && !Window.isMouseButtonPressed(0)
+            && System.currentTimeMillis() - this.lastDockFlushMs >= DOCK_FLUSH_THROTTLE_MS)
+        {
+            this.lastDockFlushMs = System.currentTimeMillis();
+            this.flushDockLayout();
+        }
+
         /* Pre-render job: a couple of frames per display frame, so the editor stays responsive
          * while the ruler fills up behind the playhead. */
         if (dev.bbsae.client.render.CompPrecache.isRunning())
@@ -18930,12 +19443,23 @@ public class UICompositorPanel extends UIDashboardPanel
         float entrance = this.panelMotion.intro(0F);
         MatrixStack stack = context.batcher.getContext().getMatrices();
 
+        this.leftPageMotion.update();
+        this.inspectorPageMotion.update();
+        this.timelinePageMotion.update();
+
         stack.push();
         stack.translate(0F, (1F - entrance) * 6F, 0F);
 
         try
         {
             super.render(context);
+
+            /* Page switches: a fast veil over the page that just changed. Drawn after the children
+             * (and inside the entrance transform) so it covers the hard cut without touching any
+             * BBS control's own alpha. */
+            this.leftPageMotion.renderVeil(context, this.effectColumn.area);
+            this.inspectorPageMotion.renderVeil(context, this.inspectorColumn.area);
+            this.timelinePageMotion.renderVeil(context, this.timeline.area);
 
             if (this.cameraFlying && this.preview != null)
             {

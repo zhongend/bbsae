@@ -13,10 +13,10 @@ import mchorse.bbs_mod.forms.FormRenderLast;
 import mchorse.bbs_mod.forms.entities.IEntity;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.resources.Link;
+import mchorse.bbs_mod.ui.film.replays.UIReplayPropTransform;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.input.drag.TransformSpace;
 import mchorse.bbs_mod.ui.framework.elements.utils.StencilMap;
-import mchorse.bbs_mod.ui.film.replays.UIReplayPropTransform;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.Gizmo;
 import mchorse.bbs_mod.ui.utils.StencilFormFramebuffer;
@@ -28,6 +28,7 @@ import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -38,8 +39,9 @@ import java.util.Map;
  * {@link StencilFormFramebuffer}, the same {@link StencilMap}, the same
  * {@code Gizmo.STENCIL_MAX} boundary between gizmo handles and everything behind them, and the
  * same {@code FilmEntityRenderer} path so a bone/bone-owner form reports the same ids the film
- * editor would. Replay ids start right after the gizmo's range, so a click can never be ambiguous
- * about which of the two it hit.</p>
+ * editor would. Replay ids are {@code Gizmo.STENCIL_MAX + 1 + <replay list index>}, so the picked
+ * value converts back to the list position with no second lookup table — and stays correct when
+ * disabled or culled replays are skipped.</p>
  */
 public final class ReplayPickPass
 {
@@ -51,12 +53,11 @@ public final class ReplayPickPass
 
     private final StencilFormFramebuffer stencil = new StencilFormFramebuffer();
     private final StencilMap stencilMap = new StencilMap();
+    private final ReplayLogLimiter failures = new ReplayLogLimiter();
 
     /** The replay list index of the last picked model, or -1. */
     private int pickedReplay = -1;
     private boolean gizmoHandlePicked;
-    private boolean initialized;
-    private boolean loggedFailure;
 
     public StencilFormFramebuffer stencil()
     {
@@ -74,11 +75,17 @@ public final class ReplayPickPass
     }
 
     /**
-     * Renders the id pass and picks under the cursor.
+     * Renders the id pass and (when the cursor is over the viewport) picks under it.
      *
      * <p>Runs in the UI pass, so it owns the matrices, the framebuffer and the readback itself;
      * the cursor coordinates are converted exactly the way the film editor converts them
      * ({@code pickGUI}, which honours the GUI scale).</p>
+     *
+     * <p>The pass runs even when the cursor is outside the viewport: the original gizmo's visual
+     * is drawn from the matrix this pass captures ({@code Gizmo.captureVisual}), and a verification
+     * screenshot with the pointer outside the viewport must still show the handles. Picking is
+     * skipped in that case, which is also what keeps an out-of-area readback from reporting a
+     * clamped pixel.</p>
      */
     public void render(UIContext context, ReplayEditSession session, Area area)
     {
@@ -90,12 +97,7 @@ public final class ReplayPickPass
             return;
         }
 
-        if (!area.isInside(context))
-        {
-            this.stencil.clearIndex();
-
-            return;
-        }
+        boolean cursorInside = area.isInside(context);
 
         MinecraftClient client = MinecraftClient.getInstance();
 
@@ -149,10 +151,12 @@ public final class ReplayPickPass
             RenderSystem.setProjectionMatrix(viewCamera.projection, VertexSorter.BY_Z);
 
             MatrixStack stack = new MatrixStack();
-            int index = 0;
+            List<Replay> replays = session.film().replays.getList();
 
-            for (Replay replay : session.film().replays.getList())
+            for (int i = 0; i < replays.size(); i++)
             {
+                Replay replay = replays.get(i);
+
                 if (replay == null || !Boolean.TRUE.equals(replay.enabled.get()))
                 {
                     continue;
@@ -160,7 +164,7 @@ public final class ReplayPickPass
 
                 IEntity entity = entities.get(replay.getId());
 
-                if (entity == null || entity.getForm() == null)
+                if (entity == null || entity.getForm() == null || !session.isReplayVisible(i))
                 {
                     continue;
                 }
@@ -169,7 +173,7 @@ public final class ReplayPickPass
                 {
                     session.applyPose(entity, replay);
 
-                    this.stencilMap.objectIndex = REPLAY_STENCIL_OFFSET + index;
+                    this.stencilMap.objectIndex = REPLAY_STENCIL_OFFSET + i;
                     this.stencilMap.setIncrement(false);
 
                     FilmEntityRenderer.renderEntity(FilmControllerContext.instance
@@ -179,37 +183,46 @@ public final class ReplayPickPass
                 }
                 catch (RuntimeException e)
                 {
-                    if (!this.loggedFailure)
+                    if (this.failures.allow(System.currentTimeMillis()))
                     {
-                        this.loggedFailure = true;
-                        BbsAeAddon.LOGGER.warn("Replay mode could not pick replay {}", replay.getId(), e);
+                        BbsAeAddon.LOGGER.warn("Replay mode could not pick replay {}{}",
+                            replay.getId(), this.failures.describeSuppressed(), e);
                     }
                 }
-
-                index += 1;
             }
 
             this.renderGizmoStencil(session, viewCamera, transition);
 
-            /* The readback has to happen while the pick framebuffer is still bound. */
-            this.stencil.pickGUI(context, area, HANDLE_PICK_RADIUS, Gizmo.STENCIL_MAX);
-            this.stencil.unbind(this.stencilMap);
+            /* The readback has to happen while the pick framebuffer is still bound. A pointer
+             * outside the viewport means "no hover", not a clamped readback. */
+            int picked = 0;
 
-            int picked = this.stencil.getIndex();
+            if (cursorInside)
+            {
+                this.stencil.pickGUI(context, area, HANDLE_PICK_RADIUS, Gizmo.STENCIL_MAX);
+                picked = this.stencil.getIndex();
+            }
+            else
+            {
+                this.stencil.clearIndex();
+            }
+
+            this.stencil.unbind(this.stencilMap);
 
             this.gizmoHandlePicked = picked >= Gizmo.STENCIL_X && picked <= Gizmo.STENCIL_MAX;
 
             if (picked >= REPLAY_STENCIL_OFFSET)
             {
-                this.pickedReplay = picked - REPLAY_STENCIL_OFFSET;
+                int index = picked - REPLAY_STENCIL_OFFSET;
+
+                this.pickedReplay = index < replays.size() ? index : -1;
             }
         }
         catch (RuntimeException e)
         {
-            if (!this.loggedFailure)
+            if (this.failures.allow(System.currentTimeMillis()))
             {
-                this.loggedFailure = true;
-                BbsAeAddon.LOGGER.warn("Replay mode pick pass failed", e);
+                BbsAeAddon.LOGGER.warn("Replay mode pick pass failed{}", this.failures.describeSuppressed(), e);
             }
         }
         finally
@@ -280,11 +293,6 @@ public final class ReplayPickPass
         if (texture.width != width || texture.height != height)
         {
             this.stencil.resize(width, height);
-            this.initialized = true;
-        }
-        else if (!this.initialized)
-        {
-            this.initialized = true;
         }
     }
 
@@ -294,5 +302,10 @@ public final class ReplayPickPass
         this.stencil.clearPicking();
         this.pickedReplay = -1;
         this.gizmoHandlePicked = false;
+    }
+
+    public void resetLimiter()
+    {
+        this.failures.reset();
     }
 }

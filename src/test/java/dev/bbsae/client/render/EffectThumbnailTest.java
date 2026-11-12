@@ -158,38 +158,111 @@ public class EffectThumbnailTest
         return false;
     }
 
+    /**
+     * A usable preview must both differ from the test card and keep enough visible pixels. The old
+     * "differs" test accepted a completely empty image, and a replica whose copies landed off the
+     * composition produced a uniform clamped-edge colour — both technically "different" from the
+     * card but useless as a preview, so a near-uniform image is rejected too.
+     */
+    private static boolean usable(int[] pixels, int[] source)
+    {
+        if (!differs(pixels, source))
+        {
+            return false;
+        }
+
+        int visible = 0;
+        java.util.Map<Integer, Integer> buckets = new java.util.HashMap<>();
+
+        for (int pixel : pixels)
+        {
+            if (((pixel >>> 24) & 0xFF) > 8)
+            {
+                visible += 1;
+
+                /* Quantise to 5 bits per channel: gradients still produce many buckets, a flat
+                 * fill produces one. */
+                int key = ((pixel >> 19) & 0xE0) << 16 | ((pixel >> 11) & 0xE0) << 8
+                    | ((pixel >> 3) & 0xE0) | ((pixel >>> 24) & 0xE0);
+
+                buckets.merge(key, 1, Integer::sum);
+            }
+        }
+
+        if (visible <= pixels.length / 50)
+        {
+            return false;
+        }
+
+        int largest = 0;
+
+        for (int count : buckets.values())
+        {
+            largest = Math.max(largest, count);
+        }
+
+        return largest < visible * 0.92F;
+    }
+
     /** Finds a parameter choice that visibly shows the effect; zero-strength defaults would otherwise
      * produce a plain test card and make every preview look identical. */
     private static CompEffect showcase(CompEffectRegistry.Definition definition, CompProject project)
     {
-        CompEffect effect = CompEffectRegistry.create(definition.id, 1);
         int[] source = source();
 
-        if (differs(render(effect, project), source))
+        if (usable(render(CompEffectRegistry.create(definition.id, 1), project), source))
         {
-            return effect;
+            return CompEffectRegistry.create(definition.id, 1);
         }
 
         for (CompEffectRegistry.Param param : definition.params)
         {
-            float value = (param.min + param.max) * 0.5F;
+            float span = param.max - param.min;
+            float[] values = {param.min + span * 0.5F, param.min + span * 0.72F, param.min + span * 0.25F};
 
-            if (Math.abs(value - effect.valueF(param.key, param.defaultValue)) < 0.0001F)
+            for (float value : values)
             {
-                value = param.min + (param.max - param.min) * 0.72F;
-            }
+                if (Math.abs(value - param.defaultValue) < 0.0001F)
+                {
+                    continue;
+                }
 
-            CompEffect candidate = CompEffectRegistry.create(definition.id, 1);
+                CompEffect candidate = CompEffectRegistry.create(definition.id, 1);
 
-            candidate.put(param.key, (double) value);
+                candidate.put(param.key, (double) value);
 
-            if (differs(render(candidate, project), source))
-            {
-                return candidate;
+                if (usable(render(candidate, project), source))
+                {
+                    return candidate;
+                }
             }
         }
 
-        return effect;
+        /* Pixel-authored parameters (radius, offset, …) can have reference defaults that are larger
+         * than this 80 px thumbnail composition. A combined candidate keeps neutral values and
+         * scales the large pixel-ish ranges down to something visible in the preview. */
+        CompEffect scaled = CompEffectRegistry.create(definition.id, 1);
+
+        for (CompEffectRegistry.Param param : definition.params)
+        {
+            float span = param.max - param.min;
+
+            if (param.min < 0F && param.max > 0F)
+            {
+                scaled.put(param.key, 0D);
+            }
+            else if (span >= 100F)
+            {
+                scaled.put(param.key, (double) (param.min + span * 0.01F));
+            }
+        }
+
+        if (usable(render(scaled, project), source))
+        {
+            return scaled;
+        }
+
+        return CompEffectRegistry.create(definition.id, 1);
     }
 
     @Test

@@ -13,6 +13,7 @@ import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.utils.ScrollDirection;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.UI;
+import net.minecraft.client.util.math.MatrixStack;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +33,11 @@ public class UICompPresetBrowser extends UIElement
     private final UIScrollViewView view;
     private String search = "";
 
+    private final UiMotion motion = new UiMotion();
+    private int motionFrames;
+    /** Index of the next card in the current rebuild; drives the entrance stagger. */
+    private int cardIndex;
+
     public UICompPresetBrowser(UICompositorPanel panel)
     {
         this.panel = panel;
@@ -44,9 +50,26 @@ public class UICompPresetBrowser extends UIElement
         this.refresh();
     }
 
+    @Override
+    public void render(UIContext context)
+    {
+        this.motion.tickFrame();
+
+        if (++this.motionFrames >= UICompButton.PRUNE_EVERY)
+        {
+            this.motionFrames = 0;
+            this.motion.prune(UICompButton.PRUNE_IDLE);
+        }
+
+        super.render(context);
+    }
+
     public void refresh()
     {
         this.view.removeAll();
+        this.cardIndex = 0;
+        /* A rebuild is a new card list (search, apply, save): replay the staggered entrance. */
+        this.motion.replay();
 
         UITextbox search = new UITextbox(64, (text) ->
         {
@@ -160,7 +183,7 @@ public class UICompPresetBrowser extends UIElement
 
     private UIElement presetRow(CompPreset preset)
     {
-        UIElement row = new UIElement();
+        PresetCard row = new PresetCard(this.cardIndex++);
 
         row.w(1F).h(36);
 
@@ -185,6 +208,71 @@ public class UICompPresetBrowser extends UIElement
         }
 
         return row;
+    }
+
+    /**
+     * One preset card.
+     *
+     * <p>The plate is drawn by the card itself so the hover wash and the staggered entrance can be
+     * interpolated; BBS's scroll view clips the card, and only the painting moves — the button
+     * children keep their original hit rectangles, so a fast click during the entrance still
+     * lands on the right control.</p>
+     */
+    private final class PresetCard extends UIElement
+    {
+        private final int index;
+        private final String hoverKey;
+
+        PresetCard(int index)
+        {
+            this.index = index;
+            /* Stable channel name, built once per card (cards are rebuilt, not drawn from a pool). */
+            this.hoverKey = "preset:" + index + ":h";
+        }
+
+        @Override
+        public void render(UIContext context)
+        {
+            UiMotion motion = UICompPresetBrowser.this.motion;
+            float intro = UiStagger.progress(motion, this.index, 0.016F, 0.24F);
+            float appear = UiStagger.alpha(intro);
+            float hover = motion.anim(this.hoverKey, this.area.isInside(context) ? 1F : 0F, 24F);
+            int shift = UiStagger.offsetPx(intro, Math.round(3F * motion.intensity()));
+
+            if (hover > 0.01F || appear < 0.999F)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
+                    UiGfx.mulA(0xFFFFFFFF, (0.02F + 0.05F * hover) * appear));
+            }
+
+            if (hover > 0.01F)
+            {
+                context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
+                    UiGfx.mulA(0xFF4C86D8, 0.35F * hover));
+                UiGfx.accentRail(context.batcher, this.area.x, this.area.y + 1,
+                    this.area.ey() - this.area.y - 2, hover, 0xFF4C86D8);
+            }
+
+            MatrixStack stack = shift > 0 ? context.batcher.getContext().getMatrices() : null;
+
+            if (stack != null)
+            {
+                stack.push();
+                stack.translate(0F, shift, 0F);
+            }
+
+            try
+            {
+                super.render(context);
+            }
+            finally
+            {
+                if (stack != null)
+                {
+                    stack.pop();
+                }
+            }
+        }
     }
 
     private void apply(CompPreset preset)

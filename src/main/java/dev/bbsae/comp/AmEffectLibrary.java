@@ -1067,6 +1067,80 @@ public final class AmEffectLibrary
             .p("amount", "强度", 0F, 1F, 1F, 0.01F)
             .p("vertical", "垂直方向", 0F, 1F, 1F, 1F));
 
+        /* ---- AM repeat family (layer replicators) -------------------------------------------------
+         * The reference repeat entries carry no shader: they draw the layer N times with an
+         * incremental transform. The pixel bodies below are therefore never executed — the effects
+         * are intercepted by EffectRenderer's composition-space REPLICATE pass — but every
+         * definition still needs a valid body so the catalogue can compile and probe it like any
+         * other data-driven entry. Neutral = a transform that leaves the single copy in place. */
+        add(new AmEffectDef("am_repeat", "重复", "AM · 重复", """
+            void main()
+            {
+                fragColor = sampleLayer(layerUv(vUv));
+            }
+            """, 0F, null)
+            .neutralAt("count", 1)
+            .neutralAt("offset_x", 0)
+            .neutralAt("offset_y", 0)
+            .neutralAt("angle", 0)
+            .neutralAt("scale", 1)
+            .neutralAt("alpha", 1)
+            .p("count", "数量", 1F, 32F, 5F, 1F)
+            .p("offset_x", "偏移 X（像素）", -2000F, 2000F, 48F, 1F)
+            .p("offset_y", "偏移 Y（像素）", -2000F, 2000F, 0F, 1F)
+            .p("angle", "角度（每个复制体递增）", -1800F, 1800F, 0F, 0.5F)
+            .p("scale", "缩放（每个复制体递增）", 0.01F, 10F, 1F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_repeat_radial", "环形重复", "AM · 重复", """
+            void main()
+            {
+                fragColor = sampleLayer(layerUv(vUv));
+            }
+            """, 0F, null)
+            .neutralAt("count", 1)
+            .neutralAt("radius", 0)
+            .neutralAt("angle", 0)
+            .neutralAt("base_scale", 1)
+            .neutralAt("scale", 1)
+            .neutralAt("offset_x", 0)
+            .neutralAt("offset_y", 0)
+            .neutralAt("alpha", 1)
+            .p("count", "数量", 1F, 32F, 8F, 1F)
+            .p("radius", "半径（像素）", 0F, 2000F, 300F, 1F)
+            .p("orientation", "起始朝向", -1800F, 1800F, 0F, 0.5F)
+            .p("start_angle", "起始角度", -3600F, 3600F, 0F, 0.5F)
+            .p("sweep", "扫过角度", 0F, 360F, 360F, 0.5F)
+            .p("base_scale", "基础缩放", 0.01F, 10F, 1F, 0.01F)
+            .p("offset_x", "内容偏移 X（像素）", -2000F, 2000F, 0F, 1F)
+            .p("offset_y", "内容偏移 Y（像素）", -2000F, 2000F, 0F, 1F)
+            .p("angle", "角度（每个复制体递增）", -1800F, 1800F, 0F, 0.5F)
+            .p("scale", "缩放（每个复制体递增）", 0.01F, 10F, 1F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_repeat_scatter", "散布重复", "AM · 重复", """
+            void main()
+            {
+                fragColor = sampleLayer(layerUv(vUv));
+            }
+            """, 0F, null)
+            .neutralAt("count", 1)
+            .neutralAt("radius", 0)
+            .neutralAt("angle", 0)
+            .neutralAt("scale", 1)
+            .neutralAt("offset_x", 0)
+            .neutralAt("offset_y", 0)
+            .neutralAt("alpha", 1)
+            .p("count", "数量", 1F, 32F, 12F, 1F)
+            .p("radius", "散布半径（像素）", 0F, 2000F, 300F, 1F)
+            .p("evolution", "演化", -999F, 999F, 0F, 0.01F)
+            .p("scatter_seed", "随机种子", 0F, 5F, 0F, 0.01F)
+            .p("offset_x", "内容偏移 X（像素）", -2000F, 2000F, 0F, 1F)
+            .p("offset_y", "内容偏移 Y（像素）", -2000F, 2000F, 0F, 1F)
+            .p("angle", "角度（每个复制体递增）", -1800F, 1800F, 0F, 0.5F)
+            .p("scale", "缩放（每个复制体递增）", 0.01F, 10F, 1F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F));
+
         add(new AmEffectDef("am_channel_map", "通道映射", "AM · 调色", """
             void main()
             {
@@ -1405,6 +1479,51 @@ public final class AmEffectLibrary
             .p("gamma_g", "绿通道伽马", 0.1F, 4F, 1F, 0.01F)
             .p("gamma_b", "蓝通道伽马", 0.1F, 4F, 1F, 0.01F)
             .p("amount", "强度", 0F, 1F, 1F, 0.01F));
+
+        /* AM "RGB Mixer": each output channel is a mix of the three input channels. Identity is the
+         * "red→red, green→green, blue→blue" triple (the same convention as the channel map), so the
+         * defaults follow the reference and the zero contract is declared on that triple. */
+        add(new AmEffectDef("am_rgb_mixer", "RGB 混合", "AM · 调色", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec3 mixed = c.r * u_rmix.rgb + c.g * u_gmix.rgb + c.b * u_bmix.rgb;
+                mixed = pow(max(mixed, vec3(0.0)), vec3(1.0 / max(u_gamma, 0.01)));
+                mixed += vec3(u_offset);
+                fragColor = vec4(clamp(mixed, 0.0, 1.0), c.a);
+            }
+            """, 0F, null)
+            .neutralWhen((effect) ->
+                effect.color("rmix", 0xFFFF0000) == 0xFFFF0000
+                    && effect.color("gmix", 0xFF00FF00) == 0xFF00FF00
+                    && effect.color("bmix", 0xFF0000FF) == 0xFF0000FF
+                    && Math.abs(effect.valueF("gamma", 1F) - 1F) <= 0.0001F
+                    && Math.abs(effect.valueF("offset", 0F)) <= 0.0001F)
+            .p("gamma", "伽马", 0.01F, 9.99F, 1F, 0.005F)
+            .p("offset", "亮度偏移", -0.9F, 0.9F, 0F, 0.01F)
+            .c("rmix", "红色混合", 0xFFFF0000)
+            .c("gmix", "绿色混合", 0xFF00FF00)
+            .c("bmix", "蓝色混合", 0xFF0000FF));
+
+        /* AM solid colour fill: replaces the layer colour with one colour, optionally multiplied
+         * into or screened over the content. Alpha 0 is the identity, so it has a real zero. */
+        add(new AmEffectDef("am_solid_color", "纯色", "AM · 调色", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+                vec3 color = u_color.rgb;
+                vec3 blended = u_blend < 0.5 ? color
+                    : u_blend < 1.5 ? c.rgb * color
+                    : 1.0 - (1.0 - c.rgb) * (1.0 - color);
+                float amount = clamp(u_alpha, 0.0, 1.0);
+                fragColor = vec4(mix(c.rgb, blended, amount), c.a);
+            }
+            """, 0F, "alpha")
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .p("blend", "混合（0 正常 / 1 相乘 / 2 滤色）", 0F, 2F, 0F, 1F)
+            .c("color", "颜色", 0xFF2D1EF6));
 
         add(new AmEffectDef("am_sat_vib", "饱和度与自然饱和度", "AM · 调色", """
             void main()

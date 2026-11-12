@@ -17,9 +17,11 @@ import org.joml.Vector3f;
  *       rotation is Minecraft's yaw/pitch convention.</li>
  * </ul>
  *
- * <p>Both are built from the same {@link CompViewportCamera}: the view is {@code viewport.view ·
- * compFromWorld} and the eye is mapped back to world coordinates, so the actor pass and the gizmo
- * cannot disagree about where the camera is.</p>
+ * <p>Both are built from the same {@link CompViewportCamera}: the rotation is {@code
+ * viewport.view · linearFromWorld} (translation stripped, because the actor pass receives
+ * camera-relative geometry and BBS' {@code Camera.view} is rotation-only) and the eye is mapped
+ * back to world coordinates, so the actor pass and the gizmo cannot disagree about where the
+ * camera is.</p>
  */
 public final class ReplayViewCamera
 {
@@ -34,7 +36,13 @@ public final class ReplayViewCamera
         Camera camera = new Camera();
 
         camera.projection.set(viewport.projection);
-        camera.view.set(viewport.view).mul(space.compFromWorld());
+
+        /* BBS' Camera.view is a rotation-only matrix; Camera.position carries the eye. The UI gizmo
+         * pipeline depends on that split: `renderInterface` projects a captured view-space matrix
+         * with the projection alone, and `computeWorldOrigin` undoes the rotation and adds the
+         * position. The actors themselves are rendered from camera-relative geometry, so the
+         * rotation must be the block→view rotation only — no anchor translation. */
+        camera.view.set(rotationOnlyView(viewport, space));
 
         Vector3f eye = space.toWorld(viewport.position);
 
@@ -46,9 +54,25 @@ public final class ReplayViewCamera
         camera.near = Math.max(0.001F, viewport.near * blocksPerPixel);
         camera.far = Math.max(camera.near + 1F, viewport.far * blocksPerPixel);
 
-        camera.rotation.set((float) Math.toRadians(viewport.pitch), (float) Math.toRadians(viewport.yaw + 180F), 0F);
+        camera.rotation.set((float) Math.toRadians(viewport.pitch + ReplayCalibration.pitchOffset()),
+            (float) Math.toRadians(viewport.yaw + ReplayCalibration.yawOffset()), 0F);
 
         return camera;
+    }
+
+    /**
+     * Block-relative world → view rotation for the actor pass and the gizmo stack: the viewport's
+     * rotation composed with the scene's linear mapping, translation stripped.
+     */
+    public static Matrix4f rotationOnlyView(CompViewportCamera viewport, ReplaySceneSpace space)
+    {
+        viewport.update();
+
+        Matrix4f view = new Matrix4f(viewport.view);
+
+        view.m30(0F).m31(0F).m32(0F);
+
+        return view.mul(space.linearFromWorld());
     }
 
     /**
@@ -66,7 +90,7 @@ public final class ReplayViewCamera
         ActorCamera camera = new ActorCamera();
         Vector3f eye = space.toWorld(viewport.position);
 
-        camera.place(eye.x, eye.y, eye.z, viewport.yaw + 180F, viewport.pitch);
+        camera.place(eye.x, eye.y, eye.z, viewport.yaw + ReplayCalibration.yawOffset(), viewport.pitch + ReplayCalibration.pitchOffset());
 
         return camera;
     }
@@ -80,11 +104,9 @@ public final class ReplayViewCamera
         }
     }
 
-    /** The view matrix a film actor pass should be rendered with (world → view). */
+    /** The camera-relative block→view rotation a film actor pass renders with. */
     public static Matrix4f view(CompViewportCamera viewport, ReplaySceneSpace space)
     {
-        viewport.update();
-
-        return new Matrix4f(viewport.view).mul(space.compFromWorld());
+        return rotationOnlyView(viewport, space);
     }
 }

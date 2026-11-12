@@ -41,3 +41,6 @@ docs/screenshots/
 _backup/
 net/
 _patch.py
+_tmp_*
+_tmpjar/
+*.tmp

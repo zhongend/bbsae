@@ -101,6 +101,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.session.camera().setViewport(this.area.w, this.area.h);
         this.session.camera().update();
         this.session.frameIfNeeded(this.area);
+        this.session.updateVisibility();
 
         int drawn = ReplayModelPass.draw(context.batcher, this.session, this.area.x, this.area.y, this.area.w, this.area.h);
 
@@ -127,15 +128,27 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     {
         int x = this.area.x + 8;
         int y = this.area.y + 7;
+        int replays = this.session.replayCount();
+        int placeable = this.session.placeableCount();
 
         context.batcher.textCard("实体回放 · 3D 空间", x, y);
 
         String selection = this.session.replay() == null
             ? "未选择回放"
-            : this.session.replay().getName() + (this.session.canEditPlacement() ? "" : "（无实体）");
+            : this.session.replay().getName() + (this.session.hasModel(this.session.replay()) ? "" : "（无模型）");
+        String cull = this.session.isCullActive()
+            ? " · 裁剪 " + this.session.visibleCount() + "/" + replays
+            : "";
 
-        context.batcher.textCard("模型 " + drawn + " / " + this.session.film().replays.getList().size() + " · " + selection,
+        context.batcher.textCard("模型 " + drawn + "/" + placeable + " · " + selection + cull,
             x, y + 18, 0xFFDDDDDD, 0x99000000);
+
+        String problem = this.emptyStateText(drawn, replays, placeable);
+
+        if (problem != null)
+        {
+            context.batcher.textCard(problem, x, y + 36, 0xFFFFB27A, 0xAA140D06);
+        }
 
         this.renderCameraHud(context);
 
@@ -150,6 +163,58 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             : "右键环绕 · Shift+右键/中键平移 · 滚轮缩放 · 左键选模型/拖 gizmo";
 
         context.batcher.textCard(hint, x, this.area.ey() - 17, 0xFF777777, 0x00000000);
+    }
+
+    /**
+     * One user-readable line explaining why the viewport looks empty. Null when the scene is in a
+     * normal state (some models drawn, or a film with no replays is still a normal state that the
+     * panel header explains).
+     */
+    private String emptyStateText(int drawn, int replays, int placeable)
+    {
+        if (ReplayModelPass.hasRecentError())
+        {
+            String error = ReplayModelPass.lastError();
+
+            if (error != null && error.length() > 70)
+            {
+                error = error.substring(0, 70) + "…";
+            }
+
+            return "3D 渲染失败：" + error + "（详细堆栈见客户端日志）";
+        }
+
+        if (replays == 0)
+        {
+            return "影片里没有回放：点「原版回放编辑」在 BBS 原版编辑器里添加回放";
+        }
+
+        if (placeable == 0)
+        {
+            return "回放还没有模型：选中回放后点「模型库」选择一个 BBS 模型";
+        }
+
+        if (this.session.replay() == null)
+        {
+            return "未选择回放：左键点 3D 模型，或在左侧列表选择一条回放";
+        }
+
+        if (!this.session.hasModel(this.session.replay()))
+        {
+            return "当前回放没有模型：在左侧选一条有模型的回放，或点「模型库」选择一个 BBS 模型";
+        }
+
+        if (drawn == 0)
+        {
+            if (this.session.isCullActive() && this.session.visibleCount() == 0)
+            {
+                return "模型不在视野内：点「框选全部」或滚轮缩小";
+            }
+
+            return "模型未显示：检查回放是否启用、模型是否加载（客户端日志有失败原因）";
+        }
+
+        return null;
     }
 
     private void renderCameraHud(UIContext context)

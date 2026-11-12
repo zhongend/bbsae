@@ -42,10 +42,36 @@ class CompDockSourceTest
     }
 
     @Test
+    void focusAndPresetTreesOnlyReferenceRegisteredPanels()
+    {
+        Set<String> registered = Set.of(CompDockSource.PANEL_EFFECTS, CompDockSource.PANEL_PREVIEW,
+            CompDockSource.PANEL_INSPECTOR, CompDockSource.PANEL_TIMELINE);
+
+        Set<String> focus = new HashSet<>();
+
+        EditorLayoutNode.collectPanelIds(CompDockSource.focusLayout(), focus);
+        assertEquals(Set.of(CompDockSource.PANEL_PREVIEW, CompDockSource.PANEL_TIMELINE), focus);
+
+        for (int preset = 0; preset <= 3; preset++)
+        {
+            Set<String> ids = new HashSet<>();
+
+            EditorLayoutNode.collectPanelIds(CompDockSource.presetLayout(preset), ids);
+            assertTrue(registered.containsAll(ids),
+                "preset " + preset + " references an unregistered panel: " + ids);
+
+            if (preset != 1)
+            {
+                assertEquals(registered, ids, "preset " + preset + " must keep every panel reachable");
+            }
+        }
+    }
+
+    @Test
     void layoutRoundTripsThroughTheProjectSettings()
     {
         CompProject.CompSettings settings = settings();
-        CompDockSource source = new CompDockSource(settings, CompDockSource::defaultLayout, null);
+        CompDockSource source = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
         EditorLayoutNode custom = new EditorLayoutNode.SplitterNode(true, 0.5F,
             new EditorLayoutNode.PanelNode(CompDockSource.PANEL_PREVIEW),
             new EditorLayoutNode.StackNode(
@@ -62,7 +88,7 @@ class CompDockSourceTest
         assertFalse(source.isDirty());
         assertFalse(settings.dockLayout.isBlank(), "flush must persist the tree");
 
-        CompDockSource reloaded = new CompDockSource(settings, CompDockSource::defaultLayout, null);
+        CompDockSource reloaded = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
         EditorLayoutNode read = reloaded.getRoot();
 
         assertNotNull(read);
@@ -81,7 +107,7 @@ class CompDockSourceTest
     {
         CompProject.CompSettings settings = settings();
         int[] changes = {0};
-        CompDockSource source = new CompDockSource(settings, CompDockSource::defaultLayout,
+        CompDockSource source = new CompDockSource(() -> settings, CompDockSource::defaultLayout,
             () -> changes[0]++);
 
         for (int i = 0; i < 30; i++)
@@ -109,7 +135,7 @@ class CompDockSourceTest
 
         settings.dockLayout = null;
 
-        CompDockSource source = new CompDockSource(settings, CompDockSource::defaultLayout, null);
+        CompDockSource source = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
 
         assertEquals(CompDockSource.encode(CompDockSource.defaultLayout()),
             CompDockSource.encode(source.getRoot()));
@@ -123,7 +149,7 @@ class CompDockSourceTest
         settings.dockLayout = "{not a layout";
         settings.dockHiddenPanels = "preview,,";
 
-        CompDockSource source = new CompDockSource(settings, CompDockSource::defaultLayout, null);
+        CompDockSource source = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
 
         assertEquals(CompDockSource.encode(CompDockSource.defaultLayout()),
             CompDockSource.encode(source.getRoot()));
@@ -135,7 +161,7 @@ class CompDockSourceTest
     void hiddenPanelsRoundTripAsCommaSeparatedIds()
     {
         CompProject.CompSettings settings = settings();
-        CompDockSource source = new CompDockSource(settings, CompDockSource::defaultLayout, null);
+        CompDockSource source = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
 
         source.setHiddenPanels(new LinkedHashSet<>(
             java.util.List.of(CompDockSource.PANEL_EFFECTS, CompDockSource.PANEL_INSPECTOR)));
@@ -146,7 +172,7 @@ class CompDockSourceTest
         assertEquals(CompDockSource.PANEL_EFFECTS + "," + CompDockSource.PANEL_INSPECTOR,
             settings.dockHiddenPanels);
 
-        CompDockSource reloaded = new CompDockSource(settings, CompDockSource::defaultLayout, null);
+        CompDockSource reloaded = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
 
         assertEquals(Set.of(CompDockSource.PANEL_EFFECTS, CompDockSource.PANEL_INSPECTOR),
             reloaded.getHiddenPanels());
@@ -156,7 +182,7 @@ class CompDockSourceTest
     void reloadDropsTheCacheAfterAProjectSwitch()
     {
         CompProject.CompSettings settings = settings();
-        CompDockSource source = new CompDockSource(settings, CompDockSource::defaultLayout, null);
+        CompDockSource source = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
 
         source.setRoot(new EditorLayoutNode.StackNode(
             java.util.List.of(CompDockSource.PANEL_PREVIEW), CompDockSource.PANEL_PREVIEW));

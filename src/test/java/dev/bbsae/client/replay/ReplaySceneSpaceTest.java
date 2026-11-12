@@ -105,6 +105,24 @@ public class ReplaySceneSpaceTest
     }
 
     @Test
+    public void theLinearMappingHasNoTranslationAndKeepsTheScaleSigns()
+    {
+        ReplaySceneSpace space = new ReplaySceneSpace(32F);
+
+        space.anchor.set(100F, -50F, 7F);
+
+        Matrix4f linear = space.linearFromWorld();
+
+        assertEquals(32F, linear.m00(), 0.0001F);
+        assertEquals(-32F, linear.m11(), 0.0001F);
+        assertEquals(-32F, linear.m22(), 0.0001F);
+        assertEquals(0F, linear.m30(), 0.0001F);
+        assertEquals(0F, linear.m31(), 0.0001F);
+        assertEquals(0F, linear.m32(), 0.0001F);
+        assertEquals(1F, linear.m33(), 0.0001F);
+    }
+
+    @Test
     public void oneBlockIsAlwaysTheConfiguredPixelSize()
     {
         ReplaySceneSpace space = new ReplaySceneSpace();

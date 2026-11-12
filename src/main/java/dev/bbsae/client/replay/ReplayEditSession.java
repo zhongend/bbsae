@@ -15,8 +15,10 @@ import mchorse.bbs_mod.ui.film.controller.UIFilmController;
 import mchorse.bbs_mod.ui.film.replays.UIReplayPropTransform;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.GizmoDrag;
+import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -48,6 +50,13 @@ public final class ReplayEditSession
     private boolean framed;
     private boolean playing;
     private long lastPlayNanos;
+
+    /* Per-frame visibility (frustum culling for big films); recomputed by the viewport before the
+     * model and pick passes so both draw the same set. */
+    private boolean[] visible = new boolean[0];
+    private int visibleCount;
+    private int culledCount;
+    private boolean cullActive;
 
     public ReplayEditSession(UIFilmPanel filmPanel, Film film, Replay replay)
     {
@@ -133,6 +142,134 @@ public final class ReplayEditSession
     public IEntity selectedEntity()
     {
         return this.entity(this.replay);
+    }
+
+    /** Index of a replay in the film's replay list, or -1. */
+    public int replayIndex(Replay replay)
+    {
+        return replay == null ? -1 : this.film.replays.getList().indexOf(replay);
+    }
+
+    public Replay replayAt(int index)
+    {
+        List<Replay> replays = this.film.replays.getList();
+
+        return index >= 0 && index < replays.size() ? replays.get(index) : null;
+    }
+
+    /* ------------------------------------------------------------ visibility */
+
+    /**
+     * Recomputes which replays the 3D passes should process this frame.
+     *
+     * <p>Small films keep every actor; big films frustum-test them against the viewport camera and
+     * skip everything that cannot contribute a pixel, with the selected replay always kept so the
+     * gizmo never disappears on the thing being edited. The list is computed once and consumed by
+     * both the colour pass and the pick pass, so "visible there" and "pickable here" cannot
+     * disagree.</p>
+     */
+    public void updateVisibility()
+    {
+        List<Replay> replays = this.film.replays.getList();
+        int count = replays.size();
+        Map<String, IEntity> entities = this.entities();
+
+        this.visibleCount = count;
+        this.culledCount = 0;
+        this.cullActive = count > 0 && entities != null && ReplayCulling.shouldCull(count);
+
+        if (!this.cullActive)
+        {
+            this.visible = ReplayCulling.allVisible(count);
+
+            return;
+        }
+
+        Camera camera = this.viewCamera();
+        Matrix4f viewProjection = new Matrix4f(camera.projection).mul(camera.view);
+        List<Vector3f> positions = new java.util.ArrayList<>(count);
+
+        for (Replay candidate : replays)
+        {
+            IEntity entity = candidate == null ? null : entities.get(candidate.getId());
+
+            positions.add(entity == null ? null
+                : new Vector3f((float) entity.getX(), (float) entity.getY(), (float) entity.getZ()));
+        }
+
+        this.visible = ReplayCulling.visible(viewProjection, positions,
+            ReplayCalibration.cullRadius(), replays.indexOf(this.replay));
+        this.visibleCount = ReplayCulling.countVisible(this.visible);
+        this.culledCount = count - this.visibleCount;
+    }
+
+    /** True when the replay at the list index should be processed this frame (defaults to true). */
+    public boolean isReplayVisible(int index)
+    {
+        if (index < 0 || this.visible.length == 0 || index >= this.visible.length)
+        {
+            return true;
+        }
+
+        return this.visible[index];
+    }
+
+    public int replayCount()
+    {
+        return this.film.replays.getList().size();
+    }
+
+    /** Enabled replays that have a live entity with a form — what the 3D pass can draw at all. */
+    public int placeableCount()
+    {
+        Map<String, IEntity> entities = this.entities();
+
+        if (entities == null)
+        {
+            return 0;
+        }
+
+        int count = 0;
+
+        for (Replay candidate : this.film.replays.getList())
+        {
+            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+            {
+                continue;
+            }
+
+            IEntity entity = entities.get(candidate.getId());
+
+            if (entity != null && entity.getForm() != null)
+            {
+                count += 1;
+            }
+        }
+
+        return count;
+    }
+
+    /** True when this replay has something to draw/appear in the viewport (entity with a form). */
+    public boolean hasModel(Replay replay)
+    {
+        IEntity entity = this.entity(replay);
+
+        return entity != null && entity.getForm() != null;
+    }
+
+    public int visibleCount()
+    {
+        return this.visibleCount;
+    }
+
+    public int culledCount()
+    {
+        return this.culledCount;
+    }
+
+    public boolean isCullActive()
+    {
+        return this.cullActive;
     }
 
     /**
@@ -415,9 +552,11 @@ public final class ReplayEditSession
             return;
         }
 
-        Vector3f min = new Vector3f(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE);
-        Vector3f max = new Vector3f(-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE);
-        boolean any = false;
+        /* Frame the replays that actually have a model. A film can contain placement-only replays
+         * (no form) parked at the world origin; framing every entity made the camera sit 5590
+         * composition pixels away from a one-block actor in the first real-machine screenshot.
+         * Only when the film has no models at all does it fall back to every live entity. */
+        List<Replay> frameList = new java.util.ArrayList<>();
 
         for (Replay candidate : this.film.replays.getList())
         {
@@ -428,10 +567,42 @@ public final class ReplayEditSession
 
             IEntity entity = entities.get(candidate.getId());
 
-            if (entity == null)
+            if (entity != null && entity.getForm() != null)
             {
-                continue;
+                frameList.add(candidate);
             }
+        }
+
+        if (frameList.isEmpty())
+        {
+            for (Replay candidate : this.film.replays.getList())
+            {
+                if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+                {
+                    continue;
+                }
+
+                if (entities.get(candidate.getId()) != null)
+                {
+                    frameList.add(candidate);
+                }
+            }
+        }
+
+        if (frameList.isEmpty())
+        {
+            this.space.anchor.set(0F, 0F, 0F);
+            this.camera.setTarget(0F, 0F, 0F).setPose(0F, 20F, 2000F);
+
+            return;
+        }
+
+        Vector3f min = new Vector3f(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE);
+        Vector3f max = new Vector3f(-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE);
+
+        for (Replay candidate : frameList)
+        {
+            IEntity entity = entities.get(candidate.getId());
 
             this.applyPose(entity, candidate);
 
@@ -439,15 +610,6 @@ public final class ReplayEditSession
 
             min.min(comp);
             max.max(comp);
-            any = true;
-        }
-
-        if (!any)
-        {
-            this.space.anchor.set(0F, 0F, 0F);
-            this.camera.setTarget(0F, 0F, 0F).setPose(0F, 20F, 2000F);
-
-            return;
         }
 
         /* Second pass, after the origin moved: the bounds have to be measured in the final
@@ -464,9 +626,9 @@ public final class ReplayEditSession
         min.set(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE);
         max.set(-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE);
 
-        for (Replay candidate : this.film.replays.getList())
+        for (Replay candidate : frameList)
         {
-            IEntity entity = entities.get(candidate == null ? null : candidate.getId());
+            IEntity entity = entities.get(candidate.getId());
 
             if (entity == null)
             {
@@ -485,6 +647,18 @@ public final class ReplayEditSession
         }
 
         this.camera.frame(min, max);
+
+        /* A single actor has (almost) zero bounds, and framing that put the camera at distance 3
+         * composition pixels — i.e. inside the model — in the second real-machine screenshot.
+         * Keep a human-scale minimum distance so the actor is actually visible. */
+        float minDistance = ReplayCalibration.frameMinDistance();
+
+        if (this.camera.distance < minDistance)
+        {
+            this.camera.setPose(this.camera.yaw, this.camera.pitch, minDistance);
+            this.camera.update();
+        }
+
         this.framed = true;
     }
 

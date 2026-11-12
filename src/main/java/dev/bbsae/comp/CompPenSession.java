@@ -34,14 +34,66 @@ public final class CompPenSession
         void setClosed(boolean closed);
 
         /**
-         * True when any point channel of this path already has keyframes. Inserting or removing a
-         * vertex would shift the {@code p/<i>} channel indices of every key frame, so that is
-         * refused until the path animation is remapped (see the pen tool report).
+         * True when any point channel of this path already has keyframes. Such a path needs a
+         * vertex-count remap before a point can be added or removed: every key of the six
+         * {@code p/<i>/*} channels of every point is addressed by index, so shifting the model list
+         * without shifting the channels would animate the wrong vertices.
          */
         boolean animated();
 
+        /**
+         * Channel access for vertex-count remapping; {@code null} when this target cannot expose
+         * its channels (tests, or a path whose animation is not backed by scalar channels). A
+         * target that reports {@link #animated()} but returns {@code null} here is refused rather
+         * than silently corrupted.
+         */
+        default Animation animation()
+        {
+            return null;
+        }
+
         /** Short user-facing name, e.g. {@code "Mask 1"} or {@code "Path 2"}. */
         String label();
+    }
+
+    /* Point components, in the same order the mask/shape point classes store them. */
+    public static final int COMPONENT_X = 0;
+    public static final int COMPONENT_Y = 1;
+    public static final int COMPONENT_IN_X = 2;
+    public static final int COMPONENT_IN_Y = 3;
+    public static final int COMPONENT_OUT_X = 4;
+    public static final int COMPONENT_OUT_Y = 5;
+    public static final int COMPONENT_COUNT = 6;
+
+    /**
+     * The six scalar channels of every point, as the vertex-count remap needs them.
+     *
+     * <p>Deliberately tiny and animation-system agnostic: the session asks "what are the key ticks
+     * of this channel / what is its value at tick T", never how the project stores a keyframe. The
+     * UI layer implements it over {@code CompLayer.scalarChannel(...)}; the tests implement it over
+     * a linear-interpolated map.</p>
+     */
+    public interface Animation
+    {
+        boolean hasKey(int point, int component);
+
+        /** Value of the component when the channel has no keys (the authored base). */
+        float base(int point, int component);
+
+        /** Evaluated channel value at {@code tick}, falling back to {@link #base}. */
+        float valueAt(int point, int component, float tick);
+
+        /** Ticks of the component's keyframes, ascending; empty when it has none. */
+        float[] keyTicks(int point, int component);
+
+        /** Moves all six channels of one point to another index, preserving keys exactly. */
+        void moveChannels(int from, int to);
+
+        /** Removes every key of the point's six channels. */
+        void clearChannels(int point);
+
+        /** Inserts or overwrites one key, inheriting the neighbouring key's curve style when new. */
+        void setKey(int point, int component, float tick, float value);
     }
 
     /** Side effects the UI has to perform around a mutation. */
@@ -142,10 +194,26 @@ public final class CompPenSession
     private boolean hasMouse;
     private float mouseLocalX;
     private float mouseLocalY;
+    /**
+     * Current playhead tick (composition frames). Only used by the animated vertex-count remap: the
+     * key at the playhead takes the user's actual click parameter, every other key is split at 0.5.
+     */
+    private float tick;
 
     public CompPenSession(Listener listener)
     {
         this.listener = listener;
+    }
+
+    /** Playhead tick; the UI sets this before every press/key. */
+    public void setTick(float tick)
+    {
+        this.tick = CompPathGeometry.isUsable(tick) ? tick : 0F;
+    }
+
+    public float tick()
+    {
+        return this.tick;
     }
 
     /* ------------------------------------------------------------------ state queries */
@@ -634,8 +702,28 @@ public final class CompPenSession
             y = constrained[1];
         }
 
-        this.listener.beginAction("钢笔：落点");
-        this.target.insert(count, x, y, 0F, 0F, 0F, 0F);
+        if (this.target.animated())
+        {
+            /* A path with keyframed point channels gets a de Casteljau vertex inserted into every
+             * keyframe, so the channel indices stay aligned and the curve keeps its shape. */
+            Animation animation = this.target.animation();
+
+            if (animation == null || !this.remapAppend(animation, x, y))
+            {
+                if (animation == null)
+                {
+                    this.listener.status("路径动画通道不可用：已取消落点");
+                }
+
+                return PRESS_CONSUMED;
+            }
+        }
+        else
+        {
+            this.listener.beginAction("钢笔：落点");
+            this.target.insert(count, x, y, 0F, 0F, 0F, 0F);
+        }
+
         this.selection.clear();
         this.selection.add(count);
         this.drag = Drag.NEW_TANGENT;
@@ -994,9 +1082,16 @@ public final class CompPenSession
 
         if (this.target.animated())
         {
-            this.listener.status("该路径已有动画关键帧：本期不能在段上加点（会打乱逐点通道）；请先删除关键帧");
+            Animation animation = this.target.animation();
 
-            return false;
+            if (animation == null)
+            {
+                this.listener.status("路径动画通道不可用：不能在段上加点");
+
+                return false;
+            }
+
+            return this.remapInsertOnSegment(animation, segment, t);
         }
 
         int oldCount = this.target.count();
@@ -1021,6 +1116,65 @@ public final class CompPenSession
         this.listener.status("已在路径段上加点");
 
         return true;
+    }
+
+    /**
+     * Appends a vertex at the end of the path without entering draw mode.
+     *
+     * <p>Used by the inspector's "添加路径点/添加蒙版点" shortcut. Animated paths go through the same
+     * remap as a pen click: the point is placed at the playhead, every other keyframe gets the last
+     * segment split at {@code t = 0.5}.</p>
+     */
+    public boolean appendPoint(float localX, float localY)
+    {
+        if (this.target == null)
+        {
+            return false;
+        }
+
+        int index = this.target.count();
+
+        if (this.target.animated())
+        {
+            Animation animation = this.target.animation();
+
+            if (animation == null || !this.remapAppend(animation, localX, localY))
+            {
+                if (animation == null)
+                {
+                    this.listener.status("路径动画通道不可用：不能加点");
+                }
+
+                return false;
+            }
+        }
+        else
+        {
+            this.listener.beginAction("钢笔：加点");
+            this.target.insert(index, localX, localY, 0F, 0F, 0F, 0F);
+        }
+
+        this.selection.clear();
+        this.selection.add(index);
+        this.anchorPoint = this.target.count() - 1;
+        this.listener.changed();
+        this.listener.status("已在路径末尾加点");
+
+        return true;
+    }
+
+    /** Removes one vertex by index (inspector shortcut); animated channels are remapped. */
+    public boolean deletePoint(int index)
+    {
+        if (this.target == null || index < 0 || index >= this.target.count())
+        {
+            return false;
+        }
+
+        this.selection.clear();
+        this.selection.add(index);
+
+        return this.deleteSelection();
     }
 
     /**
@@ -1072,13 +1226,6 @@ public final class CompPenSession
             return false;
         }
 
-        if (this.target.animated())
-        {
-            this.listener.status("该路径已有动画关键帧：本期不能删点（会打乱逐点通道）；请先删除关键帧");
-
-            return false;
-        }
-
         int[] indices = new int[this.selection.size()];
         int slot = 0;
 
@@ -1095,8 +1242,23 @@ public final class CompPenSession
             return false;
         }
 
-        this.listener.beginAction("钢笔：删除点");
         java.util.Arrays.sort(indices, 0, slot);
+
+        if (this.target.animated())
+        {
+            Animation animation = this.target.animation();
+
+            if (animation == null)
+            {
+                this.listener.status("路径动画通道不可用：不能删点");
+
+                return false;
+            }
+
+            return this.remapDelete(animation, indices, slot);
+        }
+
+        this.listener.beginAction("钢笔：删除点");
 
         for (int i = slot - 1; i >= 0; i--)
         {
@@ -1118,6 +1280,307 @@ public final class CompPenSession
         this.listener.status("已删除 " + slot + " 个顶点");
 
         return true;
+    }
+
+    /* ------------------------------------------------------------------ animated vertex remap */
+
+    /**
+     * Vertex-count remap: the pen tool's answer to AE's "Preserve Constant Vertex and Feather Point
+     * Count".
+     *
+     * <p>A path's animation lives in six scalar channels per point, addressed by point index
+     * ({@code mask/<id>/p/<i>/x} …). Inserting or removing a point without touching those channels
+     * shifts every key onto the wrong vertex, which is why the tool used to refuse the edit. The
+     * remap makes the edit the way AE/effectcraft do:</p>
+     *
+     * <ol>
+     *   <li>collect the union of key ticks of the channels that define the affected segment;</li>
+     *   <li>at every tick, evaluate the path and insert a vertex by a de Casteljau split — at the
+     *       playhead with the user's click parameter, at every other key with {@code t = 0.5}
+     *       (any split parameter keeps the curve's shape, and 0.5 can never degenerate);</li>
+     *   <li>shift the untouched points' channel objects to their new indices;</li>
+     *   <li>write the split values back at those ticks.</li>
+     * </ol>
+     *
+     * <p>The path is therefore pixel-identical at every existing keyframe. Between keyframes the
+     * result is an interpolation of the sampled splits — exact whenever the neighbouring channels
+     * interpolate linearly, and the same approximation AE's whole-value path keys avoid. Deleting a
+     * vertex is simpler: the point's channels are dropped and later indices shift down, so every
+     * keyframe keeps the exact values of the surviving vertices.</p>
+     */
+    private boolean remapInsertOnSegment(Animation animation, int segment, float t)
+    {
+        int oldCount = this.target.count();
+        int start = segment;
+        int end = CompPathGeometry.segmentEnd(this.target, segment);
+
+        if (start < 0 || end < 0 || end >= oldCount)
+        {
+            return false;
+        }
+
+        float fraction = Math.max(0.0001F, Math.min(0.9999F, CompPathGeometry.finite(t)));
+        float[] ticks = this.remapTicks(animation, start, end);
+        float[][] splits = new float[ticks.length][];
+
+        /* Evaluate before any mutation: the channel indices are still the old ones here. */
+        for (int i = 0; i < ticks.length; i++)
+        {
+            splits[i] = Math.abs(ticks[i] - this.tick) < 0.0001F
+                ? this.remapSplit(animation, start, end, ticks[i], fraction)
+                : this.remapSplit(animation, start, end, ticks[i], 0.5F);
+        }
+
+        float[] atPlayhead = null;
+
+        for (int i = 0; i < ticks.length; i++)
+        {
+            if (Math.abs(ticks[i] - this.tick) < 0.0001F)
+            {
+                atPlayhead = splits[i];
+
+                break;
+            }
+        }
+
+        if (atPlayhead == null)
+        {
+            return false;
+        }
+
+        int at = segment + 1;
+
+        this.listener.beginAction("钢笔：加点（重映射动画关键帧）");
+
+        /* Highest index first: every move writes into an index that has just been vacated. */
+        for (int i = oldCount - 1; i >= at; i--)
+        {
+            animation.moveChannels(i, i + 1);
+        }
+
+        this.target.insert(at, atPlayhead[0], atPlayhead[1], atPlayhead[2], atPlayhead[3], atPlayhead[4], atPlayhead[5]);
+
+        int endIndex = end == 0 ? 0 : end + 1;
+
+        for (int i = 0; i < ticks.length; i++)
+        {
+            float[] split = splits[i];
+
+            if (split == null)
+            {
+                continue;
+            }
+
+            animation.setKey(start, COMPONENT_OUT_X, ticks[i], split[6]);
+            animation.setKey(start, COMPONENT_OUT_Y, ticks[i], split[7]);
+            animation.setKey(endIndex, COMPONENT_IN_X, ticks[i], split[8]);
+            animation.setKey(endIndex, COMPONENT_IN_Y, ticks[i], split[9]);
+
+            for (int component = 0; component < COMPONENT_COUNT; component++)
+            {
+                animation.setKey(at, component, ticks[i], split[component]);
+            }
+        }
+
+        this.selection.clear();
+        this.selection.add(at);
+        this.anchorPoint = this.target.count() - 1;
+        this.listener.changed();
+        this.listener.status("已在路径段上加点，并重映射了 " + ticks.length + " 个动画关键时间");
+
+        return true;
+    }
+
+    /**
+     * Appends a vertex while drawing on an animated path. The clicked point is placed at the
+     * playhead; every other keyframe gets the last segment split at {@code t = 0.5} so the path
+     * keeps its shape there (effectcraft's {@code CountOp::Insert} rule).
+     */
+    private boolean remapAppend(Animation animation, float x, float y)
+    {
+        int oldCount = this.target.count();
+
+        float[] ticks = this.remapTicks(animation);
+        float[][] splits = new float[ticks.length][];
+        boolean[] playhead = new boolean[ticks.length];
+
+        for (int i = 0; i < ticks.length; i++)
+        {
+            if (Math.abs(ticks[i] - this.tick) < 0.0001F)
+            {
+                splits[i] = new float[] {x, y, 0F, 0F, 0F, 0F};
+                playhead[i] = true;
+            }
+            else if (oldCount >= 2)
+            {
+                splits[i] = this.remapSplit(animation, oldCount - 2, oldCount - 1, ticks[i], 0.5F);
+            }
+            else if (oldCount == 1)
+            {
+                float[] last = this.remapPointAt(animation, oldCount - 1, ticks[i]);
+
+                splits[i] = new float[] {last[0], last[1], 0F, 0F, 0F, 0F};
+            }
+        }
+
+        this.listener.beginAction("钢笔：落点（重映射动画关键帧）");
+
+        this.target.insert(oldCount, x, y, 0F, 0F, 0F, 0F);
+
+        for (int i = 0; i < ticks.length; i++)
+        {
+            float[] split = splits[i];
+
+            if (split == null)
+            {
+                continue;
+            }
+
+            if (!playhead[i] && oldCount >= 2)
+            {
+                animation.setKey(oldCount - 2, COMPONENT_OUT_X, ticks[i], split[6]);
+                animation.setKey(oldCount - 2, COMPONENT_OUT_Y, ticks[i], split[7]);
+                animation.setKey(oldCount - 1, COMPONENT_IN_X, ticks[i], split[8]);
+                animation.setKey(oldCount - 1, COMPONENT_IN_Y, ticks[i], split[9]);
+            }
+
+            for (int component = 0; component < COMPONENT_COUNT; component++)
+            {
+                animation.setKey(oldCount, component, ticks[i], split[component]);
+            }
+        }
+
+        return true;
+    }
+
+    /** Removes vertices from every keyframe by index; surviving vertices keep their exact channels. */
+    private boolean remapDelete(Animation animation, int[] indices, int slot)
+    {
+        this.listener.beginAction("钢笔：删除点（重映射动画关键帧）");
+
+        int current = this.target.count();
+
+        for (int i = slot - 1; i >= 0; i--)
+        {
+            int index = indices[i];
+
+            if (index < 0 || index >= current)
+            {
+                continue;
+            }
+
+            animation.clearChannels(index);
+
+            for (int move = index + 1; move < current; move++)
+            {
+                animation.moveChannels(move, move - 1);
+            }
+
+            this.target.remove(index);
+            current -= 1;
+        }
+
+        this.selection.clear();
+
+        if (this.target.count() < 3 && this.target.closed())
+        {
+            this.target.setClosed(false);
+            this.listener.closedChanged();
+        }
+
+        this.anchorPoint = this.target.count() - 1;
+        this.drag = Drag.NONE;
+        this.dragPoint = -1;
+        this.listener.changed();
+        this.listener.status("已删除 " + slot + " 个顶点，并重映射了动画关键帧");
+
+        return true;
+    }
+
+    /** Union of all key ticks of the six channels of the given points, plus the playhead. */
+    private float[] remapTicks(Animation animation, int... points)
+    {
+        java.util.TreeSet<Float> ticks = new java.util.TreeSet<>();
+
+        ticks.add(this.tick);
+
+        if (points == null || points.length == 0)
+        {
+            for (int point = 0; point < this.target.count(); point++)
+            {
+                this.collectTicks(animation, point, ticks);
+            }
+        }
+        else
+        {
+            for (int point : points)
+            {
+                this.collectTicks(animation, point, ticks);
+            }
+        }
+
+        float[] result = new float[ticks.size()];
+        int slot = 0;
+
+        for (Float value : ticks)
+        {
+            result[slot++] = value;
+        }
+
+        return result;
+    }
+
+    private void collectTicks(Animation animation, int point, java.util.TreeSet<Float> ticks)
+    {
+        for (int component = 0; component < COMPONENT_COUNT; component++)
+        {
+            float[] channelTicks = animation.keyTicks(point, component);
+
+            if (channelTicks == null)
+            {
+                continue;
+            }
+
+            for (float value : channelTicks)
+            {
+                if (CompPathGeometry.isUsable(value))
+                {
+                    ticks.add(value);
+                }
+            }
+        }
+    }
+
+    /** Evaluated point ({@code x,y,inX,inY,outX,outY}) at a tick, channel by channel. */
+    private float[] remapPointAt(Animation animation, int point, float tick)
+    {
+        float[] values = new float[COMPONENT_COUNT];
+
+        for (int component = 0; component < COMPONENT_COUNT; component++)
+        {
+            values[component] = animation.valueAt(point, component, tick);
+        }
+
+        return values;
+    }
+
+    /** de Casteljau split of one segment at an evaluated tick; same layout as splitSegment. */
+    private float[] remapSplit(Animation animation, int start, int end, float tick, float fraction)
+    {
+        if (start < 0 || end < 0 || start >= this.target.count() || end >= this.target.count())
+        {
+            return null;
+        }
+
+        float[] first = this.remapPointAt(animation, start, tick);
+        float[] last = this.remapPointAt(animation, end, tick);
+        CompPathGeometry.ArrayPath segment = new CompPathGeometry.ArrayPath(2);
+
+        segment.add(first[0], first[1], first[2], first[3], first[4], first[5]);
+        segment.add(last[0], last[1], last[2], last[3], last[4], last[5]);
+        segment.setClosed(false);
+
+        return CompPathGeometry.splitSegment(segment, 0, Math.max(0.0001F, Math.min(0.9999F, fraction)));
     }
 
     /* ------------------------------------------------------------------ keyboard */
