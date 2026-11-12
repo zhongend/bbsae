@@ -297,9 +297,29 @@ final class DepthPlanePixelHarness
 
     static List<CompLayer> farFirst(CompRenderContext context, List<CompLayer> layers)
     {
+        /* Mirror CompRenderer.orderLayers: only runs of camera-affected 3D layers are sorted.
+         * A 2D layer keeps its stack slot (AE) and breaks the run. */
         List<CompLayer> ordered = new ArrayList<>(layers);
+        int start = 0;
 
-        ordered.sort(Comparator.comparingDouble((CompLayer layer) -> CompScene.planeDepth(context, layer)));
+        for (int i = 0; i <= ordered.size(); i++)
+        {
+            boolean boundary = i == ordered.size() || !CompScene.sortsIn3D(context, ordered.get(i));
+
+            if (!boundary)
+            {
+                continue;
+            }
+
+            if (i - start > 1)
+            {
+                List<CompLayer> run = ordered.subList(start, i);
+
+                run.sort(Comparator.comparingDouble((CompLayer layer) -> CompScene.planeDepth(context, layer)));
+            }
+
+            start = i + 1;
+        }
 
         return ordered;
     }

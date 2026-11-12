@@ -68,6 +68,12 @@ public final class CompPrecache
     private static final Map<String, Cache> CACHES = new HashMap<>();
     /** Keys whose {@code meta.txt} was already probed, so a miss is not a file-system hit per frame. */
     private static final java.util.Set<String> RESTORE_TRIED = new java.util.HashSet<>();
+    /** Shared empty result for "no cache"; callers only read it. */
+    private static final java.util.BitSet EMPTY_COVERAGE = new java.util.BitSet();
+    /** P1-11 diagnostics: green-bar call/rebuild counts with {@code -Dbbsae.debugTimeline}. */
+    private static final boolean DEBUG_TIMELINE = Boolean.getBoolean("bbsae.debugTimeline");
+    private static int coverageCalls;
+    private static int coverageRebuilds;
     private static final Deque<GlTexture> FREE = new ArrayDeque<>();
     /**
      * One writer thread, bounded queue.
@@ -144,12 +150,70 @@ public final class CompPrecache
         int failed;
         long lastFrameMs;
         int cooldown;
+        /** P1-11: the green bar's BitSet, rebuilt only when one of its keys changes. */
+        final CoverageCache coverage = new CoverageCache();
 
         Cache(String key, String projectId, String compId)
         {
             this.key = key;
             this.projectId = projectId;
             this.compId = compId;
+        }
+    }
+
+    /**
+     * Cached coverage key for the ruler's green bar.
+     *
+     * <p>{@link #coverage(CompProject, CompDocument)} used to build a fresh BitSet by walking
+     * every cached frame on every displayed frame. The bar only changes when the cache
+     * generation changes (signature edit), when a frame is added/removed (frame count), while a
+     * pre-render job advances (job cursor), or when the stale flag flips. Those four values are
+     * the whole key; while the editor is idle the key is constant and the same BitSet is
+     * returned, so the per-frame cost drops to a few compares.</p>
+     *
+     * <p>The returned BitSet is shared and must be treated as read-only.</p>
+     */
+    static final class CoverageCache
+    {
+        private java.util.BitSet bits;
+        private int generation = Integer.MIN_VALUE;
+        private int frameCount = -1;
+        private int jobCursor = Integer.MIN_VALUE;
+        private boolean stale;
+        private int rebuilds;
+
+        /** Returns the cached bits, or null when the key changed and the caller must rebuild. */
+        java.util.BitSet cached(int generation, int frameCount, int jobCursor, boolean stale)
+        {
+            if (this.bits != null
+                && this.generation == generation
+                && this.frameCount == frameCount
+                && this.jobCursor == jobCursor
+                && this.stale == stale)
+            {
+                return this.bits;
+            }
+
+            return null;
+        }
+
+        /** Publishes freshly built bits under the current key. */
+        java.util.BitSet publish(java.util.BitSet bits, int generation, int frameCount, int jobCursor, boolean stale)
+        {
+            this.bits = bits;
+            this.generation = generation;
+            this.frameCount = frameCount;
+            this.jobCursor = jobCursor;
+            this.stale = stale;
+            this.rebuilds++;
+
+            return bits;
+        }
+
+        /** Number of BitSet rebuilds this cache has performed; diagnostics/tests only. */
+        int rebuilds()
+        {
+            return this.rebuilds;
         }
     }
 
@@ -919,29 +983,63 @@ public final class CompPrecache
     /**
      * Which frames are green, as a bitset.
      *
-     * <p>The ruler asks once per displayed frame and merges runs, instead of calling
-     * {@link #state} for every frame of the composition (which would rebuild a string key
-     * thousands of times per frame).</p>
+     * <p>The ruler asks once per displayed frame; the result is cached per {@link Cache} by the
+     * four values that can change the answer (generation, frame count, job cursor, stale flag),
+     * so an idle editor rebuilds zero BitSets. See {@link CoverageCache}. The returned BitSet is
+     * shared and read-only.</p>
      */
     public static java.util.BitSet coverage(CompProject project, CompDocument comp)
     {
-        java.util.BitSet bits = new java.util.BitSet();
         Cache cache = cached(project, comp);
 
-        if (cache == null || cache.stale)
+        if (cache == null)
+        {
+            return EMPTY_COVERAGE;
+        }
+
+        int generation = cache.generation;
+        int frameCount = cache.frames.size();
+        int jobCursor = cache == job ? cache.cursor : -1;
+        boolean stale = cache.stale;
+
+        coverageCalls++;
+
+        java.util.BitSet bits = cache.coverage.cached(generation, frameCount, jobCursor, stale);
+
+        if (bits != null)
         {
             return bits;
         }
 
-        for (Frame entry : cache.frames.values())
+        bits = new java.util.BitSet();
+
+        if (!stale)
         {
-            if (entry.texture != null || entry.onDisk)
+            for (Frame entry : cache.frames.values())
             {
-                bits.set(entry.index);
+                if (entry.texture != null || entry.onDisk)
+                {
+                    bits.set(entry.index);
+                }
             }
         }
 
+        cache.coverage.publish(bits, generation, frameCount, jobCursor, stale);
+        coverageRebuilds++;
+
+        if (DEBUG_TIMELINE && coverageCalls % 120 == 0)
+        {
+            BbsAeAddon.LOGGER.info("timeline coverage: calls={} rebuilds={} frames={} generation={} running={}",
+                coverageCalls, coverageRebuilds, frameCount, generation, cache == job);
+        }
+
         return bits;
+    }
+
+    /** Number of green-bar BitSet rebuilds since the JVM started; diagnostics/tests only. */
+    public static int coverageRebuilds()
+    {
+        return coverageRebuilds;
     }
 
     public static void clear(CompProject project, CompDocument comp)

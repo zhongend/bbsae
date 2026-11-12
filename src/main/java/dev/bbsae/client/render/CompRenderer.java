@@ -885,6 +885,11 @@ public final class CompRenderer
      * routing ({@link CompScene#usePerspective}, {@link CompScene#world},
      * {@link CompCamera#project}), so editor/export geometry cannot disagree; the preview/scale
      * flags never enter it.</p>
+     *
+     * <p>Only <b>real 3D pixel layers</b> can cross a plane: a 2D layer is screen-fixed (it is
+     * composited in stack order and never takes the perspective path), and cameras, nulls and
+     * adjustment layers own no projected pixels. Counting any of them used to switch the whole
+     * frame to per-pixel depth for geometry that cannot cross anything.</p>
      */
     static boolean needsPerPixelDepthAuto(CompRenderContext context)
     {
@@ -899,13 +904,9 @@ public final class CompRenderer
         for (CompLayer layer : context.comp.layers)
         {
             if (layer == null || !layer.visible || !layer.activeAt(context.time)
-                || context.comp.isSoloedOut(layer) || !CompScene.usePerspective(context, layer))
-            {
-                continue;
-            }
-
-            /* Only layers with pixels matter (cameras/adjustment layers never project). */
-            if ("camera".equals(layer.type) || "adjustment".equals(layer.type))
+                || context.comp.isSoloedOut(layer)
+                || !layer.threeD || !CompScene.hasPixels(layer)
+                || !CompScene.usePerspective(context, layer))
             {
                 continue;
             }
@@ -1107,7 +1108,6 @@ public final class CompRenderer
                 }
 
                 boolean effectsBaked = rendered.effectsBaked;
-                boolean is2D = !CompScene.usePerspective(context, layer);
 
                 content = applyLayerMask(content, layer, context, model, effectsBaked, renderMasks);
 
@@ -1215,7 +1215,7 @@ public final class CompRenderer
                 {
                     CompLayer matte = comp.getLayer(layer.trackMatteId);
 
-                    if (matte != null && matte != layer && hasPixels(matte))
+                    if (matte != null && matte != layer && CompScene.hasPixels(matte))
                     {
                         Matrix4f matteModel = CompScene.model(context, matte);
                         LayerRender matteRender = renderLayerContent(matte, context, matteModel, CompScene.projection(context, matte), stack, batcher, renderEffects);
@@ -1230,17 +1230,6 @@ public final class CompRenderer
                             matteFbo = applyLayerMask(matteFbo, matte, context, matteModel,
                                 matteRender.effectsBaked, renderMasks);
 
-                            /* A 2D matte over a 3D target has to be projected too, otherwise the
-                             * matte lives in camera-view space while the target content is already
-                             * in perspective composition space. */
-                            if (!is2D && matte.threeD && CompScene.spatial(context) && !CompScene.usePerspective(context, matte))
-                            {
-                                GlFramebuffer projectedMatte = projectPlane(matteFbo, matte, context, batcher);
-
-                                FboPool.release(matteFbo);
-                                matteFbo = projectedMatte;
-                            }
-
                             int channel = layer.trackMatteMode == CompLayer.MATTE_LUMA ? 1 : layer.trackMatteMode == CompLayer.MATTE_ALPHA_INVERTED ? 2 : layer.trackMatteMode == CompLayer.MATTE_LUMA_INVERTED ? 3 : 0;
                             GlFramebuffer matted = PassRenderer.mask(content, matteFbo.color.id, channel);
 
@@ -1249,18 +1238,6 @@ public final class CompRenderer
                             content = matted;
                         }
                     }
-                }
-
-                /* A flat layer under a tilted camera: the finished comp-space image is projected
-                 * onto the layer's z plane. Doing it here — after masks, effects and styles — is
-                 * what keeps those passes exact: they never see the perspective, they just draw
-                 * the layer where it lives. */
-                if (layer.threeD && CompScene.spatial(context) && !CompScene.usePerspective(context, layer))
-                {
-                    GlFramebuffer projected = projectPlane(content, layer, context, batcher);
-
-                    FboPool.release(content);
-                    content = projected;
                 }
 
                 float opacity = opacityAt(layer, context);
@@ -1356,87 +1333,9 @@ public final class CompRenderer
     }
 
     /**
-     * Draws a finished comp-space layer image onto its z plane, seen through the camera.
-     *
-     * <p>The image already contains everything the layer is (content, mask, effects, styles) at its
-     * comp position, so all this pass has to do is put that plane into the camera's view. A single
-     * textured quad is exact: the GPU interpolates UVs perspective-correctly, and the plane really
-     * is flat.</p>
-     */
-    private static GlFramebuffer projectPlane(GlFramebuffer source, CompLayer layer, CompRenderContext context, Batcher2D batcher)
-    {
-        CompCamera camera = CompScene.camera(context);
-        GlFramebuffer target = FboPool.acquire(context.renderWidth(), context.renderHeight());
-        MatrixStack stack = batcher.getContext().getMatrices();
-        float z = layer.scalarAt("z", layer.z, context.frame);
-
-        target.begin();
-        BufferRenderer.resetCurrentVertexBuffer();
-
-        stack.push();
-        stack.peek().getPositionMatrix().set(new Matrix4f(camera.view).translate(0F, 0F, z));
-        RenderSystem.setProjectionMatrix(camera.projection, VertexSorter.BY_Z);
-
-        try
-        {
-            /* Subdivide the plane instead of drawing one giant quad. A single quad whose corner
-             * falls behind the camera is clipped as a whole — the layer vanished when the camera
-             * tilted near its edge. Small cells clip independently, so the visible part survives.
-             * The UVs are the same bottom-up mapping the old single quad used. */
-            int cells = 16;
-            float cw = context.width / (float) cells;
-            float ch = context.height / (float) cells;
-
-            for (int j = 0; j < cells; j++)
-            {
-                for (int i = 0; i < cells; i++)
-                {
-                    float x0 = i * cw;
-                    float y0 = j * ch;
-                    float x1 = x0 + cw;
-                    float y1 = y0 + ch;
-                    /* The quad lives in composition pixels; the source texture may be smaller
-                     * (proxy scale), so the UVs are normalised through the comp size. */
-                    float u0 = x0 / context.width * source.width;
-                    float u1 = x1 / context.width * source.width;
-                    float vTop = (1F - y0 / context.height) * source.height;
-                    float vBottom = (1F - y1 / context.height) * source.height;
-
-                    batcher.texturedBox(source.color.id, 0xFFFFFFFF,
-                        x0, y0, cw, ch,
-                        u0, vTop, u1, vBottom,
-                        source.width, source.height);
-                }
-            }
-
-            batcher.flush();
-        }
-        finally
-        {
-            stack.pop();
-            RenderSystem.setProjectionMatrix(GlStateGuard.ortho(context.width, context.height), VertexSorter.BY_Z);
-            BufferRenderer.resetCurrentVertexBuffer();
-        }
-
-        /* The source is straight alpha; drawing it into a transparent target with SRC_ALPHA makes
-         * the result premultiplied. Every consumer (composite, track matte, effects after the
-         * projection) expects straight alpha, so convert exactly once — the same correction
-         * renderBaked3D already does. Without it, a projected 2D layer gets dark fringes and a
-         * projected luma matte reads the darkened RGB. */
-        GlFramebuffer straightened = PassRenderer.unpremultiply(target);
-
-        if (straightened != target)
-        {
-            FboPool.release(target);
-        }
-
-        return straightened;
-    }
-
-    /**
-     * Effects and styles work in layer-local UV space. For 2D layers that space is the camera-view
-     * model matrix; a 3D layer keeps its world matrix (a perspective homography cannot be expressed
-     * as the affine map those effects expect).
+     * Effects and styles work in layer-local UV space. For a screen-fixed 2D layer that space is
+     * the composition-space world matrix; a perspective 3D layer keeps its world matrix (a
+     * perspective homography cannot be expressed as the affine map those effects expect).
      */
     private static Matrix4f effectSpace(CompRenderContext context, CompLayer layer, Matrix4f model)
     {
@@ -1444,9 +1343,14 @@ public final class CompRenderer
     }
 
     /**
-     * Painter's order: 3D slots are permuted far-to-near. Adjustment layers and 2D layers keep
-     * their stack position, because an adjustment layer affects exactly the pixels accumulated
-     * before it.
+     * Painter's order: <b>runs</b> of consecutive 3D pixel layers are permuted far-to-near.
+     *
+     * <p>A run is a maximal sequence of layers for which {@link CompScene#sortsIn3D} is true
+     * (AE logic: {@code threeD && hasPixels}). A 2D layer, an adjustment layer, a camera/null, or
+     * any layer without pixels keeps its stack slot and <b>breaks</b> the run. That is what makes
+     * a 2D layer composite between two 3D groups in stack order instead of being dragged by a
+     * depth it does not have. Legacy logic keeps the old rule (once the frame is spatial, every
+     * content layer is spatial), so old projects keep their look.</p>
      */
     static List<CompLayer> orderLayers(CompDocument comp, CompRenderContext context)
     {
@@ -1455,7 +1359,7 @@ public final class CompRenderer
 
         for (int i = 0; i <= order.size(); i++)
         {
-            boolean boundary = i == order.size() || "adjustment".equals(order.get(i).type);
+            boolean boundary = i == order.size() || !CompScene.sortsIn3D(context, order.get(i));
 
             if (!boundary)
             {
@@ -1475,38 +1379,11 @@ public final class CompRenderer
 
     private static void sortSegment(List<CompLayer> order, int start, int end, CompRenderContext context)
     {
-        List<Integer> slots = new ArrayList<>();
-        List<CompLayer> three = new ArrayList<>();
-
-        for (int i = start; i < end; i++)
-        {
-            CompLayer layer = order.get(i);
-
-            /* Under a spatial camera a flat layer is a plane in the same 3D space as the 3D ones,
-             * so it must be sorted with them; otherwise a layer the tilt pushes behind keeps
-             * painting over one in front. Ties (all z = 0) keep the stack order. */
-            boolean projected = layer.threeD || CompScene.spatial(context);
-
-            if (projected && !"camera".equals(layer.type) && !"adjustment".equals(layer.type))
-            {
-                slots.add(i);
-                three.add(layer);
-            }
-        }
-
-        if (three.size() < 2)
-        {
-            return;
-        }
-
         /* Ascending depth = far first. CompScene caches the value for this frame, so the comparator
-         * does a map lookup instead of rebuilding two matrices per comparison. */
-        three.sort((a, b) -> Float.compare(CompScene.planeDepth(context, a), CompScene.planeDepth(context, b)));
-
-        for (int i = 0; i < slots.size(); i++)
-        {
-            order.set(slots.get(i), three.get(i));
-        }
+         * does a map lookup instead of rebuilding two matrices per comparison. The sort is stable,
+         * so coplanar layers keep their stack order. */
+        order.subList(start, end).sort((a, b) -> Float.compare(
+            CompScene.planeDepth(context, a), CompScene.planeDepth(context, b)));
     }
 
     /**
@@ -1895,8 +1772,9 @@ public final class CompRenderer
      * <p>It is exactly {@link CompScene#usePerspective}: those layers are drawn through
      * {@code projection · view}, either by the layer-local bake or by the direct fallback, so
      * their pixels are screen pixels. Everything else (2D layers, flat 3D layers under a
-     * non-perspective camera) is painted in composition space and only gets projected later by
-     * {@code projectPlane}. Effects that resample their input need to know which one they got.</p>
+     * non-perspective camera) is painted in composition space and composited there, because the
+     * orthographic projection is already the composition rectangle. Effects that resample their
+     * input need to know which one they got.</p>
      */
     static boolean effectsRunOnProjectedContent(CompRenderContext context, CompLayer layer)
     {
@@ -2102,21 +1980,6 @@ public final class CompRenderer
         }
 
         return firstProjectedEffect(layer.effects) < layer.effects.size();
-    }
-
-    /**
-     * Camera / null / adjustment layers produce no pixels of their own.
-     *
-     * <p>Using one as a track matte multiplied the target by a fully transparent raster, so the
-     * layer simply vanished with no message. The matte picker still lists them, so the renderer has
-     * to refuse them as well.</p>
-     */
-    private static boolean hasPixels(CompLayer layer)
-    {
-        return layer != null
-            && !"camera".equals(layer.type)
-            && !"null".equals(layer.type)
-            && !"adjustment".equals(layer.type);
     }
 
     private static boolean hasEnabledEffects(CompLayer layer)

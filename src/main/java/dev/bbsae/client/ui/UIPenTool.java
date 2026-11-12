@@ -1667,80 +1667,11 @@ public final class UIPenTool implements CompPenSession.Listener
 
             float compX = (screenX - view.areaX - view.ox) / view.scale;
             float compY = (screenY - view.areaY - view.oy) / view.scale;
-            Matrix4f world = CompScene.world(view.rc, layer);
 
-            if (!CompScene.usePerspective(view.rc, layer))
-            {
-                CompCamera camera = CompScene.camera(view.rc);
-
-                if (!layer.threeD)
-                {
-                    /* Screen-attached 2D layer: the renderer's model is exactly view2D · world, so
-                     * its 4x4 inverse is the exact inverse of the projection. */
-                    Matrix4f model = new Matrix4f(camera.view2D).mul(world);
-                    Vector3f local = new Vector3f(compX, compY, 0F);
-
-                    new Matrix4f(model).invert().transformPosition(local);
-
-                    return new float[] {local.x, local.y};
-                }
-
-                /* A 3D layer under an orthographic camera is projected affinely too, but view2D
-                 * drops world z, so the 4x4 inverse of view2D·world is ambiguous: it can return a
-                 * point that is not on the layer plane. The correct inverse is the projection ray
-                 * through that plane — for an orthographic camera every such ray is parallel to
-                 * world Z. (The old drag code keyed this branch on layer.threeD and ray-cast
-                 * with the perspective camera, which is the mirror image of the same bug.) */
-                Vector3f flat = new Vector3f(compX, compY, 0F);
-
-                new Matrix4f(camera.view2D).invert().transformPosition(flat);
-
-                Vector3f direction = new Vector3f(0F, 0F, 1F);
-                Vector3f origin = world.transformPosition(new Vector3f(0F, 0F, 0F));
-                Vector3f normal = world.transformDirection(new Vector3f(0F, 0F, 1F)).normalize();
-
-                if (normal.lengthSquared() < 0.000001F)
-                {
-                    return null;
-                }
-
-                float denominator = direction.dot(normal);
-
-                if (Math.abs(denominator) < 0.00001F)
-                {
-                    return null;
-                }
-
-                float t = new Vector3f(origin).sub(flat).dot(normal) / denominator;
-                Vector3f hit = new Vector3f(flat).fma(t, direction);
-                Vector3f local = new Vector3f(hit);
-
-                new Matrix4f(world).invert().transformPosition(local);
-
-                return new float[] {local.x, local.y};
-            }
-
-            /* Perspective layer: intersect the cursor ray with the layer's plane. */
-            CompCamera camera = CompScene.camera(view.rc);
-            Vector3f rayA = camera.unproject(compX, compY, view.compWidth, view.compHeight, 0F);
-            Vector3f rayB = camera.unproject(compX, compY, view.compWidth, view.compHeight, 1000F);
-            Vector3f origin = world.transformPosition(new Vector3f(0F, 0F, 0F));
-            Vector3f normal = world.transformDirection(new Vector3f(0F, 0F, 1F)).normalize();
-            Vector3f direction = new Vector3f(rayB).sub(rayA);
-            float denominator = direction.dot(normal);
-
-            if (Math.abs(denominator) < 0.00001F)
-            {
-                return null;
-            }
-
-            float t = new Vector3f(origin).sub(rayA).dot(normal) / denominator;
-            Vector3f hit = new Vector3f(rayA).fma(t, direction);
-            Vector3f local = new Vector3f(hit);
-
-            new Matrix4f(world).invert().transformPosition(local);
-
-            return new float[] {local.x, local.y};
+            /* One shared inverse for every layer kind (2D screen-fixed / 3D flat / perspective).
+             * The pen used to re-derive view2D/model inverses here; after the AE camera split that
+             * was exactly the code that disagreed with what the renderer draws. */
+            return CompScene.compToLayerLocal(view.rc, layer, compX, compY);
         }
         catch (RuntimeException e)
         {

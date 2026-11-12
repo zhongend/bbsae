@@ -16,6 +16,7 @@ import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.renderers.EmptyStateRenderer;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
+import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -46,6 +47,8 @@ public class UICompTrackTimeline extends UIElement
     private static final int ROW_DEFAULT = 26;
     /** Trim hit zone. 7 px is the smallest target that still feels clickable with a trackpad. */
     private static final int EDGE = 7;
+    /** P1-11 diagnostics: green-bar rebuilds and keyframe tick work with {@code -Dbbsae.debugTimeline}. */
+    private static final boolean DEBUG_TIMELINE = Boolean.getBoolean("bbsae.debugTimeline");
 
     private static final int MODE_NONE = 0;
     private static final int MODE_TRIM_IN = 1;
@@ -73,6 +76,12 @@ public class UICompTrackTimeline extends UIElement
     private int rowHeight = ROW_DEFAULT;
     private final UiMotion motion = new UiMotion();
     private int motionFrames;
+    /** Debug counters for {@code -Dbbsae.debugTimeline}; only touched when the flag is on. */
+    private int debugFrames;
+    private int debugFirstRow = -1;
+    private int debugLastRow = -1;
+    private long debugTicksDrawn;
+    private int debugCoverageRebuilds;
     /** Per-layer motion channel names, built once — a 200-track timeline must not allocate keys. */
     private final Map<String, String[]> channelKeys = new HashMap<>();
     /** Last snap guide a flash was started for; a repeated frame must not re-trigger it. */
@@ -222,6 +231,72 @@ public class UICompTrackTimeline extends UIElement
     static int sourceRowIndex(int row, int layerCount)
     {
         return layerCount - 1 - row;
+    }
+
+    /**
+     * First row that can intersect the lane viewport at this scroll offset.
+     *
+     * <p>P1-11: the render loop must never touch a row that is scrolled out of view — its
+     * keyframe ticks and header would be clipped anyway. These two helpers are the single
+     * definition of "visible row", shared by the renderer and the regression test.</p>
+     */
+    static int firstVisibleRow(int scrollY, int rowHeight)
+    {
+        return Math.max(0, scrollY / Math.max(1, rowHeight));
+    }
+
+    /** Exclusive end row: two extra rows cover partial rows at either edge. */
+    static int visibleRowEnd(int first, int laneHeight, int rowHeight, int rowCount)
+    {
+        int height = Math.max(1, rowHeight);
+
+        return Math.min(rowCount, Math.max(0, first) + Math.max(0, laneHeight) / height + 2);
+    }
+
+    /**
+     * Read-only view of a channel's keys as {@code Keyframe<?>}; same wildcard cast the curve
+     * editor uses, safe because the list is only read.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static List<Keyframe<?>> keyframesOf(KeyframeChannel<?> channel)
+    {
+        return (List<Keyframe<?>>) (List<?>) channel.getKeyframes();
+    }
+
+    /** First index whose tick is {@code >= tick}. Keys are sorted by every write path. */
+    private static int lowerBoundTick(List<Keyframe<?>> keys, float tick)
+    {
+        int low = 0;
+        int high = keys.size();
+
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+
+            if (keys.get(mid).getTick() < tick)
+            {
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+
+        return low;
+    }
+
+    /** First index whose tick is {@code > tick}. */
+    private static int upperBoundTick(List<Keyframe<?>> keys, float tick)
+    {
+        int low = lowerBoundTick(keys, tick);
+
+        while (low < keys.size() && keys.get(low).getTick() == tick)
+        {
+            low++;
+        }
+
+        return low;
     }
 
     /** Resolves a visible row directly in the reversed source stack. */
@@ -714,6 +789,31 @@ public class UICompTrackTimeline extends UIElement
         super.render(context);
 
         this.updateCursor(context);
+
+        if (DEBUG_TIMELINE)
+        {
+            this.debugTimelineStats();
+        }
+    }
+
+    /** One line every ~2 s at 60 fps: visible rows, ticks actually drawn, green-bar rebuilds. */
+    private void debugTimelineStats()
+    {
+        if (++this.debugFrames < 120)
+        {
+            return;
+        }
+
+        int rebuilds = dev.bbsae.client.render.CompPrecache.coverageRebuilds();
+        int delta = rebuilds - this.debugCoverageRebuilds;
+
+        dev.bbsae.BbsAeAddon.LOGGER.info(
+            "timeline: visibleRows={}..{} ticksDrawn={} coverageRebuilds={}",
+            this.debugFirstRow, this.debugLastRow, this.debugTicksDrawn, delta);
+
+        this.debugFrames = 0;
+        this.debugTicksDrawn = 0;
+        this.debugCoverageRebuilds = rebuilds;
     }
 
     /** Channel names for a layer: head selection, lane selection, clip-bar hover. */
@@ -919,8 +1019,14 @@ public class UICompTrackTimeline extends UIElement
             }
         }
 
-        int first = Math.max(0, this.scrollY / Math.max(1, this.rowHeight));
-        int last = Math.min(layerCount, first + this.laneArea.h / Math.max(1, this.rowHeight) + 2);
+        int first = firstVisibleRow(this.scrollY, this.rowHeight);
+        int last = visibleRowEnd(first, this.laneArea.h, this.rowHeight, layerCount);
+
+        if (DEBUG_TIMELINE)
+        {
+            this.debugFirstRow = first;
+            this.debugLastRow = last;
+        }
 
         for (int i = first; i < last; i++)
         {
@@ -1252,13 +1358,6 @@ public class UICompTrackTimeline extends UIElement
      */
     private Keyframe keyframeAt(CompLayer layer, int row, UIContext context)
     {
-        List<Keyframe> keyframes = layer.allKeyframes();
-
-        if (keyframes.isEmpty())
-        {
-            return null;
-        }
-
         int barY = this.rowY(row) + 3;
         int barH = Math.max(10, this.rowHeight - 6);
         int tickY = barY + barH - 3;
@@ -1269,39 +1368,131 @@ public class UICompTrackTimeline extends UIElement
         }
 
         float fps = this.fps();
+        float fromTick = (float) (this.fromX(context.mouseX - 5) * fps) - 1F;
+        float toTick = (float) (this.fromX(context.mouseX + 5) * fps) + 1F;
         Keyframe best = null;
         int bestDistance = 5;
 
-        for (Keyframe keyframe : keyframes)
+        for (String path : layer.animatedPaths())
         {
-            int x = this.toX(keyframe.getTick() / fps);
-            int distance = Math.abs(context.mouseX - x);
+            if (path == null || path.isEmpty())
+            {
+                continue;
+            }
+
+            Keyframe key = this.nearestKey(layer.scalarChannel(path), context.mouseX, fps,
+                fromTick, toTick, bestDistance);
+
+            if (key != null)
+            {
+                best = key;
+                bestDistance = Math.abs(context.mouseX - this.toX(key.getTick() / fps));
+            }
+        }
+
+        Keyframe opacity = this.nearestKey(layer.opacityChannel(), context.mouseX, fps,
+            fromTick, toTick, bestDistance);
+
+        if (opacity != null)
+        {
+            best = opacity;
+            bestDistance = Math.abs(context.mouseX - this.toX(opacity.getTick() / fps));
+        }
+
+        Keyframe transform = this.nearestKey(layer.transformChannel(), context.mouseX, fps,
+            fromTick, toTick, bestDistance);
+
+        if (transform != null)
+        {
+            best = transform;
+        }
+
+        return best;
+    }
+
+    /** Nearest key of one channel inside the pixel range; never scans keys outside it. */
+    private Keyframe nearestKey(KeyframeChannel<?> channel, int mouseX, float fps,
+                                float fromTick, float toTick, int maxDistance)
+    {
+        List<Keyframe<?>> keys = keyframesOf(channel);
+        int first = lowerBoundTick(keys, fromTick);
+        int last = upperBoundTick(keys, toTick);
+        Keyframe best = null;
+        int bestDistance = maxDistance;
+
+        for (int i = first; i < last; i++)
+        {
+            Keyframe key = keys.get(i);
+            int distance = Math.abs(mouseX - this.toX(key.getTick() / fps));
 
             if (distance <= bestDistance)
             {
-                best = keyframe;
                 bestDistance = distance;
+                best = key;
             }
         }
 
         return best;
     }
 
+    /**
+     * P1-11: draw one tick per key whose tick falls inside the bar's pixel range.
+     *
+     * <p>The old code called {@code layer.allKeyframes()} for every visible row and frame, which
+     * allocated an {@code ArrayList} and copied every key of every channel into it — for a
+     * 40-track composition with a few hundred keys each, that was a large allocation every frame.
+     * This walks the channels directly and binary-searches each sorted key list to the visible
+     * tick interval, so only the keys that actually draw are visited.</p>
+     */
     private void renderKeyframeTicks(UIContext context, CompLayer layer, int barY, int barH, int minX, int maxX)
-    {        List<Keyframe> keyframes = layer.allKeyframes();
+    {
+        float fps = this.fps();
+        float fromTick = (float) (this.fromX(minX) * fps) - 0.5F;
+        float toTick = (float) (this.fromX(maxX) * fps) + 0.5F;
+        int y = barY + barH - 4;
+        int drawn = 0;
 
-        if (keyframes.isEmpty())
+        /* Axis and scalar channels: animatedPaths() returns the existing paths without touching
+         * layers that have none. */
+        for (String path : layer.animatedPaths())
+        {
+            if (path == null || path.isEmpty())
+            {
+                continue;
+            }
+
+            drawn = this.drawTickRange(context, layer.scalarChannel(path), fromTick, toTick,
+                fps, y, minX, maxX, drawn);
+
+            if (drawn > 220)
+            {
+                return;
+            }
+        }
+
+        drawn = this.drawTickRange(context, layer.opacityChannel(), fromTick, toTick,
+            fps, y, minX, maxX, drawn);
+
+        if (drawn > 220)
         {
             return;
         }
 
-        float fps = this.fps();
-        int y = barY + barH - 4;
-        int drawn = 0;
+        this.drawTickRange(context, layer.transformChannel(), fromTick, toTick,
+            fps, y, minX, maxX, drawn);
+    }
 
-        for (Keyframe keyframe : keyframes)
+    /** Draws the keys of one channel inside [fromTick, toTick]; returns the running tick count. */
+    private int drawTickRange(UIContext context, KeyframeChannel<?> channel, float fromTick, float toTick,
+                              float fps, int y, int minX, int maxX, int drawn)
+    {
+        List<Keyframe<?>> keys = keyframesOf(channel);
+        int first = lowerBoundTick(keys, fromTick);
+        int last = upperBoundTick(keys, toTick);
+
+        for (int i = first; i < last; i++)
         {
-            int x = this.toX(keyframe.getTick() / fps);
+            int x = this.toX(keys.get(i).getTick() / fps);
 
             if (x < minX || x > maxX)
             {
@@ -1310,11 +1501,18 @@ public class UICompTrackTimeline extends UIElement
 
             context.batcher.box(x - 1, y, x + 1, y + 2, 0xFFE9EDF3);
 
+            if (DEBUG_TIMELINE)
+            {
+                this.debugTicksDrawn++;
+            }
+
             if (++drawn > 220)
             {
-                return;
+                return drawn;
             }
         }
+
+        return drawn;
     }
 
     private CompMarker markerAt(int mouseX)

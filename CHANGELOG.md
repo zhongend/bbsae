@@ -1,5 +1,55 @@
 # BBS AE 更新日记
 
+## 0.98 — 2026-11-14
+
+第五轮「假设所有功能都有 bug」：审计 **3D 摄像机/图层 3D 逻辑是否符合 AE 语义**（需求 1 的最终校验），
+并继续修性能审计剩余 P0/P1（存档/撤销全工程 JSON、曲线编辑器采样、时间轴绿条）。回放 undo 后 UI
+消失问题新增关键证据（页面 render 确实执行但画面不可见 → GL 绑定/绘制目标怀疑），仍未根治。
+全量 **142 个测试套件 / 905 项测试全绿（1 skipped）**（0.97 基线 136/857）。
+
+### 3D 相机 / 图层 3D 逻辑（需求 1 校验）
+
+- **P0 2D 图层真正与相机解耦**：`CompScene.cameraAffects` 为唯一判据（AE=仅 3D 层；legacy 模式保持旧
+  全层行为）；2D 层 model=world（不经 view2D）、投影/命中/手柄/钢笔共用 `CompScene.compToLayerLocal`，
+  相机 pan/zoom/roll 不再移动 2D 画面与 gizmo。
+- **P0 3D 工作区**：2D 层按 contain-fit 屏幕固定绘制、按栈序命中/选择；3D 层才走 orbit 投影与深度排序。
+- **P1 2D 层打断 3D run**：只有连续 `threeD && hasPixels` 层参与深度排序，与 AE/effectcraft 一致。
+- **P1 活动相机**：activeCameraId 只在仍有效（camera+visible+activeAt）时覆盖；否则栈顶有效相机；
+  隐藏/剪出的相机不再统治全片。
+- **P2 spatial/逐像素深度 AUTO**：隐藏/剪出/无像素/null 的 3D 层与 2D 残留 z 不再触发整帧空间模式
+  或逐像素深度；删除恒不可达的 projectPlane 分支。
+- **相机工具手感**：Track XY 用 1/(fitScale·cameraZoom)（dolly 后不再领先光标）；相机工具拖动有 undo
+  检查点；2D 预览滚轮不再静默修改镜头/插关键帧（仅看穿摄像机时 dolly/FOV）。
+- 调整层 3D 开关禁用并说明（始终作用于整幅合成）。
+- 仍未做：新建相机默认双节点/50mm、Z 轴符号 AE 约定、旧工程 logicVersion 自动迁移（下一轮）。
+
+### 存档/撤销性能（审计 P0-3）
+
+- `CompStore.saveChecked` 全流式：旧文件 `JsonReader` 流式扫描一次（版本守卫+.bak 可读性），去掉
+  toJson String+回读 parse；`GSON.toJson(project, Writer)` 直写 tmp 再流式验证；`.bak` 改 Files.copy。
+  300 层/5100 键：saveChecked 64–66ms（旧 88–107ms）、snapshot 885k chars（旧 1.24M，−28.8%）。
+- `prepareTracksForWrite` 只跳过可证 no-op 的层；`-Dbbsae.debugSave` 分段打点；SavePathPerfTest 8 例。
+
+### 曲线/时间轴性能（审计 P1-8/P1-11）
+
+- **曲线编辑器**：零分配 CurveSampler（单 segment/基本类型插值/段游标+二分回退）、>400 列降采样、
+  keyAt tick 二分、renderKeys 只遍历可见键；CurveSamplingPerfTest 5。
+- **时间轴**：绿条 CoverageCache（静止 0 重建）、刻度按通道+可见 tick 区间二分（去 allKeyframes 拷贝）；
+  TimelineCoverageCacheTest 5 + TimelineVisibleRowFilterTest 6。
+
+### P0 根治：回放 undo/redo 后回放页 UI 停止绘制
+
+- 现象：回放模式 Ctrl+Z 后整个仪表盘 UI 消失只剩世界+gizmo（0.95 以来 6 次诊断未找到根因）。
+- 本轮证据：页面 render 确实被调用（render 日志）、屏幕/页面/面板/area/父链全部正常 → 不是没渲染，
+  而是"画出来看不到"。
+- **根因**：BBS film undo 路径 `UIFilmPanel.applyUndoData → showPanel → applyPreviewSizeToBBS` 会把
+  `BBSRendering` 的自定义渲染尺寸打开（日志 `setCustomSize customSize=true w=1042 h=586`），undo
+  结束后没有关闭；该标志让渲染走替换后的帧缓冲，窗口帧缓冲只剩世界画面。
+- **修复**：`runFilmHistory` 在 undo/redo 前记录 `BBSRendering.isCustomSize()`，finally 中若由 false
+  变 true 则 `setCustomSize(false)`；同时保留 BBS 视频宽高/帧率全局设置恢复。
+- 真机验证：Run 53b 四张截图（move/undo/form/list）UI 完整、模型/gizmo/轨道正常，`undoRestored=true`。
+  证据 `docs/verify/round53-replay-*.png`。
+
 ## 0.97 — 2026-11-13
 
 第四轮「假设所有功能都有 bug」：只读审计**效果/蒙版/文字 在 2D/3D/工作区/预览/导出 五路径**的一致性与

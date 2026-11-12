@@ -1,6 +1,5 @@
 package dev.bbsae.client.render;
 
-import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompExpression;
 import dev.bbsae.comp.CompLayer;
 import mchorse.bbs_mod.utils.pose.Transform;
@@ -14,14 +13,17 @@ import java.util.Set;
 /**
  * The composition scene graph.
  *
- * <p>One space, one matrix per layer, one camera. 2D and 3D layers differ <b>only</b> in whether
- * the perspective projection is applied to the layer's world matrix; the transform composition,
- * the parent chain and the drag compensation are identical. That is what makes 3D parenting
- * behave exactly like 2D parenting (and why the old, separate {@code localWorldMatrix3D} with its
- * Y-flip could never agree with the 2D path).</p>
+ * <p>One space, one matrix per layer, one camera. World space is composition pixels: <b>X right,
+ * Y down, Z towards the viewer</b>. The transform composition, the parent chain and the drag
+ * compensation are identical for 2D and 3D layers.</p>
  *
- * <p>World space is composition pixels: <b>X right, Y down, Z towards the viewer</b>. Content is
- * drawn in the same orientation, so no layer needs a Y-flip any more.</p>
+ * <h2>AE camera semantics ({@link #cameraAffects})</h2>
+ * <p>A layer follows the composition camera <b>only when its own 3D switch is on</b>. A 2D layer
+ * is attached to the composition rectangle: pan, zoom, roll, dolly and tilt move the 3D layers
+ * around it, never the layer itself. That is the After Effects "2D layers are screen-space"
+ * rule, and it is why a 2D layer can no longer grow when the camera dollies. The legacy
+ * {@code legacy3DLogic} switch restores the pre-AE behaviour for old projects, where every
+ * content layer went through the camera view once the frame became spatial.</p>
  *
  * <p>World matrices are cached per {@link CompRenderContext}, i.e. per composition per frame:
  * the render loop, the depth sort, the gizmos and the hit test all read the same matrix instead
@@ -200,8 +202,13 @@ public final class CompScene
     }
 
     /**
-     * Model matrix handed to the content renderer: world space for 3D layers, the 2D camera view
-     * for everything else. The caller pairs it with {@link #projection(CompRenderContext, CompLayer)}.
+     * Model matrix handed to the content renderer.
+     *
+     * <p>For a layer the camera affects this is its world matrix seen through the camera: the
+     * perspective {@code view} for a projected 3D layer, the affine {@code view2D} for a 3D layer
+     * under an orthographic camera. A layer the camera does not affect (an AE 2D layer) is handed
+     * its raw world matrix: it lives in composition pixels, so the caller pairs it with the
+     * orthographic composition projection and the camera cannot move it.</p>
      */
     public static Matrix4f model(CompRenderContext ctx, CompLayer layer)
     {
@@ -213,25 +220,21 @@ public final class CompScene
         }
 
         Matrix4f world = world(ctx, layer);
-        CompCamera camera = camera(ctx);
         Matrix4f model;
 
-        if (usePerspective(ctx, layer))
+        if (cameraAffects(ctx, layer))
         {
-            model = new Matrix4f(camera.view).mul(world);
-        }
-        else if (layer.threeD && spatial(ctx))
-        {
-            /* A threeD flat layer under a tilted camera is still drawn flat — into comp space,
-             * with no camera at all. The camera is applied afterwards, once, by projecting the
-             * finished comp-space image onto the layer's z plane. Keeping the camera out of the
-             * model is what lets masks and effects stay in comp space and still come out right.
-             * A plain 2D layer is screen-attached and always uses view2D instead. */
-            model = new Matrix4f(world);
+            CompCamera camera = camera(ctx);
+
+            model = usePerspective(ctx, layer)
+                ? new Matrix4f(camera.view).mul(world)
+                : new Matrix4f(camera.view2D).mul(world);
         }
         else
         {
-            model = new Matrix4f(camera.view2D).mul(world);
+            /* Screen-space layer: composition pixels in, composition pixels out. The whole
+             * reason it cannot be camera-dollied or rolled. */
+            model = new Matrix4f(world);
         }
 
         ctx.modelCache.put(layer, model);
@@ -240,12 +243,12 @@ public final class CompScene
     }
 
     /**
-     * True when flat layers have to be projected in 3D instead of through the affine 2D view.
+     * True when the frame contains real 3D geometry to resolve: the camera looks at the comp at an
+     * angle, or a real 3D pixel layer sits off the comp plane.
      *
-     * <p>Two situations need it: the camera looks at the comp at an angle (its affine
-     * approximation is then simply wrong), or some layer sits off the comp plane (a z offset has
-     * no meaning in an affine view). Both are properties of the frame, so the answer is cached on
-     * the context.</p>
+     * <p>AE projection no longer depends on this — each layer decides by its own 3D switch — but
+     * legacy projection and the AUTO per-pixel-depth gate still need the frame-level answer, so it
+     * is cached on the context.</p>
      */
     public static boolean spatial(CompRenderContext ctx)
     {
@@ -255,7 +258,7 @@ public final class CompScene
         }
 
         CompCamera camera = camera(ctx);
-        boolean spatial = camera.perspective && (camera.tilted || hasDepth(ctx.comp, ctx.frame));
+        boolean spatial = camera.perspective && (camera.tilted || hasDepth(ctx));
 
         ctx.spatial = spatial;
 
@@ -263,27 +266,41 @@ public final class CompScene
     }
 
     /**
-     * True when any content layer sits off the composition plane at this frame.
+     * True when any <b>real 3D pixel layer</b> sits off the composition plane at this frame.
      *
-     * <p>The animated {@code z} channel is sampled, not the static field: a keyframed 3D layer that
-     * only leaves z=0 in the middle of the shot used to keep the whole frame non-spatial (and make
-     * the 3D layers jump when it finally moved). The static field remains the fallback for layers
-     * without a channel, exactly like {@link CompLayer#scalarAt}.</p>
+     * <p>Only layers that can actually be projected count: a layer that is not 3D, has no pixels
+     * (camera / null / adjustment), is hidden, trimmed out, or soloed out cannot put anything out
+     * of the comp plane. Before this filter a leftover {@code z} on a hidden 2D layer, a camera's
+     * dolly distance, or a trimmed-out 3D layer switched the whole frame into spatial mode (and
+     * could trigger the per-pixel depth path) with no visible pixel behind it.</p>
+     *
+     * <p>The animated {@code z} channel is sampled, not the static field: a keyframed 3D layer
+     * that only leaves z=0 in the middle of the shot used to keep the whole frame non-spatial (and
+     * make the 3D layers jump when it finally moved). The static field remains the fallback for
+     * layers without a channel, exactly like {@link CompLayer#scalarAt}.</p>
      */
-    private static boolean hasDepth(CompDocument comp, float frame)
+    public static boolean hasDepth(CompRenderContext ctx)
     {
-        if (comp == null || comp.layers == null)
+        if (ctx == null || ctx.comp == null || ctx.comp.layers == null)
         {
             return false;
         }
 
-        for (CompLayer layer : comp.layers)
+        boolean solo = ctx.comp.hasSolo();
+
+        for (CompLayer layer : ctx.comp.layers)
         {
-            /* A camera's own z is the dolly distance, not content depth. Counting it made
-             * "hide the camera row → the frame stops being spatial", which is a visibility switch
-             * changing the projection of unrelated layers. */
-            if (layer != null && layer.visible && !"camera".equals(layer.type)
-                && Math.abs(layer.scalarAt("z", layer.z, frame)) > 0.01F)
+            if (layer == null || !layer.threeD || !layer.activeAt(ctx.time) || !hasPixels(layer))
+            {
+                continue;
+            }
+
+            if (solo && !layer.solo)
+            {
+                continue;
+            }
+
+            if (Math.abs(layer.scalarAt("z", layer.z, ctx.frame)) > 0.01F)
             {
                 return true;
             }
@@ -292,12 +309,74 @@ public final class CompScene
         return false;
     }
 
-    /** Orthographic (comp pixels) for 2D/flat layers, the camera projection for 3D layers. */
+    /**
+     * Orthographic (comp pixels) for the layers the camera does not project, the camera
+     * perspective for 3D layers in AE logic (and for spatial frames in legacy logic).
+     */
     public static Matrix4f projection(CompRenderContext ctx, CompLayer layer)
     {
         return usePerspective(ctx, layer)
             ? camera(ctx).projection
             : GlStateGuard.ortho(ctx.width, ctx.height);
+    }
+
+    /**
+     * True when the composition camera moves this layer's pixels.
+     *
+     * <p><b>AE logic (default):</b> only a layer with its own 3D switch on follows the camera.
+     * A 2D layer is part of the composition rectangle, not of the 3D scene, so pan, zoom, roll and
+     * tilt must leave it untouched — that is the whole point of the 2D/3D switch. Cameras and
+     * adjustment layers never follow themselves (they have no projected pixels).</p>
+     *
+     * <p><b>{@code legacy3DLogic}:</b> every content layer follows the camera, exactly like the
+     * pre-AE build, so old projects keep their look.</p>
+     */
+    public static boolean cameraAffects(CompRenderContext ctx, CompLayer layer)
+    {
+        if (layer == null || "camera".equals(layer.type) || "adjustment".equals(layer.type))
+        {
+            return false;
+        }
+
+        if (legacy3D(ctx))
+        {
+            return true;
+        }
+
+        return layer.threeD;
+    }
+
+    /**
+     * Camera / null / adjustment layers produce no pixels of their own.
+     *
+     * <p>Shared by the renderer, the depth/spatial gates and the UI: every "does this layer own a
+     * picture" decision must use this one predicate. A track matte or a depth sort that counted a
+     * control layer was either a silent no-op or a fully transparent raster.</p>
+     */
+    public static boolean hasPixels(CompLayer layer)
+    {
+        return layer != null
+            && !"camera".equals(layer.type)
+            && !"null".equals(layer.type)
+            && !"adjustment".equals(layer.type);
+    }
+
+    /**
+     * True when a layer's own 3D switch makes it part of the spatial layer stack.
+     *
+     * <p>AE semantics: only 3D layers take part in depth sorting. A 2D layer stays at its stack
+     * slot and breaks a 3D run, because its pixels are composited in stack order no matter where
+     * the 3D planes are. Legacy logic keeps the old behaviour (every content layer sorts once the
+     * frame becomes spatial).</p>
+     */
+    public static boolean sortsIn3D(CompRenderContext ctx, CompLayer layer)
+    {
+        if (!hasPixels(layer))
+        {
+            return false;
+        }
+
+        return layer.threeD || (legacy3D(ctx) && spatial(ctx));
     }
 
     public static boolean usePerspective(CompRenderContext ctx, CompLayer layer)
@@ -315,6 +394,7 @@ public final class CompScene
             return spatial(ctx) || (layer.threeD && camera(ctx).perspective);
         }
 
+        /* AE mode: the 3D switch is the only thing that opts a layer into perspective. */
         return layer.threeD && camera(ctx).perspective;
     }
 
@@ -437,12 +517,21 @@ public final class CompScene
     /**
      * Local layer point → composition pixels. Used by the selection box, the camera gizmo and the
      * hit test, so gizmos can never disagree with what is rendered.
+     *
+     * <p>A 2D layer (AE logic) is screen-fixed: its world position <b>is</b> the composition
+     * pixel, no camera view is applied. A 3D layer goes through the perspective camera, or through
+     * {@code view2D} for an orthographic camera — exactly matching {@link #model}.</p>
      */
     public static Vector2f project(CompRenderContext ctx, CompLayer layer, float x, float y, float z)
     {
         Vector3f point = new Vector3f(x, y, z);
 
         world(ctx, layer).transformPosition(point);
+
+        if (!cameraAffects(ctx, layer))
+        {
+            return new Vector2f(point.x, point.y);
+        }
 
         CompCamera camera = camera(ctx);
 
@@ -451,12 +540,103 @@ public final class CompScene
             return camera.project(point, ctx.width, ctx.height);
         }
 
-        /* A 2D layer is screen-attached: it goes through the 2D view, exactly like its content
-         * does. The camera tilt is deliberately ignored for twoD layers; only threeD flat layers
-         * are projected through projectPlane(). */
         camera.view2D.transformPosition(point);
 
         return new Vector2f(point.x, point.y);
+    }
+
+    /**
+     * Composition pixel → layer-local point on the layer's own plane, or null when the layer
+     * plane is edge-on / behind the camera. The exact inverse of
+     * {@link #project(CompRenderContext, CompLayer, float, float, float)} for z = 0.
+     *
+     * <p>This is the shared geometry the editor's mask drag, layer drag and pen tool need. A 2D
+     * layer (AE logic) is inverted through its world matrix because its composition pixel is its
+     * world pixel; a 3D layer is intersected with its plane by the camera ray. Callers that work
+     * in screen pixels must first map them through their panel's composition fit.</p>
+     */
+    public static float[] compToLayerLocal(CompRenderContext ctx, CompLayer layer, float compX, float compY)
+    {
+        if (ctx == null || layer == null)
+        {
+            return null;
+        }
+
+        Matrix4f world = world(ctx, layer);
+
+        if (!cameraAffects(ctx, layer) || !usePerspective(ctx, layer))
+        {
+            /* Affine path: the pixel is model · local with local z = 0. Invert the model, then
+             * walk the (comp-space) screen ray back onto the local z = 0 plane. A plain 2D layer
+             * has no tilt and the ray is degenerate, so the inverse point is returned directly. */
+            Matrix4f inverse = new Matrix4f(model(ctx, layer));
+
+            try
+            {
+                inverse.invert();
+            }
+            catch (RuntimeException e)
+            {
+                return null;
+            }
+
+            Vector3f origin = new Vector3f(compX, compY, 0F);
+            Vector3f direction = new Vector3f(0F, 0F, 1F);
+
+            inverse.transformPosition(origin);
+            inverse.transformDirection(direction);
+
+            if (Math.abs(direction.z) < 0.000001F)
+            {
+                return new float[] {origin.x, origin.y};
+            }
+
+            float t = -origin.z / direction.z;
+
+            return new float[] {origin.x + direction.x * t, origin.y + direction.y * t};
+        }
+
+        CompCamera camera = camera(ctx);
+        Vector3f rayA = camera.unproject(compX, compY, ctx.width, ctx.height, 0F);
+        Vector3f rayB = camera.unproject(compX, compY, ctx.width, ctx.height, 1000F);
+
+        if (rayA == null || rayB == null)
+        {
+            return null;
+        }
+
+        Vector3f origin = world.transformPosition(new Vector3f(0F, 0F, 0F));
+        Vector3f normal = world.transformDirection(new Vector3f(0F, 0F, 1F));
+
+        if (normal.lengthSquared() < 0.000001F)
+        {
+            return null;
+        }
+
+        normal.normalize();
+
+        Vector3f direction = new Vector3f(rayB).sub(rayA);
+        float denominator = direction.dot(normal);
+
+        if (Math.abs(denominator) < 0.00001F)
+        {
+            return null;
+        }
+
+        float t = new Vector3f(origin).sub(rayA).dot(normal) / denominator;
+        Vector3f hit = new Vector3f(rayA).fma(t, direction);
+        Vector3f local = new Vector3f(hit);
+
+        try
+        {
+            new Matrix4f(world).invert().transformPosition(local);
+        }
+        catch (RuntimeException e)
+        {
+            return null;
+        }
+
+        return new float[] {local.x, local.y};
     }
 
     /** World point → composition pixels. */

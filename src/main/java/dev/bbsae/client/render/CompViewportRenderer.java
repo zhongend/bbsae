@@ -423,8 +423,41 @@ public final class CompViewportRenderer
         });
     }
 
-    private static int drawLayers(Batcher2D batcher, CompRenderContext context, CompDocument doc,
-                                   CompViewportCamera camera, float screenX, float screenY, Matrix4f matrix)
+    /**
+     * AE ordering for the 3D workspace: only consecutive runs of layers the camera affects are
+     * depth-sorted; every other layer keeps its stack slot and breaks the run.
+     *
+     * <p>In AE logic a 2D layer is screen-fixed — it has no depth to sort by and must stay exactly
+     * where the stack put it. Sorting it with the 3D planes is what made a 2D background jump in
+     * front of a 3D layer while orbiting. Legacy logic keeps the old "every content layer sorts"
+     * rule, so old projects look unchanged.</p>
+     */
+    static void sortByViewRuns(CompRenderContext context, java.util.List<CompLayer> layers,
+                               org.joml.Vector3f eye, org.joml.Vector3f forward)
+    {
+        int start = 0;
+
+        for (int i = 0; i <= layers.size(); i++)
+        {
+            boolean boundary = i == layers.size() || !CompScene.cameraAffects(context, layers.get(i));
+
+            if (!boundary)
+            {
+                continue;
+            }
+
+            if (i - start > 1)
+            {
+                sortByView(context, layers.subList(start, i), eye, forward);
+            }
+
+            start = i + 1;
+        }
+    }
+
+    /** Visible content layers in stack order, with AE depth runs sorted for the orbit camera. */
+    static List<CompLayer> viewportOrder(CompRenderContext context, CompDocument doc,
+                                         CompViewportCamera camera)
     {
         List<CompLayer> order = new ArrayList<>();
 
@@ -443,9 +476,7 @@ public final class CompViewportRenderer
                 continue;
             }
 
-            String type = layer.type == null ? "solid" : layer.type;
-
-            if ("camera".equals(type) || "null".equals(type) || "adjustment".equals(type))
+            if (!CompScene.hasPixels(layer))
             {
                 continue;
             }
@@ -453,12 +484,68 @@ public final class CompViewportRenderer
             order.add(layer);
         }
 
-        /* Painter's algorithm, farthest first. The key is the depth of the layer's *plane*: all
-         * coplanar layers tie and fall back to stack order (which is what the composition does),
-         * while a layer pushed towards the viewer on z sorts in front of them from any angle.
-         * Using the nearest corner instead made a large background plane win against a small
-         * layer stacked above it, because its bottom edge was nearer to a tilted camera. */
-        sortByView(context, order, camera.position, camera.forward);
+        sortByViewRuns(context, order, camera.position, camera.forward);
+
+        return order;
+    }
+
+    /**
+     * Contain-fit of the composition rectangle into the viewport, identical to the composition
+     * panel's preview fit: no orbit perspective, no camera zoom/pan.
+     *
+     * @return {scale, offsetX, offsetY}
+     */
+    static float[] viewportFit(CompRenderContext context, CompViewportCamera camera)
+    {
+        float viewportWidth = Math.max(1F, camera.width);
+        float viewportHeight = Math.max(1F, camera.height);
+        float compWidth = Math.max(1F, context.width);
+        float compHeight = Math.max(1F, context.height);
+        float scale = Math.min(viewportWidth / compWidth, viewportHeight / compHeight);
+
+        return new float[] {
+            scale,
+            (viewportWidth - compWidth * scale) * 0.5F,
+            (viewportHeight - compHeight * scale) * 0.5F
+        };
+    }
+
+    /**
+     * A screen-fixed layer's four content corners in viewport pixels (TL, TR, BR, BL).
+     *
+     * <p>The composition rectangle is fitted into the viewport exactly like the preview, then the
+     * layer's world matrix is applied <b>in composition space</b> — the orbit camera never enters
+     * the mapping. That is what "a 2D layer does not turn in the 3D workspace" means in AE.</p>
+     */
+    static float[] screenFixedQuad(CompRenderContext context, CompViewportCamera camera, Matrix4f world,
+                                   float x0, float y0, float x1, float y1,
+                                   float screenX, float screenY)
+    {
+        float[] fit = viewportFit(context, camera);
+        float[] corners = new float[8];
+
+        for (int i = 0; i < 4; i++)
+        {
+            float lx = (i == 0 || i == 3) ? x0 : x1;
+            float ly = (i == 0 || i == 1) ? y0 : y1;
+            Vector3f point = world.transformPosition(new Vector3f(lx, ly, 0F));
+
+            corners[i * 2] = screenX + fit[1] + point.x * fit[0];
+            corners[i * 2 + 1] = screenY + fit[2] + point.y * fit[0];
+        }
+
+        return corners;
+    }
+
+    private static int drawLayers(Batcher2D batcher, CompRenderContext context, CompDocument doc,
+                                   CompViewportCamera camera, float screenX, float screenY, Matrix4f matrix)
+    {
+        /* Painter's algorithm, farthest first — but only inside runs of camera-affected layers.
+         * A 2D layer keeps its stack slot and never sorts with the 3D planes (see
+         * {@link #sortByViewRuns}). The key is the depth of the layer's *plane*: all coplanar
+         * layers tie and fall back to stack order (which is what the composition does), while a
+         * layer pushed towards the viewer on z sorts in front of them from any angle. */
+        List<CompLayer> order = viewportOrder(context, doc, camera);
 
         BufferBuilder buffer = Tessellator.getInstance().getBuffer();
 
@@ -481,6 +568,25 @@ public final class CompViewportRenderer
             }
 
             Matrix4f world = CompScene.world(context, layer);
+
+            /* AE: a 2D layer is screen-fixed. Draw it in composition pixels through the preview
+             * fit, not through the orbit camera: it must not foreshorten, disappear behind the
+             * camera, or change size while the user orbits. */
+            if (!CompScene.cameraAffects(context, layer))
+            {
+                RenderSystem.disableDepthTest();
+                RenderSystem.depthMask(false);
+
+                float[] corners = screenFixedQuad(context, camera, world,
+                    source.localX, source.localY,
+                    source.localX + source.localWidth, source.localY + source.localHeight,
+                    screenX, screenY);
+
+                emitScreenQuad(buffer, matrix, corners, source, withAlpha(0xFFFFFF, opacity));
+                drawn++;
+
+                continue;
+            }
 
             /* 3D layers are depth-tested quads: the GPU interpolates the plane's true depth, so a
              * layer crossing another one is resolved per pixel instead of by whole-layer order. */
@@ -511,6 +617,26 @@ public final class CompViewportRenderer
         }
 
         return drawn;
+    }
+
+    /** Emits a screen-fixed layer quad; UVs match the layer-local raster (top row is v = 1). */
+    private static void emitScreenQuad(BufferBuilder buffer, Matrix4f matrix, float[] quad,
+                                       CompLayerSourceCache.Entry source, int color)
+    {
+        RenderSystem.setShader(GameRenderer::getPositionTexColorProgram);
+        RenderSystem.setShaderTexture(0, source.texture.color.id);
+        buffer.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_TEXTURE_COLOR);
+
+        buffer.vertex(matrix, quad[0], quad[1], 0F).texture(0F, 1F).color(color).next();
+        buffer.vertex(matrix, quad[2], quad[3], 0F).texture(1F, 1F).color(color).next();
+        buffer.vertex(matrix, quad[4], quad[5], 0F).texture(1F, 0F).color(color).next();
+
+        buffer.vertex(matrix, quad[0], quad[1], 0F).texture(0F, 1F).color(color).next();
+        buffer.vertex(matrix, quad[4], quad[5], 0F).texture(1F, 0F).color(color).next();
+        buffer.vertex(matrix, quad[6], quad[7], 0F).texture(0F, 0F).color(color).next();
+
+        BufferRenderer.drawWithGlobalProgram(buffer.end());
+        BufferRenderer.resetCurrentVertexBuffer();
     }
 
     /** Approximate on-screen size of a layer's projected diagonal. */
@@ -659,15 +785,6 @@ public final class CompViewportRenderer
         return projected == null ? null : projected.add(screenX, screenY);
     }
 
-    private static float depthOf(CompRenderContext context, CompViewportCamera camera, CompLayer layer)
-    {
-        Vector3f origin = new Vector3f();
-
-        CompScene.world(context, layer).transformPosition(origin);
-
-        return camera.depthOf(origin);
-    }
-
     public static int withAlpha(int rgb, float alpha)
     {
         int a = Math.max(0, Math.min(255, Math.round(alpha * 255F)));
@@ -681,6 +798,9 @@ public final class CompViewportRenderer
      * The layer's four content corners in screen pixels (TL, TR, BR, BL), or null when the layer is
      * behind the camera. Shared by the selection overlay and the hit test, so what is drawn and what
      * is clickable can never disagree.
+     *
+     * <p>AE 2D layers are screen-fixed: their quad comes from the viewport fit of the composition
+     * rectangle, not from the orbit camera — exactly like {@link #drawLayers} draws them.</p>
      */
     public static float[] layerQuad(CompRenderContext context, CompLayer layer, CompViewportCamera camera,
                                     float screenX, float screenY)
@@ -690,6 +810,12 @@ public final class CompViewportRenderer
         float x = -width * layer.anchorX;
         float y = -height * layer.anchorY;
         Matrix4f world = CompScene.world(context, layer);
+
+        if (!CompScene.cameraAffects(context, layer))
+        {
+            return screenFixedQuad(context, camera, world, x, y, x + width, y + height, screenX, screenY);
+        }
+
         float[] corners = new float[8];
 
         for (int i = 0; i < 4; i++)
@@ -711,11 +837,15 @@ public final class CompViewportRenderer
     }
 
     /**
-     * Topmost layer under the cursor. Depth sorted so the nearest layer wins, exactly like the paint
-     * order used by {@link #drawLayers}.
+     * Topmost layer under the cursor, in the exact order the workspace paints.
+     *
+     * <p>The list is sorted once with the same run rules as {@link #drawLayers}, then walked from
+     * the last painted layer backwards: the first hit is the one on top. Screen-fixed 2D layers are
+     * tested with their fit quad, so clicking a 2D layer cannot miss because the orbit camera
+     * happens to point somewhere else. {@link #pick} is kept as a compatibility alias.</p>
      */
-    public static CompLayer pick(CompRenderContext context, CompViewportCamera camera, float screenX, float screenY,
-                                 float mouseX, float mouseY)
+    public static CompLayer layerAt(CompRenderContext context, CompViewportCamera camera, float screenX, float screenY,
+                                    float mouseX, float mouseY)
     {
         List<CompLayer> candidates = new ArrayList<>();
 
@@ -735,12 +865,12 @@ public final class CompViewportRenderer
             candidates.add(layer);
         }
 
-        candidates.sort((a, b) -> Float.compare(depthOf(context, camera, a), depthOf(context, camera, b)));
+        sortByViewRuns(context, candidates, camera.position, camera.forward);
 
-        CompLayer hit = null;
-
-        for (CompLayer layer : candidates)
+        for (int index = candidates.size() - 1; index >= 0; index--)
         {
+            CompLayer layer = candidates.get(index);
+
             if ("null".equals(layer.type))
             {
                 Vector3f origin = new Vector3f();
@@ -751,7 +881,7 @@ public final class CompViewportRenderer
 
                 if (point != null && Math.abs(point.x + screenX - mouseX) <= 10F && Math.abs(point.y + screenY - mouseY) <= 10F)
                 {
-                    hit = layer;
+                    return layer;
                 }
 
                 continue;
@@ -761,11 +891,19 @@ public final class CompViewportRenderer
 
             if (quad != null && insideQuad(mouseX, mouseY, quad))
             {
-                hit = layer;
+                return layer;
             }
         }
 
-        return hit;
+        return null;
+    }
+
+    /** @deprecated use {@link #layerAt} — kept for the existing editor call sites. */
+    @Deprecated
+    public static CompLayer pick(CompRenderContext context, CompViewportCamera camera, float screenX, float screenY,
+                                 float mouseX, float mouseY)
+    {
+        return layerAt(context, camera, screenX, screenY, mouseX, mouseY);
     }
 
     private static boolean insideQuad(float x, float y, float[] corners)

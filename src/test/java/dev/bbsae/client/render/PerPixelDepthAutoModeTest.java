@@ -122,6 +122,60 @@ public class PerPixelDepthAutoModeTest
             DepthPlanePixelHarness.project(true), crossing)));
     }
 
+    /**
+     * P1 regression: only real 3D pixel layers may turn AUTO on. A 2D layer (even a rotated,
+     * overlapping one), a hidden/trimmed/soloed-out 3D layer, or a control layer without pixels
+     * cannot produce the crossing AUTO exists for.
+     */
+    @Test
+    public void autoOnlyCountsReal3DPixelLayers()
+    {
+        CompProject project = DepthPlanePixelHarness.project(false);
+
+        /* Two crossing 3D planes: AUTO on. */
+        CompDocument crossing = PerPixelDepthAutoPolicyTest.crossingScene();
+
+        assertTrue(CompRenderer.needsPerPixelDepthAuto(DepthPlanePixelHarness.context(project, crossing)));
+
+        /* Demote one plane to 2D: its bounds still overlap, but it is screen-fixed, so painter
+         * order is exact again. */
+        crossing.getLayer("high").threeD = false;
+        assertFalse(CompRenderer.needsPerPixelDepthAuto(DepthPlanePixelHarness.context(project, crossing)),
+            "a 2D layer cannot cross a 3D plane");
+
+        /* The same scene in legacy logic must ignore the 2D layer too: AUTO counts only threeD. */
+        assertFalse(CompRenderer.needsPerPixelDepthAuto(DepthPlanePixelHarness.context(
+            DepthPlanePixelHarness.project(true), crossing)),
+            "AUTO is a 3D-pixel concept even in legacy projection mode");
+
+        /* Hidden, trimmed out and soloed out 3D layers are not part of the frame. */
+        CompDocument visible = PerPixelDepthAutoPolicyTest.crossingScene();
+
+        visible.getLayer("high").visible = false;
+        assertFalse(CompRenderer.needsPerPixelDepthAuto(DepthPlanePixelHarness.context(project, visible)));
+
+        CompDocument trimmed = PerPixelDepthAutoPolicyTest.crossingScene();
+
+        trimmed.getLayer("high").in = 5F;
+        trimmed.getLayer("high").out = 6F;
+        assertFalse(CompRenderer.needsPerPixelDepthAuto(DepthPlanePixelHarness.context(project, trimmed)),
+            "the frame time is 0s, outside the layer's trim");
+
+        CompDocument soloedOut = PerPixelDepthAutoPolicyTest.crossingScene();
+
+        soloedOut.getLayer("low").solo = true;
+        assertFalse(CompRenderer.needsPerPixelDepthAuto(DepthPlanePixelHarness.context(project, soloedOut)),
+            "only the soloed layer is visible, so there is nothing to cross");
+
+        /* A null layer owns no pixels, even when forced 3D. */
+        CompDocument control = PerPixelDepthAutoPolicyTest.crossingScene();
+
+        control.getLayer("high").type = "null";
+        control.getLayer("high").threeD = true;
+        assertFalse(CompRenderer.needsPerPixelDepthAuto(DepthPlanePixelHarness.context(project, control)));
+        assertFalse(CompScene.hasPixels(control.getLayer("high")));
+    }
+
     /* --------------------------------------------------------- gating table */
 
     @Test

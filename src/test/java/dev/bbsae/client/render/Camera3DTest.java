@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -152,16 +154,18 @@ public class Camera3DTest
         assertEquals(1F, view.zoom, 0.001F, "focal-distance camera must be 1:1");
     }
 
+    /**
+     * AE logic: a 2D layer is attached to the composition rectangle, not to the camera. A tilted
+     * camera must not move it, and its model matrix must be its plain world matrix (no view2D).
+     */
     @Test
-    public void a2DLayerUsesView2DEvenWhenTheCameraIsTilted()
+    public void a2DLayerIgnoresTheTiltedCameraInAeLogic()
     {
         CompDocument doc = document();
         CompProject project = project(doc);
         CompLayer camera = camera(doc);
 
-        /* A free camera: rotationX/Y must actually tilt the view. With the default look-at target
-         * the yaw/pitch fields are ignored, so this test would only have been "tilted" because the
-         * camera's own dolly z used to count as content depth (fixed in CompScene.hasDepth). */
+        /* A free camera: rotationX/Y must actually tilt the view. */
         camera.cameraLookAt = false;
         camera.rotationX = 25F;
         camera.rotationY = 20F;
@@ -173,14 +177,53 @@ public class Camera3DTest
 
         assertTrue(CompScene.spatial(ctx), "tilt must switch the composition into spatial mode");
         assertTrue(!CompScene.usePerspective(ctx, flat), "a 2D layer never uses perspective");
+        assertTrue(!CompScene.cameraAffects(ctx, flat), "AE: the camera does not affect a 2D layer");
 
         org.joml.Vector3f point = new org.joml.Vector3f(100F, 50F, 0F);
         org.joml.Vector3f modelPoint = CompScene.model(ctx, flat).transformPosition(new org.joml.Vector3f(point));
-        org.joml.Vector3f viewPoint = new org.joml.Matrix4f(CompScene.camera(ctx).view2D)
+        org.joml.Vector3f worldPoint = CompScene.world(ctx, flat).transformPosition(new org.joml.Vector3f(point));
+
+        assertEquals(worldPoint.x, modelPoint.x, 0.01F, "2D model must be the world matrix");
+        assertEquals(worldPoint.y, modelPoint.y, 0.01F, "2D model must be the world matrix");
+
+        Vector2f projected = CompScene.project(ctx, flat, 100F, 50F, 0F);
+
+        assertEquals(960F + 100F, projected.x, 0.01F, "tilt/pan/zoom must not move a 2D layer");
+        assertEquals(540F + 50F, projected.y, 0.01F, "tilt/pan/zoom must not move a 2D layer");
+    }
+
+    /** The legacy switch restores the old look: a 2D layer is dragged along by the camera view. */
+    @Test
+    public void legacyLogicStillAppliesTheCameraViewToA2DLayer()
+    {
+        CompDocument doc = document();
+        CompProject project = project(doc);
+
+        project.settings.legacy3DLogic = true;
+
+        CompLayer camera = camera(doc);
+
+        camera.cameraLookAt = false;
+        camera.rotationX = 25F;
+        camera.rotationY = 20F;
+        doc.layers.add(camera);
+        doc.activeCameraId = camera.id;
+
+        CompRenderContext ctx = context(project, doc);
+        CompLayer flat = card(doc, false);
+
+        assertTrue(CompScene.legacy3D(ctx));
+        assertTrue(CompScene.cameraAffects(ctx, flat), "legacy: every content layer follows the camera");
+        assertTrue(CompScene.usePerspective(ctx, flat),
+            "legacy: a spatial frame projects the 2D layer through the perspective camera");
+
+        org.joml.Vector3f point = new org.joml.Vector3f(100F, 50F, 0F);
+        org.joml.Vector3f modelPoint = CompScene.model(ctx, flat).transformPosition(new org.joml.Vector3f(point));
+        org.joml.Vector3f viewPoint = new org.joml.Matrix4f(CompScene.camera(ctx).view)
             .mul(CompScene.world(ctx, flat)).transformPosition(new org.joml.Vector3f(point));
 
-        assertEquals(viewPoint.x, modelPoint.x, 0.1F);
-        assertEquals(viewPoint.y, modelPoint.y, 0.1F);
+        assertEquals(viewPoint.x, modelPoint.x, 0.01F);
+        assertEquals(viewPoint.y, modelPoint.y, 0.01F);
     }
 
     @Test
@@ -210,8 +253,12 @@ public class Camera3DTest
         assertTrue(distanceNear > distanceFlat + 1F, "positive z must magnify");
     }
 
+    /**
+     * AE semantics: pan/zoom move the 3D layers, not a 2D layer. The 2D layer's composition pixel
+     * is its world pixel, so it stays where the stack put it.
+     */
     @Test
-    public void panAndZoomDriveBothViews()
+    public void panAndZoomDriveThe3DViewButNotA2DLayer()
     {
         CompDocument doc = document();
         CompProject project = project(doc);
@@ -219,6 +266,9 @@ public class Camera3DTest
 
         camera.x = doc.width * 0.5F + 100F;
         camera.cameraZ /= 2F;
+        /* Free camera: the view stays straight down -Z, so pan/zoom are pure 2D-view changes and
+         * a point on the z = 0 plane must land on the same pixel in both projections. */
+        camera.cameraLookAt = false;
         doc.layers.add(camera);
         doc.activeCameraId = camera.id;
 
@@ -227,16 +277,22 @@ public class Camera3DTest
 
         assertEquals(2F, view.zoom, 0.001F, "half the distance doubles the zoom");
 
-        CompLayer flat = card(doc, false);
-        Vector2f centre = CompScene.project(ctx, flat, 0F, 0F, 0F);
+        CompLayer deep = card(doc, true);
+        Vector2f deepCentre = CompScene.project(ctx, deep, 0F, 0F, 0F);
 
-        /* Camera moved right by 100 at 2x zoom: the layer centre must land 200px left of centre. */
-        assertEquals(doc.width * 0.5F - 200F, centre.x, EPS);
-        assertEquals(doc.height * 0.5F, centre.y, EPS);
+        /* Camera moved right by 100 at 2x zoom: the 3D layer centre must land 200px left of centre. */
+        assertEquals(doc.width * 0.5F - 200F, deepCentre.x, EPS);
+        assertEquals(doc.height * 0.5F, deepCentre.y, EPS);
+
+        CompLayer flat = card(doc, false);
+        Vector2f flatCentre = CompScene.project(ctx, flat, 0F, 0F, 0F);
+
+        assertEquals(doc.width * 0.5F, flatCentre.x, 0.01F, "a 2D layer ignores camera pan");
+        assertEquals(doc.height * 0.5F, flatCentre.y, 0.01F, "a 2D layer ignores camera zoom");
     }
 
     @Test
-    public void rollTurnsTheWorldTheOtherWay()
+    public void rollTurnsThe3DWorldButNotA2DLayer()
     {
         CompDocument doc = document();
         CompProject project = project(doc);
@@ -247,18 +303,20 @@ public class Camera3DTest
         doc.activeCameraId = camera.id;
 
         CompRenderContext ctx = context(project, doc);
-        CompLayer flat = card(doc, false);
-        Vector2f centre = CompScene.project(ctx, flat, 0F, 0F, 0F);
-
-        assertEquals(doc.width * 0.5F, centre.x, EPS);
-        assertEquals(doc.height * 0.5F, centre.y, EPS);
+        CompLayer deep = card(doc, true);
 
         /* Roll the camera 90° clockwise: the world appears to turn counter-clockwise, so a point
          * that was at 3 o'clock moves to 12 o'clock — above the frame centre. */
-        Vector2f right = CompScene.project(ctx, flat, 100F, 0F, 0F);
+        Vector2f right = CompScene.project(ctx, deep, 100F, 0F, 0F);
 
         assertEquals(doc.width * 0.5F, right.x, 0.1F);
         assertEquals(doc.height * 0.5F - 100F, right.y, 0.1F);
+
+        CompLayer flat = card(doc, false);
+        Vector2f flatRight = CompScene.project(ctx, flat, 100F, 0F, 0F);
+
+        assertEquals(doc.width * 0.5F + 100F, flatRight.x, 0.01F, "roll must not rotate a 2D layer");
+        assertEquals(doc.height * 0.5F, flatRight.y, 0.01F, "roll must not rotate a 2D layer");
     }
 
     @Test
@@ -313,11 +371,11 @@ public class Camera3DTest
     }
 
     /**
-     * A 2D layer is screen-attached: it follows pan / zoom / roll, but a tilted camera must not
-     * move it (it has no depth to project).
+     * AE logic: a 2D layer sits on the composition rectangle. Neither a tilt nor a pan/zoom may
+     * move it; the same camera moves a 3D layer (covered by the tests above).
      */
     @Test
-    public void twoDLayerFollowsPanZoomButIgnoresTilt()
+    public void twoDLayerIgnoresPanZoomAndTilt()
     {
         CompDocument doc = document();
         CompProject project = project(doc);
@@ -325,6 +383,7 @@ public class Camera3DTest
 
         camera.rotationX = 25F;
         camera.rotationY = 20F;
+        camera.cameraLookAt = false;
         doc.layers.add(camera);
         doc.activeCameraId = camera.id;
 
@@ -332,8 +391,10 @@ public class Camera3DTest
         CompLayer flat = card(doc, false);
         Vector2f tilted = CompScene.project(tiltedCtx, flat, 0F, 0F, 0F);
 
-        assertEquals(doc.width * 0.5F, tilted.x, 0.1F, "tilt must not move a 2D layer");
-        assertEquals(doc.height * 0.5F, tilted.y, 0.1F, "tilt must not move a 2D layer");
+        assertTrue(CompScene.spatial(tiltedCtx), "the pose must really be tilted");
+
+        assertEquals(doc.width * 0.5F, tilted.x, 0.01F, "tilt must not move a 2D layer");
+        assertEquals(doc.height * 0.5F, tilted.y, 0.01F, "tilt must not move a 2D layer");
 
         camera.rotationX = 0F;
         camera.rotationY = 0F;
@@ -342,7 +403,8 @@ public class Camera3DTest
         CompRenderContext pannedCtx = context(project, doc);
         Vector2f panned = CompScene.project(pannedCtx, flat, 0F, 0F, 0F);
 
-        assertEquals(doc.width * 0.5F - 200F, panned.x, 0.1F, "pan must move a 2D layer");
+        assertEquals(doc.width * 0.5F, panned.x, 0.01F, "pan must not move a 2D layer");
+        assertEquals(doc.height * 0.5F, panned.y, 0.01F, "pan must not move a 2D layer");
     }
 
     @Test
@@ -409,23 +471,88 @@ public class Camera3DTest
     }
 
     /**
-     * A camera is a view, not content: neither the eye icon nor the trim sliders may switch the
-     * view off. Both used to, and both looked like "the compositor randomly reset itself".
+     * The active-camera choice is frame-local: a camera only overrides while it is a visible
+     * camera inside its in/out range. Hiding or trimming it must stop it from driving the view
+     * (otherwise the camera picker would lie about what is rendering).
      */
     @Test
-    public void cameraStaysActiveWhenHiddenOrTrimmed()
+    public void activeCameraMustBeUsableAtThisFrame()
     {
         CompDocument doc = document();
         CompLayer camera = camera(doc);
 
+        doc.layers.add(camera);
+
+        assertSame(camera, doc.activeCamera(0F), "visible and inside the trim");
+
+        camera.visible = false;
+
+        assertNull(doc.activeCamera(0F), "hidden camera cannot drive the frame");
+
+        camera.visible = true;
         camera.in = 4F;
         camera.out = 6F;
+
+        assertNull(doc.activeCamera(0F), "trimmed out at 0s");
+        assertSame(camera, doc.activeCamera(5F), "inside the trim");
+        assertNull(doc.activeCamera(9F), "trimmed out at 9s");
+    }
+
+    /** An invalid activeCameraId falls through to the topmost usable camera. */
+    @Test
+    public void invalidActiveCameraFallsBackToTheTopmostUsableCamera()
+    {
+        CompDocument doc = document();
+        CompLayer bottom = camera(doc);
+        CompLayer top = new CompLayer("camera-top", "Camera Top", "camera");
+
+        top.threeD = true;
+        top.camera3D = true;
+        top.x = 500F;
+        top.y = 400F;
+        top.cameraZ = CompCamera.focalFor(50F, doc.height);
+        top.z = top.cameraZ;
+        top.cameraTargetX = 500F;
+        top.cameraTargetY = 400F;
+        top.cameraTargetZ = 0F;
+        top.cameraFov = 50F;
+        top.out = doc.duration;
+        doc.layers.add(bottom);
+        doc.layers.add(top);
+
+        assertSame(top, doc.activeCamera(0F), "no explicit choice: the topmost visible camera wins");
+
+        doc.activeCameraId = bottom.id;
+        assertSame(bottom, doc.activeCamera(0F), "a valid explicit choice wins over document order");
+
+        bottom.visible = false;
+        assertSame(top, doc.activeCamera(0F), "the explicit choice became unusable this frame");
+
+        top.visible = false;
+        assertNull(doc.activeCamera(0F), "no usable camera left");
+    }
+
+    @Test
+    public void noUsableCameraFallsBackToTheDefaultView()
+    {
+        CompDocument doc = document();
+        CompProject project = project(doc);
+        CompLayer camera = camera(doc);
+
         camera.visible = false;
         doc.layers.add(camera);
 
-        assertTrue(doc.activeCamera(0F) == camera, "hidden and trimmed out: still the view at 0s");
-        assertTrue(doc.activeCamera(5F) == camera, "inside the trim");
-        assertTrue(doc.activeCamera(9F) == camera, "trimmed out at 9s");
+        CompRenderContext ctx = context(project, doc);
+        CompCamera view = CompScene.camera(ctx);
+
+        assertTrue(!view.hasCamera, "a hidden camera must not count as the frame's camera");
+        assertEquals(1F, view.zoom, 0.001F, "the fallback view is the default 1:1 framing");
+
+        CompLayer deep = card(doc, true);
+        Vector2f centre = CompScene.project(ctx, deep, 0F, 0F, 0F);
+
+        assertEquals(doc.width * 0.5F, centre.x, EPS);
+        assertEquals(doc.height * 0.5F, centre.y, EPS);
     }
 
     /**

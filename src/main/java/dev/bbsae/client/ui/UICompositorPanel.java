@@ -594,6 +594,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private int ctStartY;
             private float ctStartDistance;
             private float ctStartRadius;
+            private float ctStartZoom = 1F;
             private final org.joml.Vector3f ctStartEye = new org.joml.Vector3f();
             private final org.joml.Vector3f ctStartTarget = new org.joml.Vector3f();
             private final org.joml.Vector3f ctStartRight = new org.joml.Vector3f(1F, 0F, 0F);
@@ -2805,44 +2806,12 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 try
                 {
-                    if (!layer.threeD)
-                    {
-                        /* 2D layers are screen-attached: CompScene.project uses view2D, so the
-                         * inverse has to use view2D · world as well (CompScene.model is comp-space
-                         * for a spatial 2D layer). */
-                        CompCamera camera = CompScene.camera(rc);
-                        org.joml.Matrix4f model = new org.joml.Matrix4f(camera.view2D)
-                            .mul(CompScene.world(rc, layer));
-                        org.joml.Vector3f local = new org.joml.Vector3f(compX, compY, 0F);
-
-                        new org.joml.Matrix4f(model).invert().transformPosition(local);
-
-                        return new float[] {local.x, local.y};
-                    }
-
-                    CompCamera camera = CompScene.camera(rc);
-                    org.joml.Vector3f rayA = camera.unproject(compX, compY, UICompositorPanel.this.doc.width,
-                        UICompositorPanel.this.doc.height, 0F);
-                    org.joml.Vector3f rayB = camera.unproject(compX, compY, UICompositorPanel.this.doc.width,
-                        UICompositorPanel.this.doc.height, 1000F);
-                    org.joml.Matrix4f world = CompScene.world(rc, layer);
-                    org.joml.Vector3f origin = world.transformPosition(new org.joml.Vector3f(0F, 0F, 0F));
-                    org.joml.Vector3f normal = world.transformDirection(new org.joml.Vector3f(0F, 0F, 1F)).normalize();
-                    org.joml.Vector3f direction = new org.joml.Vector3f(rayB).sub(rayA);
-                    float denominator = direction.dot(normal);
-
-                    if (Math.abs(denominator) < 0.00001F)
-                    {
-                        return null;
-                    }
-
-                    float t = new org.joml.Vector3f(origin).sub(rayA).dot(normal) / denominator;
-                    org.joml.Vector3f hit = new org.joml.Vector3f(rayA).fma(t, direction);
-                    org.joml.Vector3f local = new org.joml.Vector3f(hit);
-
-                    new org.joml.Matrix4f(world).invert().transformPosition(local);
-
-                    return new float[] {local.x, local.y};
+                    /* One shared inverse: CompScene knows whether this layer is screen-fixed
+                     * (AE 2D: composition pixels are the layer's world pixels), flat 3D
+                     * (view2D + ray onto the plane) or perspective (camera ray). The editor used
+                     * to re-derive those inverses here, which is how gizmos drifted from the
+                     * rendered frame whenever the camera moved. */
+                    return CompScene.compToLayerLocal(rc, layer, compX, compY);
                 }
                 catch (RuntimeException e)
                 {
@@ -2979,12 +2948,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 try
                 {
-                    Matrix4f world = CompRenderer.worldMatrix(UICompositorPanel.this.doc, layer, renderContext, new java.util.HashSet<>());
-                    Vector3f point = new Vector3f(compX, compY, 0F);
+                    float[] local = CompScene.compToLayerLocal(renderContext, layer, compX, compY);
 
-                    new Matrix4f(world).invert().transformPosition(point);
-
-                    return new float[] {point.x, point.y};
+                    return local == null ? new float[] {0F, 0F} : local;
                 }
                 catch (RuntimeException e)
                 {
@@ -3016,11 +2982,18 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (!layer.threeD)
                 {
-                    /* Match CompScene.project(): 2D layers go through view2D · world, not the
-                     * perspective camera. Using the perspective unproject here made the scale
-                     * pivot drift whenever the camera was zoomed or panned. */
-                    CompCamera camera = CompScene.camera(renderContext);
-                    Matrix4f model = new Matrix4f(camera.view2D).mul(this.startWorld);
+                    /* 2D handle drag: invert the drag-start transform, not the live one. In AE
+                     * logic a 2D layer is screen-fixed (no camera view at all); legacy mode still
+                     * folds in view2D. */
+                    Matrix4f model = new Matrix4f(this.startWorld);
+
+                    if (CompScene.cameraAffects(renderContext, layer))
+                    {
+                        CompCamera camera = CompScene.camera(renderContext);
+
+                        model = new Matrix4f(camera.view2D).mul(this.startWorld);
+                    }
+
                     Vector3f point = new Vector3f(screenX, screenY, 0F);
 
                     new Matrix4f(model).invert().transformPosition(point);
@@ -3706,10 +3679,14 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.ctStartX = context.mouseX;
                 this.ctStartY = context.mouseY;
                 this.ctStartEye.set(CompCamera.eyeOf(camera, UICompositorPanel.this.getFrame(), doc.height));
+                this.ctStartZoom = Math.max(0.0001F, view.zoom);
                 this.ctStartDistance = Math.max(1F, view.distance);
                 this.ctStartRight.set(view.right);
                 this.ctStartUp.set(view.up);
                 UICompositorPanel.this.cameraToolDragging = true;
+                /* One drag = one undo step; the sampler alone merged camera and layer edits made
+                 * within the same second. */
+                UICompositorPanel.this.beginAction("摄像机工具");
 
                 if (camera.cameraLookAt)
                 {
@@ -3781,8 +3758,13 @@ public class UICompositorPanel extends UIDashboardPanel
                     }
                     case CT_TRACK_XY ->
                     {
-                        org.joml.Vector3f delta = new org.joml.Vector3f(this.ctStartRight).mul(dx / scale)
-                            .add(new org.joml.Vector3f(this.ctStartUp).mul(-dy / scale));
+                        /* Screen delta -> composition pixels (fit) -> camera-space units at the point
+                         * of interest (view zoom). Without the zoom factor, Track XY ran ahead of the
+                         * cursor after any dolly; AE/effectcraft use distance/focal (1/zoom) here. */
+                        float worldPerPixel = dev.bbsae.client.render.CameraToolMath.worldPerScreenPixel(
+                            scale, this.ctStartZoom);
+                        org.joml.Vector3f delta = new org.joml.Vector3f(this.ctStartRight).mul(dx * worldPerPixel)
+                            .add(new org.joml.Vector3f(this.ctStartUp).mul(-dy * worldPerPixel));
                         org.joml.Vector3f eye = new org.joml.Vector3f(this.ctStartEye).add(delta);
                         org.joml.Vector3f target = new org.joml.Vector3f(this.ctStartTarget).add(delta);
 
@@ -4390,11 +4372,13 @@ public class UICompositorPanel extends UIDashboardPanel
                 float screenY = (context.mouseY - this.area.y - oy) / scale;
                 CompRenderContext renderContext = new CompRenderContext(project, doc, UICompositorPanel.this.time, null, null, null);
                 CompCamera camera = CompScene.camera(renderContext);
-                /* Screen -> composition space. With a panned/zoomed camera the on-screen position
-                 * of a 2D layer is not its comp position, so the hit test has to undo the view. */
+                /* This unprojection is only the composition pixel for layers the camera still
+                 * projects (legacy flat layers). AE 2D layers are screen-fixed, so their hit
+                 * coordinate is screenX/screenY directly — unprojecting them made picking drift
+                 * with the camera while the picture stayed put. */
                 org.joml.Vector3f compPoint = camera.unproject(screenX, screenY, doc.width, doc.height, 0F);
-                float compX = compPoint.x;
-                float compY = compPoint.y;
+                float cameraCompX = compPoint.x;
+                float cameraCompY = compPoint.y;
 
                 for (int i = doc.layers.size() - 1; i >= 0; i--)
                 {
@@ -4443,20 +4427,18 @@ public class UICompositorPanel extends UIDashboardPanel
                         continue;
                     }
 
-                    Matrix4f world;
+                    /* Shared inverse: screen-fit composition pixels -> layer-local point. An AE 2D
+                     * layer is screen-fixed, so its composition pixel is the pixel under the
+                     * cursor; a legacy 2D layer still goes through the camera (cameraCompX/Y). */
+                    boolean cameraAffects = CompScene.cameraAffects(renderContext, layer);
+                    float hitX = cameraAffects ? cameraCompX : screenX;
+                    float hitY = cameraAffects ? cameraCompY : screenY;
+                    float[] local = CompScene.compToLayerLocal(renderContext, layer, hitX, hitY);
 
-                    try
-                    {
-                        world = CompRenderer.worldMatrix(doc, layer, renderContext, new java.util.HashSet<>());
-                    }
-                    catch (RuntimeException e)
+                    if (local == null)
                     {
                         continue;
                     }
-
-                    Vector3f point = new Vector3f(compX, compY, 0F);
-
-                    new Matrix4f(world).invert().transformPosition(point);
 
                     float bw;
                     float bh;
@@ -4485,7 +4467,7 @@ public class UICompositorPanel extends UIDashboardPanel
                         by = -bh * layer.anchorY;
                     }
 
-                    if (point.x >= bx && point.x <= bx + bw && point.y >= by && point.y <= by + bh)
+                    if (local[0] >= bx && local[0] <= bx + bw && local[1] >= by && local[1] <= by + bh)
                     {
                         return layer;
                     }
@@ -4951,6 +4933,14 @@ public class UICompositorPanel extends UIDashboardPanel
                     UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "视图距离 %.0f", camera.distance));
 
                     return true;
+                }
+
+                /* Camera dolly/fov only while looking through the camera. A plain 2D preview
+                 * wheel used to edit the shot camera (and insert keyframes) silently, so the
+                 * exported frame differed from what the user saw before scrolling. */
+                if (!UICompositorPanel.this.cameraPreviewMode)
+                {
+                    return super.subMouseScrolled(context);
                 }
 
                 CompLayer camera = UICompositorPanel.this.doc.activeCamera(UICompositorPanel.this.time);
@@ -10753,6 +10743,15 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* Adjustment layers always process the whole composition; the 3D switch would be a
+         * silent no-op (audit P1-2). Refuse it with an explanation instead. */
+        if ("adjustment".equals(layer.type))
+        {
+            this.setStatus("调整层始终作用于整幅合成：3D 开关对它无效（如需空间化请用 3D 图层+效果）");
+
+            return;
+        }
+
         this.beginAction("切换 3D 图层");
         layer.threeD = !layer.threeD;
 
@@ -15029,6 +15028,15 @@ public class UICompositorPanel extends UIDashboardPanel
          * whether the camera affects a layer at all. */
         threeD.tooltip(IKey.constant("AE 语义：只有开启 3D 的图层跟随摄像机透视；2D 图层始终屏幕附着。"
             + "需要 0.91 之前的全图层 3D 行为，可在 设置 → 开发者 切换 3D 逻辑"));
+
+        if ("adjustment".equals(layer.type))
+        {
+            /* The renderer applies adjustment effects to the whole accumulation buffer, so a
+             * "3D" adjustment has no plane to project; disabling the switch is honest. */
+            threeD.setEnabled(false);
+            threeD.tooltip(IKey.constant("调整层始终作用于整幅合成：3D 开关无效"));
+        }
+
         section.fields.add(threeD);
 
         if (layer.threeD && !layer.isCamera())

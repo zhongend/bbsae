@@ -2,11 +2,15 @@ package dev.bbsae.comp;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
 import dev.bbsae.BbsAeAddon;
 import mchorse.bbs_mod.utils.pose.Transform;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,6 +21,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
 /**
@@ -37,6 +42,28 @@ public final class CompStore
         .setPrettyPrinting()
         .disableHtmlEscaping()
         .create();
+
+    /**
+     * Compact serializer for undo snapshots. They are never shown, diffed or edited — only parsed
+     * back — so the pretty printer would just add whitespace to every per-second snapshot and to
+     * the undo memory budget.
+     */
+    private static final Gson SNAPSHOT_GSON = new GsonBuilder()
+        .disableHtmlEscaping()
+        .create();
+
+    /** {@code -Dbbsae.debugSave=true} logs save/snapshot segment timings. Off by default. */
+    private static final boolean DEBUG_SAVE = Boolean.getBoolean("bbsae.debugSave");
+
+    /* Test instrumentation (audit P0-3). Cheap counters so the tests can prove that a save never
+     * builds a JSON String and never parses the project a second time; they are not read at
+     * runtime. */
+    private static final AtomicLong FULL_PARSES = new AtomicLong();
+    private static final AtomicLong STRING_SERIALIZATIONS = new AtomicLong();
+    private static final AtomicLong STREAM_WRITES = new AtomicLong();
+    private static final AtomicLong STREAM_SCANS = new AtomicLong();
+    private static final AtomicLong TRACK_REBUILDS = new AtomicLong();
+    private static final AtomicLong TRACK_SKIPS = new AtomicLong();
 
     private static final Map<String, CachedProject> CACHE = new ConcurrentHashMap<>();
     private static final Map<String, CachedDocument> DOCUMENT_CACHE = new ConcurrentHashMap<>();
@@ -78,6 +105,52 @@ public final class CompStore
         rootOverride = null;
         lastSaveError = null;
         reload();
+    }
+
+    /** Snapshot of the P0-3 work counters; test-only and never read at runtime. */
+    static final class SaveIoStats
+    {
+        final long fullParses;
+        final long stringSerializations;
+        final long streamWrites;
+        final long streamScans;
+        final long trackRebuilds;
+        final long trackSkips;
+
+        private SaveIoStats(long fullParses, long stringSerializations, long streamWrites,
+            long streamScans, long trackRebuilds, long trackSkips)
+        {
+            this.fullParses = fullParses;
+            this.stringSerializations = stringSerializations;
+            this.streamWrites = streamWrites;
+            this.streamScans = streamScans;
+            this.trackRebuilds = trackRebuilds;
+            this.trackSkips = trackSkips;
+        }
+    }
+
+    static SaveIoStats saveIoStatsForTests()
+    {
+        return new SaveIoStats(FULL_PARSES.get(), STRING_SERIALIZATIONS.get(), STREAM_WRITES.get(),
+            STREAM_SCANS.get(), TRACK_REBUILDS.get(), TRACK_SKIPS.get());
+    }
+
+    static void resetSaveIoStatsForTests()
+    {
+        FULL_PARSES.set(0L);
+        STRING_SERIALIZATIONS.set(0L);
+        STREAM_WRITES.set(0L);
+        STREAM_SCANS.set(0L);
+        TRACK_REBUILDS.set(0L);
+        TRACK_SKIPS.set(0L);
+    }
+
+    /** Test seam for the streaming validator used to verify a freshly written temporary file. */
+    static boolean isReadableProjectFileForTests(Path path)
+    {
+        ProjectHeader header = inspectProjectFile(path);
+
+        return header != null && header.isProject();
     }
 
     /**
@@ -217,6 +290,8 @@ public final class CompStore
             }
 
             String json = Files.readString(path, StandardCharsets.UTF_8);
+
+            FULL_PARSES.incrementAndGet();
             CompProject project = GSON.fromJson(json, CompProject.class);
 
             if (project == null)
@@ -257,7 +332,12 @@ public final class CompStore
      *
      * <p>Keyframe channels are transient and only exist in memory; they reach JSON through
      * {@link CompLayer#saveTracks()}. Snapshotting without this call silently produced undo
-     * states with no animation at all, so every undo wiped transform/effect keyframes.</p>
+     * states with no animation at all, so every undo wiped transform/effect keyframes. The
+     * write-back is still performed for every layer that has keys (or stale serialized fields);
+     * only the provably empty layers skip it — see {@link #prepareTracksForWrite(CompProject)}.</p>
+     *
+     * <p>The snapshot uses the compact serializer: it is parsed back by {@link #restore(String)}
+     * and never shown to the user, so pretty-printing it only costs time and undo memory.</p>
      */
     public static synchronized String snapshot(CompProject project)
     {
@@ -266,27 +346,22 @@ public final class CompStore
             return "";
         }
 
-        if (project.comps != null)
-        {
-            for (CompDocument comp : project.comps)
-            {
-                if (comp == null || comp.layers == null)
-                {
-                    continue;
-                }
+        long started = DEBUG_SAVE ? System.nanoTime() : 0L;
+        TrackPass pass = prepareTracksForWrite(project);
+        long prepared = DEBUG_SAVE ? System.nanoTime() : 0L;
+        String json = SNAPSHOT_GSON.toJson(project);
 
-                for (CompLayer layer : comp.layers)
-                {
-                    if (layer != null)
-                    {
-                        layer.ensureInitialized();
-                        layer.saveTracks();
-                    }
-                }
-            }
+        STRING_SERIALIZATIONS.incrementAndGet();
+
+        if (DEBUG_SAVE)
+        {
+            long now = System.nanoTime();
+            BbsAeAddon.LOGGER.info("bbsae snapshot: layers={} rebuilt={} skipped={} chars={} prepare={}ms toJson={}ms total={}ms",
+                pass.layers, pass.rebuilt, pass.skipped, json.length(),
+                millis(started, prepared), millis(prepared, now), millis(started, now));
         }
 
-        return GSON.toJson(project);
+        return json;
     }
 
     /** Rebuilds a project from an undo snapshot (same migration and track hydration as load). */
@@ -299,6 +374,7 @@ public final class CompStore
 
         try
         {
+            FULL_PARSES.incrementAndGet();
             CompProject project = GSON.fromJson(json, CompProject.class);
 
             if (project == null || project.version > CompProject.VERSION)
@@ -338,18 +414,27 @@ public final class CompStore
     /**
      * Saves a project atomically and reports whether the main file was replaced.
      *
-     * <p>Ordering matters and is the fix for the old data-loss path:</p>
+     * <p>The save path is streaming end to end (audit P0-3): the previous file is syntax-scanned
+     * with a {@link JsonReader}, the project is written straight into {@code .tmp}, and that file
+     * is scanned back. No multi-megabyte JSON {@code String} is built and the project is never
+     * parsed a second time — on a 300-layer project that used to cost 300-600ms per gesture on the
+     * render thread.</p>
+     *
+     * <p>Ordering:</p>
      * <ol>
-     *   <li>the project is normalized and the new JSON is parsed back before any file is
-     *       touched;</li>
-     *   <li>the previous file bytes are read into memory (not copied to {@code .bak} yet);</li>
-     *   <li>the JSON is written to {@code .tmp} and atomically moved over the project;</li>
-     *   <li>only after that move succeeds is the previous content written to {@code .bak}.</li>
+     *   <li>the previous file is scanned once (full syntax + header fields); its version is the
+     *       downgrade guard and its readability decides whether it may rotate into {@code .bak};</li>
+     *   <li>the project is normalized in memory and validated directly, without a JSON round-trip;</li>
+     *   <li>the JSON is streamed into {@code .tmp}, then scanned back for syntax, {@code format},
+     *       {@code version} and a non-empty {@code comps} array;</li>
+     *   <li>the previous file is copied to {@code .bak} (bytes only, no parse) and the verified
+     *       temporary file is atomically moved over the project.</li>
      * </ol>
      *
-     * <p>A {@code .bak} failure is logged but never turns a successful main write into a failure,
-     * and a failed save never rotates the backup. A file whose on-disk version is newer than
-     * {@link CompProject#VERSION} is never overwritten (no silent downgrade).</p>
+     * <p>A {@code .bak} failure is logged but never turns a successful main write into a failure.
+     * A file whose on-disk version is newer than {@link CompProject#VERSION} is never overwritten
+     * (no silent downgrade). If the final move fails after the backup copy, {@code .bak} holds a
+     * byte copy of the unchanged main file; it is never replaced with unreadable bytes.</p>
      *
      * @return true when the project file was written; false leaves {@link #lastSaveError()} set
      */
@@ -370,36 +455,24 @@ public final class CompStore
         String id = safe(project.id);
         Path path = file(id);
         Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
+        Path backup = path.resolveSibling(path.getFileName() + ".bak");
+        long started = DEBUG_SAVE ? System.nanoTime() : 0L;
 
         try
         {
-            /* Read the previous file once: it is both the write-back guard (version) and the
-             * .bak source. Doing this twice meant two full reads + two full JSON parses of a
-             * multi-megabyte project on every save (audit P0-3). */
-            byte[] previous = readPrevious(path);
-            int diskVersion = -1;
+            /* One streaming scan replaces the old read-into-byte[] + full parse of the previous
+             * file. It is both the downgrade guard (version) and the "may this rotate into .bak?"
+             * check, and it never allocates the file content on the heap. */
+            ProjectHeader previous = inspectProjectFile(path);
 
-            if (previous != null)
+            if (previous == null && Files.isRegularFile(path))
             {
-                try
-                {
-                    CompProject existing = GSON.fromJson(new String(previous, StandardCharsets.UTF_8), CompProject.class);
-
-                    if (existing != null)
-                    {
-                        diskVersion = existing.version;
-                    }
-                }
-                catch (Exception ignored)
-                {
-                    /* Unreadable old file: readPrevious() already logged; a save is the only way
-                     * the user gets a working project back. */
-                }
+                BbsAeAddon.LOGGER.warn("Could not read previous composition project for backup {}", path);
             }
 
             /* A project loaded by an older build would otherwise overwrite a newer file and lose
              * every field this build does not know about. */
-            if (diskVersion > CompProject.VERSION)
+            if (previous != null && previous.version > CompProject.VERSION)
             {
                 return saveFailure("磁盘上的 " + path.getFileName() + " 由更新版本的 bbsae 写入，拒绝覆盖");
             }
@@ -407,30 +480,57 @@ public final class CompStore
             project.id = id;
             prepareForSave(project);
 
-            String json = GSON.toJson(project);
-            CompProject parsed = GSON.fromJson(json, CompProject.class);
-
-            if (!isValid(parsed))
+            /* prepareForSave() already normalized format/version/comps/lists, so validating the
+             * object directly is equivalent to parsing the serialized copy back (which used to be
+             * a second full parse and a second multi-MB allocation). */
+            if (!isValid(project))
             {
                 return saveFailure("序列化结果未通过校验，未写入");
             }
 
             Files.createDirectories(path.getParent());
 
-            /* Write through a temporary file and move it into place: a crash or a full disk in
-             * the middle of a save must not truncate the only copy of the project. */
-            Files.writeString(temporary, json, StandardCharsets.UTF_8);
-
-            try
+            /* Pretty-printed on purpose: a project file stays diffable and hand-editable. The
+             * document is streamed through a buffered writer, so it is never materialized as one
+             * big String. A crash or full disk mid-write still cannot truncate the main file. */
+            try (Writer writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8))
             {
-                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            }
-            catch (java.nio.file.AtomicMoveNotSupportedException e)
-            {
-                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
+                GSON.toJson(project, writer);
             }
 
-            rotateBackup(path, previous);
+            STREAM_WRITES.incrementAndGet();
+
+            if (DEBUG_SAVE)
+            {
+                long now = System.nanoTime();
+                BbsAeAddon.LOGGER.info("bbsae save {}: scan+prepare+write={}ms", path.getFileName(), millis(started, now));
+            }
+
+            ProjectHeader written = inspectProjectFile(temporary);
+
+            if (written == null || !written.isProject() || written.version != project.version)
+            {
+                deleteQuietly(temporary);
+
+                return saveFailure("序列化结果未通过校验，未写入");
+            }
+
+            if (DEBUG_SAVE)
+            {
+                long now = System.nanoTime();
+                BbsAeAddon.LOGGER.info("bbsae save {}: verify={}ms bytes={}", path.getFileName(),
+                    millis(started, now), sizeOrMinusOne(temporary));
+            }
+
+            /* Rotate by copying bytes: reading the old file into a byte[] and parsing it again was
+             * the second full parse of every save. A previous file that is not a readable project
+             * is left out of .bak so garbage can never replace the last good backup. */
+            if (previous != null && previous.isProject())
+            {
+                rotateBackup(path, backup);
+            }
+
+            moveIntoPlace(temporary, path);
 
             long modified = 0L;
 
@@ -447,16 +547,17 @@ public final class CompStore
             DOCUMENT_CACHE.clear();
             revision += 1;
 
+            if (DEBUG_SAVE)
+            {
+                long now = System.nanoTime();
+                BbsAeAddon.LOGGER.info("bbsae save {}: total={}ms", path.getFileName(), millis(started, now));
+            }
+
             return true;
         }
         catch (Exception e)
         {
-            try
-            {
-                Files.deleteIfExists(temporary);
-            }
-            catch (IOException ignored)
-            {}
+            deleteQuietly(temporary);
 
             BbsAeAddon.LOGGER.error("Could not save composition project {}", id, e);
 
@@ -526,6 +627,37 @@ public final class CompStore
             if (comp.markers == null) comp.markers = new ArrayList<>();
             if (comp.parameters == null) comp.parameters = new ArrayList<>();
             if (comp.audio == null) comp.audio = new ArrayList<>();
+        }
+
+        prepareTracksForWrite(project);
+    }
+
+    /**
+     * Writes live keyframe channels back into the serialized fields ({@code transformData},
+     * {@code opacityData}, {@code channels}) before a snapshot or a save.
+     *
+     * <p>{@link CompLayer#saveTracks()} rebuilds those strings through BBS's {@code DataToString}
+     * for every layer, even a layer that never had a keyframe. That is paid by the once-per-second
+     * undo sampler and by every gesture checkpoint. A layer whose live channels and serialized
+     * fields are all empty cannot produce a different result, so the rebuild is skipped only in
+     * that <b>provably</b> no-op case; any layer with keys, or with stale serialized data, still
+     * goes through the real method.</p>
+     */
+    private static TrackPass prepareTracksForWrite(CompProject project)
+    {
+        TrackPass pass = new TrackPass();
+
+        if (project.comps == null)
+        {
+            return pass;
+        }
+
+        for (CompDocument comp : project.comps)
+        {
+            if (comp == null || comp.layers == null)
+            {
+                continue;
+            }
 
             for (CompLayer layer : comp.layers)
             {
@@ -534,74 +666,309 @@ public final class CompStore
                     continue;
                 }
 
+                pass.layers += 1;
                 layer.ensureInitialized();
-                layer.saveTracks();
+
+                if (needsTrackWriteback(layer))
+                {
+                    layer.saveTracks();
+                    pass.rebuilt += 1;
+                    TRACK_REBUILDS.incrementAndGet();
+                }
+                else
+                {
+                    pass.skipped += 1;
+                    TRACK_SKIPS.incrementAndGet();
+                }
             }
         }
+
+        return pass;
     }
 
-    private static int existingVersion(Path path)
+    /**
+     * True when {@link CompLayer#saveTracks()} could change the layer's serialized form.
+     *
+     * <p>Deliberately conservative: anything that is not provably empty asks for the real rebuild,
+     * because a missed rebuild silently drops animation from undo/save (the bug that originally
+     * made snapshots wipe every keyframe).</p>
+     */
+    private static boolean needsTrackWriteback(CompLayer layer)
     {
-        if (!Files.isRegularFile(path))
+        if (!layer.transformChannel().getKeyframes().isEmpty())
         {
-            return -1;
+            return true;
         }
 
-        try
+        if (!layer.opacityChannel().getKeyframes().isEmpty())
         {
-            CompProject existing = GSON.fromJson(Files.readString(path, StandardCharsets.UTF_8), CompProject.class);
+            return true;
+        }
 
-            return existing == null ? -1 : existing.version;
-        }
-        catch (Exception e)
+        if (layer.transformData != null && !layer.transformData.isEmpty())
         {
-            /* Unreadable old file: the load path already quarantined it, and a successful save is
-             * the only way the user gets a working project again. */
-            return -1;
+            return true;
         }
+
+        if (layer.opacityData != null && !layer.opacityData.isEmpty())
+        {
+            return true;
+        }
+
+        if (layer.channels != null && !layer.channels.isEmpty())
+        {
+            return true;
+        }
+
+        /* Axis/effect/mask channels are only reachable through this list. A channel object may
+         * exist without any keys (scalarChannel() creates lazily), so each path is checked. */
+        for (String path : layer.animatedPaths())
+        {
+            if (layer.hasScalarChannel(path))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    private static byte[] readPrevious(Path path)
+    /** Counters for one track write-back pass; also used by the debug timing log. */
+    private static final class TrackPass
+    {
+        private int layers;
+        private int rebuilt;
+        private int skipped;
+    }
+
+    /**
+     * Cheap streaming header/syntax scan of a project JSON file.
+     *
+     * <p>Returns {@code null} when the file is missing, unreadable, or not a syntactically valid
+     * JSON object. The whole document is consumed through {@link JsonReader#skipValue()} so a
+     * truncated tail is detected without building a JSON tree, a {@link CompProject} or a
+     * multi-megabyte {@code String}; only {@code version}, {@code format} and the {@code comps}
+     * array are read.</p>
+     */
+    private static ProjectHeader inspectProjectFile(Path path)
     {
         if (!Files.isRegularFile(path))
         {
             return null;
         }
 
-        try
+        STREAM_SCANS.incrementAndGet();
+
+        try (JsonReader reader = new JsonReader(new InputStreamReader(Files.newInputStream(path), StandardCharsets.UTF_8)))
         {
-            byte[] bytes = Files.readAllBytes(path);
+            reader.setLenient(false);
 
-            /* Only rotate a readable revision into .bak. When the main file was quarantined as
-             * corrupt, overwriting the last good backup with garbage would destroy the only good
-             * copy; keeping the old .bak is strictly better. */
-            CompProject readable = GSON.fromJson(new String(bytes, StandardCharsets.UTF_8), CompProject.class);
+            if (reader.peek() != JsonToken.BEGIN_OBJECT)
+            {
+                return null;
+            }
 
-            return readable == null ? null : bytes;
+            reader.beginObject();
+
+            int version = -1;
+            String format = null;
+            boolean compsNonEmpty = false;
+
+            while (reader.hasNext())
+            {
+                String name = reader.nextName();
+
+                if ("version".equals(name))
+                {
+                    version = readHeaderVersion(reader);
+                }
+                else if ("format".equals(name))
+                {
+                    format = readHeaderFormat(reader);
+                }
+                else if ("comps".equals(name))
+                {
+                    compsNonEmpty = countComps(reader) > 0;
+                }
+                else
+                {
+                    reader.skipValue();
+                }
+            }
+
+            reader.endObject();
+
+            if (reader.peek() != JsonToken.END_DOCUMENT)
+            {
+                return null;
+            }
+
+            return new ProjectHeader(format, version, compsNonEmpty);
         }
         catch (Exception e)
         {
-            BbsAeAddon.LOGGER.warn("Could not read previous composition project for backup {}", path, e);
-
             return null;
         }
     }
 
-    private static void rotateBackup(Path path, byte[] previous)
+    private static int readHeaderVersion(JsonReader reader) throws IOException
     {
-        if (previous == null || previous.length == 0)
+        JsonToken token = reader.peek();
+
+        if (token == JsonToken.NUMBER)
         {
-            return;
+            return reader.nextInt();
         }
 
+        if (token == JsonToken.STRING)
+        {
+            try
+            {
+                return Integer.parseInt(reader.nextString().trim());
+            }
+            catch (NumberFormatException e)
+            {
+                return -1;
+            }
+        }
+
+        reader.skipValue();
+
+        return -1;
+    }
+
+    private static String readHeaderFormat(JsonReader reader) throws IOException
+    {
+        JsonToken token = reader.peek();
+
+        if (token == JsonToken.STRING)
+        {
+            return reader.nextString();
+        }
+
+        if (token == JsonToken.NULL)
+        {
+            reader.nextNull();
+
+            return null;
+        }
+
+        reader.skipValue();
+
+        return null;
+    }
+
+    /** Number of object entries in the top-level {@code comps} array; throws when malformed. */
+    private static int countComps(JsonReader reader) throws IOException
+    {
+        if (reader.peek() != JsonToken.BEGIN_ARRAY)
+        {
+            throw new IOException("comps is not an array");
+        }
+
+        reader.beginArray();
+
+        int count = 0;
+
+        while (reader.hasNext())
+        {
+            JsonToken token = reader.peek();
+
+            if (token == JsonToken.NULL)
+            {
+                reader.nextNull();
+            }
+            else if (token == JsonToken.BEGIN_OBJECT)
+            {
+                reader.skipValue();
+                count += 1;
+            }
+            else
+            {
+                throw new IOException("comps contains a non-object entry");
+            }
+        }
+
+        reader.endArray();
+
+        return count;
+    }
+
+    /** Header fields extracted by {@link #inspectProjectFile(Path)}. */
+    private static final class ProjectHeader
+    {
+        private final String format;
+        private final int version;
+        private final boolean compsNonEmpty;
+
+        private ProjectHeader(String format, int version, boolean compsNonEmpty)
+        {
+            this.format = format;
+            this.version = version;
+            this.compsNonEmpty = compsNonEmpty;
+        }
+
+        /** A complete bbsae project document, not merely parseable JSON. */
+        private boolean isProject()
+        {
+            return CompProject.FORMAT.equals(this.format) && this.version >= 1 && this.compsNonEmpty;
+        }
+    }
+
+    /**
+     * Rotates the previous revision into {@code .bak} by copying bytes. Reading it into memory and
+     * parsing it just to re-write the same bytes was the second full parse of every save. A copy
+     * failure (e.g. a directory occupies the backup path) is logged but never fails the save.
+     */
+    private static void rotateBackup(Path path, Path backup)
+    {
         try
         {
-            Files.write(path.resolveSibling(path.getFileName() + ".bak"), previous);
+            Files.copy(path, backup, StandardCopyOption.REPLACE_EXISTING);
         }
         catch (IOException e)
         {
             BbsAeAddon.LOGGER.warn("Could not update composition project backup {}", path, e);
         }
+    }
+
+    private static void moveIntoPlace(Path temporary, Path path) throws IOException
+    {
+        try
+        {
+            Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        }
+        catch (java.nio.file.AtomicMoveNotSupportedException e)
+        {
+            Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void deleteQuietly(Path path)
+    {
+        try
+        {
+            Files.deleteIfExists(path);
+        }
+        catch (IOException ignored)
+        {}
+    }
+
+    private static long sizeOrMinusOne(Path path)
+    {
+        try
+        {
+            return Files.size(path);
+        }
+        catch (IOException e)
+        {
+            return -1L;
+        }
+    }
+
+    private static String millis(long started, long finished)
+    {
+        return String.format(Locale.ROOT, "%.1f", (finished - started) / 1_000_000.0D);
     }
 
     /** Drops null comps/layers and makes every required list non-null. */

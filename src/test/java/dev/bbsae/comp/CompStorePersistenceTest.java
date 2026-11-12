@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -20,8 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Persistence contract of {@link CompStore}: a broken project must never be replaced by demo data,
- * a failed save must be reported instead of swallowed, and backups must only be rotated after the
- * new file is safely in place.
+ * a failed save must be reported instead of swallowed, and the backup must only ever rotate a
+ * readable previous revision — and only after the new file was streamed and verified.
  */
 class CompStorePersistenceTest
 {
@@ -175,9 +176,11 @@ class CompStorePersistenceTest
 
         Path file = CompStore.file(id);
         Path backup = file.resolveSibling(file.getFileName() + ".bak");
+        Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
 
         assertTrue(Files.isRegularFile(file));
         assertFalse(Files.exists(backup), "the first save has no previous file to rotate");
+        assertFalse(Files.exists(temporary), "a successful save must not leave its temporary file behind");
 
         /* The file must be valid UTF-8 (no BOM) and round-trip the Chinese name. */
         byte[] bytes = Files.readAllBytes(file);
@@ -192,6 +195,28 @@ class CompStorePersistenceTest
         assertTrue(Files.isRegularFile(backup), "the second save must rotate the previous file into .bak");
         assertEquals(1920, parse(backup).comps.get(0).width, "the backup must hold the previous revision");
         assertEquals(1234, parse(file).comps.get(0).width);
+    }
+
+    @Test
+    void backupIsAnExactByteCopyOfThePreviousRevision() throws IOException
+    {
+        String id = "byte_copy";
+        CompProject project = CompStore.newProject(id, "Bytes");
+        Path file = CompStore.file(id);
+        Path backup = file.resolveSibling(file.getFileName() + ".bak");
+
+        project.comps.get(0).width = 1111;
+        assertTrue(CompStore.saveChecked(project));
+
+        byte[] firstRevision = Files.readAllBytes(file);
+
+        project.comps.get(0).width = 2222;
+        assertTrue(CompStore.saveChecked(project));
+
+        /* The .bak is rotated by Files.copy: it must be the previous revision verbatim, not a
+         * re-serialization of an in-memory object (field order/pretty printing could differ). */
+        assertArrayEquals(firstRevision, Files.readAllBytes(backup));
+        assertEquals(1111, parse(backup).comps.get(0).width);
     }
 
     @Test
@@ -222,8 +247,11 @@ class CompStorePersistenceTest
 
         Path backup = file.resolveSibling(file.getFileName() + ".bak");
 
-        /* A directory at the backup path makes the rotation fail after the main move succeeded. */
+        /* A non-empty directory at the backup path makes the copy fail deterministically. An empty
+         * directory would be replaced by Files.copy on Windows, so it does not exercise the
+         * failure path this test is about. */
         Files.createDirectories(backup);
+        write(backup.resolve("occupied.txt"), "occupied");
 
         project.comps.get(0).width = 640;
 

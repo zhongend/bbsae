@@ -30,7 +30,11 @@ public class CompDocument
     public float workAreaIn = 0F;
     public float workAreaOut = 12F;
     public float currentTime = 0F;
-    /** Empty means "use the topmost visible camera layer"; otherwise a camera layer id. */
+    /**
+     * Empty means "use the topmost usable camera layer"; otherwise a camera layer id. The id only
+     * wins while that camera is visible and inside its in/out range at the current frame (see
+     * {@link #activeCamera(float)}).
+     */
     public String activeCameraId = "";
 
     public List<CompLayer> layers = new ArrayList<>();
@@ -60,50 +64,49 @@ public class CompDocument
     }
 
     /**
-     * The camera that should drive this comp, or null for a flat comp.
+     * The camera that should drive this comp at {@code time}, or null for a flat comp.
      *
-     * <h2>Why neither visibility nor trim is consulted</h2>
-     * <p>A camera is a <b>view</b>, not content. Two consequences follow, and both were bugs when
-     * they were ignored:</p>
-     * <ul>
-     *   <li>Hiding the camera row (the eye icon) must not change the picture. {@code activeAt()}
-     *       starts with {@code visible}, so using it here meant one click on the eye reset the
-     *       whole composition to 1:1 — with no visible cause.</li>
-     *   <li>Trimming the camera must not delete the view either. A camera created on a 5-second
-     *       default trim silently stopped existing at 5s in a 12-second comp, and the composition
-     *       snapped back to the flat view at the exact frame the user started caring about.</li>
-     * </ul>
+     * <h2>Selection rules</h2>
+     * <ol>
+     *   <li>{@link #activeCameraId} wins <b>only while it still names a usable camera this
+     *       frame</b>: it must be a camera layer, visible, and inside its in/out range.</li>
+     *   <li>Otherwise the topmost usable camera wins (the same "front camera" rule AE uses).</li>
+     *   <li>Otherwise there is no camera and the renderer falls back to its default 1:1 view.</li>
+     * </ol>
      *
-     * <p>Both are pure view state: they do not own pixels, so they cannot make pixels disappear.
-     * What still selects between cameras is {@link #activeCameraId}, then document order (the
-     * topmost camera wins — the same rule AE uses for the "front" camera).</p>
-     *
-     * <p>{@code time} is kept in the signature because every caller passes it and dropping it
-     * would touch a dozen call sites; nothing in the method needs it any more.</p>
+     * <p>The previous rule let a hidden or trimmed-out camera keep driving the frame forever,
+     * because a camera was treated as pure view state. That made the active-camera picker lie:
+     * clicking a camera that was hidden or outside its trim did nothing visible, while the old
+     * camera went on rendering. Making visibility and trim part of "usable" means the picker,
+     * the gizmo and the picture always agree; the fallback keeps the frame renderable instead of
+     * dropping the camera entirely.</p>
      */
     public CompLayer activeCamera(float time)
     {
-        if (this.activeCameraId != null && !this.activeCameraId.isEmpty())
-        {
-            CompLayer chosen = this.getLayer(this.activeCameraId);
+        CompLayer chosen = this.getLayer(this.activeCameraId);
 
-            if (chosen != null && chosen.isCamera())
-            {
-                return chosen;
-            }
+        if (isUsableCamera(chosen, time))
+        {
+            return chosen;
         }
 
         for (int i = this.layers.size() - 1; i >= 0; i--)
         {
             CompLayer layer = this.layers.get(i);
 
-            if (layer.isCamera())
+            if (isUsableCamera(layer, time))
             {
                 return layer;
             }
         }
 
         return null;
+    }
+
+    /** A camera is usable when it is a camera layer that is visible at {@code time}. */
+    public static boolean isUsableCamera(CompLayer layer, float time)
+    {
+        return layer != null && layer.isCamera() && layer.visible && layer.activeAt(time);
     }
 
     public int indexOfLayer(String layerId)

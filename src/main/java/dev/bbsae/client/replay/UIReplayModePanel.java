@@ -90,6 +90,8 @@ public class UIReplayModePanel extends UIDashboardPanel
     private boolean built;
     private boolean tracksDirty;
     private boolean primed;
+    /** Logs the first render after an undo/redo to prove whether the page still draws. */
+    private boolean logNextRender;
     private boolean lastPlaying;
     /** Re-entrancy guard for {@link #applySelection(Replay, boolean)}; see the method's comment. */
     private boolean selectingReplay;
@@ -666,6 +668,17 @@ public class UIReplayModePanel extends UIDashboardPanel
     @Override
     public void render(UIContext context)
     {
+        if (this.logNextRender)
+        {
+            this.logNextRender = false;
+            BbsAeAddon.LOGGER.info("Replay history: page render reached after undo/redo (visible={}, area={}x{}@{}, parent={}, fbo={}, depth={}, blend={})",
+                this.isVisible(), this.area.w, this.area.h, this.area.x, this.area.y,
+                this.getParent() == null ? "null" : this.getParent().getClass().getSimpleName(),
+                org.lwjgl.opengl.GL30.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING),
+                org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST),
+                org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_BLEND));
+        }
+
         this.checkReplayListChanged();
         this.ensureTracks();
         this.applyDebugSetup();
@@ -974,8 +987,8 @@ public class UIReplayModePanel extends UIDashboardPanel
             }
         }
 
-        boolean attached = panel.getRoot() != null;
         boolean wasVisible = panel.isVisible();
+        boolean attached = panel.getRoot() != null;
 
         if (!attached)
         {
@@ -992,6 +1005,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         int bbsVideoWidth = mchorse.bbs_mod.BBSSettings.videoWidth.get();
         int bbsVideoHeight = mchorse.bbs_mod.BBSSettings.videoHeight.get();
         int bbsVideoFps = mchorse.bbs_mod.BBSSettings.videoFrameRate.get();
+        boolean bbsCustomSize = mchorse.bbs_mod.client.BBSRendering.isCustomSize();
 
         try
         {
@@ -1021,6 +1035,15 @@ public class UIReplayModePanel extends UIDashboardPanel
                 mchorse.bbs_mod.BBSSettings.videoFrameRate.set(bbsVideoFps);
             }
 
+            /* The film panel's undo path also toggles BBS' custom render size, which replaces the
+             * frame buffer used while the film preview is active. Leaving it on after undo made the
+             * whole dashboard stop appearing (world + gizmo only). The replay page is not the film
+             * preview, so restore the window-sized path. */
+            if (!bbsCustomSize && mchorse.bbs_mod.client.BBSRendering.isCustomSize())
+            {
+                mchorse.bbs_mod.client.BBSRendering.setCustomSize(false);
+            }
+
             if (!attached)
             {
                 panel.removeFromParent();
@@ -1028,6 +1051,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             }
         }
 
+        this.logNextRender = true;
         this.debugAfterExternalEdit(selected);
 
         /* BBS' applyUndoData() path is allowed to restructure the film panel's own UI (showPanel,
@@ -1036,30 +1060,6 @@ public class UIReplayModePanel extends UIDashboardPanel
          * null while the client screen is still open). Re-open the dashboard so the user is not
          * stranded on an invisible editor; the log line makes the underlying bug visible. */
         net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
-        mchorse.bbs_mod.ui.framework.UIBaseMenu currentMenu = mchorse.bbs_mod.ui.framework.UIScreen.getCurrentMenu();
-
-        if (currentMenu != null)
-        {
-            mchorse.bbs_mod.ui.framework.UIBaseMenu.UIRootElement screenRoot = currentMenu.getRoot();
-            StringBuilder children = new StringBuilder();
-
-            for (mchorse.bbs_mod.ui.framework.elements.IUIElement child : screenRoot.getChildren())
-            {
-                if (child instanceof mchorse.bbs_mod.ui.framework.elements.UIElement element)
-                {
-                    children.append(element.getClass().getSimpleName())
-                        .append("[vis=").append(element.isVisible())
-                        .append(",area=").append(element.area.x).append(',').append(element.area.y)
-                        .append(',').append(element.area.w).append(',').append(element.area.h).append("] ");
-                }
-            }
-
-            BbsAeAddon.LOGGER.info("Replay history root children: {}", children);
-            BbsAeAddon.LOGGER.info("Replay history page chain: parent={} parentOfParent={}",
-                this.getParent() == null ? "null" : this.getParent().getClass().getSimpleName(),
-                this.getParent() == null || this.getParent().getParent() == null
-                    ? "null" : this.getParent().getParent().getClass().getSimpleName());
-        }
         BbsAeAddon.LOGGER.info("Replay history after {}: root={} screen={} pageVisible={} panelVisible={} panelArea={}x{} currentPanel={}",
             redo ? "redo" : "undo", this.getRoot() != null, client == null ? null : client.currentScreen,
             this.isVisible(), panel.isVisible(), this.area.w, this.area.h,

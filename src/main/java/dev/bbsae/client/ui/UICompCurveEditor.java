@@ -16,8 +16,14 @@ import mchorse.bbs_mod.ui.utils.context.ContextMenuManager;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.keys.KeyAction;
 import mchorse.bbs_mod.utils.colors.Colors;
+import mchorse.bbs_mod.utils.interps.AutoBezier;
+import mchorse.bbs_mod.utils.interps.IInterp;
 import mchorse.bbs_mod.utils.interps.Interpolations;
+import mchorse.bbs_mod.utils.interps.Lerps;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
+import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
+import mchorse.bbs_mod.utils.keyframes.KeyframeSegment;
+import mchorse.bbs_mod.utils.keyframes.factories.KeyframeFactories;
 import mchorse.bbs_mod.utils.pose.Transform;
 import org.lwjgl.glfw.GLFW;
 
@@ -253,6 +259,400 @@ public class UICompCurveEditor extends UIElement
             + String.format(Locale.ROOT, "  影响 %.0f%%  速度 %.1f/s", influence * 100F, speed);
     }
 
+    /* ---------------------------------------------------------------- sampling
+     * P1-8: the graph used to evaluate one column per pixel with
+     * {@code channel.valueAt()}. That path goes through BBS's
+     * {@code KeyframeChannel.interpolate()}, which allocates a fresh {@code KeyframeSegment} and a
+     * boxed {@code Float} for every sample — at 1000–10000 samples per frame this was the editor's
+     * largest steady-state allocation. {@link CurveSampler} evaluates the same interpolation
+     * directly from the channel's key list with one reused segment and primitive math, and the
+     * graph downsamples wide views instead of sampling every pixel.
+     */
+
+    /** Dev switch: sample counters and timing, plus the existing span dump. */
+    static final boolean DEBUG_SAMPLING = Boolean.getBoolean("bbsae.debugCurve");
+
+    /**
+     * Columns skipped between evaluations for a graph of {@code columns} pixels.
+     *
+     * <p>At most 400 samples per channel are needed to describe a line on screen; beyond that a
+     * 1 px step cannot be seen but still costs a full interpolation. The gap is filled by linear
+     * interpolation between the two evaluated columns, so the curve keeps its shape. Set
+     * {@code -Dbbsae.curveDownsample=false} (or pass false) to evaluate every column.</p>
+     */
+    static int sampleStride(int columns, boolean downsampling)
+    {
+        if (!downsampling || columns <= 400)
+        {
+            return 1;
+        }
+
+        return Math.max(2, (columns + 399) / 400);
+    }
+
+    /**
+     * Read-only view of a channel's keys as {@code Keyframe<?>}.
+     *
+     * <p>BBS's channel is generic; the curve editor works with wildcard keys. The cast is safe
+     * because the list is only read and every element is a {@link Keyframe}.</p>
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static List<Keyframe<?>> keyframesOf(KeyframeChannel<?> channel)
+    {
+        return (List<Keyframe<?>>) (List<?>) channel.getKeyframes();
+    }
+
+    /** First index whose tick is {@code >= tick}; keys are kept sorted by every write path. */
+    static int lowerBoundTick(List<Keyframe<?>> keys, float tick)
+    {
+        int low = 0;
+        int high = keys.size();
+
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+
+            if (keys.get(mid).getTick() < tick)
+            {
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+
+        return low;
+    }
+
+    /** First index whose tick is {@code > tick}. */
+    static int upperBoundTick(List<Keyframe<?>> keys, float tick)
+    {
+        int low = lowerBoundTick(keys, tick);
+
+        while (low < keys.size() && keys.get(low).getTick() == tick)
+        {
+            low++;
+        }
+
+        return low;
+    }
+
+    /** Linear fill between two evaluated columns; a NaN endpoint keeps the line broken. */
+    static void fillColumns(float[] samples, int fromColumn, int toColumn, float fromY, float toY)
+    {
+        int span = toColumn - fromColumn;
+
+        if (span <= 0)
+        {
+            return;
+        }
+
+        if (Float.isNaN(fromY) || Float.isNaN(toY))
+        {
+            for (int i = fromColumn + 1; i <= toColumn; i++)
+            {
+                samples[i] = Float.NaN;
+            }
+
+            return;
+        }
+
+        for (int i = 1; i <= span; i++)
+        {
+            samples[fromColumn + i] = fromY + (toY - fromY) * (i / (float) span);
+        }
+    }
+
+    /**
+     * A float channel's interpolation, evaluated without allocating.
+     *
+     * <p>This is a deliberate mirror of {@code FloatKeyframeFactory.interpolate()}: the factory
+     * returns a boxed {@code Float}, and {@code KeyframeChannel.interpolate()} additionally
+     * creates a {@code KeyframeSegment}. Both are avoided here by reusing one segment and doing
+     * the few float formulas in primitives. The interpolation math itself is not reimplemented —
+     * it calls the same {@code BezierUtils}, {@code AutoBezier.handles}, {@code Lerps} and
+     * {@code IInterp} functions BBS uses.</p>
+     *
+     * <p>Channels with loops keep using {@code valueAt()}: a loop can synthesise temporary keys
+     * and remap time, and the handful of looped channels in a project are not the hot path. The
+     * debug counter records those fallbacks.</p>
+     */
+    static final class CurveSampler
+    {
+        private final KeyframeSegment<Float> segment = new KeyframeSegment<>();
+        /** Reused by AutoBezier: the stock method allocates two double[4] per sample. */
+        private final double[] autoA = new double[4];
+        private final double[] autoB = new double[4];
+
+        private KeyframeChannel<?> cursorChannel;
+        private int cursorRevision = Integer.MIN_VALUE;
+        private int cursorLow;
+        private float cursorFrame = Float.NaN;
+
+        long samples;
+        long cursorHits;
+        long binarySearches;
+        long fallbackSamples;
+        /** The reused segment is the only one this sampler ever creates; kept for the perf test. */
+        int segmentAllocations = 1;
+
+        /** Samples a curve-editor channel; the hot path for the graph. */
+        float sample(CompCurveChannel channel, float frame)
+        {
+            KeyframeChannel<?> raw = channel.raw();
+            float fallback = channel.defaultValue();
+
+            if (raw.getFactory() == KeyframeFactories.FLOAT && raw.getLoops().isEmpty())
+            {
+                @SuppressWarnings("unchecked")
+                KeyframeChannel<Float> floats = (KeyframeChannel<Float>) raw;
+
+                return this.sampleFloat(floats, frame, fallback, channel.revision());
+            }
+
+            this.fallbackSamples++;
+
+            return channel.valueAt(frame);
+        }
+
+        /**
+         * Evaluates a float channel at {@code frame} with no per-sample allocation.
+         *
+         * @param revision the owning {@link CompCurveChannel}'s revision; the cursor is only
+         *                 reused while it is unchanged, so an edit can never be sampled from a
+         *                 stale segment.
+         */
+        float sampleFloat(KeyframeChannel<Float> channel, float frame, float fallback, int revision)
+        {
+            this.samples++;
+
+            List<Keyframe<Float>> keys = channel.getKeyframes();
+            int size = keys.size();
+
+            if (size == 0)
+            {
+                return fallback;
+            }
+
+            Keyframe<Float> a;
+            Keyframe<Float> b;
+            int index;
+
+            if (size == 1 || frame < keys.get(0).getTick())
+            {
+                a = b = keys.get(0);
+                index = 0;
+            }
+            else if (frame >= keys.get(size - 1).getTick())
+            {
+                a = b = keys.get(size - 1);
+                index = size - 1;
+            }
+            else
+            {
+                /* Same lower-bound rule as KeyframeChannel.findRawSegment(): an exact integer
+                 * tick selects the segment that starts at that key. */
+                int low = this.lowerBound(channel, keys, size, frame, revision);
+
+                b = keys.get(low);
+
+                if (b.getTick() == Math.floor(frame) && low < size - 1)
+                {
+                    low += 1;
+                    b = keys.get(low);
+                }
+
+                a = low - 1 >= 0 ? keys.get(low - 1) : b;
+                index = low - 1 >= 0 ? low - 1 : low;
+            }
+
+            this.segment.fill(a, b, index);
+            this.segment.setup(frame);
+
+            if (a == b)
+            {
+                Float value = a.getValue();
+
+                return value == null ? fallback : value;
+            }
+
+            return interpolateFloat(this.segment, this.autoA, this.autoB);
+        }
+
+        /**
+         * Lower bound that starts from the previous sample when both the channel/revision and the
+         * frame order still match. Columns are sampled left to right, so the common case is the
+         * same segment or the next one; the cursor turns that into one or two comparisons instead
+         * of a full binary search. A backwards jump (speed graph samples frame ±0.5) falls back to
+         * binary search, which is still allocation-free.
+         */
+        private int lowerBound(KeyframeChannel<?> channel, List<Keyframe<Float>> keys, int size, float frame, int revision)
+        {
+            if (channel == this.cursorChannel && revision == this.cursorRevision && frame >= this.cursorFrame)
+            {
+                int low = Math.max(0, Math.min(size, this.cursorLow));
+
+                /* The cursor is only a hint: a timeline drag can shift keys through CompLayer
+                 * without touching this channel's revision. Verify the lower-bound invariant
+                 * before trusting it (low == size is impossible while frame < last tick). */
+                boolean valid = low < size && (low == 0 || keys.get(low - 1).getTick() < frame);
+
+                if (valid)
+                {
+                    int limit = Math.min(size, low + 16);
+
+                    while (low < limit && keys.get(low).getTick() < frame)
+                    {
+                        low++;
+                    }
+
+                    if (low >= size || keys.get(low).getTick() >= frame)
+                    {
+                        this.cursorHits++;
+                        this.rememberCursor(channel, revision, frame, low);
+
+                        return low;
+                    }
+                }
+
+                this.binarySearches++;
+                low = lowerBoundBinary(keys, 0, size, frame);
+                this.rememberCursor(channel, revision, frame, low);
+
+                return low;
+            }
+
+            this.binarySearches++;
+
+            int low = lowerBoundBinary(keys, 0, size, frame);
+
+            this.rememberCursor(channel, revision, frame, low);
+
+            return low;
+        }
+
+        private void rememberCursor(KeyframeChannel<?> channel, int revision, float frame, int low)
+        {
+            this.cursorChannel = channel;
+            this.cursorRevision = revision;
+            this.cursorLow = low;
+            this.cursorFrame = frame;
+        }
+
+        private static int lowerBoundBinary(List<Keyframe<Float>> keys, int low, int high, float tick)
+        {
+            while (low < high)
+            {
+                int mid = (low + high) >>> 1;
+
+                if (keys.get(mid).getTick() < tick)
+                {
+                    low = mid + 1;
+                }
+                else
+                {
+                    high = mid;
+                }
+            }
+
+            return low;
+        }
+
+        /**
+         * Mirrors {@code FloatKeyframeFactory.interpolate()}, including the auto-bezier handle
+         * computation. {@code AutoBezier.get()} itself allocates two {@code double[4]} arrays per
+         * call, so its public {@code handles()} writer is used with shared arrays instead.
+         */
+        private static float interpolateFloat(KeyframeSegment<Float> segment, double[] autoA, double[] autoB)
+        {
+            Keyframe<Float> a = segment.a;
+            Keyframe<Float> b = segment.b;
+            float x = segment.getInterpolationProgress();
+            IInterp interpolation = a.getInterpolation();
+
+            if (interpolation.has(Interpolations.BEZIER))
+            {
+                return (float) mchorse.bbs_mod.utils.keyframes.BezierUtils.get(
+                    a.getValue(), b.getValue(),
+                    a.getTick(), b.getTick(),
+                    a.rx, a.ry,
+                    b.lx, b.ly,
+                    x
+                );
+            }
+
+            if (interpolation.has(Interpolations.AUTO) || interpolation.has(Interpolations.AUTO_CLAMPED))
+            {
+                Keyframe<Float> preA = segment.preA;
+                Keyframe<Float> postB = segment.postB;
+                float aTick = a.getTick();
+                float bTick = b.getTick();
+                double w = bTick - aTick;
+                double h = b.getValue() - a.getValue();
+
+                if (h == 0)
+                {
+                    h = 0.00001D;
+                }
+
+                AutoBezier.handles(
+                    preA.getTick(), preA.getValue(), aTick, a.getValue(), bTick, b.getValue(),
+                    preA.getTick() != aTick, true, interpolation.has(Interpolations.AUTO_CLAMPED), autoA
+                );
+                AutoBezier.handles(
+                    aTick, a.getValue(), bTick, b.getValue(), postB.getTick(), postB.getValue(),
+                    true, postB.getTick() != bTick, interpolation.has(Interpolations.AUTO_CLAMPED), autoB
+                );
+
+                double x1 = Math.max(0D, Math.min(1D, (autoA[2] - aTick) / w));
+                double y1 = (autoA[3] - a.getValue()) / h;
+                double x2 = Math.max(0D, Math.min(1D, (autoB[0] - aTick) / w));
+                double y2 = (autoB[1] - a.getValue()) / h;
+
+                return (float) (Lerps.bezier(0D, y1, y2, 1D, Lerps.bezierX(x1, x2, x)) * h + a.getValue());
+            }
+
+            double duration = IInterp.context.duration;
+            double startTick = IInterp.context.startTick;
+
+            IInterp.context.segment(segment.duration, a.getTick());
+
+            try
+            {
+                return (float) interpolation.interpolate(IInterp.context.set(
+                    segment.preA.getValue(), a.getValue(), b.getValue(), segment.postB.getValue(), x
+                ));
+            }
+            finally
+            {
+                IInterp.context.segment(duration, startTick);
+            }
+        }
+    }
+
+    /**
+     * Per-key emphasis, cached instead of animated every frame.
+     *
+     * <p>The old {@code renderKeys()} called {@code UiMotion.anim()} twice for every visible key —
+     * up to a thousand channel-map writes and two string-key lookups per key per frame, with the
+     * target being 0 for all but the hovered one. Here only keys whose target changed (or which
+     * are still settling) are stepped; every other key reads the cached alpha.</p>
+     */
+    static final class KeyEmphasis
+    {
+        final String[] channels;
+        float hover;
+        float select;
+        float hoverTarget;
+        float selectTarget;
+
+        KeyEmphasis(String base)
+        {
+            this.channels = new String[] {base + ":h", base + ":s"};
+        }
+    }
+
     private final class Graph extends UIElement
     {
         private static final int DRAG_NONE = 0;
@@ -345,8 +745,11 @@ public class UICompCurveEditor extends UIElement
         private final UiMotion motion = new UiMotion();
         /** Row emphasis channels keyed by "c:&lt;channelId&gt;" or "g:&lt;group&gt;". */
         private final Map<String, String[]> rowKeys = new HashMap<>();
-        /** Per-key {hover, select} channels, identity-mapped and capped on structural churn. */
-        private final IdentityHashMap<Keyframe<?>, String[]> keyKeys = new IdentityHashMap<>();
+        /** Per-key emphasis, identity-mapped and capped on structural churn. */
+        private final IdentityHashMap<Keyframe<?>, KeyEmphasis> keyEmphasis = new IdentityHashMap<>();
+        /** Keys whose emphasis is still approaching its target; usually just the hovered one. */
+        private final Set<Keyframe<?>> keyAnimating =
+            Collections.newSetFromMap(new IdentityHashMap<Keyframe<?>, Boolean>());
         private int keyKeySerial;
         /** Keyframe under the pointer this frame (hover ring); null while dragging. */
         private Keyframe<?> hoveredKey;
@@ -356,6 +759,17 @@ public class UICompCurveEditor extends UIElement
          * not cached). See CurveSpans for why the curve is stored per column instead of as a
          * polyline: the vertex count must not depend on the curve's slope. */
         private final java.util.Map<String, CurveSpans> spanCache = new java.util.HashMap<>();
+        /** Zero-allocation evaluator shared by every channel; its cursor follows the last sample. */
+        private final CurveSampler sampler = new CurveSampler();
+        /** >400 px graphs evaluate at most 400 columns; see {@link #sampleStride(int, boolean)}. */
+        private boolean curveDownsample = !"false".equalsIgnoreCase(System.getProperty("bbsae.curveDownsample", "true"));
+        /** Debug counters for {@code -Dbbsae.debugCurve}; all zero-cost when the flag is off. */
+        private long debugSamples;
+        private long debugCursorHits;
+        private long debugBinarySearches;
+        private long debugFallbacks;
+        private long debugSampleNanos;
+        private int debugFrames;
         /** keyframe -> owning channel, so hit testing is O(1) instead of O(channels x keys). */
         private final IdentityHashMap<Keyframe<?>, CompCurveChannel> owners = new IdentityHashMap<>();
         /** The curve under the last key hit; overlay mode uses it to pick the right component. */
@@ -1319,25 +1733,65 @@ public class UICompCurveEditor extends UIElement
             return keys;
         }
 
-        /** Emphasis channels of one keyframe: 0 = hover amount, 1 = selection amount. */
-        private String[] keyKeys(Keyframe<?> key)
+        /** Cached hover/selection amounts of one keyframe. */
+        private KeyEmphasis keyEmphasis(Keyframe<?> key)
         {
-            String[] keys = this.keyKeys.get(key);
+            KeyEmphasis emphasis = this.keyEmphasis.get(key);
 
-            if (keys == null)
+            if (emphasis == null)
             {
-                if (this.keyKeys.size() > 4096)
+                if (this.keyEmphasis.size() > 4096)
                 {
-                    this.keyKeys.clear();
+                    this.keyEmphasis.clear();
+                    this.keyAnimating.clear();
                 }
 
-                String base = "kf:" + (this.keyKeySerial++);
-
-                keys = new String[] {base + ":h", base + ":s"};
-                this.keyKeys.put(key, keys);
+                emphasis = new KeyEmphasis("kf:" + (this.keyKeySerial++));
+                this.keyEmphasis.put(key, emphasis);
             }
 
-            return keys;
+            return emphasis;
+        }
+
+        /**
+         * Advances only the keys that are still moving, so a resting graph does no per-key motion
+         * work at all. Called once per frame before {@link #renderKeys(UIContext)}.
+         */
+        private void stepKeyEmphasis()
+        {
+            if (this.keyAnimating.isEmpty())
+            {
+                return;
+            }
+
+            java.util.Iterator<Keyframe<?>> iterator = this.keyAnimating.iterator();
+
+            while (iterator.hasNext())
+            {
+                Keyframe<?> key = iterator.next();
+                KeyEmphasis emphasis = this.keyEmphasis.get(key);
+
+                if (emphasis == null)
+                {
+                    iterator.remove();
+
+                    continue;
+                }
+
+                float hoverTarget = key == this.hoveredKey ? 1F : 0F;
+                float selectTarget = this.selection.contains(key) ? 1F : 0F;
+
+                emphasis.hover = this.motion.anim(emphasis.channels[0], hoverTarget, 28F);
+                emphasis.select = this.motion.anim(emphasis.channels[1], selectTarget, 22F);
+                emphasis.hoverTarget = hoverTarget;
+                emphasis.selectTarget = selectTarget;
+
+                if (Math.abs(emphasis.hover - hoverTarget) < 0.002F
+                    && Math.abs(emphasis.select - selectTarget) < 0.002F)
+                {
+                    iterator.remove();
+                }
+            }
         }
 
         /** Index of the channel-list row under a pointer Y, or -1. */
@@ -1628,7 +2082,15 @@ public class UICompCurveEditor extends UIElement
             this.drawSmoothCurve(context, color, opacity, thickness);
         }
 
-        /** Fills {@link #curveSamples} with one clamped graph Y per screen column. */
+        /**
+         * Fills {@link #curveSamples} with one clamped graph Y per screen column.
+         *
+         * <p>P1-8: the fast path resolves the backing {@link KeyframeChannel} once and then calls
+         * {@link CurveSampler} per column, which reuses a segment cursor and allocates nothing.
+         * Graphs wider than 400 px are evaluated at a stride and the gap is filled linearly: the
+         * line is identical at screen resolution, but a 4K-wide graph costs 400 interpolations
+         * instead of 3800.</p>
+         */
         private void sampleCurve(CompCurveChannel channel)
         {
             int columns = Math.max(1, this.curveArea.w);
@@ -1642,16 +2104,115 @@ public class UICompCurveEditor extends UIElement
             float originX = this.curveArea.x;
             float top = this.curveArea.y - 2F;
             float bottom = this.curveArea.ey() + 2F;
+            int revision = channel.revision();
+            KeyframeChannel<?> raw = channel.raw();
+            float fallback = channel.defaultValue();
+            boolean fast = raw.getFactory() == KeyframeFactories.FLOAT && raw.getLoops().isEmpty();
 
-            for (int column = 0; column < columns; column++)
+            @SuppressWarnings("unchecked")
+            KeyframeChannel<Float> floats = fast ? (KeyframeChannel<Float>) raw : null;
+
+            long started = DEBUG_SAMPLING ? System.nanoTime() : 0L;
+            int stride = sampleStride(columns, this.curveDownsample);
+
+            if (stride <= 1)
             {
-                float value = this.channelValueAt(channel, (float) this.fromX(originX + column) * fps);
-                float y = this.toY(value);
-
-                this.curveSamples[column] = (Float.isNaN(y) || Float.isInfinite(y))
-                    ? Float.NaN
-                    : Math.max(top, Math.min(bottom, y));
+                for (int column = 0; column < columns; column++)
+                {
+                    this.curveSamples[column] = this.sampleColumn(channel, floats, fallback, revision,
+                        originX + column, fps, top, bottom);
+                }
             }
+            else
+            {
+                float previousY = this.sampleColumn(channel, floats, fallback, revision,
+                    originX, fps, top, bottom);
+                int previousColumn = 0;
+
+                this.curveSamples[0] = previousY;
+
+                for (int column = stride; column < columns; column += stride)
+                {
+                    float y = this.sampleColumn(channel, floats, fallback, revision,
+                        originX + column, fps, top, bottom);
+
+                    fillColumns(this.curveSamples, previousColumn, column, previousY, y);
+
+                    previousColumn = column;
+                    previousY = y;
+                }
+
+                if (previousColumn < columns - 1)
+                {
+                    float y = this.sampleColumn(channel, floats, fallback, revision,
+                        originX + columns - 1, fps, top, bottom);
+
+                    fillColumns(this.curveSamples, previousColumn, columns - 1, previousY, y);
+                }
+            }
+
+            if (DEBUG_SAMPLING)
+            {
+                this.debugSampleNanos += System.nanoTime() - started;
+                this.debugFrames++;
+
+                if (this.debugFrames >= 120)
+                {
+                    this.logSampleStats(columns, stride);
+                }
+            }
+        }
+
+        private float sampleColumn(CompCurveChannel channel, KeyframeChannel<Float> floats, float fallback,
+                                   int revision, float x, float fps, float top, float bottom)
+        {
+            float frame = (float) this.fromX(x) * fps;
+            float value;
+
+            if (this.speedMode)
+            {
+                float a = this.sampleAt(channel, floats, fallback, revision, frame - 0.5F);
+                float b = this.sampleAt(channel, floats, fallback, revision, frame + 0.5F);
+
+                value = (b - a) * fps;
+            }
+            else
+            {
+                value = this.sampleAt(channel, floats, fallback, revision, frame);
+            }
+
+            float y = this.toY(value);
+
+            return (Float.isNaN(y) || Float.isInfinite(y)) ? Float.NaN : Math.max(top, Math.min(bottom, y));
+        }
+
+        private float sampleAt(CompCurveChannel channel, KeyframeChannel<Float> floats, float fallback,
+                               int revision, float frame)
+        {
+            return floats != null
+                ? this.sampler.sampleFloat(floats, frame, fallback, revision)
+                : channel.valueAt(frame);
+        }
+
+        private void logSampleStats(int columns, int stride)
+        {
+            long samples = this.sampler.samples - this.debugSamples;
+            long cursor = this.sampler.cursorHits - this.debugCursorHits;
+            long binary = this.sampler.binarySearches - this.debugBinarySearches;
+            long fallbacks = this.sampler.fallbackSamples - this.debugFallbacks;
+            double ms = this.debugSampleNanos / 1.0E6D / Math.max(1, this.debugFrames);
+
+            dev.bbsae.BbsAeAddon.LOGGER.info(
+                "curve sampling: {}/frame samples={} cursor={} binary={} fallback={} avgMs={} columns={} stride={}",
+                samples / Math.max(1, this.debugFrames), samples, cursor, binary, fallbacks,
+                String.format(Locale.ROOT, "%.3f", ms), columns, stride);
+
+            this.debugSamples = this.sampler.samples;
+            this.debugCursorHits = this.sampler.cursorHits;
+            this.debugBinarySearches = this.sampler.binarySearches;
+            this.debugFallbacks = this.sampler.fallbackSamples;
+            this.debugSampleNanos = 0L;
+            this.debugFrames = 0;
         }
 
         /**
@@ -1812,11 +2373,11 @@ public class UICompCurveEditor extends UIElement
         {
             if (!this.speedMode)
             {
-                return channel.valueAt(frame, fallback);
+                return this.sampler.sample(channel, frame);
             }
 
-            float a = channel.valueAt(frame - 0.5F, fallback);
-            float b = channel.valueAt(frame + 0.5F, fallback);
+            float a = this.sampler.sample(channel, frame - 0.5F);
+            float b = this.sampler.sample(channel, frame + 0.5F);
 
             return (b - a) * this.fps();
         }
@@ -1842,10 +2403,16 @@ public class UICompCurveEditor extends UIElement
 
         private void renderKeys(UIContext context)
         {
+            this.stepKeyEmphasis();
+
             context.batcher.clip(this.curveArea, context);
 
             try
             {
+                float fps = this.fps();
+                float fromTick = (float) (this.fromX(this.curveArea.x - 8F) * fps) - 2F;
+                float toTick = (float) (this.fromX(this.curveArea.ex() + 8F) * fps) + 2F;
+
                 for (CompCurveChannel channel : this.channels)
                 {
                     if (!this.isVisible(channel) || !channel.hasKeys())
@@ -1867,14 +2434,17 @@ public class UICompCurveEditor extends UIElement
                     }
 
                     boolean isActive = channel == this.active;
+                    List<Keyframe<?>> keys = keyframesOf(channel.raw());
+                    int first = lowerBoundTick(keys, fromTick);
+                    int last = upperBoundTick(keys, toTick);
 
-                    for (Object entry : channel.raw().getKeyframes())
+                    /* Only visible keys are visited: a 500-key channel scrolled to its end used to
+                     * walk all 500 every frame just to cull 490 of them. */
+                    for (int i = first; i < last; i++)
                     {
-                        Keyframe<?> raw = (Keyframe<?>) entry;
-                        float x = this.toX(raw.getTick() / this.fps());
+                        Keyframe<?> raw = keys.get(i);
+                        float x = this.toX(raw.getTick() / fps);
 
-                        /* Cull before touching the value: a 500-key channel must not evaluate
-                         * keys that are outside the viewport. */
                         if (x < this.curveArea.x - 8 || x > this.curveArea.ex() + 8)
                         {
                             continue;
@@ -1883,11 +2453,24 @@ public class UICompCurveEditor extends UIElement
                         float value = this.speedMode ? this.keySpeed(channel, raw, true) : channel.numericValue(raw);
                         float y = this.toY(value);
                         boolean selected = this.selection.contains(raw);
-                        String[] keys = this.keyKeys(raw);
-                        /* A key that was just clicked fades to white instead of snapping; a key
-                         * that scrolls away is pruned by UiMotion, so the identity map stays sane. */
-                        float hov = this.motion.anim(keys[0], raw == this.hoveredKey ? 1F : 0F, 28F);
-                        float sel = this.motion.anim(keys[1], selected ? 1F : 0F, 22F);
+                        KeyEmphasis emphasis = this.keyEmphasis(raw);
+                        float hoverTarget = raw == this.hoveredKey ? 1F : 0F;
+                        float selectTarget = selected ? 1F : 0F;
+
+                        /* Only a key whose target changed (or one still settling from a previous
+                         * frame) touches UiMotion; all the other visible keys read their cached
+                         * alpha. That removes up to two anim() calls per key per frame. */
+                        if (emphasis.hoverTarget != hoverTarget || emphasis.selectTarget != selectTarget)
+                        {
+                            emphasis.hoverTarget = hoverTarget;
+                            emphasis.selectTarget = selectTarget;
+                            emphasis.hover = this.motion.anim(emphasis.channels[0], hoverTarget, 28F);
+                            emphasis.select = this.motion.anim(emphasis.channels[1], selectTarget, 22F);
+                            this.keyAnimating.add(raw);
+                        }
+
+                        float hov = emphasis.hover;
+                        float sel = emphasis.select;
                         int base = ghost ? Colors.setA(channel.color, 0.30F)
                             : (isActive ? channel.color : Colors.setA(channel.color, 0.6F));
                         int color = UiMotion.lerpColor(base, 0xFFFFFFFF, Math.max(sel, hov * 0.55F));
@@ -2569,6 +3152,11 @@ public class UICompCurveEditor extends UIElement
         {
             Keyframe<?> best = null;
             double bestDistance = 10D;
+            float fps = this.fps();
+            /* Only keys whose x is within the 10 px hit radius can win. Keys are sorted by tick,
+             * so a binary range replaces the full scan of every channel's key list. */
+            float fromTick = (float) (this.fromX(mouseX - 10) * fps) - 2F;
+            float toTick = (float) (this.fromX(mouseX + 10) * fps) + 2F;
 
             this.hitChannel = null;
 
@@ -2586,10 +3174,14 @@ public class UICompCurveEditor extends UIElement
                     continue;
                 }
 
-                for (Object entry : channel.raw().getKeyframes())
+                List<Keyframe<?>> keys = keyframesOf(channel.raw());
+                int first = lowerBoundTick(keys, fromTick);
+                int last = upperBoundTick(keys, toTick);
+
+                for (int i = first; i < last; i++)
                 {
-                    Keyframe<?> raw = (Keyframe<?>) entry;
-                    float x = this.toX(raw.getTick() / this.fps());
+                    Keyframe<?> raw = keys.get(i);
+                    float x = this.toX(raw.getTick() / fps);
 
                     if (Math.abs(mouseX - x) > bestDistance)
                     {

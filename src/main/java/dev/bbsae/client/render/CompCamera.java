@@ -36,8 +36,10 @@ import org.joml.Vector3f;
  * </pre>
  *
  * <p>At z = 0 those two views agree pixel for pixel (see {@code CompCameraTest}), which is the
- * invariant the whole renderer relies on: 2D layers use {@code view2D}, 3D layers use
- * {@code projection · view}, and both land on the same comp rectangle.</p>
+ * invariant the whole renderer relies on: a 3D layer uses {@code projection · view} when the
+ * camera is perspective and {@code view2D} when it is orthographic, so switching the camera type
+ * cannot move a layer that lies on the composition plane. Plain 2D layers use neither: AE logic
+ * leaves them in composition space, attached to the frame rather than to the camera.</p>
  */
 public final class CompCamera
 {
@@ -56,7 +58,12 @@ public final class CompCamera
     public final float distance;
     /** Comp-to-screen scale for the z = 0 plane. */
     public final float zoom;
-    /** Camera roll in degrees (positive = clockwise on screen). */
+    /**
+     * Camera roll in degrees (positive = clockwise on screen).
+     *
+     * <p>Applies to the layers the camera affects. A 2D layer in AE logic is outside the camera
+     * view entirely, so roll must not rotate it.</p>
+     */
     public final float roll;
 
     public final float cx;
@@ -71,8 +78,8 @@ public final class CompCamera
     public final boolean perspective;
     /**
      * True when the camera looks away from the comp plane (yaw/pitch), which is the only pose in
-     * which a 2D layer's affine {@link #view2D} is no longer a valid approximation of the
-     * perspective view. The renderer uses this to switch flat layers onto the real 3D path.
+     * which the affine {@link #view2D} is no longer a valid approximation of the perspective
+     * view. {@link CompScene#spatial} uses it to decide whether a frame needs the spatial path.
      */
     public final boolean tilted;
 
@@ -178,8 +185,9 @@ public final class CompCamera
     }
 
     /**
-     * Resolves the camera for this frame. A missing camera layer yields the identity view: comp
-     * centre at screen centre, 1:1 scale, no roll — the framing every 2D layer expects.
+     * Resolves the camera for this frame. A missing (or not currently usable) camera layer yields
+     * the default 1:1 view: comp centre at screen centre, no roll — the framing every 2D layer
+     * expects and the fallback the renderer uses when the active camera is hidden or trimmed out.
      */
     public static CompCamera of(CompDocument comp, float time, float frame)
     {
