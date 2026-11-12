@@ -220,10 +220,13 @@ public final class CompRenderer
         int frame = CompFrameServer.frameOf(doc, time);
         float scale = Math.max(0.05F, Math.min(1F, proxy));
 
-        /* Green-bar pre-render first: it is a disk cache of exactly these frames. */
+        /* Green-bar pre-render first: it is a disk cache of exactly these frames. Only use it when
+         * it was rendered at least at the requested proxy scale: the pre-render is capped at
+         * 1280x720, and an AE preview that asked for 1:1 used to be served the 720p frame and
+         * upscale it. Falling through re-renders at the real scale. */
         GlTexture precached = CompPrecache.texture(project, doc, frame);
 
-        if (precached != null)
+        if (precached != null && CompPrecache.cacheScale(doc) + 0.0001F >= scale)
         {
             blitTexture(batcher, precached.id, doc, alpha, frameWidth, frameHeight, fit);
 
@@ -1088,7 +1091,7 @@ public final class CompRenderer
                 {
                     if (renderEffects)
                     {
-                        accumulation = applyAdjustment(layer, accumulation, context, stack, batcher);
+                        accumulation = applyAdjustment(layer, accumulation, context, stack, batcher, renderMasks);
                     }
                     continue;
                 }
@@ -1104,56 +1107,9 @@ public final class CompRenderer
                 }
 
                 boolean effectsBaked = rendered.effectsBaked;
-
                 boolean is2D = !CompScene.usePerspective(context, layer);
 
-                if (is2D && renderMasks && layer.masks != null && !layer.masks.isEmpty())
-                {
-                    /* Rasterize at the RENDER size, not the composition size. The mask texture is
-                     * sampled with the content FBO's own UVs, so a full-resolution mask carries no
-                     * extra information — only cost: an animated mask re-rasterized a
-                     * 1920x1080 AWT path plus a box blur per frame, which is the "编辑蒙版时预览
-                     * 卡顿" complaint. The proxy preview now pays proxy pixels; the 3D bake path
-                     * already worked this way. */
-                    int maskWidth = context.renderWidth();
-                    int maskHeight = context.renderHeight();
-                    float maskScale = Math.max(0.0001F, maskWidth / (float) Math.max(1, comp.width));
-                    Matrix4f maskModel = new Matrix4f(model).scale(maskScale, maskScale, 1F);
-                    MaskCache.MaskTexture mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame, maskScale);
-
-                    if (mask != null)
-                    {
-                        GlFramebuffer masked = PassRenderer.mask(content, mask.texture.id, 0);
-
-                        FboPool.release(content);
-                        content = masked;
-                    }
-                }
-                else if (!is2D && !effectsBaked && renderMasks && layer.masks != null && !layer.masks.isEmpty())
-                {
-                    /* A perspective 3D layer whose bake was skipped (replay-entity layers never
-                     * bake; a precomp without a cached raster falls back to the direct path) still
-                     * needs its masks. The direct-path content is already camera-projected in
-                     * composition space, so the layer-local affine mask cannot address it: project
-                     * the mask path with the same view-projection and rasterize it at render size.
-                     * Before this the mask was simply dropped, so a masked 3D entity/precomp layer
-                     * showed unmasked with per-pixel-depth-independent paths too. */
-                    CompCamera maskCamera = CompScene.camera(context);
-                    Matrix4f maskViewProjection = new Matrix4f(maskCamera.projection)
-                        .mul(maskCamera.view)
-                        .mul(CompScene.world(context, layer));
-                    float maskScale = projectedMaskScale(context, layer, maskCamera);
-                    MaskCache.MaskTexture mask = MaskCache.getProjected(layer, context.renderWidth(),
-                        context.renderHeight(), maskViewProjection, context.frame, maskScale);
-
-                    if (mask != null)
-                    {
-                        GlFramebuffer masked = PassRenderer.mask(content, mask.texture.id, 0);
-
-                        FboPool.release(content);
-                        content = masked;
-                    }
-                }
+                content = applyLayerMask(content, layer, context, model, effectsBaked, renderMasks);
 
                 Matrix4f effectSpace = effectSpace(context, layer, model);
 
@@ -1239,10 +1195,11 @@ public final class CompRenderer
                     context.backdrop = previousBackdrop;
                 }
 
-                /* Styles were baked into the layer-space raster together with the effects; running
-                 * them again here would double a shadow/glow and apply it in composition space
-                 * instead of on the plane. Only the fallback (cache unavailable) styles here. */
-                if (renderEffects && !effectsBaked)
+                /* Styles are baked with the layer-space raster, except when the stack has effects
+                 * that run after the projection: then the bake deferred the styles so this pass can
+                 * keep the 2D order (effects first, styles last). The fallback (no bake) applies
+                 * them here too. */
+                if (renderEffects && (!effectsBaked || stylesRunAfterProjection(layer)))
                 {
                     content = applyStyles(layer, content, context, effectSpace);
                 }
@@ -1266,24 +1223,12 @@ public final class CompRenderer
 
                         if (matteFbo != null)
                         {
-                            /* The matte's own masks belong to its own pixels. Same render-size
-                             * rasterization as the layer path above. */
-                            if (matte.masks != null && !matte.masks.isEmpty())
-                            {
-                                int matteMaskWidth = context.renderWidth();
-                                int matteMaskHeight = context.renderHeight();
-                                float matteMaskScale = Math.max(0.0001F, matteMaskWidth / (float) Math.max(1, comp.width));
-                                Matrix4f matteMaskModel = new Matrix4f(matteModel).scale(matteMaskScale, matteMaskScale, 1F);
-                                MaskCache.MaskTexture matteMask = MaskCache.get(matte, matteMaskWidth, matteMaskHeight, matteMaskModel, context.frame, matteMaskScale);
-
-                                if (matteMask != null)
-                                {
-                                    GlFramebuffer maskedMatte = PassRenderer.mask(matteFbo, matteMask.texture.id, 0);
-
-                                    FboPool.release(matteFbo);
-                                    matteFbo = maskedMatte;
-                                }
-                            }
+                            /* The matte's own masks belong to its own pixels; the bake already
+                             * contains them when it ran, in which case applying them again squared
+                             * the coverage (dimmed matte edges). One shared helper keeps the
+                             * once-only contract for both the target and the matte. */
+                            matteFbo = applyLayerMask(matteFbo, matte, context, matteModel,
+                                matteRender.effectsBaked, renderMasks);
 
                             /* A 2D matte over a 3D target has to be projected too, otherwise the
                              * matte lives in camera-view space while the target content is already
@@ -1585,6 +1530,88 @@ public final class CompRenderer
         }
     }
 
+    /**
+     * Applies a layer's masks to its content exactly once.
+     *
+     * <p>Two paths already contain the mask and must not apply it again: the 3D bake rasterizes
+     * masks into the layer raster, and this is the only place that knows whether the content came
+     * from that bake ({@code effectsBaked}). Track-matte layers used to be masked twice (once by the
+     * bake, once by the matte block), which squared the coverage and dimmed the edges. The 2D path
+     * uses the affine layer model; a perspective layer whose bake was skipped uses the projected
+     * path, because its content already lives in composition space.</p>
+     */
+    static GlFramebuffer applyLayerMask(GlFramebuffer content, CompLayer layer, CompRenderContext context,
+                                        Matrix4f model, boolean masksBaked, boolean masksEnabled)
+    {
+        if (content == null || masksBaked || !masksEnabled || layer == null
+            || layer.masks == null || layer.masks.isEmpty())
+        {
+            return content;
+        }
+
+        /* Rasterize at the RENDER size, not the composition size. The mask texture is sampled
+         * with the content FBO's own UVs, so a full-resolution mask carries no extra information —
+         * only cost: an animated mask re-rasterized a 1920x1080 AWT path plus a box blur per frame,
+         * which is the "编辑蒙版时预览卡顿" complaint. The 3D bake path already worked this way. */
+        int maskWidth = context.renderWidth();
+        int maskHeight = context.renderHeight();
+        MaskCache.MaskTexture mask;
+
+        if (CompScene.usePerspective(context, layer))
+        {
+            /* The direct-path content is already camera-projected in composition space, so the
+             * layer-local affine mask cannot address it: project the mask path with the same
+             * view-projection and rasterize it at render size. Before this the mask was simply
+             * dropped, so a masked 3D entity/precomp layer showed unmasked. */
+            CompCamera maskCamera = CompScene.camera(context);
+            Matrix4f maskViewProjection = new Matrix4f(maskCamera.projection)
+                .mul(maskCamera.view)
+                .mul(CompScene.world(context, layer));
+            float maskScale = projectedMaskScale(context, layer, maskCamera);
+
+            mask = MaskCache.getProjected(layer, maskWidth, maskHeight, maskViewProjection,
+                context.frame, maskScale);
+        }
+        else
+        {
+            float maskScale = Math.max(0.0001F, maskWidth / (float) Math.max(1, context.comp.width));
+            Matrix4f maskModel = new Matrix4f(model)
+                .scale(maskScale, maskScale, 1F);
+            mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame,
+                maskLayerScale(model, maskScale));
+        }
+
+        if (mask == null)
+        {
+            return content;
+        }
+
+        GlFramebuffer masked = PassRenderer.mask(content, mask.texture.id, 0);
+
+        FboPool.release(content);
+
+        return masked;
+    }
+
+    /**
+     * Raster pixels per layer pixel for mask feather/expansion: the composition-to-raster factor
+     * times the layer's own transform scale. Feather is authored in layer pixels, so a scaled layer
+     * must scale its feather too; before this the feather stayed constant while the rest of the
+     * mask moved/scaled.
+     */
+    static float maskLayerScale(Matrix4f model, float rasterPerComp)
+    {
+        if (model == null)
+        {
+            return rasterPerComp;
+        }
+
+        float x = (float) Math.sqrt(model.m00() * model.m00() + model.m01() * model.m01());
+        float y = (float) Math.sqrt(model.m10() * model.m10() + model.m11() * model.m11());
+
+        return rasterPerComp * Math.max(0.0001F, Math.max(x, y));
+    }
+
     private static LayerRender renderLayerContent(CompLayer layer, CompRenderContext context, Matrix4f model, Matrix4f layerProjection, Set<String> stack, Batcher2D batcher, boolean renderEffects)
     {
         /* A 3D layer with effects is drawn from its layer-space raster.
@@ -1751,7 +1778,7 @@ public final class CompRenderer
         return straightened;
     }
 
-    private static GlFramebuffer applyAdjustment(CompLayer layer, GlFramebuffer original, CompRenderContext context, Set<String> stack, Batcher2D batcher)
+    private static GlFramebuffer applyAdjustment(CompLayer layer, GlFramebuffer original, CompRenderContext context, Set<String> stack, Batcher2D batcher, boolean renderMasks)
     {
         if (layer.effects == null || layer.effects.isEmpty())
         {
@@ -1800,13 +1827,14 @@ public final class CompRenderer
 
         float opacity = opacityAt(layer, context);
 
-        if (layer.masks != null && !layer.masks.isEmpty())
+        if (renderMasks && layer.masks != null && !layer.masks.isEmpty())
         {
             int maskWidth = context.renderWidth();
             int maskHeight = context.renderHeight();
             float maskScale = Math.max(0.0001F, maskWidth / (float) Math.max(1, context.width));
             Matrix4f maskModel = new Matrix4f(CompScene.world(context, layer)).scale(maskScale, maskScale, 1F);
-            MaskCache.MaskTexture mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame, maskScale);
+            MaskCache.MaskTexture mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame,
+                maskLayerScale(CompScene.world(context, layer), maskScale));
 
             if (mask != null)
             {
@@ -1980,12 +2008,14 @@ public final class CompRenderer
             return false;
         }
 
-        return !effectsBaked || requiresProjectedPass(effect.type);
+        return !effectsBaked || requiresProjectedPassFor(effect);
     }
 
     /**
      * True when the effect can only run on the projected frame: depth effects read the world depth
-     * buffer, shake samples the composition and backdrop effects need the accumulated comp.
+     * buffer, shake samples the composition, backdrop effects need the accumulated comp, and the
+     * AM bodies that read {@code Comp} need the composition under the layer (they must not be baked
+     * into a layer-local raster where there is no composition at all).
      *
      * <p>Mesh shape effects are deliberately NOT here: they draw into the layer-local raster during
      * the bake, so the projected quad carries them exactly like any other content effect. Running
@@ -2004,6 +2034,29 @@ public final class CompRenderer
             || EffectRenderer.isCompositionSpace(type);
     }
 
+    /**
+     * Effect-aware form of {@link #requiresProjectedPass(String)}.
+     *
+     * <p>The classic displacement map has a depth-map mode that samples the world depth buffer.
+     * A layer-local bake has no depth attachment, so the effect silently fell back to the noise
+     * map on 3D layers. Only the projected pass can honour the mode, therefore it is classified
+     * dynamically from the effect's parameters.</p>
+     */
+    static boolean requiresProjectedPassFor(CompEffect effect)
+    {
+        if (effect == null)
+        {
+            return false;
+        }
+
+        if (requiresProjectedPass(effect.type))
+        {
+            return true;
+        }
+
+        return "displacement".equals(effect.type) && effect.valueF("depth", 0F) > 0.5F;
+    }
+
     /** Index of the first effect that must run after projection, or the list size if none. */
     static int firstProjectedEffect(java.util.List<CompEffect> effects)
     {
@@ -2016,13 +2069,39 @@ public final class CompRenderer
         {
             CompEffect effect = effects.get(i);
 
-            if (effect != null && effect.enabled && requiresProjectedPass(effect.type))
+            if (effect != null && effect.enabled && requiresProjectedPassFor(effect))
             {
                 return i;
             }
         }
 
         return effects.size();
+    }
+
+    /**
+     * True when a 3D layer's styles have to run after the projected effects instead of in the bake.
+     *
+     * <p>The 2D path applies effects first and styles last; the layer-local bake used to apply
+     * styles immediately after the baked effect prefix, so a 3D layer with a projected effect (for
+     * example a repeat/shape-field/glass pass) graded its styled image instead of styling the
+     * graded one. That is an order difference the user can see on a 3D layer with a drop shadow or
+     * stroke below a repeat effect, and it made "the same stack looks different in 2D and 3D".
+     * When the stack has any projected effect the styles are deferred to the composition pass,
+     * where the same "effects then styles" order as the 2D path applies.</p>
+     */
+    static boolean stylesRunAfterProjection(CompLayer layer)
+    {
+        if (layer == null || layer.styles == null || layer.styles.isEmpty())
+        {
+            return false;
+        }
+
+        if (layer.effects == null || layer.effects.isEmpty())
+        {
+            return false;
+        }
+
+        return firstProjectedEffect(layer.effects) < layer.effects.size();
     }
 
     /**

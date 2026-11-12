@@ -50,7 +50,7 @@ import java.util.Map;
 public final class CompLayerSourceCache
 {
     /** Longest side of a cached layer raster, in pixels. */
-    private static final int MAX_EDGE = 1024;
+    static final int MAX_EDGE = 1024;
     /** Total VRAM budget for source rasters (the FBOs are owned, not pooled). */
     private static final long BUDGET_BYTES = 48L * 1024L * 1024L;
     private static final int MAX_ENTRIES = 32;
@@ -99,7 +99,7 @@ public final class CompLayerSourceCache
 
         String key = cacheKey(context.project == null ? "" : context.project.id, context.comp.id, layer.id);
         Rect rect = bounds(layer, context);
-        float scale = Math.min(1F, MAX_EDGE / Math.max(rect.width, rect.height));
+        float scale = rasterScaleFor(rect.width, rect.height, rasterMaxEdge(context));
         int pixelWidth = Math.max(1, Math.round(rect.width * scale));
         int pixelHeight = Math.max(1, Math.round(rect.height * scale));
         long signature = signature(layer, context, pixelWidth, pixelHeight);
@@ -183,6 +183,53 @@ public final class CompLayerSourceCache
                 release(entry.getValue());
             }
         }
+    }
+
+    /**
+     * Long-edge cap of a layer raster, before the proxy scale.
+     *
+     * <p>The 1024 px cap is a draft/preview memory and fill-rate guard. The encoder used to inherit
+     * it too, so a 1900 px wide layer exported from a ~1024 px raster upscaled back to full size —
+     * soft, and worse once glow/blur padding enlarged the rectangle. Preview keeps the cap; any
+     * non-preview render (AE preview at scale 1, export) may use at least the composition's long
+     * edge. The signature contains the pixel size, so both variants keep separate cache entries.</p>
+     */
+    static float rasterMaxEdge(CompRenderContext context)
+    {
+        if (context == null)
+        {
+            return MAX_EDGE;
+        }
+
+        if (context.preview)
+        {
+            return MAX_EDGE;
+        }
+
+        return Math.max(MAX_EDGE, Math.max(context.width, context.height));
+    }
+
+    /**
+     * Whether the free 3D workspace draft can show this effect type.
+     *
+     * <p>The draft draws one cached layer raster per layer quad: layer-local effects, masks and
+     * styles are baked into that raster, but effects that need the projected composition (repeat
+     * family, shape field, {@code Comp}-sampling AM bodies, shake, depth_*), track mattes and blend
+     * modes are composition passes and are not run there. This helper documents/locks that known
+     * limitation for the viewport and its HUD; the composition preview and the encoder always run
+     * the full stack.</p>
+     */
+    static boolean draftApplies(String type)
+    {
+        return type != null && !CompRenderer.requiresProjectedPass(type);
+    }
+
+    /** Pure raster-scale helper (long edge cap / layer rectangle long edge). */
+    static float rasterScaleFor(float rectWidth, float rectHeight, float maxEdge)
+    {
+        float longest = Math.max(Math.max(1F, rectWidth), Math.max(1F, rectHeight));
+
+        return Math.min(1F, Math.max(0F, maxEdge) / longest);
     }
 
     private static boolean hasPixels(CompLayer layer)
@@ -476,8 +523,20 @@ public final class CompLayerSourceCache
         proxy.fps = parent.comp.fps;
         proxy.duration = parent.comp.duration;
 
-        CompRenderContext context = new CompRenderContext(parent.project, proxy, parent.time, null, null, null);
+        CompRenderContext context = new CompRenderContext(parent.project, proxy, parent.time,
+            parent.projection, parent.camera, parent.depth);
+
+        /* The proxy context must inherit the editor flags: the 3D draft plate is only editor chrome,
+         * and the encoder render may run at a different raster cap. */
+        context.preview = parent.preview;
+        context.draftViewport = parent.draftViewport;
+
         Matrix4f world = new Matrix4f().scale(scale).translate(-rect.x, -rect.y, 0F);
+
+        /* Effect pixel units are authored in composition pixels. The bake raster is capped and
+         * scaled, so convert through raster px / parent comp px (the post-projection effects on the
+         * same 3D layer already run on that grid). */
+        float effectScale = content.width / (float) Math.max(1, parent.comp.width);
 
         /* The effect space is the LAYER rect, not the padded raster: the padding exists so a blur
          * can spread, but generative effects (gradient, checkerboard, circle, grid, halftone) must
@@ -487,7 +546,8 @@ public final class CompLayerSourceCache
         float by = rect.y + pad;
         float bw = Math.max(1F, rect.width - pad * 2F);
         float bh = Math.max(1F, rect.height - pad * 2F);
-        EffectSpace space = EffectSpace.ofBounds(layer, world, context, bx, by, bw, bh);
+        EffectSpace space = EffectSpace.ofBounds(layer, world, context, bx, by, bw, bh,
+            Math.max(1, parent.comp.width), Math.max(1, parent.comp.height));
         GlFramebuffer current = content;
 
         /* Masks are layer pixels, so they belong in the same raster and before the effects: a
@@ -534,7 +594,7 @@ public final class CompLayerSourceCache
 
             try
             {
-                CompEffect resolved = scaleEffectForRaster(layer.resolveEffect(effect, parent.frame), scale);
+                CompEffect resolved = scaleEffectForRaster(layer.resolveEffect(effect, parent.frame), effectScale);
                 GlFramebuffer next = EffectRenderer.apply(layer, resolved, current, context, space);
 
                 if (next != current)
@@ -558,8 +618,13 @@ public final class CompLayerSourceCache
         /* Styles are part of what the layer looks like, not a post-projection annotation: a drop
          * shadow must be clipped by the same raster margin (EffectPadding) and must follow the
          * plane in 3D. Baking them here makes the viewport and the final 3D frame agree, and lets
-         * the composition skip its after-projection style pass for this layer. */
-        if (hasStyles)
+         * the composition skip its after-projection style pass for this layer.
+         *
+         * <p>Exception: when the stack has effects that run after the projection, baking the styles
+         * here would grade the styled image instead of styling the graded one (the 2D path applies
+         * effects first and styles last). Those styles are deferred to the composition pass; the
+         * composition asks the same helper.</p> */
+        if (hasStyles && !CompRenderer.stylesRunAfterProjection(layer))
         {
             for (CompStyle style : layer.styles)
             {
@@ -624,40 +689,11 @@ public final class CompLayerSourceCache
             scaleParam(scaled, definition.blurKey, scale);
         }
 
-        switch (type)
-        {
-            case "blur", "box_blur", "directional_blur", "glow", "outer_glow",
-                 "cc_cross_blur", "cc_lens_blur", "compound_blur", "bilateral_blur",
-                 "smart_blur", "unsharp_mask", "camera_shake_deblur" ->
-                scaleParam(scaled, "radius", scale);
-            case "channel_blur" ->
-            {
-                scaleParam(scaled, "radius", scale);
-                scaleParam(scaled, "radius_g", scale);
-                scaleParam(scaled, "radius_b", scale);
-            }
-            case "offset", "transform", "cc_split" ->
-            {
-                scaleParam(scaled, "offset_x", scale);
-                scaleParam(scaled, "offset_y", scale);
-            }
-            case "spherize", "magnify", "cc_ripple_pulse" ->
-                scaleParam(scaled, "radius", scale);
-            case "drop_shadow" ->
-            {
-                scaleParam(scaled, "distance", scale);
-                scaleParam(scaled, "softness", scale);
-            }
-            case "stroke" -> scaleParam(scaled, "width", scale);
-            case "rgb_split" -> scaleParam(scaled, "amount", scale);
-            /* Noise/grain measure their cells against the raster itself (Size = the FBO), so the
-             * feature size has to travel to raster pixels. */
-            case "noise" -> scaleParam(scaled, "scale", scale);
-            case "grain" -> scaleParam(scaled, "size", scale);
-            default ->
-            {
-            }
-        }
+        /* Classic effects convert their pixel-authored parameters through
+         * {@link EffectRenderer#proxyScale(EffectSpace, GlFramebuffer)} (ref grid = parent
+         * composition now), so pre-scaling them here would apply the factor twice. Only the
+         * separable AM blur hands its radius straight to {@code PassRenderer.blur}, which counts
+         * framebuffer pixels. */
 
         return scaled;
     }
@@ -983,6 +1019,13 @@ public final class CompLayerSourceCache
          * belong to the fingerprint (otherwise toggling them served the old pixels). */
         h = mix(h, context.renderEffects ? 1 : 0);
         h = mix(h, context.renderMasks ? 1 : 0);
+
+        /* The editor mode is baked into this raster too: the 3D workspace draws a blue
+         * "预合成（草稿）" plate and the BBS-preview placeholder, while the panel preview and the
+         * encoder draw the real nested composition / sampled world frame. Without these two bits
+         * the first viewer won the cache and the other modes showed its pixels. */
+        h = mix(h, context.preview ? 1 : 0);
+        h = mix(h, context.draftViewport ? 1 : 0);
 
         /* Masks are multiplied into the raster before the effects; their geometry and feather
          * must invalidate the cached texture just like an effect parameter does. */

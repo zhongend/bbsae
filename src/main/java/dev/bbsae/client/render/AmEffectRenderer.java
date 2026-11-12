@@ -110,8 +110,8 @@ public final class AmEffectRenderer
 
         if (definition.usesComp)
         {
-            /* The composition below the layer when the pipeline provides it; the effect's own
-             * input is the documented fallback for baked 3D layers and isolated previews. */
+            /* The composition below the layer when the pipeline provides it; the effect's own input
+             * is the documented fallback for isolated previews. */
             GlFramebuffer backdrop = context == null ? null : context.backdrop;
 
             PassRenderer.bind(program, "Comp", 1, backdrop == null ? input : backdrop);
@@ -122,9 +122,15 @@ public final class AmEffectRenderer
          * preview renders into a smaller FBO, so using its size here made every radius (blur,
          * ripple, glass, shadows) shrink by the proxy scale - the effect looked weaker in preview
          * than in the full-resolution export. FBO UVs still cover the whole composition, so the
-         * pixel -> UV conversion only needs the composition size. */
-        int pixelWidth = context == null ? input.width : Math.max(1, context.width);
-        int pixelHeight = context == null ? input.height : Math.max(1, context.height);
+         * pixel -> UV conversion only needs the composition size.
+         *
+         * The effect space's reference grid is the authority: a layer-local bake passes the parent
+         * composition size there, so the baked prefix and the post-projection effects on the same
+         * 3D layer convert pixel-authored parameters on the same grid. */
+        int pixelWidth = space != null ? Math.max(1, space.refWidth)
+            : context == null ? input.width : Math.max(1, context.width);
+        int pixelHeight = space != null ? Math.max(1, space.refHeight)
+            : context == null ? input.height : Math.max(1, context.height);
 
         program.set("Size", pixelWidth, pixelHeight);
         program.set("Texel", 1F / pixelWidth, 1F / pixelHeight);

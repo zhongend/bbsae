@@ -373,9 +373,33 @@ public final class CompStore
 
         try
         {
+            /* Read the previous file once: it is both the write-back guard (version) and the
+             * .bak source. Doing this twice meant two full reads + two full JSON parses of a
+             * multi-megabyte project on every save (audit P0-3). */
+            byte[] previous = readPrevious(path);
+            int diskVersion = -1;
+
+            if (previous != null)
+            {
+                try
+                {
+                    CompProject existing = GSON.fromJson(new String(previous, StandardCharsets.UTF_8), CompProject.class);
+
+                    if (existing != null)
+                    {
+                        diskVersion = existing.version;
+                    }
+                }
+                catch (Exception ignored)
+                {
+                    /* Unreadable old file: readPrevious() already logged; a save is the only way
+                     * the user gets a working project back. */
+                }
+            }
+
             /* A project loaded by an older build would otherwise overwrite a newer file and lose
              * every field this build does not know about. */
-            if (existingVersion(path) > CompProject.VERSION)
+            if (diskVersion > CompProject.VERSION)
             {
                 return saveFailure("磁盘上的 " + path.getFileName() + " 由更新版本的 bbsae 写入，拒绝覆盖");
             }
@@ -392,8 +416,6 @@ public final class CompStore
             }
 
             Files.createDirectories(path.getParent());
-
-            byte[] previous = readPrevious(path);
 
             /* Write through a temporary file and move it into place: a crash or a full disk in
              * the middle of a save must not truncate the only copy of the project. */

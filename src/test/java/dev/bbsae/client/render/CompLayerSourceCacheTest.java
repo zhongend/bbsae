@@ -70,15 +70,21 @@ public class CompLayerSourceCacheTest
     }
 
     @Test
-    public void rasterScaleConvertsPixelRadiiWithoutMutatingTheSourceEffect()
+    public void rasterScaleConvertsOnlyTheRawFramebufferBlurRadius()
     {
+        /* Classic effects convert their pixel-authored parameters inside the renderer through
+         * EffectRenderer.proxyScale(space, input), where the space's reference grid is the parent
+         * composition (see EffectSpace.ofBounds(..., refWidth, refHeight)). Pre-scaling them here
+         * again would apply the raster factor twice; only the separable AM blur, whose radius goes
+         * straight to PassRenderer.blur as a framebuffer-pixel count, is pre-scaled. */
         CompEffect blur = new CompEffect("fx", "blur");
 
         blur.put("radius", 40D);
 
-        CompEffect scaled = CompLayerSourceCache.scaleEffectForRaster(blur, 0.5F);
+        CompEffect unscaled = CompLayerSourceCache.scaleEffectForRaster(blur, 0.5F);
 
-        assertEquals(20F, scaled.valueF("radius", 0F), 1e-4F);
+        assertEquals(40F, unscaled.valueF("radius", 0F), 1e-4F,
+            "classic radii are converted through the effect space, not pre-scaled");
         assertEquals(40F, blur.valueF("radius", 0F), 1e-4F, "the saved effect must not be mutated");
 
         CompEffect shadow = new CompEffect("fx2", "drop_shadow");
@@ -88,8 +94,11 @@ public class CompLayerSourceCacheTest
 
         CompEffect scaledShadow = CompLayerSourceCache.scaleEffectForRaster(shadow, 0.5F);
 
-        assertEquals(10F, scaledShadow.valueF("distance", 0F), 1e-4F);
-        assertEquals(4F, scaledShadow.valueF("softness", 0F), 1e-4F);
+        assertEquals(20F, scaledShadow.valueF("distance", 0F), 1e-4F);
+        assertEquals(8F, scaledShadow.valueF("softness", 0F), 1e-4F);
+
+        /* The conversion itself is the tested pure function. */
+        assertEquals(0.5F, EffectRenderer.proxyScale(512, 1024), 1e-4F);
     }
 
     @Test

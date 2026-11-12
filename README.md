@@ -5,20 +5,18 @@
 </p>
 
 <p align="center">
-<b>作者 / Author：终end</b> · <a href="https://github.com/zhongend">@zhongend</a>　<b>联合开发者 / Co-developer：星辰久梦君（Star Dm Sov）</b> · <a href="https://github.com/cupefersi">@cupefersi</a>
+<b>浣滆€?/ Author锛氱粓end</b> 路 <a href="https://github.com/zhongend">@zhongend</a>銆€<b>鑱斿悎寮€鍙戣€?/ Co-developer锛氭槦杈颁箙姊﹀悰锛圫tar Dm Sov锛?/b> 路 <a href="https://github.com/cupefersi">@cupefersi</a>
 </p>
 
-> **特别感谢赞助者：【星辰久梦君_Star Dm Sov】、血之书、Szv文森特37** — 你们的赞助支持了本插件的开发，感谢你们。完整鸣谢见 [CREDITS.md](CREDITS.md)。
-
-> 交接文档：**[docs/HANDOFF.zh.md](docs/HANDOFF.zh.md)**（当前架构、已实现功能、关键 bug、未完成项、构建 - 重映射流程）。
-- **Source:** <https://github.com/zhongend/bbsae>
+> **鐗瑰埆鎰熻阿璧炲姪鑰咃細銆愭槦杈颁箙姊﹀悰_Star Dm Sov銆戙€佽涔嬩功銆丼zv鏂囨．鐗?7** 鈥?浣犱滑鐨勮禐鍔╂敮鎸佷簡鏈彃浠剁殑寮€鍙戯紝鎰熻阿浣犱滑銆傚畬鏁撮福璋㈣ [CREDITS.md](CREDITS.md)銆?
+> 浜ゆ帴鏂囨。锛?*[docs/HANDOFF.zh.md](docs/HANDOFF.zh.md)**锛堝綋鍓嶆灦鏋勩€佸凡瀹炵幇鍔熻兘銆佸叧閿?bug銆佹湭瀹屾垚椤广€佹瀯寤?- 閲嶆槧灏勬祦绋嬶級銆?- **Source:** <https://github.com/zhongend/bbsae>
 - **Issues:** <https://github.com/zhongend/bbsae/issues>
-- **更新日记 / Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
+- **鏇存柊鏃ヨ / Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
 - **Feature matrix:** [`docs/features.zh.md`](docs/features.zh.md)
 - **UI architecture:** [`docs/ui-architecture.zh.md`](docs/ui-architecture.zh.md)
 - **Photon research:** [`docs/photon-research.zh.md`](docs/photon-research.zh.md)
 - **Developer handoff:** [`docs/HANDOFF.zh.md`](docs/HANDOFF.zh.md)
-- **中文图文介绍 / Chinese gallery:** [`docs/GALLERY.zh.md`](docs/GALLERY.zh.md)
+- **涓枃鍥炬枃浠嬬粛 / Chinese gallery:** [`docs/GALLERY.zh.md`](docs/GALLERY.zh.md)
 - **Round 8 (Alight Motion PIXEL effects):** [`docs/ROUND8-01-AUDIT.zh.md`](docs/ROUND8-01-AUDIT.zh.md),
   [`docs/ROUND8-02-PIXEL.zh.md`](docs/ROUND8-02-PIXEL.zh.md),
   [`docs/ROUND8-03-VERIFY.zh.md`](docs/ROUND8-03-VERIFY.zh.md),
@@ -31,20 +29,20 @@
 - **Round 14 (UI density / flat buttons / tooltips, v0.4.0):** [`docs/ROUND14-UI-DENSITY-FLAT.zh.md`](docs/ROUND14-UI-DENSITY-FLAT.zh.md)
 - **Round 15 (BBS-native preview + world depth / pre-render cache / UI performance, v0.5.0):**
   [`docs/ROUND15-PREVIEW-CACHE-PERF.zh.md`](docs/ROUND15-PREVIEW-CACHE-PERF.zh.md)
-- **Round 16 (curve editor redesign — jank analysis, render architecture, AE parity plan):**
+- **Round 16 (curve editor redesign 鈥?jank analysis, render architecture, AE parity plan):**
   [`docs/ROUND16-CURVE-EDITOR-DESIGN.zh.md`](docs/ROUND16-CURVE-EDITOR-DESIGN.zh.md)
-- **Round 17 (curve editor P0+P1 — column-span geometry, blank-page fix, v0.6.0):**
+- **Round 17 (curve editor P0+P1 鈥?column-span geometry, blank-page fix, v0.6.0):**
   [`docs/ROUND17-CURVE-PERF.zh.md`](docs/ROUND17-CURVE-PERF.zh.md)
 - **Round 18 (visible curves / asset import / video+audio export / single-page library / solid
   stage / camera semantics, v0.7.0):**
   [`docs/ROUND18-CURVE-IMPORT-EXPORT-CAMERA.zh.md`](docs/ROUND18-CURVE-IMPORT-EXPORT-CAMERA.zh.md)
-- **Round 19 (AE encoder mode — frame server pipeline for preview and export, v0.8.0):**
+- **Round 19 (AE encoder mode 鈥?frame server pipeline for preview and export, v0.8.0):**
   [`docs/ROUND19-AE-ENCODER.zh.md`](docs/ROUND19-AE-ENCODER.zh.md)
 - **Round 20 (AE pipeline: disk frame cache, render budget, raw-frame pipe, preview audio,
   proxy resolution, v0.9.0):** [`docs/ROUND20-AE-PIPELINE.zh.md`](docs/ROUND20-AE-PIPELINE.zh.md)
 - **Round 21 (timeline zoom, audio and video tracks, narrow-panel fix, v0.10.0):**
   [`docs/ROUND21-TRACKS-AND-AUDIO.zh.md`](docs/ROUND21-TRACKS-AND-AUDIO.zh.md)
-- **Round 22 (Blender-style 3D viewport camera — free orbit/pan/zoom, source-texture draft
+- **Round 22 (Blender-style 3D viewport camera 鈥?free orbit/pan/zoom, source-texture draft
   rendering, v0.11.0):** [`docs/ROUND22-CAMERA-VIEWPORT.zh.md`](docs/ROUND22-CAMERA-VIEWPORT.zh.md)
 - **Round 23 (viewport usability: right-drag orbit, gradients, motion path, plane-depth stacking,
   first-open layout, playback flicker, v0.12.0):**
@@ -52,7 +50,7 @@
 - **Round 24 (viewport input polling, layer-space effects in the export path, mask/exclude,
   effect thumbnails, layer quick panel, v0.13.2):**
   [`docs/ROUND24-VIEWPORT-MASK-QUICKPANEL.zh.md`](docs/ROUND24-VIEWPORT-MASK-QUICKPANEL.zh.md)
-- **Round 25 (replay entity layer — depth-keyed matte, native file dialog, v0.14.1):**
+- **Round 25 (replay entity layer 鈥?depth-keyed matte, native file dialog, v0.14.1):**
   [`docs/ROUND25-ENTITY-KEY-IMPORT.zh.md`](docs/ROUND25-ENTITY-KEY-IMPORT.zh.md)
 - **Round 26 (owned Win32 file dialog, sound import, layer library, true 3D camera, v0.15.0):**
   [`docs/ROUND26-IMPORT-LIBRARY-CAMERA.zh.md`](docs/ROUND26-IMPORT-LIBRARY-CAMERA.zh.md)
@@ -91,10 +89,10 @@
 - **Round 43 (automatic system font discovery and import, v0.21.5):**
   [`docs/ROUND43-SYSTEM-FONTS.zh.md`](docs/ROUND43-SYSTEM-FONTS.zh.md)
 - **Round 44 (effect & layer bug-fix release, v0.22.0):** [`docs/ROUND44-EFFECT-LAYER-FIXES.zh.md`](docs/ROUND44-EFFECT-LAYER-FIXES.zh.md)
-- **Photon attribution / 引用声明:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
+- **Photon attribution / 寮曠敤澹版槑:** [`PHOTON-NOTICE.md`](PHOTON-NOTICE.md)
 
 <p align="center">
-  <img src="docs/gallery/hero.png" alt="BBS AE — onboarding, BBS-style settings and editable shortcuts" width="100%">
+  <img src="docs/gallery/hero.png" alt="BBS AE 鈥?onboarding, BBS-style settings and editable shortcuts" width="100%">
 </p>
 
 > This repository does **not** redistribute the BBS FS jar. Download BBS FS 2.7-1.20.1 from its
@@ -110,20 +108,19 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.96.jar`](https://github.com/zhongend/bbsae/releases/download/v0.96/bbsae-0.96.jar)
-   from the **v0.96** release (the asset is updated with each source push).
+1. Download [`bbsae-0.97.jar`](https://github.com/zhongend/bbsae/releases/download/v0.97/bbsae-0.97.jar)
+   from the **v0.97** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.96.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.97.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
-   **Replay properties → Compositor → Open Film Compositor**.
+   **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.96.jar` SHA-256: `93331DDDDFED5A43B70663FE693C85531BD14354379539ADD5100B0DF18CBC27` (3,743,118 bytes).
+`bbsae-0.97.jar` SHA-256: `A71AFA72ABFA5657C627D0C09B0AB5BAF983409D8C8C88EA402B938C6E97C882` (3,788,288 bytes).
 
 ## Gallery
 
-> 中文版图文介绍（含逐张说明）见 **[docs/GALLERY.zh.md](docs/GALLERY.zh.md)**。
-### The editor, not an overlay
+> 涓枃鐗堝浘鏂囦粙缁嶏紙鍚€愬紶璇存槑锛夎 **[docs/GALLERY.zh.md](docs/GALLERY.zh.md)**銆?### The editor, not an overlay
 
 <p align="center">
   <img src="docs/gallery/editor-overview.png" alt="BBS AE editor: effects library, live preview, Effect Controls and track timeline" width="100%">
@@ -132,12 +129,12 @@ export** without touching the `.dat` film format.
 BBS AE opens as an **independent BBS dashboard panel**, not a transparent overlay on the
 film editor. The layout follows a Premiere-style information architecture:
 
-1. **Effects library** — search, categories and a recent list; double-click applies to the selected track.
-2. **Live FBO preview** — the compositor renders into its own framebuffer with selection handles,
+1. **Effects library** 鈥?search, categories and a recent list; double-click applies to the selected track.
+2. **Live FBO preview** 鈥?the compositor renders into its own framebuffer with selection handles,
    safe-area/grid overlays, and **FX / Mask / BBS-world** toggles for A/B comparison.
-3. **Effect Controls** — motion, opacity, blend mode, the applied-effect stack, layer styles,
+3. **Effect Controls** 鈥?motion, opacity, blend mode, the applied-effect stack, layer styles,
    masks, text, grade, and the context-sensitive Layer/Comp/Output pages.
-4. **Track timeline** — one row per layer, movable/trimable clips, frame snapping, work-area
+4. **Track timeline** 鈥?one row per layer, movable/trimable clips, frame snapping, work-area
    shading, markers and a BBS-native keyframe drawer. Drag the **left grip** of a track header
    to reorder layers vertically (blue insertion line), without hunting through the context menu.
 
@@ -152,7 +149,7 @@ blur, colour, keying, generate, distort, stylize, transitions and depth. Round 8
 screen/retro effects built on the shared PIXEL shader, and 0.19 adds **Grid Repeat**, **Random
 Repeat**, **Turbulent Displace**, **Colorama** and **Light Sweep**:
 
-**Scanlines 路 Glitch 路 VHS 路 Halftone 路 Emboss 路 Mirror 路 Kaleidoscope**
+**Scanlines 璺?Glitch 璺?VHS 璺?Halftone 璺?Emboss 璺?Mirror 璺?Kaleidoscope**
 
 <p align="center">
   <a href="docs/verify/round8-pixel-effects.png">
@@ -168,15 +165,15 @@ phase, ink/paper colours); Mirror overlays a mirrored copy with an opacity contr
 
 | <img src="docs/verify/round6-grade6.png" alt="AE-style colour wheels" width="100%"> | <img src="docs/verify/round28-assets.png" alt="Asset library with Minecraft icons and a draggable scrollbar" width="100%"> |
 | :---: | :---: |
-| **AE-style grading** — lift/gamma/gain wheels, five-point master curve, presets and keyframeable exposure/contrast/saturation/vibrance. | **Asset library** — project media plus the client's item/block/entity/gui textures; search, thumbnails and a draggable scrollbar. |
+| **AE-style grading** 鈥?lift/gamma/gain wheels, five-point master curve, presets and keyframeable exposure/contrast/saturation/vibrance. | **Asset library** 鈥?project media plus the client's item/block/entity/gui textures; search, thumbnails and a draggable scrollbar. |
 
 | <img src="docs/verify/round7-3d2.png" alt="3D camera and 3D card in the compositor" width="100%"> | <img src="docs/verify/ui-4-export-dialog.png" alt="Export dialog with resolution, aspect and frame rate" width="100%"> |
 | :---: | :---: |
-| **3D camera and 2.5D cards** — free camera, depth ordering, adjustment layers and precomps. | **BBS-native export** — resolution/aspect/fps presets write into BBS's recorder, then F6 renders the real film. |
+| **3D camera and 2.5D cards** 鈥?free camera, depth ordering, adjustment layers and precomps. | **BBS-native export** 鈥?resolution/aspect/fps presets write into BBS's recorder, then F6 renders the real film. |
 
 | <img src="docs/verify/round6-export-1080p60.png" alt="A frame from a 1080p60 export" width="100%"> |
 | :---: |
-| **A real 1920×1080 @ 60 fps export** — 494 frames, 8.23 s, with the compositor layers baked into the MP4. |
+| **A real 1920脳1080 @ 60 fps export** 鈥?494 frames, 8.23 s, with the compositor layers baked into the MP4. |
 
 ### Built on BBS's own frame path
 
@@ -186,7 +183,7 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
 
-## What's new in 0.91 — 2D layers stay screen-attached
+## What's new in 0.91 鈥?2D layers stay screen-attached
 
 - Root cause of the 2D-layer bug: once any 3D layer had a z offset (or the camera was tilted),
   `CompScene.spatial()` made *every* flat layer go through the 3D `projectPlane()` pass, so plain
@@ -196,7 +193,7 @@ encoding.
 - `Camera3DTest` pins that a 2D layer still uses view2D under a tilted camera.
 - 379 tests green.
 
-## What's new in 0.90 — replay entity layers keep their matte in 3D effects
+## What's new in 0.90 鈥?replay entity layers keep their matte in 3D effects
 
 - A replay entity layer's coverage matte is projected in **composition space** (the world camera
   decides which actor pixels are keyed), but the 3D effect bake rasterized the layer in **layer-local
@@ -207,19 +204,19 @@ encoding.
   shapes and 2D layers.
 - 378 tests green.
 
-## What's new in 0.89 — fix the camera-preview ghost by disabling the depth plane path
+## What's new in 0.89 鈥?fix the camera-preview ghost by disabling the depth plane path
 
 - Reproduced with the user's project `____bug` locally: with the main compositor's per-pixel depth
   enabled, the camera preview showed duplicated star/polygon layers and stripes; with
   `DepthPlaneCompositor` disabled the same project renders correctly.
 - The free 3D workspace was always clean because it uses `Viewport3DRenderer`, a different path.
-- Per-pixel depth in the main composition is now **off by default** (Settings → 显示与线框 can enable
+- Per-pixel depth in the main composition is now **off by default** (Settings 鈫?鏄剧ず涓庣嚎妗?can enable
   it again); the main composition falls back to whole-layer ordering, while the 3D workspace keeps
   its depth-tested quads.
 - 0.87's opaque camera preview and 0.88's world-capture feedback guards remain.
 - 375 tests green.
 
-## What's new in 0.88 — stop the BBS-preview feedback ghost
+## What's new in 0.88 鈥?stop the BBS-preview feedback ghost
 
 - Root cause found in the user's film project: it contains a **BBS preview layer**. With BBS' custom
   preview/recording size, the late world copy could run after the composition overlay, so the BBS
@@ -231,19 +228,19 @@ encoding.
 - 0.87's opaque camera preview and depth-state restoration remain.
 - 375 tests green.
 
-## What's new in 0.87 — camera-preview ghosting fix
+## What's new in 0.87 鈥?camera-preview ghosting fix
 
 - Camera preview now renders a **fresh opaque frame** every time: it no longer reuses the preview
   cache (whose transparent stage could let the previous frame show through) and never shares a
   cached texture with the normal preview.
 - While the compositor is open, BBS' editor **onion skins** are temporarily suppressed (restored on
   exit); their extra previous/next frame drawings are a common source of duplicated shapes and text
-  in camera preview. A new Settings switch 关闭 BBS 洋葱皮残影 controls this if you need onion skins.
+  in camera preview. A new Settings switch 鍏抽棴 BBS 娲嬭懕鐨畫褰?controls this if you need onion skins.
 - `Viewport3DRenderer` now restores depth writes/tests when it finishes, so depth state cannot leak
   into the composition blit.
 - 375 tests green.
 
-## What's new in 0.86 — keyframe TIME-axis zoom
+## What's new in 0.86 鈥?keyframe TIME-axis zoom
 
 - Clarified intent: the zoom needed in the XYZ keyframe drawer is the **time axis**, not row height.
   The drawer title arrows now zoom the time axis in/out by setting the x-axis view around the current
@@ -252,22 +249,21 @@ encoding.
   labels; requests reported as a horizontal wheel are accepted too.
 - Row-height controls remain on the curve editor +/- buttons and the Settings sliders, independent of
   time zoom.
-- Client screenshot: `docs/verify/round62-keyframe-timezoom.png` (ticks 0–10 s collapsed to a
-  120–350 frame window); project and prefs restored.
+- Client screenshot: `docs/verify/round62-keyframe-timezoom.png` (ticks 0鈥?0 s collapsed to a
+  120鈥?50 frame window); project and prefs restored.
 - 375 tests green.
 
-## What's new in 0.85 — drawer closes with the same slide
+## What's new in 0.85 鈥?drawer closes with the same slide
 
 - The closing path now shrinks the keyframe drawer through the same animated height instead of
   snapping it shut; opening and closing share one clipped layout.
 - Switching away from the timeline page resets the slide, so returning with the drawer open slides it
   up from the bottom again.
 
-## What's new in 0.84 — XYZ track resizing and a sliding keyframe drawer
+## What's new in 0.84 鈥?XYZ track resizing and a sliding keyframe drawer
 
 - The **keyframe drawer** holding the position X/Y/Z rows now has up/down buttons in its title bar
-  that resize the dope-sheet tracks directly; the curve editor's channel list has its own +/−
-  buttons, and the Settings sliders drive both editors.
+  that resize the dope-sheet tracks directly; the curve editor's channel list has its own +/鈭?  buttons, and the Settings sliders drive both editors.
 - Alt+wheel now resizes rows anywhere inside the curve editor, not only when the pointer is over a
   specific channel row. The buttons remain the guaranteed path.
 - The keyframe drawer **slides up from the timeline's bottom edge** (~300 ms ease-out) and slides
@@ -275,36 +271,36 @@ encoding.
 - Client screenshot: `docs/verify/round60-keyframe-drawer.png`; project and prefs restored.
 - 375 tests green.
 
-## What's new in 0.83 — overlay presets in Settings
+## What's new in 0.83 鈥?overlay presets in Settings
 
-- 显示与线框 gains three one-click buttons: **纯净预览** (hide gizmos, boxes, camera wireframes,
-  guides and preview text), **显示全部线框与提示**, and **恢复默认外观设置** (opacity/thickness back
+- 鏄剧ず涓庣嚎妗?gains three one-click buttons: **绾噣棰勮** (hide gizmos, boxes, camera wireframes,
+  guides and preview text), **鏄剧ず鍏ㄩ儴绾挎涓庢彁绀?*, and **鎭㈠榛樿澶栬璁剧疆** (opacity/thickness back
   to 1, row heights back to defaults, all switches on).
 - These complement the per-control sliders/toggles and give an immediate way to declutter or reset.
 
-## What's new in 0.82 — visible keyframe track-height controls
+## What's new in 0.82 鈥?visible keyframe track-height controls
 
 - The keyframe editor now has **+/- buttons in its top-right corner** that change the dope-sheet row
   height directly, so resizing no longer depends on a wheel gesture that BBS' own scroll handling can
   swallow.
-- Settings → 显示与线框 has sliders for **关键帧轨道高度** (12–60 px) and **时间轴轨道高度**
-  (18–62 px); moving them applies immediately and saves to prefs.
+- Settings 鈫?鏄剧ず涓庣嚎妗?has sliders for **鍏抽敭甯ц建閬撻珮搴?* (12鈥?0 px) and **鏃堕棿杞磋建閬撻珮搴?*
+  (18鈥?2 px); moving them applies immediately and saves to prefs.
 - Alt+wheel / Alt+= / Alt+- remain as shortcuts; the buttons and sliders are the reliable fallback.
 - Client screenshot: `docs/verify/round58-keyframe-buttons.png`; project and prefs restored.
 - 375 tests green.
 
-## What's new in 0.81 — one gizmo at a time, BBS box by default
+## What's new in 0.81 鈥?one gizmo at a time, BBS box by default
 
 - The 3D workspace now defaults to the **scale** mode: only the BBS-style selection box, corner and
   edge grips and a centre uniform handle are shown. W switches to the move arrows, R to the rotation
-  rings — so the three gizmos no longer pile up on one layer.
+  rings 鈥?so the three gizmos no longer pile up on one layer.
 - Grips are larger (6 px corners, 4 px edges, 6 px centre) with wider hit areas; dragging the centre
   handle scales uniformly.
 - The mode bar moved further up, clear of the HUD text.
 - Client screenshot: `docs/verify/round56-box-scale.png`; project and prefs restored.
 - 375 tests green.
 
-## What's new in 0.80 — BBS-style placement box in 3D
+## What's new in 0.80 鈥?BBS-style placement box in 3D
 
 - The 3D workspace now also has the BBS placement-gizmo interaction: four corner grips scale both
   local axes freely, and the four edge grips scale a single axis. The pointer is intersected with the
@@ -314,10 +310,10 @@ encoding.
 - Client screenshot: `docs/verify/round55-box-gizmo.png`; project and preferences restored.
 - 375 tests green.
 
-## What's new in 0.79 — recent effects and a keyframe-row verification
+## What's new in 0.79 鈥?recent effects and a keyframe-row verification
 
-- The effect library has a **最近使用** category: it lists the effects in the order they were applied
-  and clicking one stacks it again. The category sits right after 全部 and shows an empty state when
+- The effect library has a **鏈€杩戜娇鐢?* category: it lists the effects in the order they were applied
+  and clicking one stacks it again. The category sits right after 鍏ㄩ儴 and shows an empty state when
   there is no history yet.
 - Verified the BBS keyframe editor's row height in the real client with
   `-PbbsaeKeyframeRowHeight=40` (`docs/verify/round55-keyframe-rows.png`); it goes through the
@@ -325,21 +321,21 @@ encoding.
 - Project and preferences were restored after the run.
 - 375 tests green.
 
-## What's new in 0.78 — keyframe track height and a preview-text switch
+## What's new in 0.78 鈥?keyframe track height and a preview-text switch
 
 - The **BBS keyframe editor** now exposes its dope-sheet track height: Alt+wheel or Alt+= / Alt+-
   changes it between 12 and 60 px and saves it to `prefs.json`, so the editor reopens at the size you
   chose. The main timeline's row height is persisted the same way.
-- Settings → 显示与线框 has a new **预览文字提示** switch. Turning it off hides the 3D mode/camera HUD,
+- Settings 鈫?鏄剧ず涓庣嚎妗?has a new **棰勮鏂囧瓧鎻愮ず** switch. Turning it off hides the 3D mode/camera HUD,
   the look-through hint, the resolution strip and the camera position labels; the wireframe geometry
   itself is unaffected.
 - `CompPrefsOverlayTest` covers the defaults and a JSON round-trip of the overlay opacity/thickness,
   both row heights and the hint switch.
 - 375 tests green.
 
-## What's new in 0.77 — wireframe settings and track-height zoom
+## What's new in 0.77 鈥?wireframe settings and track-height zoom
 
-- Settings has a new **显示与线框** page: a master gizmo switch, gizmo opacity, wireframe thickness,
+- Settings has a new **鏄剧ず涓庣嚎妗?* page: a master gizmo switch, gizmo opacity, wireframe thickness,
   selection boxes, camera gizmos and safe-area/guides toggles. All overlay strokes go through one
   `line()` path, so opacity and thickness apply immediately to gizmos, selection boxes, camera
   frustums and guides; turning gizmos or selection boxes off also disables their hit tests, so an
@@ -350,20 +346,20 @@ encoding.
 - Client screenshot: `docs/verify/round52-settings-overlay.png`.
 - 373 tests green.
 
-## What's new in 0.76 — move / scale / rotate gizmos in 3D
+## What's new in 0.76 鈥?move / scale / rotate gizmos in 3D
 
 - The 3D workspace now has three AE-style gizmo modes: **W = move** (arrows), **E = scale** (axis-end
   squares plus a centre square for uniform scale), **R = rotate** (three projected X/Y/Z rings). A
   clickable mode bar sits above the bottom HUD and highlights the active mode; the W/E/R keys switch
   modes while the preview is focused.
 - Each drag is computed from the screen axis or angle captured at press time, so it follows the
-  pointer; Shift snaps moves to whole units and rotation to 15°. Axes pointing at the camera are drawn
+  pointer; Shift snaps moves to whole units and rotation to 15掳. Axes pointing at the camera are drawn
   dimmed and are not hit-tested.
 - `CompGizmo3DTest` covers the scale factor around 1 and shortest-path screen angle deltas.
 - Client screenshots: `docs/verify/round51-gizmo-rotate.png`, `docs/verify/round51-gizmo-scale.png`.
 - 373 tests green.
 
-## What's new in 0.75 — AE-style 3D move gizmo and 2D scale fixes
+## What's new in 0.75 鈥?AE-style 3D move gizmo and 2D scale fixes
 
 - **3D move gizmo**: selecting a layer in the 3D workspace draws X (red), Y (green) and Z (blue)
   arrows with arrowheads and axis letters, projected through the viewport camera from the layer's
@@ -379,11 +375,10 @@ encoding.
 - `docs/verify/round50-gizmo3d.png` shows the gizmo in the real client.
 - 371 tests green.
 
-## What's new in 0.74 — a real effect library with rendered previews
+## What's new in 0.74 鈥?a real effect library with rendered previews
 
-- **New full-screen effect library** (`效果库` button in the header, also opened from the effects
-  page): category tabs, search, a thumbnail grid, click-to-apply and a status line. Tiles animate —
-  hover lift and accent rail, an applied pulse, staggered entrance and smooth scrolling; category
+- **New full-screen effect library** (`鏁堟灉搴揱 button in the header, also opened from the effects
+  page): category tabs, search, a thumbnail grid, click-to-apply and a status line. Tiles animate 鈥?  hover lift and accent rail, an applied pulse, staggered entrance and smooth scrolling; category
   chips animate on hover too.
 - **207 preview thumbnails** are rendered by the real effect pipeline
   (`EffectThumbnailTest`, run with `-PbbsaeThumbs`) into
@@ -397,32 +392,32 @@ encoding.
   stale `GlStateManager` cache cannot turn it opaque.
 - 363 tests green; 207 visible effects.
 
-## What's new in 0.73 — client smoke test and replay-matte verification entry
+## What's new in 0.73 鈥?client smoke test and replay-matte verification entry
 
 - Added `-PbbsaeFilmId=` for the existing `bbsaeView=entity` verification view, so a real film's
   replay matte can be opened without clicking through the UI.
 - Ran the client once (not repeatedly): the composition with 3D layers, text and the world backdrop
-  rendered correctly after the depth changes — `docs/verify/round47-client-smoke.png`. The available
+  rendered correctly after the depth changes 鈥?`docs/verify/round47-client-smoke.png`. The available
   test film has no usable replay actor, so the matte was empty; the offset fix is still covered by
   the sizing rules/tests and the runtime size warning, but a film with a replay is needed for the
   final on-screen check.
 - Project data was backed up and restored around the run.
 - 357 tests green; 137 effects.
 
-## What's new in 0.72 — pooled depth targets and a matte-size guard
+## What's new in 0.72 鈥?pooled depth targets and a matte-size guard
 
 - `DepthPlaneCompositor` now pools its colour+depth targets per size (max four each) instead of
   allocating one per composition render, which removes GPU allocation churn while scrubbing and
   playing. The pool is freed with the rest of the render caches.
 - `ReplayEntityKey` warns once per second when the coverage target size does not match the world
-  frame — the exact condition that produced the offset entity key. A future regression now shows up
+  frame 鈥?the exact condition that produced the offset entity key. A future regression now shows up
   in the client log instead of silently shifting the matte.
 - `DepthPlaneCompositorTest` asserts pool reuse (same size reused, different sizes separate).
 - 357 tests green; 137 effects.
 
-## What's new in 0.71 — translucent 3D layers no longer occlude
+## What's new in 0.71 鈥?translucent 3D layers no longer occlude
 
-- Depth prepass now writes depth only for fragments with alpha ≥ 0.5, so a semi-transparent 3D layer
+- Depth prepass now writes depth only for fragments with alpha 鈮?0.5, so a semi-transparent 3D layer
   no longer punches an opaque hole through the layers behind it.
 - The colour pass is split: opaque fragments use depth-equality against the prepass, translucent
   fragments use less-or-equal with no depth write, so they blend over a nearer opaque pixel only
@@ -431,7 +426,7 @@ encoding.
   a blend, and a translucent far red behind an opaque near blue is fully hidden.
 - 356 tests green; 137 effects.
 
-## What's new in 0.70 — per-pixel depth in the main compositor
+## What's new in 0.70 鈥?per-pixel depth in the main compositor
 
 - New `DEPTH_PLANE` shader treats each 3D layer as a camera-space plane: for every fragment it
   intersects the view ray with the plane and writes `gl_FragDepth`.
@@ -440,12 +435,12 @@ encoding.
   as before. `CompRenderer` now uses it for `usePerspective` layers in spatial compositions; 2D layers
   keep the old path.
 - `DepthPlaneCompositorTest`: two full-frame planes (far red, near blue) composed in **both** orders
-  both end blue — impossible with whole-layer painter order.
+  both end blue 鈥?impossible with whole-layer painter order.
 - Added a tiny `CompShaders.reload()` test hook so each GL test class can compile programs in its own
   hidden context without reusing destroyed ids.
 - 354 tests green; 137 effects.
 
-## What's new in 0.69 — real per-pixel depth in the 3D workspace
+## What's new in 0.69 鈥?real per-pixel depth in the 3D workspace
 
 - `GlFramebuffer` can now own a `DEPTH_COMPONENT24` renderbuffer (cleared in `begin`, released in
   `delete`).
@@ -454,18 +449,18 @@ encoding.
   per-pixel depth. Depth test/write are enabled and fully transparent fragments are discarded; 2D
   layers keep the screen-space batcher path with depth disabled.
 - `Viewport3DRendererTest` proves the point: two overlapping quads, drawn near-first or far-first,
-  both end with the nearer blue quad owning the centre and the far red ring outside — a depth buffer,
+  both end with the nearer blue quad owning the centre and the far red ring outside 鈥?a depth buffer,
   not whole-layer painter order.
 - Honest scope: the **main compositor/export** still bakes 3D layers and orders them by plane. A
   per-pixel depth composite there is the next step and is not claimed here.
 - 353 tests green; 137 effects.
 
-## What's new in 0.68 — viewport ordering pinned and the AE entry hidden when impossible
+## What's new in 0.68 鈥?viewport ordering pinned and the AE entry hidden when impossible
 
 - `CompViewportRenderer.sortByView(ctx, layers, eye, forward)` is now a testable unit.
   `CompViewportSortTest` proves the orbit camera decides the order (layer depths swap when the camera
   moves behind the comp) and that coplanar layers keep the stack order.
-- Settings → 渲染 / 编码管线 now **hides the AE option entirely** for projects containing a BBS
+- Settings 鈫?娓叉煋 / 缂栫爜绠＄嚎 now **hides the AE option entirely** for projects containing a BBS
   preview or replay-entity layer, with a tooltip explaining why, instead of accepting a click and
   rejecting it afterwards.
 - Honest remaining limitation: intersecting 3D planes still rely on per-layer painter sorting; a
@@ -473,7 +468,7 @@ encoding.
   claimed done here.
 - 351 tests green; 137 effects.
 
-## What's new in 0.67 — 3D ordering, entity matte, project entry and the AE/BBS split
+## What's new in 0.67 鈥?3D ordering, entity matte, project entry and the AE/BBS split
 
 - **3D workspace order**: layer sorting used `CompScene.planeDepth(ctx, layer)`, which resolves the
   *composition* camera; the 3D workspace orbits a free camera. Orbiting therefore reordered layers
@@ -483,7 +478,7 @@ encoding.
   BBS' custom-size preview/recorder renders the world at the film resolution. Different aspect ratios
   stretched the 0..1 mask over the plate. The matte now renders at the world frame's size and the
   depth blit's source rectangle describes the world framebuffer (`EntityMaskSizing`, with tests).
-- **Project list on the main page**: a 工程 button in the compositor header saves and returns to the
+- **Project list on the main page**: a 宸ョ▼ button in the compositor header saves and returns to the
   project list (the list already existed on the start screen, but was only reachable via Settings).
 - **AE vs BBS renderer**: projects containing a `bbs` preview layer or a `replay` entity-key layer
   cannot switch to the AE encoder (the AE renderer is frame-driven and cannot reproduce BBS'
@@ -491,7 +486,7 @@ encoding.
   back to the BBS encoder automatically.
 - 349 tests green; 137 effects.
 
-## What's new in 0.66 — painter sorting for non-convex primitives
+## What's new in 0.66 鈥?painter sorting for non-convex primitives
 
 - Back-face culling alone is only correct for convex meshes; torus, ring, hollow box and star
   polyhedron are non-convex, so their holes filled in, side walls showed sawtooth notches and back
@@ -502,51 +497,51 @@ encoding.
   sphere are smooth, heart and star polyhedron are solid.
 - 338 tests green; 137 effects.
 
-## What's new in 0.65 — zero-restore verified in the real renderer
+## What's new in 0.65 鈥?zero-restore verified in the real renderer
 
 - New `bbsaeView=zerotest` scenario renders three cases in one frame: shatter at **0** (must be a
   clean rectangle), shatter at **0.35** (must be broken) and a 3D cube with stacked effects.
-  `docs/verify/round38-zerotest.png` shows exactly that — the user-reported "shatter at 0 cannot
+  `docs/verify/round38-zerotest.png` shows exactly that 鈥?the user-reported "shatter at 0 cannot
   restore a square" contract now has pixel evidence from the real composition renderer.
-- New effects: **发光** (`AM · 风格化`, alpha halo) and **平滑斜面** (`AM · 绘制`, luminance bevel),
+- New effects: **鍙戝厜** (`AM 路 椋庢牸鍖朻, alpha halo) and **骞虫粦鏂滈潰** (`AM 路 缁樺埗`, luminance bevel),
   both with zero identities covered by the forced-shader audits.
 - 137 effects total (122 2D + 15 3D); 338 tests green.
 
-## What's new in 0.64 — zero-set audits and contour lines
+## What's new in 0.64 鈥?zero-set audits and contour lines
 
 - `AmEffectDef.zeroKeys()` exposes the "several parameters are zero together" identity sets (colour
   tone's nine gains, highlight/shadow's two amounts). A new forced-shader test,
   `everyDeclaredZeroSetIsIdentityInsideTheShader`, renders each one pixel by pixel against an opaque
-  source — the same audit that previously caught the cartoon/glass defects.
-- New effect **轮廓线** (`AM · 绘制`): luminance-gradient outline with strength 0 = original.
+  source 鈥?the same audit that previously caught the cartoon/glass defects.
+- New effect **杞粨绾?* (`AM 路 缁樺埗`): luminance-gradient outline with strength 0 = original.
 - 135 effects total (120 2D + 15 3D); 338 tests green.
 
-## What's new in 0.63 — shader-level identity audits that actually run the shader
+## What's new in 0.63 鈥?shader-level identity audits that actually run the shader
 
 - `AmEffectRenderer.applyForced` is a test-only entry point that bypasses the neutral early-out, so
   the zero/custom-identity audits really execute the shader body instead of proving a skipped pass.
   The audits also use a full-bleed opaque source, so border pixels cannot hide behind transparent
   margins.
 - The stricter audit found and fixed three real defects:
-  - **卡通** still quantised colours at `strength=0` (quantisation and outline now scale with
+  - **鍗￠€?* still quantised colours at `strength=0` (quantisation and outline now scale with
     strength);
-  - **玻璃** applied its tint/highlight regardless of refraction strength (now weighted by
+  - **鐜荤拑** applied its tint/highlight regardless of refraction strength (now weighted by
     `strength / 24`);
-  - **渐变遮罩 / 径向擦除（角度）** kept a half-transparent sweep edge at progress 1 (explicit
+  - **娓愬彉閬僵 / 寰勫悜鎿﹂櫎锛堣搴︼級** kept a half-transparent sweep edge at progress 1 (explicit
     identity branch), so "progress 1 = original" is now exact.
 - 337 tests green; 134 effects.
 
-## What's new in 0.62 — shader-level zero audit and keying/repeat effects
+## What's new in 0.62 鈥?shader-level zero audit and keying/repeat effects
 
 - New test `everyDeclaredZeroIsIdentityInsideTheShader`: it bypasses the neutral early-out and calls
   `AmEffectRenderer` directly, comparing every zero-declared effect pixel by pixel against the
   source. Previously a non-identity shader could pass because the renderer skipped the pass.
-- It immediately caught a real bug: 色度键 applied its spill suppression regardless of strength, so
+- It immediately caught a real bug: 鑹插害閿?applied its spill suppression regardless of strength, so
   strength 0 still changed colours; spill is now scaled by strength.
-- New effects: **色度键**, **亮度键** (`AM · 遮罩`), **网格平铺**, **线条重复** (`AM · 重复`).
+- New effects: **鑹插害閿?*, **浜害閿?* (`AM 路 閬僵`), **缃戞牸骞抽摵**, **绾挎潯閲嶅** (`AM 路 閲嶅`).
 - 134 effects total (119 2D + 15 3D); 335 tests green.
 
-## What's new in 0.61 — 3D shapes now work on 2D layers too
+## What's new in 0.61 鈥?3D shapes now work on 2D layers too
 
 - Composition-space mesh effects render into a **layer-sized surface** first and then place that
   surface as a quad at the layer's projected rectangle. The previous path sampled the whole
@@ -558,7 +553,7 @@ encoding.
   layers, and `docs/verify/round34-cube3d.png` is the 3D baked path.
 - 334 tests green; 130 effects.
 
-## What's new in 0.60 — 3D shape rendering verified in the client
+## What's new in 0.60 鈥?3D shape rendering verified in the client
 
 - The "gaps" between the cube's faces were **not geometry**: with a full-bleed source texture the
   faces meet exactly (`docs/verify/round33-cube-fill.png`). Earlier screenshots sampled the layer's
@@ -570,7 +565,7 @@ encoding.
   baked 3D-layer path is verified correct.
 - 334 tests green; 130 effects.
 
-## What's new in 0.59 — 3D shapes bake into the layer again
+## What's new in 0.59 鈥?3D shapes bake into the layer again
 
 - Root cause of the tiny/offset 3D primitives: `s3d_*` effects were forced into the post-projection
   pass, but the pixels they received were a **layer-local** raster while the matrix was composition
@@ -583,7 +578,7 @@ encoding.
   for the next round; the release does not claim it fixed.
 - 334 tests green; 130 effects.
 
-## What's new in 0.58 — verification harness for 3D primitives
+## What's new in 0.58 鈥?verification harness for 3D primitives
 
 - New debug entries for isolating a single layer: `bbsae.debugSelectLayer`, `bbsae.debugOnlyLayer`
   and `bbsaeView=cubetest` (one 3D layer with `s3d_cube`). They make a client screenshot show
@@ -596,178 +591,178 @@ encoding.
   release honest.
 - 334 tests green; 130 effects.
 
-## What's new in 0.57 — text inspector verified in the real client
+## What's new in 0.57 鈥?text inspector verified in the real client
 
 - Added `bbsae.debugSelectLayer`: a verification hook that selects a layer by name **or text
   content**, so screenshots can show a page for that layer type without mouse input.
-- The debug demo scene now includes a text layer (`文字效果 Aa 123`) and applies `s3d_cube` to the
+- The debug demo scene now includes a text layer (`鏂囧瓧鏁堟灉 Aa 123`) and applies `s3d_cube` to the
   3D card, exercising the text inspector and the projected-pass mesh path in one launch.
-- `docs/verify/round30-textfx4.png` shows the 文字 page: 文字模式, 打字进度, 随机字符比例, 随机种子,
-  计数器偏移/倍率 — and the text rendering in the viewport.
+- `docs/verify/round30-textfx4.png` shows the 鏂囧瓧 page: 鏂囧瓧妯″紡, 鎵撳瓧杩涘害, 闅忔満瀛楃姣斾緥, 闅忔満绉嶅瓙,
+  璁℃暟鍣ㄥ亸绉?鍊嶇巼 鈥?and the text rendering in the viewport.
 - 334 tests green; 130 effects.
 
-## What's new in 0.56 — text content effects
+## What's new in 0.56 鈥?text content effects
 
-- Text layers now support content-level effects before layout: **时间码** (`HH:MM:SS:FF`),
-  **计数器** (offset + scale), **随机字符** (deterministic per-frame scramble) and
-  **打字进度** (typewriter reveal over code points, so CJK is safe).
+- Text layers now support content-level effects before layout: **鏃堕棿鐮?* (`HH:MM:SS:FF`),
+  **璁℃暟鍣?* (offset + scale), **闅忔満瀛楃** (deterministic per-frame scramble) and
+  **鎵撳瓧杩涘害** (typewriter reveal over code points, so CJK is safe).
 - These are nullable layer fields, so projects saved before the feature keep their exact text; the
-  inspector's 文字 section gains mode, progress (keyframable), scramble amount/seed and counter
+  inspector's 鏂囧瓧 section gains mode, progress (keyframable), scramble amount/seed and counter
   offset/scale controls.
 - Per-character transform and spacing are already covered by the existing text animators and
   tracking/line-height properties (the reference app's texttransform/textspacing effects).
 - New `TextContentTest` covers formatting, code points, determinism and composition. 334 tests green.
 
-## What's new in 0.55 — transition and reveal batch
+## What's new in 0.55 鈥?transition and reveal batch
 
-- **棋盘溶解**, **像素溶解**, **径向擦除（角度）**, **渐变遮罩** (`AM · 转场`): progress-driven
+- **妫嬬洏婧惰В**, **鍍忕礌婧惰В**, **寰勫悜鎿﹂櫎锛堣搴︼級**, **娓愬彉閬僵** (`AM 路 杞満`): progress-driven
   reveals; progress 1 is the identity and is declared through `neutralWhen`.
-- **速度线** (`AM · 生成`): radial speed streaks with count/sharpness/radius and colour.
+- **閫熷害绾?* (`AM 路 鐢熸垚`): radial speed streaks with count/sharpness/radius and colour.
 - 130 effects total (115 2D + 15 3D); 326 tests green; library names stay unique.
 
-## What's new in 0.54 — effect order is preserved around the 3D bake
+## What's new in 0.54 鈥?effect order is preserved around the 3D bake
 
 - A 3D layer now splits its effect stack at the **first projected effect**: everything before it is
   baked into the layer raster, everything from it onward runs after projection **in the author's
-  order**. Previously only the projected effects themselves ran late, so `立方体 -> 模糊` executed
+  order**. Previously only the projected effects themselves ran late, so `绔嬫柟浣?-> 妯＄硦` executed
   the blur first and the cube last.
 - `requiresProjectedPass` / `firstProjectedEffect` are pure list logic and are pinned by
   `EffectOrderTest` (split point, disabled effects, classification).
 - 326 tests green; 125 effects.
 
-## What's new in 0.53 — hollow box, star polyhedron and compositing tools
+## What's new in 0.53 鈥?hollow box, star polyhedron and compositing tools
 
-- **空心盒** (six thin slabs forming a box shell) and **星形多面体** (star polygon bipyramid)
-  join `AM · 3D 形状` — 15 primitives total, all lit and texture-mapped.
-- **倒影** (mirrored copy below with fade), **内阴影** (alpha-difference inner shading) under
-  `AM · 合成`; **高光** (gaussian sheen band) under `AM · 风格化`.
+- **绌哄績鐩?* (six thin slabs forming a box shell) and **鏄熷舰澶氶潰浣?* (star polygon bipyramid)
+  join `AM 路 3D 褰㈢姸` 鈥?15 primitives total, all lit and texture-mapped.
+- **鍊掑奖** (mirrored copy below with fade), **鍐呴槾褰?* (alpha-difference inner shading) under
+  `AM 路 鍚堟垚`; **楂樺厜** (gaussian sheen band) under `AM 路 椋庢牸鍖朻.
 - 125 effects total (110 2D + 15 3D); 322 tests green.
 
-## What's new in 0.52 — opacity and halftone tools
+## What's new in 0.52 鈥?opacity and halftone tools
 
-- **羽化**, **半调点**, **等高线渐变** (`AM · 绘制`): averaged alpha feather, luminance-sized
+- **缇藉寲**, **鍗婅皟鐐?*, **绛夐珮绾挎笎鍙?* (`AM 路 缁樺埗`): averaged alpha feather, luminance-sized
   halftone dots and contour bands coloured by luminance.
-- **淡入淡出**, **眨眼** (`AM · 透明度`): progress alpha and a time-quantised blink; fade's identity
+- **娣″叆娣″嚭**, **鐪ㄧ溂** (`AM 路 閫忔槑搴): progress alpha and a time-quantised blink; fade's identity
   is progress 1 (declared through neutralWhen).
-- **光扫** (`AM · 风格化`): a moving highlight band.
+- **鍏夋壂** (`AM 路 椋庢牸鍖朻): a moving highlight band.
 - 120 effects total (107 2D + 13 3D); 322 tests green.
 
-## What's new in 0.51 — effects work in 2D and 3D and stack
+## What's new in 0.51 鈥?effects work in 2D and 3D and stack
 
 - **3D-bake sampling fixed**: effects that run on the layer-local raster now sample the source with
-  its own UVs (`layerLocalPass` → `LocalSource = 1`) instead of mapping through composition UVs,
+  its own UVs (`layerLocalPass` 鈫?`LocalSource = 1`) instead of mapping through composition UVs,
   which used to sample the wrong region (or clamp) inside the 3D bake.
 - **3D primitives are applied once**: `s3d_*` effects are excluded from the 3D bake and forced into
   the composition pass, so the layer's world matrix is not applied twice.
-- **Stacking is tested**: a new pipeline test chains 2D→2D、2D→3D、3D→2D and three-effect chains,
+- **Stacking is tested**: a new pipeline test chains 2D鈫?D銆?D鈫?D銆?D鈫?D and three-effect chains,
   checking each pass keeps the frame size, produces pixels and raises no GL error.
 - 322 tests green; 114 effects.
 
-## What's new in 0.50 — heart primitive and texture mapping for 3D
+## What's new in 0.50 鈥?heart primitive and texture mapping for 3D
 
-- **心形** (`AM · 3D 形状`): a parametric heart outline extruded into a solid primitive.
+- **蹇冨舰** (`AM 路 3D 褰㈢姸`): a parametric heart outline extruded into a solid primitive.
 - Every 3D shape now exposes **texture mapping**: repeat, offset X/Y and rotation. Repeat values
   other than 1 switch to `fract` tiling; otherwise the UV is clamped.
 - Fixed a real GLSL error found by the headless link test: comparing a `vec2` with a `float`
   (`abs(TexRepeat) > 0.0001`) is invalid in GLSL 150 and had made the mesh program fail to link.
 - 114 effects total (101 2D + 13 3D); 321 tests green.
 
-## What's new in 0.49 — twelve 3D primitives with lighting
+## What's new in 0.49 鈥?twelve 3D primitives with lighting
 
-- Six more primitives: **环形, 十字棱柱, 八面体, 六棱柱, 三棱柱, 星形棱柱** (`AM · 3D 形状`).
+- Six more primitives: **鐜舰, 鍗佸瓧妫辨煴, 鍏潰浣? 鍏１鏌? 涓夋１鏌? 鏄熷舰妫辨煴** (`AM 路 3D 褰㈢姸`).
 - Mesh vertices now carry **normals**; the fragment stage applies directional diffuse + specular
-  shading (光照角度/高度/强度、环境光、高光锐度) using a normal matrix derived from the MVP.
+  shading (鍏夌収瑙掑害/楂樺害/寮哄害銆佺幆澧冨厜銆侀珮鍏夐攼搴? using a normal matrix derived from the MVP.
 - 113 effects total (101 2D + 12 3D); the contact sheet shows all twelve primitives rendering.
 - 321 tests green.
 
-## What's new in 0.48 — real 3D primitives
+## What's new in 0.48 鈥?real 3D primitives
 
-- New mesh pipeline: `Mesh`, `MeshShapes` and `MeshRenderer` render **立方体 / 圆柱体 / 球体 /
-  棱锥 / 圆锥 / 圆环** with the layer content as the surface texture. The vertex stage uses real
+- New mesh pipeline: `Mesh`, `MeshShapes` and `MeshRenderer` render **绔嬫柟浣?/ 鍦嗘煴浣?/ 鐞冧綋 /
+  妫遍敟 / 鍦嗛敟 / 鍦嗙幆** with the layer content as the surface texture. The vertex stage uses real
   `Position/UV` attributes and an MVP matrix built from the layer's own world matrix and projection.
 - The primitives are convex, so back-face culling alone resolves occlusion: the colour-only
   framebuffers stay unchanged (no depth attachment, no render-graph changes).
-- Six `s3d_*` effects (`AM · 3D 形状`) with rotate X/Y/Z, thickness and scale; the headless shader
+- Six `s3d_*` effects (`AM 路 3D 褰㈢姸`) with rotate X/Y/Z, thickness and scale; the headless shader
   test links the dedicated mesh program and the contact sheet shows all six rendering.
 - 107 effects total (101 2D + 6 3D); 321 tests green.
 
-## What's new in 0.47 — past one hundred reference effects
+## What's new in 0.47 鈥?past one hundred reference effects
 
-- **翻转**, **倾斜**, **挤压** (`AM · 变换`): angle-driven flip, shear and axis squeeze.
-- **遮罩模糊** (`AM · 模糊`): blur restricted to alpha edges.
-- **色调** (`AM · 调色`): per-channel gain plus lift.
-- **块状溶解** (`AM · 透明度`): block-wise dissolve; progress 1 is the identity and is declared
+- **缈昏浆**, **鍊炬枩**, **鎸ゅ帇** (`AM 路 鍙樻崲`): angle-driven flip, shear and axis squeeze.
+- **閬僵妯＄硦** (`AM 路 妯＄硦`): blur restricted to alpha edges.
+- **鑹茶皟** (`AM 路 璋冭壊`): per-channel gain plus lift.
+- **鍧楃姸婧惰В** (`AM 路 閫忔槑搴): block-wise dissolve; progress 1 is the identity and is declared
   through `neutralWhen`.
 - **101 reference-compatible effects**; the neutrality test probe now respects each slider's range
   (identities at the maximum, like a dissolve at progress 1, step down instead of up).
 - 321 tests green.
 
-## What's new in 0.46 — channel maps and matte composites
+## What's new in 0.46 鈥?channel maps and matte composites
 
-- **通道映射**, **HSV 通道映射** (`AM · 调色`): channel swizzles and HSV gain/rotation, both with
+- **閫氶亾鏄犲皠**, **HSV 閫氶亾鏄犲皠** (`AM 路 璋冭壊`): channel swizzles and HSV gain/rotation, both with
   identity mappings.
-- **填充背后**, **实色遮罩**, **遮罩边缘** (`AM · 合成`): fill transparent areas, solid fill inside
+- **濉厖鑳屽悗**, **瀹炶壊閬僵**, **閬僵杈圭紭** (`AM 路 鍚堟垚`): fill transparent areas, solid fill inside
   alpha, coloured fringe on alpha edges.
-- **闪烁** (`AM · 透明度`): frame-quantised alpha flicker.
+- **闂儊** (`AM 路 閫忔槑搴): frame-quantised alpha flicker.
 - 95 reference-compatible effects; 321 tests green.
 
-## What's new in 0.45 — borders, beams and arrays
+## What's new in 0.45 鈥?borders, beams and arrays
 
-- **边框**, **描边锥度** (`AM · 绘制`): width/feather border and a tapered outline.
-- **能量束**, **六边形阵列** (`AM · 生成`): glowing beam and hex grid glow.
-- **彩色分离** (`AM · 调色`): radial RGB split.
+- **杈规**, **鎻忚竟閿ュ害** (`AM 路 缁樺埗`): width/feather border and a tapered outline.
+- **鑳介噺鏉?*, **鍏竟褰㈤樀鍒?* (`AM 路 鐢熸垚`): glowing beam and hex grid glow.
+- **褰╄壊鍒嗙** (`AM 路 璋冭壊`): radial RGB split.
 - 89 reference-compatible effects; every body is in layer space with an identity value.
 - 321 tests green.
 
-## What's new in 0.44 — procedural shapes and edge tools
+## What's new in 0.44 鈥?procedural shapes and edge tools
 
-- **径向光线**, **点阵**, **星形** (`AM · 生成`): procedural ray fans, dot grids and star polygons
+- **寰勫悜鍏夌嚎**, **鐐归樀**, **鏄熷舰** (`AM 路 鐢熸垚`): procedural ray fans, dot grids and star polygons
   with colour and alpha.
-- **平滑边缘**, **半调线** (`AM · 绘制`): alpha edge averaging and luminance-modulated halftone
+- **骞虫粦杈圭紭**, **鍗婅皟绾?* (`AM 路 缁樺埗`): alpha edge averaging and luminance-modulated halftone
   lines.
 - 84 reference-compatible effects; all in layer space with declared identities (alpha 0 / radius 0).
 - 321 tests green.
 
-## What's new in 0.43 — colour, drawing and blur batch
+## What's new in 0.43 鈥?colour, drawing and blur batch
 
-- **RGB 伽马** (per-channel gamma), **饱和度与自然饱和度**, **单色强调** (keep one hue, desaturate
-  the rest) in `AM · 调色`.
-- **发光边缘** (edge glow) in `AM · 绘制`; **漩涡模糊** (per-radius rotational blur) and
-  **内模糊** (alpha-masked blur) in `AM · 模糊`.
+- **RGB 浼介┈** (per-channel gamma), **楗卞拰搴︿笌鑷劧楗卞拰搴?*, **鍗曡壊寮鸿皟** (keep one hue, desaturate
+  the rest) in `AM 路 璋冭壊`.
+- **鍙戝厜杈圭紭** (edge glow) in `AM 路 缁樺埗`; **婕╂丁妯＄硦** (per-radius rotational blur) and
+  **鍐呮ā绯?* (alpha-masked blur) in `AM 路 妯＄硦`.
 - 79 reference-compatible effects; every body is in layer space and declares an identity.
 - 321 tests green.
 
-## What's new in 0.42 — animated transform effects
+## What's new in 0.42 鈥?animated transform effects
 
-- **抖动**, **摇摆**, **脉动缩放**, **旋转**, **随机位移**, **缩放辅助** in `AM · 变换`.
+- **鎶栧姩**, **鎽囨憜**, **鑴夊姩缂╂斁**, **鏃嬭浆**, **闅忔満浣嶇Щ**, **缂╂斁杈呭姪** in `AM 路 鍙樻崲`.
 - Time-driven effects read the composition `Time` uniform, so preview, pause and export agree;
-  every one declares a zero value (amount/angle/speed), and scale assist reports neutral at 1×1.
+  every one declares a zero value (amount/angle/speed), and scale assist reports neutral at 1脳1.
 - 73 reference-compatible effects; 321 tests green.
 
-## What's new in 0.41 — spin blur, liquify, sketch, chromatic blur, bokeh
+## What's new in 0.41 鈥?spin blur, liquify, sketch, chromatic blur, bokeh
 
-- **旋转模糊** (24-tap angular blur), **彩色模糊** (per-channel directional blur) in `AM · 模糊`.
-- **液化** (two-channel fbm displacement in layer pixels) in `AM · 变形`.
-- **素描** (edge + inverted luminance over a paper colour) and **散景** (bright-pass disc sampling)
-  in `AM · 风格化`.
+- **鏃嬭浆妯＄硦** (24-tap angular blur), **褰╄壊妯＄硦** (per-channel directional blur) in `AM 路 妯＄硦`.
+- **娑插寲** (two-channel fbm displacement in layer pixels) in `AM 路 鍙樺舰`.
+- **绱犳弿** (edge + inverted luminance over a paper colour) and **鏁ｆ櫙** (bright-pass disc sampling)
+  in `AM 路 椋庢牸鍖朻.
 - 67 reference-compatible effects, all in layer space; 321 tests green.
 
-## What's new in 0.40 — reference effects now work in layer space
+## What's new in 0.40 鈥?reference effects now work in layer space
 
 - Every reference effect body now runs in **layer coordinates**: `luv = layerUv(vUv)`, pixel radii in
   `LayerSize` (layer pixels), resampling through `sampleLayer()` (which maps layer pixels back to
   composition UVs), and `LayerTexel` for texel offsets.
 - 58 single-input bodies were migrated mechanically and the four backdrop-reading effects
-  (置换图/渐变置换/玻璃/光包裹) by hand — `Source` is sampled in layer space while `Comp` stays in
+  (缃崲鍥?娓愬彉缃崲/鐜荤拑/鍏夊寘瑁? by hand 鈥?`Source` is sampled in layer space while `Comp` stays in
   composition space.
 - Consequence: ripples, bends, glows and blurs on a small layer are anchored to that layer instead
   of the composition centre; directional effects follow layer-local y-down coordinates, which is the
   reference convention (and why some sheet tiles read flipped).
 - 321 tests green; all 62 shader bodies still link.
 
-## What's new in 0.39 — lens flare and proxy-correct pixel units
+## What's new in 0.39 鈥?lens flare and proxy-correct pixel units
 
-- **镜头光晕** (`AM · 风格化`): radial rays plus a core glow driven by a light position, colour and
+- **闀滃ご鍏夋檿** (`AM 路 椋庢牸鍖朻): radial rays plus a core glow driven by a light position, colour and
   intensity (intensity 0 returns the layer). 62 effects total.
 - **Proxy-resolution fix**: reference effects now convert pixel parameters through the composition
   size (`Size`/`Texel` from the render context) instead of the proxy framebuffer size, and the
@@ -775,87 +770,87 @@ encoding.
   scale, so preview looked weaker than the full-resolution export.
 - 321 tests green.
 
-## What's new in 0.38 — edge light and a wider zero contract
+## What's new in 0.38 鈥?edge light and a wider zero contract
 
-- **边缘光** (`AM · 风格化`): 16-direction alpha-ring sampling with colour and strength;
+- **杈圭紭鍏?* (`AM 路 椋庢牸鍖朻): 16-direction alpha-ring sampling with colour and strength;
   radius 0 returns the layer untouched. 61 effects total.
 - **Custom identity tests**: `AmEffectDef.neutralWhen(predicate)` covers effects whose neutral value
-  is not zero — 平铺 at scale 1 (offset/gap/mirror zero) and 像素化 at size 1 (no vignette/
+  is not zero 鈥?骞抽摵 at scale 1 (offset/gap/mirror zero) and 鍍忕礌鍖?at size 1 (no vignette/
   saturation/offset) now report neutral and skip the pass, exactly like effects whose identity
   parameter is zero.
 - The neutrality tests were extended accordingly (probe values now respect slider minimums).
 - 321 tests green.
 
-## What's new in 0.37 — overlay and desaturation batch
+## What's new in 0.37 鈥?overlay and desaturation batch
 
-- **去色**, **单色** (`AM · 调色`): luminance mix and tinted monochrome.
-- **渐变叠加**, **径向渐变** (`AM · 生成`): two-colour linear/radial overlays with normal/screen/
+- **鍘昏壊**, **鍗曡壊** (`AM 路 璋冭壊`): luminance mix and tinted monochrome.
+- **娓愬彉鍙犲姞**, **寰勫悜娓愬彉** (`AM 路 鐢熸垚`): two-colour linear/radial overlays with normal/screen/
   multiply/add blending and an alpha slider (alpha 0 = original layer).
 - Failed effect programs are now cached negatively, so a broken body costs one log line instead of
   one compile attempt per frame; the transparency category also gets its own library icon.
 - 60 reference-compatible effects; 321 tests green.
 
-## What's new in 0.36 — hex shift, ripple pulse, inner glow and a real UI milestone check
+## What's new in 0.36 鈥?hex shift, ripple pulse, inner glow and a real UI milestone check
 
-- **六边形位移** (per-hex random displacement), **波纹扩散** (time-driven radial wave),
-  **内发光** (16-tap edge ring) — 56 reference-compatible effects total.
+- **鍏竟褰綅绉?* (per-hex random displacement), **娉㈢汗鎵╂暎** (time-driven radial wave),
+  **鍐呭彂鍏?* (16-tap edge ring) 鈥?56 reference-compatible effects total.
 - Milestone verification in the real client (single launch, project restored afterwards):
-  effect-library row icons, the inspector section dividers between 跟踪器 and 绑定/跟踪, and the
+  effect-library row icons, the inspector section dividers between 璺熻釜鍣?and 缁戝畾/璺熻釜, and the
   tracker UI are visible in `docs/verify/round09-ui-milestone.png` and
   `docs/verify/round09-ui-dividers.png`.
 - Debug-only screenshot hooks (`debugExpandEffects`, `debugInspectorPage`, `debugInspectorScroll`,
   `debugWindow`) let future verification capture a specific panel state in one command.
 - 321 tests green.
 
-## What's new in 0.35 — procedural and colour batch
+## What's new in 0.35 鈥?procedural and colour batch
 
-- **热力图** (five-stop heat ramp by luminance), **色偏** (cyan-red / magenta-green / yellow-blue
-  shift), **云雾** (fbm clouds with time evolution and two-colour mapping) in `AM · 调色` /
-  `AM · 生成`.
-- **等高线** (luminance contour lines), **六边形平铺** (hexagonal mosaic with gap colour),
-  **卷曲** (radial curl in layer pixels) in `AM · 风格化` / `AM · 重复` / `AM · 变形`.
+- **鐑姏鍥?* (five-stop heat ramp by luminance), **鑹插亸** (cyan-red / magenta-green / yellow-blue
+  shift), **浜戦浘** (fbm clouds with time evolution and two-colour mapping) in `AM 路 璋冭壊` /
+  `AM 路 鐢熸垚`.
+- **绛夐珮绾?* (luminance contour lines), **鍏竟褰㈠钩閾?* (hexagonal mosaic with gap colour),
+  **鍗锋洸** (radial curl in layer pixels) in `AM 路 椋庢牸鍖朻 / `AM 路 閲嶅` / `AM 路 鍙樺舰`.
 - 53 reference-compatible effects; 321 tests green.
 
-## What's new in 0.34 — one entry per effect in the library
+## What's new in 0.34 鈥?one entry per effect in the library
 
 - The reference batch introduced a second row for effects the classic catalogue already had
-  (高斯模糊, 万花筒, 镜像, 网格, 色彩映射, 置换图, 极坐标, 描边, 色相映射): the library showed two
+  (楂樻柉妯＄硦, 涓囪姳绛? 闀滃儚, 缃戞牸, 鑹插僵鏄犲皠, 缃崲鍥? 鏋佸潗鏍? 鎻忚竟, 鑹茬浉鏄犲皠): the library showed two
   identical names in two categories. The superseded ids are now hidden from the library (including
   the recent list) while staying registered and renderable, so old projects keep working.
 - `EffectLibraryNamingTest` pins the contract: visible names are unique, hidden ids still have a
   renderer, and each hidden id has an AM successor.
 - 321 tests green.
 
-## What's new in 0.33 — tile/repeat and paint batch
+## What's new in 0.33 鈥?tile/repeat and paint batch
 
-- **平铺**, **旋转平铺** (`AM · 重复`): tiling with offset/gap/mirror and radial sector repetition.
-- **脉动不透明度** (`AM · 透明度`): time-driven alpha pulse.
-- **棕褐色**, **色带**, **油画** (`AM · 调色` / `AM · 风格化`): sepia mix, per-channel posterise,
+- **骞抽摵**, **鏃嬭浆骞抽摵** (`AM 路 閲嶅`): tiling with offset/gap/mirror and radial sector repetition.
+- **鑴夊姩涓嶉€忔槑搴?* (`AM 路 閫忔槑搴): time-driven alpha pulse.
+- **妫曡鑹?*, **鑹插甫**, **娌圭敾** (`AM 路 璋冭壊` / `AM 路 椋庢牸鍖朻): sepia mix, per-channel posterise,
   and a four-quadrant Kuwahara pass for brush-like smoothing (radius 0 returns the input).
 - 47 reference-compatible effects total; 319 tests green.
 
-## What's new in 0.32 — colour grading and light batch
+## What's new in 0.32 鈥?colour grading and light batch
 
-- **Six new effects**: 分离色调、双色调、色彩映射（8-stop palette）、色相偏移 in `AM · 调色`;
-  漏光（time-driven band）and 光包裹（backdrop spill around edges）in `AM · 风格化`.
+- **Six new effects**: 鍒嗙鑹茶皟銆佸弻鑹茶皟銆佽壊褰╂槧灏勶紙8-stop palette锛夈€佽壊鐩稿亸绉?in `AM 路 璋冭壊`;
+  婕忓厜锛坱ime-driven band锛塧nd 鍏夊寘瑁癸紙backdrop spill around edges锛塱n `AM 路 椋庢牸鍖朻.
 - Palette map indexes an eight-colour LUT by luminance; split tone and duotone keep the original
   alpha and expose balance/amount sliders.
 - Neutral declarations (`amount`/`alpha`/`strength`) for all six; shader link + neutrality tests
   cover them. 319 tests green.
 
-## What's new in 0.31 — backdrop-reading effects (displacement map, gradient displace, glass)
+## What's new in 0.31 鈥?backdrop-reading effects (displacement map, gradient displace, glass)
 
 - The effect pipeline now hands each layer the **composition below it**: `CompRenderContext.backdrop`
   is set around the layer effect loop and the adjustment pass, and `AmEffectDef.comp()` marks
   effects that sample it through `Comp`.
-- **置换图** (RG/GB/luminance channels, amount in layer pixels), **渐变置换** (composition gradient),
-  **玻璃** (refraction + tint + highlight) added under `AM · 变形` / `AM · 风格化`.
+- **缃崲鍥?* (RG/GB/luminance channels, amount in layer pixels), **娓愬彉缃崲** (composition gradient),
+  **鐜荤拑** (refraction + tint + highlight) added under `AM 路 鍙樺舰` / `AM 路 椋庢牸鍖朻.
 - Backdrop effects are excluded from the layer-local 3D bake and run once after projection, so a 3D
   plane cannot apply them twice; without a backdrop (isolated preview) they fall back to their own
   input instead of failing.
 - 319 tests green.
 
-## What's new in 0.30 — zero value is proven pixel by pixel
+## What's new in 0.30 鈥?zero value is proven pixel by pixel
 
 - **Pixel-level zero test.** `EffectPipelineTest.zeroValuesRestoreTheInputPixelForPixel` runs
   thirteen representative effects (block shatter, wave, blur, turbulent displace, bend, gaussian
@@ -867,28 +862,28 @@ encoding.
   in with the cell's own progress; a regression test allows resampling noise but not edge darkening.
 - 319 tests green.
 
-## What's new in 0.29 — generative and distortion batch
+## What's new in 0.29 鈥?generative and distortion batch
 
-- **Eight more effects**: 彩色像差、移轴模糊、轴向拉伸、切片故障 (distortion/style) and
-  四色渐变、条纹、网格、星空 (generative). Each has its reference parameter set and a zero-value
+- **Eight more effects**: 褰╄壊鍍忓樊銆佺Щ杞存ā绯娿€佽酱鍚戞媺浼搞€佸垏鐗囨晠闅?(distortion/style) and
+  鍥涜壊娓愬彉銆佹潯绾广€佺綉鏍笺€佹槦绌?(generative). Each has its reference parameter set and a zero-value
   declaration where one exists.
 - The generative group now includes gradient/stripe/grid/star overlays with colour pickers and
   alpha, all keyframeable through the existing scalar channels.
 - 317 tests green; contact sheet shows the new row rendering.
 
-## What's new in 0.28 — blur batch with a two-pass path
+## What's new in 0.28 鈥?blur batch with a two-pass path
 
-- **Five blur effects**: 高斯模糊、方框模糊、动感模糊、径向模糊、镜头模糊 (`AM · 模糊`).
+- **Five blur effects**: 楂樻柉妯＄硦銆佹柟妗嗘ā绯娿€佸姩鎰熸ā绯娿€佸緞鍚戞ā绯娿€侀暅澶存ā绯?(`AM 路 妯＄硦`).
 - Pure blurs no longer go through a fragment body: `AmEffectDef.blur(...)` routes them to the
-  existing separable blur (premultiply → horizontal → vertical → unpremultiply), with an optional
+  existing separable blur (premultiply 鈫?horizontal 鈫?vertical 鈫?unpremultiply), with an optional
   iteration count for the box kernel. A zero radius skips the pass entirely.
 - Directional (motion), radial (zoom) and lens blurs are single-pass sample loops with their own
   length/angle/centre/radius parameters.
 - 317 tests green; the contact sheet shows all five rendering.
 
-## What's new in 0.27 — third effect batch (polar, fractal warp, colour tools)
+## What's new in 0.27 鈥?third effect batch (polar, fractal warp, colour tools)
 
-- **Six more reference-compatible effects**: 极坐标、分形扭曲、色彩化、替换颜色、渐变映射、径向阴影.
+- **Six more reference-compatible effects**: 鏋佸潗鏍囥€佸垎褰㈡壄鏇层€佽壊褰╁寲銆佹浛鎹㈤鑹层€佹笎鍙樻槧灏勩€佸緞鍚戦槾褰?
 - Shared shader helpers grew the noise/fbm/rotation set, so noise-driven effects are plain
   definitions from now on.
 - All new effects carry their zero-value declaration (strength/amount/size) and are covered by
@@ -896,69 +891,57 @@ encoding.
 - 317 tests green; effect contact sheet (`docs/verify/effect-pipeline.png`) now renders every
   batch through the real composition pipeline.
 
-## What's new in 0.26 — distort batch, zero-value audit, library icons
+## What's new in 0.26 鈥?distort batch, zero-value audit, library icons
 
-- **Six more reference-compatible effects**: 收缩与膨胀、圆形波纹、万花筒、镜像、旋转扭曲、像素化
-  (`AM · 变形`), all data-driven and covered by the headless shader link test.
+- **Six more reference-compatible effects**: 鏀剁缉涓庤啫鑳€銆佸渾褰㈡尝绾广€佷竾鑺辩瓛銆侀暅鍍忋€佹棆杞壄鏇层€佸儚绱犲寲
+  (`AM 路 鍙樺舰`), all data-driven and covered by the headless shader link test.
 - **Zero means the original layer.** Seventeen existing effects had no neutral branch, so a value
   of 0 still ran their shader; brightness/contrast, hue/saturation, exposure, tint, levels, curves,
   invert, vignette, noise, grain, shake, matte choker, colorama, color grade and the new effects now
   short-circuit at their identity value. `EffectNeutralTest` pins the contract and lists the
   effects that legitimately have no zero state.
 - **Effect library icons**: every effect row now carries a 16 px category icon from the BBS icon
-  atlas (colour wheel, morph, blur sphere, checkerboard, key, exchange, cylinder, font…), with a
+  atlas (colour wheel, morph, blur sphere, checkerboard, key, exchange, cylinder, font鈥?, with a
   reserved gutter so names stay aligned; category headers keep their tree arrow.
 - 317 tests green.
 
-## What's new in 0.25 — the full blend set and clearer inspector groups
+## What's new in 0.25 鈥?the full blend set and clearer inspector groups
 
-- **Blend modes 13 → 30.** The layer blending list now also has 蒙版 / 排除（蒙版） as alpha
-  operations (the backdrop keeps its colour, only coverage changes), plus 线性加深、线性减淡、
-  线性光、亮光、点光、柔光叠加、减去、划分、较暗颜色、较亮颜色、色相、饱和度、颜色、明度、
-  颜色相乘. Existing project files keep their numeric mode ids.
-- **Every blend formula is pinned by a pixel test.** `BlendModesTest` composites 1×1 pixels through
+- **Blend modes 13 鈫?30.** The layer blending list now also has 钂欑増 / 鎺掗櫎锛堣挋鐗堬級 as alpha
+  operations (the backdrop keeps its colour, only coverage changes), plus 绾挎€у姞娣便€佺嚎鎬у噺娣°€?  绾挎€у厜銆佷寒鍏夈€佺偣鍏夈€佹煍鍏夊彔鍔犮€佸噺鍘汇€佸垝鍒嗐€佽緝鏆楅鑹层€佽緝浜鑹层€佽壊鐩搞€侀ケ鍜屽害銆侀鑹层€佹槑搴︺€?  棰滆壊鐩镐箻. Existing project files keep their numeric mode ids.
+- **Every blend formula is pinned by a pixel test.** `BlendModesTest` composites 1脳1 pixels through
   the real GLSL and compares them with the documented formula, including the two mask modes.
 - **Inspector dividers.** Each collapsible section is preceded by a two-pixel hairline groove, so
   the right-hand panel reads as groups instead of one long run of headers.
 - **Data-driven effect runtime + first reference batch.** Effects are now definitions (parameter
-  schema + one fragment body) compiled lazily: 色彩平衡、色温、高光与阴影、卡通、长阴影、弯曲、
-  描边 ship in the new `AM · 调色` / `AM · 风格化` / `AM · 变形` groups. The library, sliders,
+  schema + one fragment body) compiled lazily: 鑹插僵骞宠　銆佽壊娓┿€侀珮鍏変笌闃村奖銆佸崱閫氥€侀暱闃村奖銆佸集鏇层€?  鎻忚竟 ship in the new `AM 路 璋冭壊` / `AM 路 椋庢牸鍖朻 / `AM 路 鍙樺舰` groups. The library, sliders,
   colour pickers and keyframe channels are generated from the definition, and the zero-value
   contract skips the pass so those effects return the original layer at 0.
 - Research and roadmap for the effect-library parity work: [`docs/EFFECT-LIBRARY-PLAN.zh.md`](docs/EFFECT-LIBRARY-PLAN.zh.md).
 
-## What's new in 0.24 — wave/chroma/itrp/蒙版 fix round + 点跟踪器
+## What's new in 0.24 鈥?wave/chroma/itrp/钂欑増 fix round + 鐐硅窡韪櫒
 
-- **波浪变形 / 置换图 / 湍流置换现在真的会动**。DISTORT 着色器的位移量被错误地除了两次图层
-  尺寸，一个 48 px 的位移只移动 ~0.1 px——这三个效果此前一直"未生效"。着色器改为直接把图层
-  像素位移交给 layer→comp 基；3D 烘焙的双重缩放一并修掉。
-- **绿幕抠像重做**：色度模式改为色相差 + 饱和度门控（亮度无关），打光的绿幕与偏黄绿都能抠净；
-  新增 蒙版黑场/白场 清理滑杆；溢色抑制只在屏幕色影响区压绿，主体绿色不受影响，叠加在抠像
-  上的效果不再混入残留绿边。
-- **分形杂色按 AE 语义重做**：归入「噪点与颗粒」，噪声域改图层像素空间（缩放 = 特征尺寸），
-  演化逐八度旋转噪声域——打关键帧后云雾变形而非平移。
-- **itrp / iterationRP 黑屏修复**：itrp 的 final pass 输出 alpha=0，捕获的世界帧按纹理 alpha
-  混合时整帧不可见——捕获后新增 OPAQUE pass 把 alpha 归一为 1；Iris 最终帧钩子绑不上时自动
-  回退 colortex0 捕获，预览读出显示捕获状态。
-- **蒙版**：2D/调整层/轨道遮罩的蒙版统一按渲染分辨率栅格化（与 3D 烘焙一致），动画蒙版编辑
-  不再每帧栅格化整幅合成，预览卡顿消除。
-- **点跟踪器**：检查器可新建跟踪器（锚点/模板/搜索/置信度/范围），每显示帧协作式分析一帧；
-  结果可一键烘焙到所选图层的位置关键帧，或通过 `tracker.<id>.x / .y` 表达式驱动参数。
-
-## What's new in 0.23 — this is now BBS AE
+- **娉㈡氮鍙樺舰 / 缃崲鍥?/ 婀嶆祦缃崲鐜板湪鐪熺殑浼氬姩**銆侱ISTORT 鐫€鑹插櫒鐨勪綅绉婚噺琚敊璇湴闄や簡涓ゆ鍥惧眰
+  灏哄锛屼竴涓?48 px 鐨勪綅绉诲彧绉诲姩 ~0.1 px鈥斺€旇繖涓変釜鏁堟灉姝ゅ墠涓€鐩?鏈敓鏁?銆傜潃鑹插櫒鏀逛负鐩存帴鎶婂浘灞?  鍍忕礌浣嶇Щ浜ょ粰 layer鈫抍omp 鍩猴紱3D 鐑樼剻鐨勫弻閲嶇缉鏀句竴骞朵慨鎺夈€?- **缁垮箷鎶犲儚閲嶅仛**锛氳壊搴︽ā寮忔敼涓鸿壊鐩稿樊 + 楗卞拰搴﹂棬鎺э紙浜害鏃犲叧锛夛紝鎵撳厜鐨勭豢骞曚笌鍋忛粍缁块兘鑳芥姞鍑€锛?  鏂板 钂欑増榛戝満/鐧藉満 娓呯悊婊戞潌锛涙孩鑹叉姂鍒跺彧鍦ㄥ睆骞曡壊褰卞搷鍖哄帇缁匡紝涓讳綋缁胯壊涓嶅彈褰卞搷锛屽彔鍔犲湪鎶犲儚
+  涓婄殑鏁堟灉涓嶅啀娣峰叆娈嬬暀缁胯竟銆?- **鍒嗗舰鏉傝壊鎸?AE 璇箟閲嶅仛**锛氬綊鍏ャ€屽櫔鐐逛笌棰楃矑銆嶏紝鍣０鍩熸敼鍥惧眰鍍忕礌绌洪棿锛堢缉鏀?= 鐗瑰緛灏哄锛夛紝
+  婕斿寲閫愬叓搴︽棆杞櫔澹板煙鈥斺€旀墦鍏抽敭甯у悗浜戦浘鍙樺舰鑰岄潪骞崇Щ銆?- **itrp / iterationRP 榛戝睆淇**锛歩trp 鐨?final pass 杈撳嚭 alpha=0锛屾崟鑾风殑涓栫晫甯ф寜绾圭悊 alpha
+  娣峰悎鏃舵暣甯т笉鍙鈥斺€旀崟鑾峰悗鏂板 OPAQUE pass 鎶?alpha 褰掍竴涓?1锛汭ris 鏈€缁堝抚閽╁瓙缁戜笉涓婃椂鑷姩
+  鍥為€€ colortex0 鎹曡幏锛岄瑙堣鍑烘樉绀烘崟鑾风姸鎬併€?- **钂欑増**锛?D/璋冩暣灞?杞ㄩ亾閬僵鐨勮挋鐗堢粺涓€鎸夋覆鏌撳垎杈ㄧ巼鏍呮牸鍖栵紙涓?3D 鐑樼剻涓€鑷达級锛屽姩鐢昏挋鐗堢紪杈?  涓嶅啀姣忓抚鏍呮牸鍖栨暣骞呭悎鎴愶紝棰勮鍗￠】娑堥櫎銆?- **鐐硅窡韪櫒**锛氭鏌ュ櫒鍙柊寤鸿窡韪櫒锛堥敋鐐?妯℃澘/鎼滅储/缃俊搴?鑼冨洿锛夛紝姣忔樉绀哄抚鍗忎綔寮忓垎鏋愪竴甯э紱
+  缁撴灉鍙竴閿儤鐒欏埌鎵€閫夊浘灞傜殑浣嶇疆鍏抽敭甯э紝鎴栭€氳繃 `tracker.<id>.x / .y` 琛ㄨ揪寮忛┍鍔ㄥ弬鏁般€?
+## What's new in 0.23 鈥?this is now BBS AE
 
 **BBS Compositor is now BBS AE.** The mod id stays `bbsae`, so existing projects keep working.
 This release collects the fixes since 0.22.1:
 
-- **Faster preview** — frame-cache writes moved to a background writer with atomic files; cache keys now include the project and entity/replay parameters, and the timeline stops copying its layer list every frame.
-- **Precise curve editing** — only real Bezier handles are drawn, the nearest handle wins, and handle drags use a press snapshot so they no longer jump or drop the last mouse sample.
-- **Readable layer library** — cards size themselves from the available width and wrap Chinese descriptions with real font metrics.
-- **Better transform handles** — edges scale one axis, corners stay proportional (Shift frees them), and 3D layers use a ray/plane hit test so the handle tracks the pointer in perspective.
-- The first sponsor is now **【星辰久梦君_Star Dm Sov】**, in gold.
+- **Faster preview** 鈥?frame-cache writes moved to a background writer with atomic files; cache keys now include the project and entity/replay parameters, and the timeline stops copying its layer list every frame.
+- **Precise curve editing** 鈥?only real Bezier handles are drawn, the nearest handle wins, and handle drags use a press snapshot so they no longer jump or drop the last mouse sample.
+- **Readable layer library** 鈥?cards size themselves from the available width and wrap Chinese descriptions with real font metrics.
+- **Better transform handles** 鈥?edges scale one axis, corners stay proportional (Shift frees them), and 3D layers use a ray/plane hit test so the handle tracks the pointer in perspective.
+- The first sponsor is now **銆愭槦杈颁箙姊﹀悰_Star Dm Sov銆?*, in gold.
 
 The full list is in [`CHANGELOG.md`](CHANGELOG.md).
 
-## What's new in 0.22.1 — imported fonts actually display
+## What's new in 0.22.1 鈥?imported fonts actually display
 
 The font path is fixed from first principles: a font file is a **partial map** from code points to
 glyphs, so "the imported font does not show" turned out to be three separate facts stacked on top
@@ -968,13 +951,13 @@ of each other.
   missing glyph that has *no renderer and a 1 px advance*; a Latin font with Chinese text therefore
   rendered **nothing at all**. The compositor now asks the font file itself
   (`stbtt_FindGlyphIndex`, cached per file) and draws each character with the chosen font where it
-  has the glyph, and with BBS' default font where it does not — measured and drawn with the same
+  has the glyph, and with BBS' default font where it does not 鈥?measured and drawn with the same
   choice, and the fallback glyph is scaled to the custom font's size so mixed text lines up.
-- **`.ttc` collections are supported.** 微软雅黑/宋体/黑体 ship as TrueType collections, and BBS'
-  stb loader only reads a single font at offset 0 — "imported but BBS cannot parse". The importer
+- **`.ttc` collections are supported.** 寰蒋闆呴粦/瀹嬩綋/榛戜綋 ship as TrueType collections, and BBS'
+  stb loader only reads a single font at offset 0 鈥?"imported but BBS cannot parse". The importer
   now extracts face 0 into a standalone sfnt (`msyh-face0.ttf`), which every loader understands.
   The system-font picker lists `.ttc` files and names them from their first face.
-- **Layout size vs glyph atlas size.** A 200 px text layer used to be a 96 px atlas blown up 2×;
+- **Layout size vs glyph atlas size.** A 200 px text layer used to be a 96 px atlas blown up 2脳;
   the importer now passes the oversampling factor so the atlas matches the drawn size.
 - **The UI explains the rest.** The text inspector reports when the font file is missing and how
   many characters of the current text the font cannot draw (with a sample), instead of silently
@@ -986,10 +969,10 @@ of each other.
   [`round45-font-msyh-ttc.png`](docs/verify/round45-font-msyh-ttc.png).
 - New tests: `FontCoverageTest`, `FontImportTtcTest` (real `msyh.ttc` extraction + stb coverage).
 
-## What's new in 0.22.0 — effect & layer bug-fix release
+## What's new in 0.22.0 鈥?effect & layer bug-fix release
 
 This release is a deep, first-principles pass over the two subsystems that produced the most
-complaints: **effects (效果)** and **layers (图层)**. Every fix below has a regression test or a
+complaints: **effects (鏁堟灉)** and **layers (鍥惧眰)**. Every fix below has a regression test or a
 pixel-level harness behind it; the suite is now 265 tests and includes a real-GL
 `EffectPipelineTest` that drives every catalogue entry through `EffectRenderer` and writes a
 contact sheet.
@@ -1005,25 +988,25 @@ contact sheet.
   parameter (radius, offset, mosaic size, halftone dots) grew by `1/scale`, and local resampling
   drifted by the same factor. Effects visibly jumped while dragging a curve and never matched the
   1:1 export. Every family now binds the composition size.
-- **AE-style centre parameters are layer-local.** 球面化 / 光学补偿 / CC 镜头 / CC 倾斜 / 放大 /
-  CC 波纹脉冲 / 变换 / CC 径向快速模糊 compared a 0..1 layer coordinate against composition UV, so
-  the effect was dead unless the layer filled the comp, and 中心 Y was mirrored. Centres now go
-  through `EffectSpace.localToCompUv`, like 径向模糊 already did.
-- **蒙版收缩 no longer erases the layer.** `choke` (px) was compared against a 0..1 alpha, so the
+- **AE-style centre parameters are layer-local.** 鐞冮潰鍖?/ 鍏夊琛ュ伩 / CC 闀滃ご / CC 鍊炬枩 / 鏀惧ぇ /
+  CC 娉㈢汗鑴夊啿 / 鍙樻崲 / CC 寰勫悜蹇€熸ā绯?compared a 0..1 layer coordinate against composition UV, so
+  the effect was dead unless the layer filled the comp, and 涓績 Y was mirrored. Centres now go
+  through `EffectSpace.localToCompUv`, like 寰勫悜妯＄硦 already did.
+- **钂欑増鏀剁缉 no longer erases the layer.** `choke` (px) was compared against a 0..1 alpha, so the
   default `smoothstep(2, 4, a)` was zero everywhere. It is a real alpha erode/dilate now, with
   softness in pixels.
 - **Wipes/dissolve had an inverted identity.** Progress 0 is fully hidden in the shader, so the
   neutral value is 1; the old rule made the first keyframe pop the layer on for one frame.
 - **Keyed soft edges lost alpha twice** (`c.a * alpha` where alpha already contained `c.a`).
-- **暗角 did nothing at its defaults.** The in-layer distance is at most 0.707, but the default
+- **鏆楄 did nothing at its defaults.** The in-layer distance is at most 0.707, but the default
   radius was 0.75; the distance is now normalised by the corner distance.
-- **置换图's 噪波缩放 slider was dead** (the shader hardcoded 80 cycles), and **方向模糊** never set
+- **缃崲鍥?s 鍣尝缂╂斁 slider was dead** (the shader hardcoded 80 cycles), and **鏂瑰悜妯＄硦** never set
   the shared blur kernel's `Mode`, so a box blur elsewhere in the comp changed its kernel.
-- **抖动/震屏 now respects 效果强度** (0 = no shake) instead of ignoring the slider.
+- **鎶栧姩/闇囧睆 now respects 鏁堟灉寮哄害** (0 = no shake) instead of ignoring the slider.
 - **Warp effects round-trip through premultiplied alpha**, removing dark halos around text and
   semi-transparent edges.
-- **外发光 is drawn under the layer** (it used to be identical to 辉光 and wash colour into the
-  layer), and 着色's default strength is 0.5 so adding it no longer flattens the layer to one colour.
+- **澶栧彂鍏?is drawn under the layer** (it used to be identical to 杈夊厜 and wash colour into the
+  layer), and 鐫€鑹?s default strength is 0.5 so adding it no longer flattens the layer to one colour.
 
 **Layers**
 
@@ -1032,17 +1015,17 @@ contact sheet.
 - **Duplicating a selection remaps parent and track-matte references** to the *new* ids, so a
   duplicated null still drives its duplicated children; duplicated animated layers are also offset
   visibly (the +24 px used to be ignored once a layer had transform keys).
-- **预合成 keeps the group's z position.** The insertion index was computed before the layers were
+- **棰勫悎鎴?keeps the group's z position.** The insertion index was computed before the layers were
   removed, so the precomp landed one slot too high.
-- **预合成 no longer paints an opaque black rectangle.** Nested comps now render with a transparent
-  stage, and a 3D precomp with any effect/style/mask no longer exports the "预合成（草稿）"
+- **棰勫悎鎴?no longer paints an opaque black rectangle.** Nested comps now render with a transparent
+  stage, and a 3D precomp with any effect/style/mask no longer exports the "棰勫悎鎴愶紙鑽夌锛?
   placeholder text.
 - **Track mattes are applied after effects/styles on 2D and 3D alike**, and the matte layer's own
   masks are honoured. Cameras/nulls/adjustment layers are rejected as mattes instead of silently
   multiplying the target by zero.
-- **独显 (solo) is honoured by the 3D workspace, by both hit tests, and by adjustment layers**, not
+- **鐙樉 (solo) is honoured by the 3D workspace, by both hit tests, and by adjustment layers**, not
   just by the composition graph.
-- **Animated masks and 文本框宽度 now invalidate the 3D raster** (a keyed mask used to freeze at its
+- **Animated masks and 鏂囨湰妗嗗搴?now invalidate the 3D raster** (a keyed mask used to freeze at its
   first frame, in the export too).
 - **Mirroring works**: a negative scale is preserved instead of being clamped to `+0.0001`.
 - **`startTime` is applied after the speed change** (`(t - in) * timeScale + startTime`); trimming
@@ -1050,28 +1033,28 @@ contact sheet.
 - **VRAM leaks fixed**: the live-world preview leaked one composition-sized FBO per display frame
   (BBS preview / entity / depth comps), the 3D source cache leaked its staging buffer when a
   style/mask replaced it, and error paths leaked the accumulation target.
-- **Guide (参考层) layers no longer reach the recorded film or the green pre-render frames**, and the
-  效果/蒙版 A/B toggles now work on green frames and on baked 3D layers.
+- **Guide (鍙傝€冨眰) layers no longer reach the recorded film or the green pre-render frames**, and the
+  鏁堟灉/钂欑増 A/B toggles now work on green frames and on baked 3D layers.
 - **Texture state can no longer go stale** after the FBO pool deletes a texture: binds are forced
   raw and the pixel-store mode is restored by `GlStateGuard`.
 
 **Editor**
 
-- **Inspector toggles are undoable and saved** (可见/锁定/独显/参考层, 时间重映射, 遮罩, 蒙版, 标记,
-  绑定, 文字, 换行), so Ctrl+Z now reverts the checkbox you just clicked. **重置变换** clears all
+- **Inspector toggles are undoable and saved** (鍙/閿佸畾/鐙樉/鍙傝€冨眰, 鏃堕棿閲嶆槧灏? 閬僵, 钂欑増, 鏍囪,
+  缁戝畾, 鏂囧瓧, 鎹㈣), so Ctrl+Z now reverts the checkbox you just clicked. **閲嶇疆鍙樻崲** clears all
   nine transform channels, including the 3D ones.
-- **A second 调色 effect can no longer reuse an effect id** (parameter edits used to land on the old
+- **A second 璋冭壊 effect can no longer reuse an effect id** (parameter edits used to land on the old
   effect), effect apply is gated to a single unlocked layer, effect fold state is per layer, and
   right-clicking inside a multi-selection keeps it so the batch menu is reachable.
 - A reorder no-op no longer wipes the redo stack; a reorder keeps `selectedIds` and `selectedLayer`
   in sync; marker ids are unique; deleting a layer clears bindings that pointed at it.
-- The 图层库 modal now blocks clicks and scrolling behind it, and its grid no longer sticks to the
+- The 鍥惧眰搴?modal now blocks clicks and scrolling behind it, and its grid no longer sticks to the
   mouse when the release happens outside the dialog.
 - The README's Chinese text was mojibake from an old encoding round-trip; it is repaired.
 
 ## What's new in 0.21.5
 
-- **System fonts are available in the text inspector.** A searchable "System fonts…" list scans
+- **System fonts are available in the text inspector.** A searchable "System fonts鈥? list scans
   `Windows\Fonts` (and the macOS/Linux font folders), reads each font's OpenType name table for a
   real display name, and imports the chosen file into BBS' fonts folder through the normal link
   loader. Fonts are copied only when selected.
@@ -1115,13 +1098,13 @@ contact sheet.
   `CompScene.project` path as the selection box, draws points and bezier handles, and lets you drag
   points/handles. 3D layers use a mouse-ray/plane intersection, so the point follows the cursor on
   the plane. Drags write keyframes at the playhead when a mask channel already exists.
-- **3D track mattes work.** The "用作蒙版 / 用作排除" buttons used to be ignored on 3D targets; the
+- **3D track mattes work.** The "鐢ㄤ綔钂欑増 / 鐢ㄤ綔鎺掗櫎" buttons used to be ignored on 3D targets; the
   matte is now applied after projection, and a 2D matte over a 3D target is projected first.
 - 250/250 tests pass, including `MaskCombineTest` for the first-mask and combined modes.
 
 ## What's new in 0.21.1
 
-- **AE effect programme, batch 2: 12 new distort effects** — offset, polar coordinates,
+- **AE effect programme, batch 2: 12 new distort effects** 鈥?offset, polar coordinates,
   spherize, optics compensation, CC lens, CC slant, magnify, CC ripple pulse, CC bend, CC split,
   rolling-shutter repair and a 2D transform. They join displacement, bulge, pinch, twist, wave,
   turbulent displace and mirror.
@@ -1134,9 +1117,8 @@ contact sheet.
 
 ## What's new in 0.21.0
 
-- **AE effect programme, batch 1: Blur & Sharpen is complete (17/17).** Nine new effects —
-  bilateral, smart, CC cross, CC radial fast, lens/bokeh, channel, compound, unsharp mask and
-  camera-shake deblur — join the existing Gaussian/box/directional/radial blurs, sharpen and
+- **AE effect programme, batch 1: Blur & Sharpen is complete (17/17).** Nine new effects 鈥?  bilateral, smart, CC cross, CC radial fast, lens/bokeh, channel, compound, unsharp mask and
+  camera-shake deblur 鈥?join the existing Gaussian/box/directional/radial blurs, sharpen and
   linear wipe. One `AE_BLUR` shader family supplies the modes; the pass works in premultiplied
   alpha so falloffs do not darken.
 - The new effects participate in the existing strength, neutral-value, 3D padding and
@@ -1244,13 +1226,13 @@ contact sheet.
 **The thank-you release: a sponsor hall, BBS-style flight cameras, a faster AE curve, adaptive
 layout, texture-filter intelligence, and a real fix for effects on 3D layers.**
 
-*Sponsor credits.* **星辰久梦君**, **血之书** and **Szv文森特37** now live in a dedicated
-**Settings → 赞助者** category, not on the editing page: a compact gold-lit board, three cards,
+*Sponsor credits.* **鏄熻景涔呮ⅵ鍚?*, **琛€涔嬩功** and **Szv鏂囨．鐗?7** now live in a dedicated
+**Settings 鈫?璧炲姪鑰?* category, not on the editing page: a compact gold-lit board, three cards,
 and one plain thank-you per person. No per-person motivational copy. The same names are in
 `CREDITS.md`.
 
-*BBS flight camera.* Camera settings now switch between **AE 摄像机** (position + target) and
-**BBS 原版摄像机** (free yaw/pitch). A BBS camera shows a flight icon; press **F** to fly with
+*BBS flight camera.* Camera settings now switch between **AE 鎽勫儚鏈?* (position + target) and
+**BBS 鍘熺増鎽勫儚鏈?* (free yaw/pitch). A BBS camera shows a flight icon; press **F** to fly with
 WASD, Space/Shift and the mouse, scroll to change speed, and press **F** again to leave a
 position/rotation/FOV keyframe at the playhead. Both camera styles are ordinary layers and can
 coexist in one composition; the active camera decides the shot.
@@ -1261,9 +1243,9 @@ changed. The fingerprint now includes the whole resolved effect stack, depth eff
 after the 3D projection instead of being skipped, and a missing depth buffer is a true no-op
 rather than erasing the layer.
 
-*New effects.* **缃戞牸閲嶅 / 闅忔満閲嶅** (Alight Motion-style grid and seeded random repetition),
-**湍流置换** (EffectCraft-inspired fractal displacement), **色彩映射** (three-stop Colorama),
-and **扇厜** (animated light sweep). The effect catalogue is now **58** entries; all new shaders
+*New effects.* **缂冩垶鐗搁柌宥咁槻 / 闂呭繑婧€闁插秴顦?* (Alight Motion-style grid and seeded random repetition),
+**婀嶆祦缃崲** (EffectCraft-inspired fractal displacement), **鑹插僵鏄犲皠** (three-stop Colorama),
+and **鎵囧帨** (animated light sweep). The effect catalogue is now **58** entries; all new shaders
 have real GL pixel tests, and the repeat shader has identity/repetition/gap/seed tests.
 
 *AE curve performance.* BBS's batcher emits one draw call per solid box. The value graph was
@@ -1284,10 +1266,10 @@ program picture.
 preview floor, the timeline never steals the body on short windows, the settings card fits small
 panels, and the preview controls fold themselves away on narrow previews.
 
-*Texture filtering.* A new project setting **线性过滤** and per-image override choose automatic,
+*Texture filtering.* A new project setting **绾挎€ц繃婊?* and per-image override choose automatic,
 linear or nearest. Automatic detects high-resolution sources (large/downscaled) and keeps
 pixel-art nearest; the settings page shows the live high-res/pixel/pending counts. The preview
-bar has a one-click `线性 / 自动 / 最近邻` chip.
+bar has a one-click `绾挎€?/ 鑷姩 / 鏈€杩戦偦` chip.
 
 *Keyframe drawer and shader compatibility.* Switching to the curve page and back no longer leaves
 the keyframe drawer blank. Preview status now reports Iris/shader-pass state, shadow-pass copies
@@ -1316,16 +1298,16 @@ turning depth effects into a black frame.
 
 ## What's new in 0.18.0
 
-**A first-run onboarding, a BBS-style settings surface and editable shortcuts — and every custom
+**A first-run onboarding, a BBS-style settings surface and editable shortcuts 鈥?and every custom
 widget now moves with a non-linear curve instead of snapping.**
 
-*Onboarding.* The compositor opens on a BBS-style welcome card: layout presets (标准 / 专注 / 紧凑 /
-宽屏), a motion preset (平衡 / 电影感 / 极简), a shortcut scheme, and a short finish page. The
-background is the same visual language as BBS's own landing screen — a deep surface, drifting
-lights and a pointer-following glow — and the choice is persisted, so it only appears once. It can
-be replayed from Settings → 新手引导.
+*Onboarding.* The compositor opens on a BBS-style welcome card: layout presets (鏍囧噯 / 涓撴敞 / 绱у噾 /
+瀹藉睆), a motion preset (骞宠　 / 鐢靛奖鎰?/ 鏋佺畝), a shortcut scheme, and a short finish page. The
+background is the same visual language as BBS's own landing screen 鈥?a deep surface, drifting
+lights and a pointer-following glow 鈥?and the choice is persisted, so it only appears once. It can
+be replayed from Settings 鈫?鏂版墜寮曞.
 
-*Settings.* The old fixed 520×520 modal is replaced by a left category rail + right scrollable list
+*Settings.* The old fixed 520脳520 modal is replaced by a left category rail + right scrollable list
 in the style of BBS 2.7's settings: search, section headers, toggles, sliders and segmented choices.
 Motion intensity/speed, glow, shadows, backdrop brightness, layout density, project defaults,
 encoder/proxy and the shortcut editor all live here. The overlay enters with a short overshoot,
@@ -1357,8 +1339,7 @@ the plugin's icon.**
 *Asset library scrollbar.* The 3 px line was painted, never hit-tested. It is now a real 8 px thumb:
 drag it, click the track to jump, release anywhere (the physical button is polled so it cannot stick),
 hover highlights, and the grid reserves room so the thumb never covers a tile. The hint says
-—滚轮或右侧滑块滑动—
-
+鈥旀粴杞垨鍙充晶婊戝潡婊戝姩鈥?
 *The curve editor was editing the wrong property.* All five transform curves share one BBS
 `Transform` keyframe. The editor stored `IdentityHashMap<Keyframe, channel>` ownership, so the last
 adapter (Scale Y) overwrote Position X: dragging a position key changed Scale Y, and the
@@ -1368,17 +1349,17 @@ channel** for transform keys; scalar channels keep their one-to-one map.
 *Bezier handles no longer collapse on mouse-down.* The drag handler treated the pointer delta as the
 handle's absolute offset, so the first 1 px collapsed `rx` to 0.25 and `ry` to 0. It now snapshots
 `rx/ry/lx/ly` at press and adds the delta, clamps influence to the adjacent segment, mirrors by
-default, breaks with Alt, and reports influence/speed. Default 卤5-frame handles are expanded to
+default, breaks with Alt, and reports influence/speed. Default 鍗?-frame handles are expanded to
 33.3 % influence when Bezier is chosen; value fitting includes the handles so they cannot be clipped.
 
 *Professional graph ergonomics.* Middle/Space drag pans **both** axes; right-clicking a key exposes the
 interpolation menu (linear / bezier / ease / ease-in / ease-out / hold / auto / continuous / delete);
-arrow keys nudge 1 frame / 1 pixel (Shift = 10×); the graph shows a selected-key card (channel, time,
+arrow keys nudge 1 frame / 1 pixel (Shift = 10脳); the graph shows a selected-key card (channel, time,
 value, interpolation) next to the playhead readout.
 
 *The plugin icon.* `fabric.mod.json` had no `icon`, so Mod Menu showed a placeholder. The repository's
-32×32 compositor icon (by 超级大布叮) is now packaged as a 128×128 padded, rounded
-`assets/bbsae/icon.png` and registered in the metadata; the BBS 16×16 tab/clip icon stays the
+32脳32 compositor icon (by 瓒呯骇澶у竷鍙? is now packaged as a 128脳128 padded, rounded
+`assets/bbsae/icon.png` and registered in the metadata; the BBS 16脳16 tab/clip icon stays the
 original. `IconResourceTest` checks both.
 
 <p align="center">
@@ -1392,8 +1373,8 @@ their XYZ back.**
 
 *The clock was a unit error.* `startRenderFrame(tickDelta)` added `tickDelta / 20` once per
 rendered frame, but BBS passes Minecraft's **fraction of the current client tick** there, not the
-elapsed time since the previous frame. Summing the sawtooth happened to give 1× at 60 fps, ran
-**3.6× too fast at 144 fps** and 0.5× at 30 fps. Playback now advances by wall-clock seconds with
+elapsed time since the previous frame. Summing the sawtooth happened to give 1脳 at 60 fps, ran
+**3.6脳 too fast at 144 fps** and 0.5脳 at 30 fps. Playback now advances by wall-clock seconds with
 a 0.5 s stall clamp, reset on resume/seek, so one second of composition is one second of film.
 `CompTimeTest` reproduces the old refresh-rate dependence and checks the new clock at
 30/60/90/144/240 fps.
@@ -1401,20 +1382,20 @@ a 0.5 s stall clamp, reset on resume/seek, so one second of composition is one s
 *The clip picker no longer shows a translation key.* BBS labels a clip type through
 `UIKeys.C_CLIP` (`bbs.ui.camera.clips.<link>`). A missing entry falls back to the key itself, so
 the add-clip menu showed `bbs.ui.camera.clips.bbsae:composition`. The addon now registers that
-key — and the legacy `composition` spelling — through `RegisterL10nEvent`, with a post-ready
-fallback, and new clips are titled `合成器` from the start.
+key 鈥?and the legacy `composition` spelling 鈥?through `RegisterL10nEvent`, with a post-ready
+fallback, and new clips are titled `鍚堟垚鍣╜ from the start.
 
 *The 3D layer quick panel is 3D.* The right-hand quick panel switches from five 2D rows to ten
-3D rows: position X/Y/Z, rotation X/Y/Z and scale X/Y/Z, each group with its own ◆ key button.
+3D rows: position X/Y/Z, rotation X/Y/Z and scale X/Y/Z, each group with its own 鈼?key button.
 Z depth, pitch, yaw and Z scale write the layer's scalar channels, the same channels the 3D scene
 graph reads.
 
-*BBS's own curve picker is one click away.* A **插值曲线** button in the keyframe drawer header
+*BBS's own curve picker is one click away.* A **鎻掑€兼洸绾?* button in the keyframe drawer header
 and in the quick panel opens BBS's `UIInterpolationContextMenu`: the graph preview, the full
-icon grid (linear/hold/bezier/auto/ease/bounce/elastic/—, the four bezier arguments and
+icon grid (linear/hold/bezier/auto/ease/bounce/elastic/鈥? the four bezier arguments and
 copy/paste. It applies to every selected keyframe, or selects the key at the playhead first.
 
-*First-key buttons work.* The inspector's ◆ was disabled until a scalar channel already existed,
+*First-key buttons work.* The inspector's 鈼?was disabled until a scalar channel already existed,
 and `addScalarKey` read fields `CompLayer.scalar()` did not know (`z`, `rotationX/Y`, `scaleZ`,
 `squash`, camera distance/target/FOV), inserting 0. Every scalar field is now readable, the
 current displayed value is passed explicitly, and the key action starts its undo checkpoint
@@ -1429,20 +1410,20 @@ before writing.
 **The timeline zooms, and audio/video finally have tracks.**
 
 *Zoom was a unit error.* BBS's `Scale.zoom(delta, min, max)` **adds** to a value measured in pixels
-per second; the editor passed 卤1, so every key press and wheel notch changed the scale by 1.7 % — a
-dead control. A step is now 1.35× (`zoomTarget`), applied through the same additive API and anchored
+per second; the editor passed 鍗?, so every key press and wheel notch changed the scale by 1.7 % 鈥?a
+dead control. A step is now 1.35脳 (`zoomTarget`), applied through the same additive API and anchored
 at the cursor, with `Alt + =/-` for track height. Two tests drive BBS's real `Scale` to prove that one
-step is exactly 1.35× and that in/out steps cancel.
+step is exactly 1.35脳 and that in/out steps cancel.
 
 *Audio is a track now.* The timeline's rows were exactly `doc.layers`; audio clips lived only in the
 inspector. There is now a virtual audio row (`rowCount()` = layers + 1) with the same time axis, row
 height and scroll: green bars, click to select, drag to move, 8-px edges to trim (the source offset
-follows a trim-in), `Delete` removes the selected clip — and the bar length is the length stored at
+follows a trim-in), `Delete` removes the selected clip 鈥?and the bar length is the length stored at
 import (`probeDuration`), so what you see is what the mixer plays.
 
 *Video is a track now.* `footage` layers already consume `frame_%04d.png`, but nothing produced those
-frames. `CompVideoImport` converts a video with FFmpeg on a worker thread — at the composition's frame
-rate and raster, letterboxed, 60 s cap — then creates a footage layer on the client thread. The
+frames. `CompVideoImport` converts a video with FFmpeg on a worker thread 鈥?at the composition's frame
+rate and raster, letterboxed, 60 s cap 鈥?then creates a footage layer on the client thread. The
 compositor can then ask for frame 91 in any order, which is the whole point of the frame pipeline.
 
 *Two UI bugs.* A side-by-side layout at ~360 logical pixels squeezed the preview to a negative width
@@ -1456,10 +1437,10 @@ And the effect/mask/world-backdrop toggles are hidden in AE mode, where they can
 *Disk frames.* The frame server now has an L2 on disk keyed by the **content fingerprint**
 (`cache/frames/<project>/<comp>/<signature>_<frame>_<w>x<h>.rgba`). Because the file name *is* the
 document state, an entry can never be stale: different content means a different file. Raw pixels
-(no PNG round-trip — 1080p ImageIO is slower than re-rendering a simple comp), written only for
-frames that took ≤ 45 ms, 512 MB budget with oldest-first eviction.
+(no PNG round-trip 鈥?1080p ImageIO is slower than re-rendering a simple comp), written only for
+frames that took 鈮?45 ms, 512 MB budget with oldest-first eviction.
 
-*A render budget instead of one frame per tick.* GL lives on the render thread — a background render
+*A render budget instead of one frame per tick.* GL lives on the render thread 鈥?a background render
 thread would need a shared context and would fight Minecraft's state. So the "farm" spends 22 ms of
 each 50 ms tick producing frames (up to 6), which removes the hard 20 fps ceiling: a 12-second
 60 fps composition used to take 36 s to write even at 3 ms a frame. And full-size video now streams
@@ -1469,11 +1450,11 @@ bottleneck. Resized presets, PNG sequences and "keep frames" keep the file path 
 *Preview audio.* The composition's mix is rendered on a worker thread and played through BBS's own
 OpenAL (`SoundBuffer`/`SoundPlayer`), so there is no second audio backend. The playhead is
 authoritative: `sync(time)` corrects drift over 250 ms and handles loops, and one
-`syncPreviewAudio()` derives everything from `(playing, AE, has audio, toggle)` — so any code that
+`syncPreviewAudio()` derives everything from `(playing, AE, has audio, toggle)` 鈥?so any code that
 pauses playback also stops the sound.
 
 *Proxy resolution, explicit.* `encoderProxy` 1/1, 3/4, 1/2, 1/4 in Settings; the badge reads
-`AE 编码器 · 代理 1/2`. The frame cache keys on the factor, and export is always 1/1 — a silent
+`AE 缂栫爜鍣?路 浠ｇ悊 1/2`. The frame cache keys on the factor, and export is always 1/1 鈥?a silent
 proxy is how "the preview looks soft but the export is sharp" becomes a bug report.
 
 ## What's new in 0.8.0
@@ -1481,35 +1462,35 @@ proxy is how "the preview looks soft but the export is sharp" becomes a bug repo
 **A second render pipeline, and it is the one an editor needs.** Until now the composition was an
 overlay: the game produced the frame, at window resolution, at display-refresh timing, and BBS's
 recorder wrote it. That is correct for a film overlay and wrong for an editor, where "frame 90"
-must mean the same picture in the viewer and in the file. **AE 编码器模式** (Settings →渲染 / 编码
-管线) switches the frame source to the compositor:
+must mean the same picture in the viewer and in the file. **AE 缂栫爜鍣ㄦā寮?* (Settings 鈫掓覆鏌?/ 缂栫爜
+绠＄嚎) switches the frame source to the compositor:
 
 - `CompRenderer.renderFrame(project, doc, frame, alpha)` is now the **only** way a frame leaves the
   compositor: time comes from the frame index (`frame / fps`), the raster is the composition's own
   resolution, editor chrome is suppressed, guide layers are excluded.
-- `CompFrameServer` caches those frames, keyed by the document fingerprint — editing anything makes
+- `CompFrameServer` caches those frames, keyed by the document fingerprint 鈥?editing anything makes
   the old frames unreachable, so there is no invalidation to forget. 192 MB LRU (~23 frames of
   1080p).
 - The preview asks the server for the playhead's frame; the render queue asks it for every frame of
   the range. Same function, same pixels. This is the producer/consumer "pull" model MLT uses and
   the `RenderManager` + `FrameHashCache` design Olive uses.
-- **AE 导出** (the header button changes label) queues the composition at its own resolution and
+- **AE 瀵煎嚭** (the header button changes label) queues the composition at its own resolution and
   frame rate instead of going through BBS's recorder.
 
 It is a different pipeline, so it is labelled like one: a one-time **risk dialog** (six concrete
-consequences, not a disclaimer), a red **AE 编码器 / 帧 N / total** badge on the preview, and a red
-hint in Settings. The honest limitations: the 3D world can only enter through the `BBS 棰勮` layer,
+consequences, not a disclaimer), a red **AE 缂栫爜鍣?/ 甯?N / total** badge on the preview, and a red
+hint in Settings. The honest limitations: the 3D world can only enter through the `BBS 妫板嫯顫峘 layer,
 and offline exports see its **last** captured frame; depth effects lose their depth; the BBS
 recorder keeps rendering in BBS mode, so the two paths never mix.
 
 ## What's new in 0.7.0
 
-**The curve is a curve again.** The editor opened on a fixed **-100— 00** value axis and a view
+**The curve is a curve again.** The editor opened on a fixed **-100鈥?00** value axis and a view
 length of `frames / 24` seconds, so a position channel (values in the hundreds) and a 12-second
 60 fps composition were both framed wrong: every sampled Y landed outside the graph rectangle, the
 clip removed the line, and only the keyframe glyphs survived. The graph now frames its own data
 (value axis from the active channel's keys, time axis from the composition duration), pins
-out-of-range values to the edge like AE, and refills its per-column spans every frame — the
+out-of-range values to the edge like AE, and refills its per-column spans every frame 鈥?the
 incremental span cache whose invalidation could not be proven is gone (0.2 ms/frame against a
 screenshot that showed neighbouring columns jumping between unrelated values).
 
@@ -1527,7 +1508,7 @@ part of a clip (`seek = exportStart - clipStart`, previously every range export 
 from 0). The render queue's output module is a chooser with real names and a video/audio icon
 instead of a text field for internal preset ids.
 
-**The asset library is one sliding page.** The old modal pinned everything to a 620×400 rectangle;
+**The asset library is one sliding page.** The old modal pinned everything to a 620脳400 rectangle;
 below that the action row was off-screen ("the button does nothing"). Categories slide
 horizontally, the thumbnail grid scrolls vertically, and the footer switches between short and long
 labels by width. The render queue's field row no longer uses `UIElement.row()`, which ignores child
@@ -1535,13 +1516,13 @@ widths and was squeezing a 110-px label column into a quarter-width box.
 
 **The stage is solid.** A transparent composition over the live game world read as "the panel is
 broken". The stage colour is opaque by default, the world backdrop is an explicit toggle, and
-`CompRenderer.stageColor()` is the single place that decides (backdrop preview → transparent,
-alpha export → transparent, everything else → the document colour). Existing projects migrate once.
+`CompRenderer.stageColor()` is the single place that decides (backdrop preview 鈫?transparent,
+alpha export 鈫?transparent, everything else 鈫?the document colour). Existing projects migrate once.
 
 **Camera semantics.** A camera is a view, not content: hiding its row or trimming it no longer
 switches the composition back to 1:1. The gizmo, its hit test and its drag all read the animated
 transform (`cameraEye`), and `layerAt()` reuses `handleAt()` instead of maintaining a second copy of
-the geometry — clicking the camera body now works wherever it is drawn.
+the geometry 鈥?clicking the camera body now works wherever it is drawn.
 
 ## What's new in 0.6.0
 
@@ -1552,30 +1533,30 @@ further you dragged a handle. Curves are now rasterised into a **per-column span
 Vertex count is bounded by the width of the graph instead of by the data, and an unchanged curve
 costs zero evaluations.
 
-**Editing only recomputes what changed.** A handle drag rebuilds the 20— 0 columns of the affected
+**Editing only recomputes what changed.** A handle drag rebuilds the 20鈥?0 columns of the affected
 segment instead of resampling the whole graph; the five transform axes share one key list, so they
 invalidate together (a shared epoch) while scalar channels keep their own revision counter.
 
 **Release no longer jumps.** A drag used to rebuild the entire inspector and every keyframe sheet
-on mouse-up — 3— 0 ms landing exactly on the frame you let go. A drag now only re-runs the
+on mouse-up 鈥?3鈥?0 ms landing exactly on the frame you let go. A drag now only re-runs the
 inspector's value bindings; only adding/removing keys rebuilds widgets.
 
 **Preview follows the curve.** Dragging used to leave the pre-render cache answering with the last
 green frame (a regression from 0.5.0: `markDirty()` only ran on save). A drag now invalidates the
-cache every frame, drops the preview to 0.7× resolution while the mouse is down, and — when the
-playhead sits outside the edited segment — reuses the frame it already has instead of re-rendering
+cache every frame, drops the preview to 0.7脳 resolution while the mouse is down, and 鈥?when the
+playhead sits outside the edited segment 鈥?reuses the frame it already has instead of re-rendering
 the whole graph.
 
 **The blank curve page is fixed.** The strip was laid out only when the tab was clicked, so a
 dashboard page switch (or entering a precomp, or the render view) could leave the curve editor
-visible with a zero-height rectangle — and a negative clip silently erases everything. The strip is
+visible with a zero-height rectangle 鈥?and a negative clip silently erases everything. The strip is
 now reconciled every frame from `(page, visibility, area)`, the graph area is clamped to at least
-1×1, and a strip too short to host a graph falls back to the timeline with a message. Switching to
+1脳1, and a strip too short to host a graph falls back to the timeline with a message. Switching to
 the curve page also grows the strip to 55% of the panel once.
 
 **Smaller fixes.** Modifiers in the curve area go through GLFW instead of `Screen.hasAltDown()`
 (Alt-broken handles were intermittent); the active channel survives an inspector edit (it used to
-jump back to "位置 X" because the check compared object identity); `keyAt`/marquee iterate the raw
+jump back to "浣嶇疆 X" because the check compared object identity); `keyAt`/marquee iterate the raw
 key list instead of allocating a `Key` per keyframe per frame; grid labels and the value readout
 are cached per view/frame instead of `String.format`-ed every display frame.
 
@@ -1587,52 +1568,52 @@ Tests: **119/119**.
 
 **The preview is BBS's preview now.** The compositor used to paint the film frame only if a
 toggle callback happened to request it, cropped it to fill the composition rectangle, and had no
-depth at all — a `depth_*` effect silently did nothing while previewing. Three changes:
+depth at all 鈥?a `depth_*` effect silently did nothing while previewing. Three changes:
 
 1. The world frame and its **depth buffer** are copied together at the end of the world render
    (`SceneDepth.captureFrom`), so colour and depth always come from the same frame, and depth
    effects see the film's real geometry.
 2. The capture request is re-derived from the document every frame instead of only from a toggle,
-   so a project saved with the world backdrop — or a one-click 3D workspace — actually gets it.
+   so a project saved with the world backdrop 鈥?or a one-click 3D workspace 鈥?actually gets it.
 3. The world frame is drawn **contained** (letterboxed), exactly like BBS's own preview, instead
    of cover-cropped into the composition rectangle.
 
-**Pre-render cache with a green bar.** Press **预渲染** in the timeline toolbar and the ruler
+**Pre-render cache with a green bar.** Press **棰勬覆鏌?* in the timeline toolbar and the ruler
 fills with a green strip. Green frames are served from a disk+VRAM cache
-(`config/bbsae/cache/—, raw RGBA + deflate, 1280×720 cap) instead of being re-rendered, so a
-composition with a dozen effects plays back smoothly. The pass is cooperative — two frames per
-display frame, 18 ms budget — and any edit invalidates the green immediately.
+(`config/bbsae/cache/鈥旑泦, raw RGBA + deflate, 1280脳720 cap) instead of being re-rendered, so a
+composition with a dozen effects plays back smoothly. The pass is cooperative 鈥?two frames per
+display frame, 18 ms budget 鈥?and any edit invalidates the green immediately.
 
 **The editor stopped writing the project to disk on every mouse event.** `save()` used to
 serialize the whole project (megabytes of JSON) and rewrite the file for every slider tick, wheel
 notch and drag delta; it is now a dirty flag with a debounced write. That single change removes
 most of the "the UI is extremely laggy" symptom.
 
-**Preview renders at display resolution.** A 1920×1080 composition shown in a 700 px panel used to
+**Preview renders at display resolution.** A 1920脳1080 composition shown in a 700 px panel used to
 render 2.07 M pixels to display 0.28 M. The render targets now follow the viewport
-(`CompRenderContext.scale`), which is a 7× reduction in per-pass cost with no coordinate changes.
+(`CompRenderContext.scale`), which is a 7脳 reduction in per-pass cost with no coordinate changes.
 
 **Camera.** Wheel now dollies *towards* the composition (it used to zoom out), Alt+wheel narrows
 the field of view, Alt is read from GLFW instead of `Screen.hasAltDown()`, and the inspector is no
 longer rebuilt on every wheel notch.
 
 **Alt+wheel resizes the tracks.** It was bound to horizontal timeline zoom; row height was hidden
-behind Alt+Shift. Now Alt+wheel is track height (18— 2 px), Ctrl+wheel zooms time.
+behind Alt+Shift. Now Alt+wheel is track height (18鈥?2 px), Ctrl+wheel zooms time.
 
 **Curve editor.** The value axis is fitted to the **active channel** instead of every visible
-channel — position (0— 080) and opacity (0—) on one axis turned the graph into a flat line at the
+channel 鈥?position (0鈥?080) and opacity (0鈥? on one axis turned the graph into a flat line at the
 bottom. Only the active channel's curves, keys and handles are drawn and hit-tested by default
-(`聚焦` overlays the rest), and the cursor shows a crosshair with a live time/value readout.
+(`鑱氱劍` overlays the rest), and the cursor shows a crosshair with a live time/value readout.
 
 See [`docs/ROUND15-PREVIEW-CACHE-PERF.zh.md`](docs/ROUND15-PREVIEW-CACHE-PERF.zh.md).
 
 ## What's new in 0.4.0
 
-**UI density: small / medium / large, auto-following BBS.** Everything — row height, control height,
-label column, icon size, panel widths — now derives from one density number (`CompUi`). "Auto" reads
-BBS's applied GUI scale: 1— → large, 3 → medium, 4+ → small. That inversion is deliberate: a scale
-of 4 leaves a 480×270 logical canvas, so tall rows simply do not fit, while scale 1 has room to
-breathe. Switch it in Settings →鐣岄潰瀵嗗害; it is saved per project.
+**UI density: small / medium / large, auto-following BBS.** Everything 鈥?row height, control height,
+label column, icon size, panel widths 鈥?now derives from one density number (`CompUi`). "Auto" reads
+BBS's applied GUI scale: 1鈥?鈫?large, 3 鈫?medium, 4+ 鈫?small. That inversion is deliberate: a scale
+of 4 leaves a 480脳270 logical canvas, so tall rows simply do not fit, while scale 1 has room to
+breathe. Switch it in Settings 鈫掗悾宀勬桨鐎靛棗瀹? it is saved per project.
 
 **Flat buttons instead of accent blocks.** BBS's `UIButton` fills itself with the theme's primary
 colour; forty of those in an inspector is a wall of saturated blocks. `UICompButton` keeps all of
@@ -1651,14 +1632,14 @@ See [`docs/ROUND14-UI-DENSITY-FLAT.zh.md`](docs/ROUND14-UI-DENSITY-FLAT.zh.md).
 **One camera, finally.** The compositor used to have two unrelated camera paths (a 2D pan/zoom built
 from `scale.x`, and a 3D perspective camera gated behind a `camera3D` toggle), plus a Y-flip hack in
 the 3D matrix. They disagreed about zoom and framing, and the 3D projection called JOML's affine
-`transformPosition` instead of `transformProject` — so 3D layers landed at coordinates like
+`transformPosition` instead of `transformProject` 鈥?so 3D layers landed at coordinates like
 `-230646px`. Everything now derives from one pose: one space (comp pixels, Y down, Z toward the
 viewer), one `CompCamera`, one `CompScene`. The 2D view is literally the 3D camera sampled at z = 0,
 which is why switching a layer to 3D no longer changes its size or position (pinned by a test to
 0.1px). Drag the camera body to pan, the crosshair to aim, the wheel to dolly, Alt+wheel for FOV.
 
-**3D parenting.** With one scene graph, 3D parenting is the same change of basis as 2D — plus a
-Rz路Rx路Ry decomposition so z / tilt / scaleZ survive. Whole-matrix equality is asserted in tests.
+**3D parenting.** With one scene graph, 3D parenting is the same change of basis as 2D 鈥?plus a
+Rz璺疪x璺疪y decomposition so z / tilt / scaleZ survive. Whole-matrix equality is asserted in tests.
 
 **Multi-select and pre-compose.** Ctrl/Shift selection in the track timeline, Ctrl-click in the
 preview, drag the whole selection, and a batch panel: combine into a pre-render (time rebased,
@@ -1675,17 +1656,17 @@ See [`docs/ROUND13-CAMERA-MULTISELECT-PERF.zh.md`](docs/ROUND13-CAMERA-MULTISELE
 
 ## What's new in 0.2.0
 
-**AE curve editor.** The bottom strip now has a `时间轴 / 曲线` switch. The curve view is a real
+**AE curve editor.** The bottom strip now has a `鏃堕棿杞?/ 鏇茬嚎` switch. The curve view is a real
 After Effects graph editor: value graph and speed graph, per-keyframe bezier handles with
 mirrored/Alt-broken tangents, marquee selection, drag-to-retime with frame snapping, double-click
 to add a key, AE keyframe glyphs (square = linear, circle = bezier, diamond = hold), eight easing
 presets (linear / bezier / easy ease / ease in / ease out / hold / auto / continuous) with an
-influence field, and a channel list that shows every animated property — position/rotation/scale as separate curves, opacity, effect parameters, mask points, shape corners.
+influence field, and a channel list that shows every animated property 鈥?position/rotation/scale as separate curves, opacity, effect parameters, mask points, shape corners.
 
 Why it needed engine work: BBS evaluates a `Transform` channel with one interpolation for the whole
 vector and ignores `lx/ly/rx/ry`, so handles could never bend position/scale/rotation.
 `CompCurves` now evaluates each component with the same `BezierUtils` math BBS uses for float
-channels — the curve the editor draws is exactly the curve that renders.
+channels 鈥?the curve the editor draws is exactly the curve that renders.
 
 **Layer presets.** A third left-column tab: save the selected layer as an animation / effect-stack /
 style / shape / whole-layer preset, apply it to any other layer, or use the ten built-in looks.
@@ -1695,7 +1676,7 @@ payloads are re-timed to the target layer's in point.
 **Parenting no longer teleports.** Binding used to write `parentId` and let the parent matrix
 multiply the child, so a child at (900, 500) bound to a parent at (200, 100) jumped by (200, 100)
 times the parent's rotation and scale. `CompParenting` now does a change of basis
-(`local' = parentWorld⁻¹ · childWorld`), shifts every transform key by the same delta, and converts
+(`local' = parentWorld鈦宦?路 childWorld`), shifts every transform key by the same delta, and converts
 preview drags into parent space so the layer stays under the cursor.
 
 **Shape corners and colours.** Per-corner radii for rectangles (4) and triangles/polygons/stars
@@ -1748,8 +1729,8 @@ entries are intermediary-remapped.
   resources live in `minecraft`; every item/block/entity thumbnail failed to load and inserted
   layers had no texture. `mc:` is now mapped to `minecraft`;
 - added `InterfaceBlur.applyUnder()` plus a dark scrim behind the library;
-- the panel is now 620×400 (5×3 thumbnails, 6 category columns) so the action buttons fit a
-  1536×864 / GUI-scale-2 logical screen;
+- the panel is now 620脳400 (5脳3 thumbnails, 6 category columns) so the action buttons fit a
+  1536脳864 / GUI-scale-2 logical screen;
 - evidence: [`docs/verify/round11-asset-library.png`](docs/verify/round11-asset-library.png),
   details: [`docs/ROUND11-ASSET-LIBRARY.zh.md`](docs/ROUND11-ASSET-LIBRARY.zh.md).
 
@@ -1765,7 +1746,7 @@ entries are intermediary-remapped.
 - `workAreaOut` follows the composition duration (including migration of the old 12-second
   default), so preview playback no longer loops at 12 s;
 - added the user-provided compositor icon as `assets/bbsae/assets/textures/gui/compositor_icon.png`
-  (16×16), used by the dashboard tab and the `bbsae:composition` clip;
+  (16脳16), used by the dashboard tab and the `bbsae:composition` clip;
 - the export dialog has an explicit **Export duration (seconds)** field (persisted as
   `CompSettings.exportDuration`, 0 = composition duration) and a **Sync to BBS timeline** button.
   The same field is available in the **compositor settings** after entering a project, with an
@@ -1809,7 +1790,7 @@ entries are intermediary-remapped.
 2026-10-18 sixth pass (distortion, grading, landing screen, media/sound, export):
 
 - distortion effects now measure strength in **pixels** and radius against the layer's half
-  diagonal (`2蟺/wavelength` for waves); `pinch` gained its missing radius parameter. A real GL
+  diagonal (`2锜?wavelength` for waves); `pinch` gained its missing radius parameter. A real GL
   pixel test asserts that a bulge pulls transparent pixels into a square;
 - the inspector has a real **grading page**: three AE-style colour wheels (lift/gamma/gain),
   a five-point master tone curve drawn with the same formula as the shader, presets and
@@ -1825,7 +1806,7 @@ entries are intermediary-remapped.
 - layer duration has direct in/out/duration fields and 1s/2s/5s/fill buttons; settings add a
   default layer duration;
 - 10 motion templates, a reworked block-shatter shader and a richer composition-clip inspector
-  (project picker, fit choice, clip info, fixed 合成器 title);
+  (project picker, fit choice, clip info, fixed 鍚堟垚鍣?title);
 - external replay playback can be configured to hide the compositor
   (`showDuringExternalPlayback`), detected with `BBSRendering.isCustomSize()` so F6 recording is
   never mistaken for external playback;
@@ -2019,7 +2000,7 @@ dockable hierarchy/scene/timeline workspaces, a real-time scene preview with FX/
 toggles, and an isolated editor post-effect stack over a color+depth render target.
 
 Known limits relative to EffectCraft/AE: the compositor itself has no imported external 3D model
-files (BBS models are edited in the separate **实体回放 / Entity Replay** page, which reuses BBS's
+files (BBS models are edited in the separate **瀹炰綋鍥炴斁 / Entity Replay** page, which reuses BBS's
 own replay timeline, gizmo and model library), no lights, no graph editor for arbitrary
 expressions, no full AM 306-effect catalogue (137 effects shipped; the AM gap is documented in
 `docs/EFFECTS-AM-GAP.zh.md`), and per-character text editing on canvas is still limited. Multi-panel
@@ -2054,32 +2035,30 @@ playing back. The full evidence set lives in [`docs/verify/`](docs/verify/), inc
 sheet. An older exported MP4 frame is still available at
 [`docs/export-frame3.png`](docs/export-frame3.png).
 
-## 鸣谢 / Acknowledgements
+## 楦ｈ阿 / Acknowledgements
 
-这个插件能一直向前走，离不开下面这三位赞助者。他们的赞助支持了本插件的开发：付费的开发时间、渲染与导出环节的真机验证，以及每一轮修复后的回归测试。**特别感谢你们对 BBS 合成器开发的赞助支持。**
+杩欎釜鎻掍欢鑳戒竴鐩村悜鍓嶈蛋锛岀涓嶅紑涓嬮潰杩欎笁浣嶈禐鍔╄€呫€備粬浠殑璧炲姪鏀寔浜嗘湰鎻掍欢鐨勫紑鍙戯細浠樿垂鐨勫紑鍙戞椂闂淬€佹覆鏌撲笌瀵煎嚭鐜妭鐨勭湡鏈洪獙璇侊紝浠ュ強姣忎竴杞慨澶嶅悗鐨勫洖褰掓祴璇曘€?*鐗瑰埆鎰熻阿浣犱滑瀵?BBS 鍚堟垚鍣ㄥ紑鍙戠殑璧炲姪鏀寔銆?*
 
-| 赞助者 / Sponsor | 感谢 / Thanks |
+| 璧炲姪鑰?/ Sponsor | 鎰熻阿 / Thanks |
 | --- | --- |
-| **星辰久梦君** | 感谢你赞助并一直关注这个项目。 |
-| **血之书** | 感谢你的赞助，让效果栈和图层功能能持续扩展。 |
-| **Szv文森特37** | 感谢你的赞助与反馈，帮助合成器一路修到今天。 |
+| **鏄熻景涔呮ⅵ鍚?* | 鎰熻阿浣犺禐鍔╁苟涓€鐩村叧娉ㄨ繖涓」鐩€?|
+| **琛€涔嬩功** | 鎰熻阿浣犵殑璧炲姪锛岃鏁堟灉鏍堝拰鍥惧眰鍔熻兘鑳芥寔缁墿灞曘€?|
+| **Szv鏂囨．鐗?7** | 鎰熻阿浣犵殑璧炲姪涓庡弽棣堬紝甯姪鍚堟垚鍣ㄤ竴璺慨鍒颁粖澶┿€?|
 
-名字会一直留在这里（游戏内「设置 → 关于 / 赞助者」同样展示）。如果你也想支持这个插件，可以在 GitHub 上打开 issue、提 PR，或通过项目页的赞助方式联系作者。
+鍚嶅瓧浼氫竴鐩寸暀鍦ㄨ繖閲岋紙娓告垙鍐呫€岃缃?鈫?鍏充簬 / 璧炲姪鑰呫€嶅悓鏍峰睍绀猴級銆傚鏋滀綘涔熸兂鏀寔杩欎釜鎻掍欢锛屽彲浠ュ湪 GitHub 涓婃墦寮€ issue銆佹彁 PR锛屾垨閫氳繃椤圭洰椤电殑璧炲姪鏂瑰紡鑱旂郴浣滆€呫€?
+### 鍏朵粬鎰熻阿 / Other credits
 
-### 其他感谢 / Other credits
-
-- **项目与维护 / Project & maintainer:** 终end ([@zhongend](https://github.com/zhongend))
-- **合成器图标 / Compositor icon:** 超级大布叮 — original 32×32 at
-  [`docs/gallery/compositor-icon.png`](docs/gallery/compositor-icon.png); BBS UI copy at 16×16;
-  the 128×128 Mod Menu icon ([`src/main/resources/assets/bbsae/icon.png`](src/main/resources/assets/bbsae/icon.png))
+- **椤圭洰涓庣淮鎶?/ Project & maintainer:** 缁坋nd ([@zhongend](https://github.com/zhongend))
+- **鍚堟垚鍣ㄥ浘鏍?/ Compositor icon:** 瓒呯骇澶у竷鍙?鈥?original 32脳32 at
+  [`docs/gallery/compositor-icon.png`](docs/gallery/compositor-icon.png); BBS UI copy at 16脳16;
+  the 128脳128 Mod Menu icon ([`src/main/resources/assets/bbsae/icon.png`](src/main/resources/assets/bbsae/icon.png))
   is the same mark on a padded, rounded dark tile.
-- **运行环境 / Runtime:** Minecraft 1.20.1 + Fabric + BBS FS 2.7-1.20.1
-- **Photon (仅研究 / research only):** [Photon](https://github.com/Low-Drag-MC/Photon) by **KilaBash**,
+- **杩愯鐜 / Runtime:** Minecraft 1.20.1 + Fabric + BBS FS 2.7-1.20.1
+- **Photon (浠呯爺绌?/ research only):** [Photon](https://github.com/Low-Drag-MC/Photon) by **KilaBash**,
   licensed **CC BY-NC-SA 4.0**. Only editor/rendering ideas were studied; no Photon source,
   shaders or assets are included. See [PHOTON-NOTICE.md](PHOTON-NOTICE.md).
 
-完整名单见 [CREDITS.md](CREDITS.md)。
-
+瀹屾暣鍚嶅崟瑙?[CREDITS.md](CREDITS.md)銆?
 ## License
 
 MIT.
@@ -2088,4 +2067,5 @@ MIT.
 - **Round 48 (BBS dockable panels / per-pixel-depth ghost root fix / AM repeat family / animated pen paths / replay verification / UI motion, v0.93):** [`docs/ROUND48-DOCK-DEPTH.zh.md`](docs/ROUND48-DOCK-DEPTH.zh.md)
 - **Round 49 (exhaustive bug audit: effect data layer P1s, compositor interaction P1s, per-pixel-depth cleanup, replay/pen/motion polish, AM P1 batch, v0.94):** [`docs/ROUND49-AUDIT-FIXES.zh.md`](docs/ROUND49-AUDIT-FIXES.zh.md)
 - **Round 50 (second audit wave: timeline/undo/selection + 3D camera/render-cache pipeline, replay interaction real-machine verification, AM deform batch, v0.95):** [`docs/ROUND50-AUDIT-FIXES.zh.md`](docs/ROUND50-AUDIT-FIXES.zh.md)
-- **Round 51 (third audit wave: persistence/save isolation + export pipeline deadlock/queue guards, depth AUTO default, pen keep-count/RotoBezier, AM final batch, settings motion, v0.96):** [`docs/ROUND51-AUDIT-FIXES.zh.md`](docs/ROUND51-AUDIT-FIXES.zh.md)
+- **Round 51 (third audit wave: persistence/save isolation + export pipeline deadlock/queue guards, depth AUTO default, pen keep-count/RotoBezier, AM final batch, settings motion, v0.97):** [`docs/ROUND51-AUDIT-FIXES.zh.md`](docs/ROUND51-AUDIT-FIXES.zh.md)
+- **Round 52 (effect 2D/3D/export consistency + 3D effect unit/matte/raster fixes, effects-right default dock, text/mask performance, save-path tuning, v0.97):** [`docs/ROUND52-EFFECT-3D-PERF.zh.md`](docs/ROUND52-EFFECT-3D-PERF.zh.md)

@@ -8,9 +8,11 @@ import mchorse.bbs_mod.utils.keyframes.factories.KeyframeFactories;
 import mchorse.bbs_mod.utils.pose.Transform;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * One layer in a composition.
@@ -1222,80 +1224,422 @@ public class CompLayer
     public float lineHeightAt(float frame) { return Math.max(0.1F, this.scalarAt("text/lineHeight", this.lineHeight, frame)); }
     public float textStrokeAt(float frame) { return Math.max(0F, this.scalarAt("text/strokeWidth", this.strokeWidth, frame)); }
 
+    /**
+     * Precomputed channel paths for one mask.
+     *
+     * <p>They depend only on the mask id and its point count, and the old code rebuilt every one of
+     * them ("mask/" + id + "/p/" + i + "/" + field) once per point per frame. A mask is evaluated
+     * at least once per render pass, so a 40-point roto mask allocated 240 short-lived strings per
+     * frame — plus one copy of the whole mask. The path strings now live in a weak side cache, so
+     * the mask itself stays a pure data object (nothing transient is serialized) and editing the id
+     * or the point count rebuilds them.</p>
+     */
+    private static final Map<CompMask, MaskPaths> MASK_PATHS = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<CompShape, ShapePaths> SHAPE_PATHS = Collections.synchronizedMap(new WeakHashMap<>());
+
+    private static final class MaskPaths
+    {
+        final String id;
+        final int points;
+        final String opacity;
+        final String feather;
+        final String expansion;
+        final String[] pointPaths;
+
+        MaskPaths(CompMask mask)
+        {
+            this.id = mask.id == null ? "" : mask.id;
+            this.points = mask.points == null ? 0 : mask.points.size();
+            this.opacity = maskPath(this.id, "opacity");
+            this.feather = maskPath(this.id, "feather");
+            this.expansion = maskPath(this.id, "expansion");
+            this.pointPaths = new String[this.points * 6];
+
+            for (int i = 0; i < this.points; i++)
+            {
+                String base = "mask/" + this.id + "/p/" + i + "/";
+
+                this.pointPaths[i * 6] = base + "x";
+                this.pointPaths[i * 6 + 1] = base + "y";
+                this.pointPaths[i * 6 + 2] = base + "inX";
+                this.pointPaths[i * 6 + 3] = base + "inY";
+                this.pointPaths[i * 6 + 4] = base + "outX";
+                this.pointPaths[i * 6 + 5] = base + "outY";
+            }
+        }
+    }
+
+    private static MaskPaths maskPaths(CompMask mask)
+    {
+        String id = mask.id == null ? "" : mask.id;
+        int points = mask.points == null ? 0 : mask.points.size();
+        MaskPaths cached = MASK_PATHS.get(mask);
+
+        if (cached != null && cached.points == points && cached.id.equals(id))
+        {
+            return cached;
+        }
+
+        MaskPaths built = new MaskPaths(mask);
+
+        MASK_PATHS.put(mask, built);
+
+        return built;
+    }
+
+    private static final class ShapePaths
+    {
+        final String id;
+        final int corners;
+        final int points;
+        final String[] fixed;
+        final String[] cornerPaths;
+        final String[] pointPaths;
+
+        ShapePaths(CompShape shape)
+        {
+            this.id = shape.id == null ? "" : shape.id;
+            this.corners = shape.cornerCount();
+            this.points = shape.points == null ? 0 : shape.points.size();
+            this.fixed = new String[16];
+
+            String base = "shape/" + this.id + "/";
+            String[] names = {
+                "x", "y", "width", "height", "roundness", "rotation", "fillGradientAngle",
+                "trimStart", "trimEnd", "trimOffset", "repeaterCount", "repeaterOffsetX",
+                "repeaterOffsetY", "repeaterScale", "repeaterRotation", "repeaterOpacity"
+            };
+
+            for (int i = 0; i < names.length; i++)
+            {
+                this.fixed[i] = base + names[i];
+            }
+
+            this.cornerPaths = new String[this.corners];
+
+            for (int i = 0; i < this.corners; i++)
+            {
+                this.cornerPaths[i] = base + "c/" + i;
+            }
+
+            this.pointPaths = new String[this.points * 6];
+
+            for (int i = 0; i < this.points; i++)
+            {
+                String pointBase = base + "p/" + i + "/";
+
+                this.pointPaths[i * 6] = pointBase + "x";
+                this.pointPaths[i * 6 + 1] = pointBase + "y";
+                this.pointPaths[i * 6 + 2] = pointBase + "inX";
+                this.pointPaths[i * 6 + 3] = pointBase + "inY";
+                this.pointPaths[i * 6 + 4] = pointBase + "outX";
+                this.pointPaths[i * 6 + 5] = pointBase + "outY";
+            }
+        }
+    }
+
+    private static ShapePaths shapePaths(CompShape shape)
+    {
+        String id = shape.id == null ? "" : shape.id;
+        int corners = shape.cornerCount();
+        int points = shape.points == null ? 0 : shape.points.size();
+        ShapePaths cached = SHAPE_PATHS.get(shape);
+
+        if (cached != null && cached.corners == corners && cached.points == points && cached.id.equals(id))
+        {
+            return cached;
+        }
+
+        ShapePaths built = new ShapePaths(shape);
+
+        SHAPE_PATHS.put(shape, built);
+
+        return built;
+    }
+
     /** Returns a copy of a mask with every animatable mask value resolved at {@code frame}. */
     public CompMask maskAt(CompMask mask, float frame)
     {
-        CompMask resolved = mask.copy();
-
-        resolved.opacity = clamp01(this.scalarAt(maskPath(mask.id, "opacity"), mask.opacity, frame));
-        resolved.feather = Math.max(0F, this.scalarAt(maskPath(mask.id, "feather"), mask.feather, frame));
-        resolved.expansion = this.scalarAt(maskPath(mask.id, "expansion"), mask.expansion, frame);
-
-        for (int i = 0; i < resolved.points.size(); i++)
+        if (mask == null)
         {
-            CompMask.CompMaskPoint point = resolved.points.get(i);
-            String base = "mask/" + mask.id + "/p/" + i + "/";
-
-            point.x = this.scalarAt(base + "x", point.x, frame);
-            point.y = this.scalarAt(base + "y", point.y, frame);
-            point.inX = this.scalarAt(base + "inX", point.inX, frame);
-            point.inY = this.scalarAt(base + "inY", point.inY, frame);
-            point.outX = this.scalarAt(base + "outX", point.outX, frame);
-            point.outY = this.scalarAt(base + "outY", point.outY, frame);
+            return null;
         }
 
+        CompMask resolved = mask.copy();
+
+        this.resolveMaskValues(mask, resolved, frame, maskPaths(mask));
+
         return resolved;
+    }
+
+    /**
+     * Resolves a mask into an existing object, for callers that rasterize it every frame.
+     *
+     * <p>{@link #maskAt(CompMask, float)} has to return a fresh copy because it is public API, but
+     * the renderer only needs the values for one rasterization. This variant reuses the point list
+     * of {@code target} and allocates only when the point count grows, which removes the per-frame
+     * mask + ArrayList + point-per-vertex allocation.</p>
+     *
+     * @param target reusable destination, or null to allocate one
+     * @return {@code target} (or a new mask when it was null)
+     */
+    public CompMask maskAtInto(CompMask mask, float frame, CompMask target)
+    {
+        if (mask == null)
+        {
+            return null;
+        }
+
+        CompMask resolved = target == null ? new CompMask() : target;
+
+        resolved.id = mask.id;
+        resolved.name = mask.name;
+        resolved.enabled = mask.enabled;
+        resolved.mode = mask.mode;
+        resolved.inverted = mask.inverted;
+        resolved.opacity = mask.opacity;
+        resolved.feather = mask.feather;
+        resolved.expansion = mask.expansion;
+        resolved.closed = mask.closed;
+        resolved.rotoBezier = mask.rotoBezier;
+
+        List<CompMask.CompMaskPoint> source = mask.points;
+        int count = source == null ? 0 : source.size();
+
+        if (resolved.points == null)
+        {
+            resolved.points = new ArrayList<>(Math.max(4, count));
+        }
+
+        while (resolved.points.size() < count)
+        {
+            resolved.points.add(new CompMask.CompMaskPoint());
+        }
+
+        while (resolved.points.size() > count)
+        {
+            resolved.points.remove(resolved.points.size() - 1);
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            CompMask.CompMaskPoint from = source.get(i);
+            CompMask.CompMaskPoint to = resolved.points.get(i);
+
+            if (from == null)
+            {
+                to.x = 0F;
+                to.y = 0F;
+                to.inX = 0F;
+                to.inY = 0F;
+                to.outX = 0F;
+                to.outY = 0F;
+
+                continue;
+            }
+
+            to.x = from.x;
+            to.y = from.y;
+            to.inX = from.inX;
+            to.inY = from.inY;
+            to.outX = from.outX;
+            to.outY = from.outY;
+        }
+
+        this.resolveMaskValues(mask, resolved, frame, maskPaths(mask));
+
+        return resolved;
+    }
+
+    private void resolveMaskValues(CompMask mask, CompMask resolved, float frame, MaskPaths paths)
+    {
+        resolved.opacity = clamp01(this.scalarAt(paths.opacity, mask.opacity, frame));
+        resolved.feather = Math.max(0F, this.scalarAt(paths.feather, mask.feather, frame));
+        resolved.expansion = this.scalarAt(paths.expansion, mask.expansion, frame);
+
+        int count = Math.min(resolved.points.size(), paths.points);
+
+        for (int i = 0; i < count; i++)
+        {
+            CompMask.CompMaskPoint point = resolved.points.get(i);
+            int base = i * 6;
+
+            point.x = this.scalarAt(paths.pointPaths[base], point.x, frame);
+            point.y = this.scalarAt(paths.pointPaths[base + 1], point.y, frame);
+            point.inX = this.scalarAt(paths.pointPaths[base + 2], point.inX, frame);
+            point.inY = this.scalarAt(paths.pointPaths[base + 3], point.inY, frame);
+            point.outX = this.scalarAt(paths.pointPaths[base + 4], point.outX, frame);
+            point.outY = this.scalarAt(paths.pointPaths[base + 5], point.outY, frame);
+        }
     }
 
     /** Returns a copy of a shape with every animatable shape value resolved at {@code frame}. */
     public CompShape shapeAt(CompShape shape, float frame)
     {
-        CompShape resolved = shape.copy();
-        String base = "shape/" + shape.id + "/";
+        if (shape == null)
+        {
+            return null;
+        }
 
-        resolved.x = this.scalarAt(base + "x", shape.x, frame);
-        resolved.y = this.scalarAt(base + "y", shape.y, frame);
-        resolved.width = this.scalarAt(base + "width", shape.width, frame);
-        resolved.height = this.scalarAt(base + "height", shape.height, frame);
-        resolved.roundness = clamp01(this.scalarAt(base + "roundness", shape.roundness, frame));
-        resolved.rotation = this.scalarAt(base + "rotation", shape.rotation, frame);
-        resolved.fillGradientAngle = this.scalarAt(base + "fillGradientAngle", shape.fillGradientAngle, frame);
-        resolved.trimStart = this.scalarAt(base + "trimStart", shape.trimStart, frame);
-        resolved.trimEnd = this.scalarAt(base + "trimEnd", shape.trimEnd, frame);
-        resolved.trimOffset = this.scalarAt(base + "trimOffset", shape.trimOffset, frame);
-        resolved.repeaterCount = Math.max(0, Math.round(this.scalarAt(base + "repeaterCount", shape.repeaterCount, frame)));
-        resolved.repeaterOffsetX = this.scalarAt(base + "repeaterOffsetX", shape.repeaterOffsetX, frame);
-        resolved.repeaterOffsetY = this.scalarAt(base + "repeaterOffsetY", shape.repeaterOffsetY, frame);
-        resolved.repeaterScale = this.scalarAt(base + "repeaterScale", shape.repeaterScale, frame);
-        resolved.repeaterRotation = this.scalarAt(base + "repeaterRotation", shape.repeaterRotation, frame);
-        resolved.repeaterOpacity = clamp01(this.scalarAt(base + "repeaterOpacity", shape.repeaterOpacity, frame));
+        CompShape resolved = shape.copy();
+
+        this.resolveShapeValues(shape, resolved, frame, shapePaths(shape));
+
+        return resolved;
+    }
+
+    /**
+     * Resolves a shape into an existing object; see {@link #maskAtInto(CompMask, float, CompMask)}.
+     * The shape/point/corner lists are reused when the counts do not grow.
+     */
+    public CompShape shapeAtInto(CompShape shape, float frame, CompShape target)
+    {
+        if (shape == null)
+        {
+            return null;
+        }
+
+        CompShape resolved = target == null ? new CompShape() : target;
+
+        resolved.id = shape.id;
+        resolved.type = shape.type;
+        resolved.operator = shape.operator;
+        resolved.enabled = shape.enabled;
+        resolved.x = shape.x;
+        resolved.y = shape.y;
+        resolved.width = shape.width;
+        resolved.height = shape.height;
+        resolved.roundness = shape.roundness;
+        resolved.rotation = shape.rotation;
+        resolved.sides = shape.sides;
+        resolved.innerRadius = shape.innerRadius;
+        resolved.outerRadius = shape.outerRadius;
+        resolved.cornerStyle = shape.cornerStyle;
+        resolved.fillColor = shape.fillColor;
+        resolved.strokeColor = shape.strokeColor;
+        resolved.strokeWidth = shape.strokeWidth;
+        resolved.fillGradient = shape.fillGradient;
+        resolved.fillColor2 = shape.fillColor2;
+        resolved.fillGradientAngle = shape.fillGradientAngle;
+        resolved.trimStart = shape.trimStart;
+        resolved.trimEnd = shape.trimEnd;
+        resolved.trimOffset = shape.trimOffset;
+        resolved.repeaterCount = shape.repeaterCount;
+        resolved.repeaterOffsetX = shape.repeaterOffsetX;
+        resolved.repeaterOffsetY = shape.repeaterOffsetY;
+        resolved.repeaterScale = shape.repeaterScale;
+        resolved.repeaterRotation = shape.repeaterRotation;
+        resolved.repeaterOpacity = shape.repeaterOpacity;
+        resolved.closed = shape.closed;
+        resolved.rotoBezier = shape.rotoBezier;
+
+        List<Float> sourceCorners = shape.corners;
+        int cornerCount = sourceCorners == null ? 0 : sourceCorners.size();
+
+        if (resolved.corners == null)
+        {
+            resolved.corners = new ArrayList<>(cornerCount);
+        }
+
+        while (resolved.corners.size() < cornerCount)
+        {
+            resolved.corners.add(0F);
+        }
+
+        while (resolved.corners.size() > cornerCount)
+        {
+            resolved.corners.remove(resolved.corners.size() - 1);
+        }
+
+        for (int i = 0; i < cornerCount; i++)
+        {
+            resolved.corners.set(i, sourceCorners.get(i));
+        }
+
+        List<CompShape.Point> sourcePoints = shape.points;
+        int pointCount = sourcePoints == null ? 0 : sourcePoints.size();
+
+        if (resolved.points == null)
+        {
+            resolved.points = new ArrayList<>(pointCount);
+        }
+
+        while (resolved.points.size() < pointCount)
+        {
+            resolved.points.add(new CompShape.Point());
+        }
+
+        while (resolved.points.size() > pointCount)
+        {
+            resolved.points.remove(resolved.points.size() - 1);
+        }
+
+        for (int i = 0; i < pointCount; i++)
+        {
+            CompShape.Point from = sourcePoints.get(i);
+            CompShape.Point to = resolved.points.get(i);
+
+            to.x = from.x;
+            to.y = from.y;
+            to.inX = from.inX;
+            to.inY = from.inY;
+            to.outX = from.outX;
+            to.outY = from.outY;
+        }
+
+        this.resolveShapeValues(shape, resolved, frame, shapePaths(shape));
+
+        return resolved;
+    }
+
+    private void resolveShapeValues(CompShape shape, CompShape resolved, float frame, ShapePaths paths)
+    {
+        String[] fixed = paths.fixed;
+
+        resolved.x = this.scalarAt(fixed[0], shape.x, frame);
+        resolved.y = this.scalarAt(fixed[1], shape.y, frame);
+        resolved.width = this.scalarAt(fixed[2], shape.width, frame);
+        resolved.height = this.scalarAt(fixed[3], shape.height, frame);
+        resolved.roundness = clamp01(this.scalarAt(fixed[4], shape.roundness, frame));
+        resolved.rotation = this.scalarAt(fixed[5], shape.rotation, frame);
+        resolved.fillGradientAngle = this.scalarAt(fixed[6], shape.fillGradientAngle, frame);
+        resolved.trimStart = this.scalarAt(fixed[7], shape.trimStart, frame);
+        resolved.trimEnd = this.scalarAt(fixed[8], shape.trimEnd, frame);
+        resolved.trimOffset = this.scalarAt(fixed[9], shape.trimOffset, frame);
+        resolved.repeaterCount = Math.max(0, Math.round(this.scalarAt(fixed[10], shape.repeaterCount, frame)));
+        resolved.repeaterOffsetX = this.scalarAt(fixed[11], shape.repeaterOffsetX, frame);
+        resolved.repeaterOffsetY = this.scalarAt(fixed[12], shape.repeaterOffsetY, frame);
+        resolved.repeaterScale = this.scalarAt(fixed[13], shape.repeaterScale, frame);
+        resolved.repeaterRotation = this.scalarAt(fixed[14], shape.repeaterRotation, frame);
+        resolved.repeaterOpacity = clamp01(this.scalarAt(fixed[15], shape.repeaterOpacity, frame));
 
         /* Always resolve corners: a fresh shape has no corner list yet, and a keyframed corner
          * radius must land there once the channel exists. */
         resolved.ensureCorners();
 
-        for (int i = 0; i < resolved.corners.size(); i++)
+        int corners = Math.min(resolved.corners.size(), paths.corners);
+
+        for (int i = 0; i < corners; i++)
         {
-            String cornerPath = base + "c/" + i;
             float fallbackCorner = shape.corner(i);
 
-            resolved.corners.set(i, Math.max(0F, this.scalarAt(cornerPath, fallbackCorner, frame)));
+            resolved.corners.set(i, Math.max(0F, this.scalarAt(paths.cornerPaths[i], fallbackCorner, frame)));
         }
 
-        for (int i = 0; i < resolved.points.size(); i++)
+        int points = Math.min(resolved.points.size(), paths.points);
+
+        for (int i = 0; i < points; i++)
         {
             CompShape.Point point = resolved.points.get(i);
-            String pointBase = base + "p/" + i + "/";
+            int base = i * 6;
 
-            point.x = this.scalarAt(pointBase + "x", point.x, frame);
-            point.y = this.scalarAt(pointBase + "y", point.y, frame);
-            point.inX = this.scalarAt(pointBase + "inX", point.inX, frame);
-            point.inY = this.scalarAt(pointBase + "inY", point.inY, frame);
-            point.outX = this.scalarAt(pointBase + "outX", point.outX, frame);
-            point.outY = this.scalarAt(pointBase + "outY", point.outY, frame);
+            point.x = this.scalarAt(paths.pointPaths[base], point.x, frame);
+            point.y = this.scalarAt(paths.pointPaths[base + 1], point.y, frame);
+            point.inX = this.scalarAt(paths.pointPaths[base + 2], point.inX, frame);
+            point.inY = this.scalarAt(paths.pointPaths[base + 3], point.inY, frame);
+            point.outX = this.scalarAt(paths.pointPaths[base + 4], point.outX, frame);
+            point.outY = this.scalarAt(paths.pointPaths[base + 5], point.outY, frame);
         }
-
-        return resolved;
     }
 
     public static String maskPath(String maskId, String property)
@@ -1401,14 +1745,63 @@ public class CompLayer
      */
     public float effectValue(CompEffect effect, String key, float fallback, float frame)
     {
-        if (effect == null)
+        if (effect == null || key == null)
         {
             return fallback;
         }
 
-        CompEffect resolved = this.resolveEffect(effect, frame);
+        /* Direct read: when nothing animates this parameter, the resolved value is exactly the
+         * stored value, so building a whole temporary CompEffect (two maps + putAll) just to read
+         * one double is pure overhead. This is the hot path for EffectPadding / slider readouts,
+         * which ask for many parameters of the same effect. */
+        String path = effectPath(effect.id, key);
+        KeyframeChannel<Float> channel = this.scalarChannels == null ? null : this.scalarChannels.get(path);
 
-        return resolved == null ? fallback : resolved.valueF(key, fallback);
+        if (channel == null)
+        {
+            return effect.valueF(key, fallback);
+        }
+
+        Double stored = effect.params.get(key);
+
+        /* An empty channel carries no value. resolveEffect() still materialises it with the neutral
+         * default (full strength for global_strength, zero otherwise), so mirror that here instead
+         * of falling back to the caller's default — the direct read has to agree with the resolved
+         * object, not just look nicer. */
+        if (channel.getKeyframes().isEmpty())
+        {
+            if (stored != null)
+            {
+                return stored.floatValue();
+            }
+
+            if (effect.params.containsKey(key))
+            {
+                return 0F;
+            }
+
+            return CompEffect.STRENGTH.equals(key) ? 1F : 0F;
+        }
+
+        float base;
+
+        if (stored != null)
+        {
+            base = stored.floatValue();
+        }
+        else if (effect.params.containsKey(key))
+        {
+            base = 0F;
+        }
+        else
+        {
+            /* A keyed parameter that was never written to the stored map: resolveEffect() uses
+             * full strength as the neutral default for global_strength and zero for everything
+             * else. */
+            base = CompEffect.STRENGTH.equals(key) ? 1F : 0F;
+        }
+
+        return this.scalarAt(path, base, frame);
     }
 
     /**
@@ -1423,7 +1816,20 @@ public class CompLayer
         return this.effectValue(this.getEffect(effectId), parameter, fallback, frame);
     }
 
-    /** Resolves animated effect parameters into a temporary effect for this frame. */
+    /**
+     * Resolves animated effect parameters into a temporary effect for this frame.
+     *
+     * <p>The returned object is a per-effect scratch buffer: resolving the same effect again (in
+     * the same frame or another one) reuses it. The previous implementation copied the effect
+     * (a new object, two {@link LinkedHashMap}s and two {@code putAll}s) on every call — a stack of
+     * 300 effects rendered through the bake, the composition pass and EffectPadding produced up to
+     * 1800 copies per frame. Callers read the resolved values and must not keep the instance across
+     * a nested resolve of the same effect; recursion is covered by a pool of depth
+     * {@value #RESOLVE_DEPTH}, and deeper nesting falls back to a fresh object.</p>
+     *
+     * <p>The resolved effect is still a distinct object from the live one, so mutating it (or its
+     * parameter map) never writes back into the project.</p>
+     */
     public CompEffect resolveEffect(CompEffect effect, float frame)
     {
         if (effect == null)
@@ -1431,7 +1837,73 @@ public class CompLayer
             return null;
         }
 
-        CompEffect resolved = effect.copy();
+        ResolveScratch scratch;
+
+        synchronized (EFFECT_SCRATCH)
+        {
+            scratch = EFFECT_SCRATCH.get(effect);
+
+            if (scratch == null)
+            {
+                scratch = new ResolveScratch();
+                EFFECT_SCRATCH.put(effect, scratch);
+            }
+        }
+
+        int depth = scratch.enter();
+
+        if (depth < 0)
+        {
+            return this.resolveEffectInto(effect, frame, null);
+        }
+
+        try
+        {
+            return this.resolveEffectInto(effect, frame, scratch.slot(depth));
+        }
+        finally
+        {
+            scratch.leave();
+        }
+    }
+
+    /**
+     * Resolves animated effect parameters into {@code target} instead of allocating a new effect.
+     * Public so hot callers (a renderer applying a whole effect stack) can own their scratch.
+     */
+    public CompEffect resolveEffectInto(CompEffect effect, float frame, CompEffect target)
+    {
+        if (effect == null)
+        {
+            return null;
+        }
+
+        CompEffect resolved = target == null ? new CompEffect() : target;
+
+        resolved.id = effect.id;
+        resolved.type = effect.type;
+        resolved.enabled = effect.enabled;
+
+        /* Repopulate the reused map in place: putting an existing key replaces the value without
+         * allocating a LinkedHashMap.Entry, so after the first frame a resolve costs no map
+         * allocation at all. Keys that disappeared from the live effect are removed first. */
+        java.util.Iterator<String> stale = resolved.params.keySet().iterator();
+
+        while (stale.hasNext())
+        {
+            if (!effect.params.containsKey(stale.next()))
+            {
+                stale.remove();
+            }
+        }
+
+        for (Map.Entry<String, Double> entry : effect.params.entrySet())
+        {
+            resolved.params.put(entry.getKey(), entry.getValue());
+        }
+
+        resolved.colors.clear();
+        resolved.colors.putAll(effect.colors);
 
         for (Map.Entry<String, Double> entry : resolved.params.entrySet())
         {
@@ -1443,34 +1915,81 @@ public class CompLayer
         /* A channel can exist for a parameter that is not in the stored map. That is how an
          * effect saved before global_strength existed gets a keyed strength, and how a parameter
          * whose base value was never written still animates. Resolving only stored params made
-         * those channels silently dead. */
+         * those channels silently dead.
+         *
+         * The channels are iterated directly (once): animatedPaths() copies the whole key set, and
+         * the old code called it twice per effect. */
+        if (this.scalarChannels == null)
+        {
+            this.scalarChannels = new LinkedHashMap<>();
+        }
+
         String prefix = effectPath(effect.id, "");
 
-        if (this.animatedPaths() != null)
+        for (String path : this.scalarChannels.keySet())
         {
-            for (String path : this.animatedPaths())
+            if (path == null || !path.startsWith(prefix))
             {
-                if (path == null || !path.startsWith(prefix))
-                {
-                    continue;
-                }
-
-                String key = path.substring(prefix.length());
-
-                if (key.isEmpty() || resolved.params.containsKey(key))
-                {
-                    continue;
-                }
-
-                /* Full strength is the neutral default; an unknown parameter defaults to zero,
-                 * which matches how EffectRenderer reads a missing value. */
-                float fallback = CompEffect.STRENGTH.equals(key) ? 1F : 0F;
-
-                resolved.put(key, this.scalarAt(path, fallback, frame));
+                continue;
             }
+
+            String key = path.substring(prefix.length());
+
+            if (key.isEmpty() || resolved.params.containsKey(key))
+            {
+                continue;
+            }
+
+            /* Full strength is the neutral default; an unknown parameter defaults to zero,
+             * which matches how EffectRenderer reads a missing value. */
+            float fallback = CompEffect.STRENGTH.equals(key) ? 1F : 0F;
+
+            resolved.put(key, this.scalarAt(path, fallback, frame));
         }
 
         return resolved;
+    }
+
+    /** Scratch pool for {@link #resolveEffect(CompEffect, float)}; bounded recursion depth. */
+    private static final int RESOLVE_DEPTH = 8;
+    private static final Map<CompEffect, ResolveScratch> EFFECT_SCRATCH =
+        Collections.synchronizedMap(new WeakHashMap<>());
+
+    private static final class ResolveScratch
+    {
+        private final CompEffect[] slots = new CompEffect[RESOLVE_DEPTH];
+        private int depth;
+
+        synchronized int enter()
+        {
+            if (this.depth >= RESOLVE_DEPTH)
+            {
+                return -1;
+            }
+
+            return this.depth++;
+        }
+
+        synchronized void leave()
+        {
+            if (this.depth > 0)
+            {
+                this.depth -= 1;
+            }
+        }
+
+        CompEffect slot(int index)
+        {
+            CompEffect slot = this.slots[index];
+
+            if (slot == null)
+            {
+                slot = new CompEffect();
+                this.slots[index] = slot;
+            }
+
+            return slot;
+        }
     }
 
     public static String effectPath(String effectId, String parameter)

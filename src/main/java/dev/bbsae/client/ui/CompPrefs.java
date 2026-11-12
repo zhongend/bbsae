@@ -34,7 +34,7 @@ public final class CompPrefs
     public static final int LAYOUT_WIDE = 3;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static Data data;
+    private static volatile Data data;
     private static boolean dirty;
     /** Redirects {@link #path()} in tests (Fabric's config dir does not exist headless). */
     private static volatile Path pathOverride;
@@ -188,7 +188,24 @@ public final class CompPrefs
         dirty = false;
     }
 
-    public static synchronized Data get()
+    /**
+     * Preferences are read dozens of times per UI frame (density/animation/grid checks); the
+     * synchronized getter serialised the whole render thread against any background save. The
+     * first call still synchronises, later calls are a volatile read of the built instance.
+     */
+    public static Data get()
+    {
+        Data current = data;
+
+        if (current != null)
+        {
+            return current;
+        }
+
+        return loadInitial();
+    }
+
+    private static synchronized Data loadInitial()
     {
         if (data == null)
         {

@@ -51,6 +51,17 @@ final class EffectSpace
     final int compWidth;
     final int compHeight;
 
+    /**
+     * Reference grid for pixel-unit parameters (blur radii, pixel sizes, offsets), in pixels.
+     *
+     * <p>Normally the same as {@link #compWidth}/{@link #compHeight} (the target FBO). The layer
+     * bake overrides it with the <b>parent composition</b> size: effects authored in composition
+     * pixels must not change size when the bake raster is capped/scaled, and the baked prefix has
+     * to agree with the post-projection effects on the same 3D layer.</p>
+     */
+    final int refWidth;
+    final int refHeight;
+
     /** Composition UV of the effect box centre, V up like every other shader UV. */
     final float centerU;
     final float centerV;
@@ -63,7 +74,7 @@ final class EffectSpace
                         float ux, float uy, float uz, float vx, float vy, float vz,
                         float m00, float m01, float m10, float m11, float originCompX, float originCompY,
                         int compWidth, int compHeight, float centerU, float centerV,
-                        float sizeU, float sizeV)
+                        float sizeU, float sizeV, int refWidth, int refHeight)
     {
         this.width = width;
         this.height = height;
@@ -83,6 +94,8 @@ final class EffectSpace
         this.originCompY = originCompY;
         this.compWidth = compWidth;
         this.compHeight = compHeight;
+        this.refWidth = Math.max(1, refWidth);
+        this.refHeight = Math.max(1, refHeight);
         this.centerU = centerU;
         this.centerV = centerV;
         this.sizeU = sizeU;
@@ -139,6 +152,20 @@ final class EffectSpace
     static EffectSpace ofBounds(CompLayer layer, Matrix4f world, CompRenderContext context,
                                 float bx, float by, float bw, float bh)
     {
+        return ofBounds(layer, world, context, bx, by, bw, bh,
+            Math.max(1, context.width), Math.max(1, context.height));
+    }
+
+    /**
+     * Explicit bounds + reference grid.
+     *
+     * @param refWidth/refHeight composition pixel grid the effect parameters are authored in. The
+     *        layer-local bake passes the parent composition size so its pixel-unit parameters keep
+     *        the same meaning as the same effect running after projection.
+     */
+    static EffectSpace ofBounds(CompLayer layer, Matrix4f world, CompRenderContext context,
+                                float bx, float by, float bw, float bh, int refWidth, int refHeight)
+    {
         int compW = Math.max(1, context.width);
         int compH = Math.max(1, context.height);
         bw = Math.max(0.0001F, bw);
@@ -169,7 +196,7 @@ final class EffectSpace
 
         return new EffectSpace(bw, bh, bx, by, ux, uy, uz, vx, vy, vz,
             matrix.m00(), matrix.m01(), matrix.m10(), matrix.m11(), originCompX, originCompY, compW, compH,
-            centerU, centerV, bw / compW, bh / compH);
+            centerU, centerV, bw / compW, bh / compH, refWidth, refHeight);
     }
 
     static EffectSpace identity(CompRenderContext context)
@@ -195,7 +222,7 @@ final class EffectSpace
         return new EffectSpace(compW, compH, 0F, 0F,
             1F, 0F, 0F, 0F, -1F, 1F,
             1F, 0F, 0F, 1F, 0F, 0F, compW, compH, centerU, centerV,
-            Math.max(0.0001F, sizeU), Math.max(0.0001F, sizeV));
+            Math.max(0.0001F, sizeU), Math.max(0.0001F, sizeV), compW, compH);
     }
 
     /** Composition UV of the effect box centre (V up). */

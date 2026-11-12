@@ -309,6 +309,18 @@ public final class CompDockSource implements ILayoutSource
     public static EditorLayoutNode defaultLayout()
     {
         return new EditorLayoutNode.SplitterNode(true, 0.72F,
+            new EditorLayoutNode.SplitterNode(false, 0.72F,
+                new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
+                new EditorLayoutNode.SplitterNode(true, 0.5F,
+                    new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
+                    new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
+            new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
+    }
+
+    /** Pre-dock layout: effect library column on the left of the preview. */
+    public static EditorLayoutNode classicLayout()
+    {
+        return new EditorLayoutNode.SplitterNode(true, 0.72F,
             new EditorLayoutNode.SplitterNode(false, 0.13F,
                 new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
                 new EditorLayoutNode.SplitterNode(false, 0.80F,
@@ -316,7 +328,6 @@ public final class CompDockSource implements ILayoutSource
                     new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
             new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
     }
-
     /** Focus mode: preview over the timeline, side panels hidden (transient, not persisted). */
     public static EditorLayoutNode focusLayout()
     {
@@ -332,13 +343,8 @@ public final class CompDockSource implements ILayoutSource
      */
     public static EditorLayoutNode effectsRightLayout()
     {
-        return new EditorLayoutNode.SplitterNode(true, 0.72F,
-            new EditorLayoutNode.SplitterNode(false, 0.72F,
-                new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
-                new EditorLayoutNode.SplitterNode(true, 0.5F,
-                    new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
-                    new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
-            new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
+        /* Kept for callers/tests written before this became the default. */
+        return defaultLayout();
     }
 
     /**

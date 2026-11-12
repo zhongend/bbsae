@@ -384,3 +384,115 @@ RGB 分离图并断言同一相对位置采样一致。
   等价经典条目，不重复入库。重复 `repeat.path` 与文字 6 项维持 0.95 的判定（不做 + 原因见 gap 文档 3.5）。
 - 验证：全量 **125 suites / 754 tests / 0 failures / 1 skipped**；`EffectP1BatchTest.SHADER_BATCH`
   （12 个）+ `AmEffectLibraryTest` 12 条零点断言；缩略图 12 张入库。未开客户端、未 git commit。
+
+## Round 6（0.97 / task-27）五路径一致性审计修复（需求2）
+
+> 依据 Lead 转发的只读一致性审计（2D 预览 / AE 预览 / 导出 / 3D 合成 / 3D 工作区五路径）。
+> 全量 **129 suites / 798 tests / 0 failures / 1 skipped**；未开客户端、未 commit、未改
+> `CompPrefs`/UI/`comp`/`AmEffectLibrary`/`PassRenderer`/`CompViewportRenderer`（写域外项已列在
+> "仍需 Lead/UI"）。
+
+### 1. 3D 层效果路径验证（审计前提纠正）
+
+- `am_glass` / `am_light_wrap` / `am_displace_map` / `am_gradient_displace` 在定义里本来就通过
+  `.comp()` 置了 `usesComp`（审计提到的 `COMPOSITION_SAMPLERS` 是冗余的，已确认无需新增渲染侧名单）。
+  `AmEffectLibrary.usesComp(type)` → `requiresProjectedPass` → 3D 层烘培跳过、投影后带
+  `context.backdrop` 运行，2D/3D/导出共用。
+- 新增 `EffectPipeline3DConsistencyTest`（16 例）：分类矩阵（repeat 族 8、shape_field、4 个 comp
+  采样、shake/depth_* 不进烘培；blur/invert/gradient/checkerboard/mirror/s3d_*/am_tile 族留在烘培）；
+  3D 层栈 split 每效果恰好执行一次；fallback 全栈一次；重复/形状场在图层矩形外有像素；4 个 comp
+  采样效果确实读取 backdrop（两种背景输出不同）；mask 先于效果（模糊可越出蒙版）；效果空间分辨率
+  无关；preview/export 路由一致；`TextureOrientationTest`（2 例）钉住上传/全屏 pass 的 UV 上下约定。
+- 文字翻转/预合成顺序：既有 `EffectOrientationTest`（4 例，2D 合成 / 3D 烘培 / 带 padding / 12 个
+  内容采样效果方向）已覆盖审计关注的翻转类回归；本轮未改，记录为"已修 + 有守护"。
+
+### 2. P0-1 光栅缓存键不含编辑器模式（已修）
+
+根因：`CompLayerSourceCache.signature` 只混入 `renderEffects/renderMasks`，不含 `context.preview`/
+`draftViewport`。3D 工作区先看过某层（草稿蓝板/BBS 预览占位）后，AE 预览/导出会复用同一光栅。
+修复：signature 混入 `preview` + `draftViewport` 两个 bit（按模式分键）。
+测试：`EffectPipeline3DConsistencyTest.rasterSignatureSeparatesDraftFromEncoderModes`（preview /
+export / draft 三者互不相等）。
+
+### 3. P1-2 同一 3D 层像素单位前后不一致（已修）
+
+根因：烘培 `EffectSpace` 的参考网格是光栅宽（`compWidth`），投影后效果参考网格是合成宽；且
+`scaleEffectForRaster` 只补偿 MAX_EDGE 段 —— 前段按图层像素、后段按合成像素，相机推拉/图层缩放
+改变效果强度。修复：
+- `EffectSpace` 新增 `refWidth/refHeight`（像素参数参考网格），`ofBounds(...)` 新增 ref 重载；
+  烘培传 **父合成尺寸**；`EffectRenderer.refWidth/refHeight` 改读 ref 网格（proxyScale 自动换算）。
+- 经典效果的像素参数不再在 `scaleEffectForRaster` 预缩放（改由 shader 侧 `proxyScale` 统一换算，
+  避免双计）；只保留 AM 可分离 blur 的半径（直接进 FBO blur，按栅格像素计数）。
+- `AmEffectRenderer` 的 `Size/Texel` 也改用 `space.refWidth/refHeight`（P3-5，AM 参考网格单一来源）。
+测试：`bakeEffectSpaceUsesTheParentCompositionReferenceGrid`；`CompLayerSourceCacheTest` 的
+`rasterScaleConvertsOnlyTheRawFramebufferBlurRadius` 同步新契约（经典半径不预缩放，AM 半径预缩放）。
+
+### 4. P1-3 3D track matte 蒙版应用两次（已修）
+
+根因：`renderLayerContent(matte)` 烘培时已把 matte 层的蒙版乘进光栅，matte 块又无条件
+`MaskCache.get + PassRenderer.mask` → 覆盖率平方、边缘变暗。修复：抽
+`CompRenderer.applyLayerMask(content, layer, context, model, masksBaked, masksEnabled)` 单一实现，
+主层与 matte 共用；`masksBaked`（`LayerRender.effectsBaked`）时不再套第二次；未烘培的 3D 透视
+matte 走 `getProjected`（与主层 direct 路径一致）；同时尊重 蒙版 A/B 开关。
+测试：`masksApplyExactlyOnceAcrossTheBakeAndDirectPaths`（烘培=true 恒等、direct 一次、开关=false 恒等）。
+
+### 5. P1-4 1024px 光栅上限作用于预览/导出（已修）
+
+根因：`MAX_EDGE=1024` 无 preview 判断，1900 宽层导出从 ~1024 放大。修复：
+`rasterMaxEdge(context)`：preview 保持 1024，非 preview（AE 预览/导出）至少取合成长边；
+`rasterScaleFor(w,h,maxEdge)` 纯函数。signature 含像素尺寸，两种模式天然分键。
+测试：`rasterCapKeepsExportDetail`（1900px 层：preview scale<1、export=1）。
+
+### 6. P1-5 mask feather/expansion 分辨率语义 + 截断（已修）
+
+根因：feather/expansion 按图层像素书写，但调用方 `scale` 是「光栅/合成像素」；且 128px 上限在
+**缩放之后**的栅格像素上截断 → 预览 feather=200*0.5=100 不被截、导出 200→128，同一滑杆两种观感。
+修复：`MaskCache` 先在图层像素上 `clamp(feather,0..128)` 再乘 scale（上限分辨率无关）；
+`CompRenderer.maskLayerScale(model, rasterPerComp)` 把图层自身缩放并入 feather 换算（2D 主路径、
+matte、调整层统一）。
+说明：128 上限仍是性能保护；如要完全支持 200px feather 需改 `MaskCache` 的多 pass 半径，属于后续项。
+
+### 7. P2-1 displacement 深度模式在烘培里退化为噪声（已修）
+
+根因：`EffectRenderer` 深度图模式取 `context.hasDepth()`；烘培 proxy context 无 depth → `UseMap=0`。
+修复：`requiresProjectedPassFor(CompEffect)`：`displacement` 且 `depth>0.5` 时强制投影后执行（动态
+分类，`firstProjectedEffect`/`needsCompositionEffect` 均改用它）。
+测试：`displacementDepthModeIsRoutedAfterProjection`。
+
+### 8. P2-2 调整层蒙版无视蒙版开关（已修）
+
+`applyAdjustment(...)` 增加 `renderMasks` 参数，蒙版块受它控制（此前只看 renderEffects）。
+（调整层在 3D 工作区的合成尺寸/比例问题位于 `CompViewportRenderer`，写域外，待 Lead/UI。）
+
+### 9. P2-4 绿帧 1280x720 被 AE 预览优先信任（已修）
+
+`renderFrameCached` 只在 `CompPrecache.cacheScale(doc) >= 请求 scale` 时使用绿帧，否则回落到
+`CompFrameServer.frame(...)` 按请求分辨率渲染。
+
+### 10. P2-6 BBS 预览占位板进入导出（已修）
+
+`LayerContentRenderer.drawBbsPreview` 增加 `context.preview` 门：占位蓝板与"等待世界帧"文字
+只在编辑器预览绘制；导出/AE 预览渲染透明。
+
+### 11. 顺带修复：3D 层 styles 与投影后效果的顺序
+
+根因：烘培在效果前缀之后立刻套 styles，投影后效果再跑 → 顺序变成「效果前缀→styles→投影后效果」，
+与 2D 的「全部效果→styles」不一致。修复：`CompRenderer.stylesRunAfterProjection(layer)`；烘培遇到
+投影后效果时推迟 styles，合成分解 pass 在效果循环后套 styles（2D 行为保持）。
+测试：`stylesRunAfterProjectionWhenTheStackHasProjectedEffects`。
+
+### 12. 已知限制（写域外，需 Lead/UI 决策）
+
+- **P1-1 / P2-3 3D 工作区**：`CompViewportRenderer` 只画缓存光栅 + 调整层，投影后效果（repeat 7 族、
+  shape_field、4 个 comp 采样、shake、depth_*）、track matte、blend mode 在 3D 工作区不可见；且新建
+  context 默认 renderEffects/renderMasks=true，不受预览条 A/B 开关控制。本轮已抽
+  `CompLayerSourceCache.draftApplies(type)` + `draftSkipsExactlyThePostProjectionSet` 测试钉住该限制，
+  并建议 UI 在 3D 工作区 HUD 明示"草稿不显示重复/合成类效果、matte、混合模式"；真正补跑需要改
+  `CompViewportRenderer`（写域外）并承担每层一个全屏 pass 的成本。
+- **P2-5 `PassRenderer.blur` 200px 上限**（`PassRenderer.java` 写域外）：上限在栅格空间，2D 导出 200
+  栅格 px、3D 烘培因栅格缩放可能等价 300+ 合成 px。建议把上限换算到参考网格（`refWidth`）后再钳。
+- **P2-8 `AmEffectLibrary.isNeutral` fallback=0**（comp 写域外）：缺参数时按 0 判定 → 部分效果"没参数
+  就中性"被静默跳过。建议 fallback 用定义默认值；本轮未改，避免动效果定义。
+- P3-1（`renderLayerContent` 未使用参数）、P3-4（`EffectSpace.of` 的 threeD 短路 vs usePerspective 双判据）
+  属清理项，本轮只在有测试保障处收敛（AM 参考网格统一），未大改语义。
+- 大图层（>1024px）烘培光栅仍受 MAX_EDGE 限制（预览）；导出上限已放开到合成长边。

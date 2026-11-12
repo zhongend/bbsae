@@ -414,4 +414,42 @@ public class AmEffectLibraryTest
         assertFalse(AmEffectLibrary.isNeutral(effect),
             id + " must not be an identity with " + key + " = " + probe);
     }
+    @Test
+    public void missingParameterUsesTheDefinitionDefaultInsteadOfZero()
+    {
+        /* A project saved before a parameter existed must be judged with that parameter's
+         * definition default. The old fallback (0) marked the effect neutral and the pipeline
+         * skipped it entirely — "I added this effect and nothing happened". */
+        for (AmEffectDef definition : AmEffectLibrary.all())
+        {
+            String zeroKey = definition.zeroKey;
+
+            if (zeroKey == null)
+            {
+                continue;
+            }
+
+            float defaultValue = 0F;
+
+            for (AmEffectDef.Param param : definition.params)
+            {
+                if (param.key.equals(zeroKey))
+                {
+                    defaultValue = param.defaultValue;
+                }
+            }
+
+            if (Math.abs(defaultValue) < 0.0001F)
+            {
+                continue;
+            }
+
+            CompEffect effect = CompEffectRegistry.create(definition.id, 1);
+
+            effect.params.remove(zeroKey);
+
+            assertFalse(AmEffectLibrary.isNeutral(effect),
+                definition.id + " must NOT be neutral when its zero key is missing and the default is " + defaultValue);
+        }
+    }
 }

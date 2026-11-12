@@ -2221,7 +2221,13 @@ public class UICompositorPanel extends UIDashboardPanel
                 int x = this.area.x + 8;
                 int y = this.area.ey() - 46;
 
-                String mode = "3D 空间 · 草稿（效果/蒙版跳过）" + (camera.ortho ? " · 正交" : " · 透视");
+                /* Draft honesty: the free viewport draws each layer's raster and only the
+                 * layer-local effects; effects that must sample the whole composition (repeat /
+                 * shape field / glass / displacement-map …), track mattes and layer blend modes
+                 * need the full compositor and are only visible in the preview/export. Saying so
+                 * avoids the "3D mode has no effects" bug report being about the draft view. */
+                String mode = "3D 空间 · 草稿（重复/合成采样效果、轨迹遮罩、混合模式不显示）"
+                    + (camera.ortho ? " · 正交" : " · 透视");
                 String pose;
 
                 if (cameraLayer == null)
@@ -5772,6 +5778,11 @@ public class UICompositorPanel extends UIDashboardPanel
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.restoreFocusBeforePersist();
+            /* Never leave an encoder running with no visible export UI behind a closed panel. */
+            if (CompExportManager.isBusy())
+            {
+                CompExportManager.cancel();
+            }
             this.savePanelLayout();
             this.flushSave();
             CompPrefs.flush();
@@ -5788,6 +5799,11 @@ public class UICompositorPanel extends UIDashboardPanel
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.restoreFocusBeforePersist();
+            /* Never leave an encoder running with no visible export UI behind a closed panel. */
+            if (CompExportManager.isBusy())
+            {
+                CompExportManager.cancel();
+            }
             this.savePanelLayout();
             this.flushSave();
             CompPrefs.flush();
@@ -8642,6 +8658,14 @@ public class UICompositorPanel extends UIDashboardPanel
         this.savePanelLayout();
         this.save();
         this.flushSave();
+
+        /* An export keeps reading this project's live document each frame; switching projects
+         * would leave it writing frames of a project the user can no longer see (audit P1). */
+        if (CompExportManager.isBusy())
+        {
+            CompExportManager.cancel();
+            this.setStatus("已取消正在进行的导出（切换工程）");
+        }
     }
 
     /** Writes now. Called on panel close, before export, and by the debounce timer. */
@@ -12647,13 +12671,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.dockLayoutDirty = true;
             this.setStatus("面板布局已重置");
         });
-        manager.action(Icons.MATERIAL, IKey.constant("效果库 + 属性停靠到预览右侧（AE 效果面板布局）"), () ->
+        manager.action(Icons.MATERIAL, IKey.constant("经典布局（效果库在左侧，旧版默认）"), () ->
         {
-            this.dockSource.setRoot(CompDockSource.effectsRightLayout());
+            this.dockSource.setRoot(CompDockSource.classicLayout());
             this.dockSource.setHiddenPanels(new java.util.LinkedHashSet<>());
             this.dock.refresh();
             this.dockLayoutDirty = true;
-            this.setStatus("已把效果库与属性栏停靠到预览右侧（可在「布局」菜单重置）");
+            this.setStatus("已切换为经典布局（效果库在左）；「重置为默认布局」可回到效果库在预览右侧");
         });
         manager.action(Icons.UNDO, IKey.constant("撤销布局改动（Ctrl+Alt+Z）"), () ->
         {

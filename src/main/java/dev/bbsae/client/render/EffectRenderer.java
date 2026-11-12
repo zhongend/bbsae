@@ -432,12 +432,12 @@ public final class EffectRenderer
      */
     private static int refWidth(EffectSpace space, GlFramebuffer input)
     {
-        return space == null ? Math.max(1, input.width) : Math.max(1, space.compWidth);
+        return space == null ? Math.max(1, input.width) : Math.max(1, space.refWidth);
     }
 
     private static int refHeight(EffectSpace space, GlFramebuffer input)
     {
-        return space == null ? Math.max(1, input.height) : Math.max(1, space.compHeight);
+        return space == null ? Math.max(1, input.height) : Math.max(1, space.refHeight);
     }
 
     private static void setPixelUnits(GlslProgram program, EffectSpace space, GlFramebuffer input)

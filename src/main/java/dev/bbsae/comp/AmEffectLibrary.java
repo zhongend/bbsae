@@ -4242,12 +4242,28 @@ public final class AmEffectLibrary
 
         for (String key : keys)
         {
-            if (Math.abs(effect.valueF(key, 0F)) > 0.0001F)
+            /* Missing parameter = the definition's default, not zero. Old projects (or hand-edited
+             * files) that predate a parameter used to be judged "neutral" and the whole effect was
+             * skipped in the pipeline — "I added this effect and nothing happened". */
+            if (Math.abs(effect.valueF(key, paramDefault(definition, key))) > 0.0001F)
             {
                 return false;
             }
         }
 
         return true;
+    }
+
+    private static float paramDefault(AmEffectDef definition, String key)
+    {
+        for (AmEffectDef.Param param : definition.params)
+        {
+            if (param != null && key.equals(param.key))
+            {
+                return param.defaultValue;
+            }
+        }
+
+        return 0F;
     }
 }

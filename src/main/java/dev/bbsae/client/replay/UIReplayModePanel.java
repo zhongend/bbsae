@@ -99,8 +99,10 @@ public class UIReplayModePanel extends UIDashboardPanel
     private String cachedStatus = "";
     /** Visibility the borrowed film panel had before being attached hidden; restored on detach. */
     private boolean borrowedFilmPanelVisible = true;
-    /** Invisible root-level holder that keeps the borrowed film panel connected (see attach). */
+    /** Invisible holder that keeps the borrowed film panel connected (see attach). */
     private UIElement borrowedFilmPanelHolder;
+    /** Private UIRootElement for the borrowed film panel (never attached to the screen). */
+    private mchorse.bbs_mod.ui.framework.UIBaseMenu.UIRootElement borrowedFilmPanelRoot;
 
     /* Verification setup requested by ReplayDebugHook; applied once the viewport has framed. */
     private boolean debugCameraPending;
@@ -275,24 +277,24 @@ public class UIReplayModePanel extends UIDashboardPanel
     }
 
     /**
-     * Keeps the borrowed {@link UIFilmPanel} connected to the UI tree (hidden), without putting it
-     * inside this page.
+     * Gives the borrowed {@link UIFilmPanel} a private {@code UIRootElement} while replay mode
+     * borrows it.
      *
-     * <p>BBS' undo handler collects the "before" UI snapshot through {@code UIElement.getRoot()} at
-     * the moment of the first value edit and applies it again on undo. A detached film panel has no
-     * root, so an edit made here wrote an undo entry whose UI snapshot was null; Ctrl+Z then threw
-     * {@code NullPointerException: ... MapType.has ... because "data" is null}.</p>
+     * <p>BBS' film undo handler collects and applies per-element UI data through
+     * {@code UIElement.getRoot()}. A detached panel has a null root: applying the snapshot threw an
+     * NPE (Run A) and the write-time snapshot was empty (Run B, {@code uiBefore=null}). Mounting a
+     * hidden holder under the real screen root fixed the data but made BBS apply the film's UI
+     * snapshot to the whole screen: after Ctrl+Z the replay page stopped drawing (Runs C–F showed
+     * world + gizmo only), because the film panel's own showPanel/dock side effects ran while the
+     * borrowed tree lived inside the real root.</p>
      *
-     * <p><b>Why a root-level holder and not a child of this page:</b> the first attempt attached
-     * the film panel to the replay page itself, which made the dashboard render the film panel's
-     * world pass and drop the page UI on the real machine (Run C screenshots were world + gizmo
-     * only). Attaching it to an invisible holder under the screen root keeps {@code getRoot()}
-     * non-null for the undo data without touching the page's children or layout: a hidden sibling
-     * is skipped by the root's render/input passes, and the page subtree stays exactly as it was.</p>
+     * <p>A private root keeps collect/apply inside the film panel's own subtree: the undo data of
+     * the film is complete (the panel and all editors are under it) while the replay page, the
+     * dashboard and the real screen root are never visited. The fake root is attached to no screen,
+     * so it is not rendered, laid out or hit-tested.</p>
      *
-     * <p>Called from {@link #update()}, i.e. once per client tick before rendering, so the holder
-     * is added while the root is not iterating its children (adding during render would throw a
-     * {@code ConcurrentModificationException}).</p>
+     * <p>Called from {@link #update()} / bind while the page is on screen, so a real UIContext is
+     * available for the private root (children may query it while applying undo data).</p>
      */
     private void attachBorrowedFilmPanel()
     {
@@ -303,22 +305,17 @@ public class UIReplayModePanel extends UIDashboardPanel
             return;
         }
 
-        if (this.borrowedFilmPanelHolder != null && this.borrowedFilmPanelHolder.getParent() != null)
-        {
-            return;
-        }
-
-        UIElement root = this.getRoot();
-
-        if (root == null)
-        {
-            /* Not on screen yet: retried from update() on the frame the page appears. */
-            return;
-        }
-
         if (panel.getParent() != null)
         {
             /* Someone else owns it (it is the dashboard's current panel): it already has a root. */
+            return;
+        }
+
+        mchorse.bbs_mod.ui.framework.UIContext context = this.getContext();
+
+        if (context == null)
+        {
+            /* Not on screen yet: retried from update() on the frame the page appears. */
             return;
         }
 
@@ -326,15 +323,20 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         panel.setVisible(false);
 
+        if (this.borrowedFilmPanelRoot == null)
+        {
+            this.borrowedFilmPanelRoot = new mchorse.bbs_mod.ui.framework.UIBaseMenu.UIRootElement(context);
+            this.borrowedFilmPanelRoot.setVisible(false);
+        }
+
         if (this.borrowedFilmPanelHolder == null)
         {
             this.borrowedFilmPanelHolder = new UIElement();
             this.borrowedFilmPanelHolder.setVisible(false);
-            this.borrowedFilmPanelHolder.relative(root).x(0).y(0).w(1F).h(1F);
+            this.borrowedFilmPanelHolder.relative(this.borrowedFilmPanelRoot).x(0).y(0).w(1F).h(1F);
             this.borrowedFilmPanelHolder.add(panel);
+            this.borrowedFilmPanelRoot.add(this.borrowedFilmPanelHolder);
         }
-
-        root.add(this.borrowedFilmPanelHolder);
     }
 
     /** Undoes {@link #attachBorrowedFilmPanel()}, restoring the visibility it had. */
@@ -354,6 +356,8 @@ public class UIReplayModePanel extends UIDashboardPanel
             this.borrowedFilmPanelHolder.removeFromParent();
             this.borrowedFilmPanelHolder = null;
         }
+
+        this.borrowedFilmPanelRoot = null;
     }
 
     private void build(UIFilmPanel panel)
@@ -980,6 +984,15 @@ public class UIReplayModePanel extends UIDashboardPanel
             this.add(panel);
         }
 
+        /* BBS' film-panel undo path runs showPanel() -> applyPreviewSizeToBBS(), which writes the
+         * film's custom preview size (the test film stores 4x2) into the global BBS video size.
+         * That global drives the film preview / recorder; a 4x2 preview upscaled to the screen is
+         * what the blank "world only" screenshots were showing after Ctrl+Z. Borrowed-panel undo
+         * must not change the client's preview resolution, so restore it afterwards. */
+        int bbsVideoWidth = mchorse.bbs_mod.BBSSettings.videoWidth.get();
+        int bbsVideoHeight = mchorse.bbs_mod.BBSSettings.videoHeight.get();
+        int bbsVideoFps = mchorse.bbs_mod.BBSSettings.videoFrameRate.get();
+
         try
         {
             if (redo)
@@ -993,6 +1006,21 @@ public class UIReplayModePanel extends UIDashboardPanel
         }
         finally
         {
+            if (mchorse.bbs_mod.BBSSettings.videoWidth.get() != bbsVideoWidth)
+            {
+                mchorse.bbs_mod.BBSSettings.videoWidth.set(bbsVideoWidth);
+            }
+
+            if (mchorse.bbs_mod.BBSSettings.videoHeight.get() != bbsVideoHeight)
+            {
+                mchorse.bbs_mod.BBSSettings.videoHeight.set(bbsVideoHeight);
+            }
+
+            if (mchorse.bbs_mod.BBSSettings.videoFrameRate.get() != bbsVideoFps)
+            {
+                mchorse.bbs_mod.BBSSettings.videoFrameRate.set(bbsVideoFps);
+            }
+
             if (!attached)
             {
                 panel.removeFromParent();
@@ -1008,6 +1036,30 @@ public class UIReplayModePanel extends UIDashboardPanel
          * null while the client screen is still open). Re-open the dashboard so the user is not
          * stranded on an invisible editor; the log line makes the underlying bug visible. */
         net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        mchorse.bbs_mod.ui.framework.UIBaseMenu currentMenu = mchorse.bbs_mod.ui.framework.UIScreen.getCurrentMenu();
+
+        if (currentMenu != null)
+        {
+            mchorse.bbs_mod.ui.framework.UIBaseMenu.UIRootElement screenRoot = currentMenu.getRoot();
+            StringBuilder children = new StringBuilder();
+
+            for (mchorse.bbs_mod.ui.framework.elements.IUIElement child : screenRoot.getChildren())
+            {
+                if (child instanceof mchorse.bbs_mod.ui.framework.elements.UIElement element)
+                {
+                    children.append(element.getClass().getSimpleName())
+                        .append("[vis=").append(element.isVisible())
+                        .append(",area=").append(element.area.x).append(',').append(element.area.y)
+                        .append(',').append(element.area.w).append(',').append(element.area.h).append("] ");
+                }
+            }
+
+            BbsAeAddon.LOGGER.info("Replay history root children: {}", children);
+            BbsAeAddon.LOGGER.info("Replay history page chain: parent={} parentOfParent={}",
+                this.getParent() == null ? "null" : this.getParent().getClass().getSimpleName(),
+                this.getParent() == null || this.getParent().getParent() == null
+                    ? "null" : this.getParent().getParent().getClass().getSimpleName());
+        }
         BbsAeAddon.LOGGER.info("Replay history after {}: root={} screen={} pageVisible={} panelVisible={} panelArea={}x{} currentPanel={}",
             redo ? "redo" : "undo", this.getRoot() != null, client == null ? null : client.currentScreen,
             this.isVisible(), panel.isVisible(), this.area.w, this.area.h,
