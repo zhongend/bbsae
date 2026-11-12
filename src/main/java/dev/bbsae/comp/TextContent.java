@@ -148,4 +148,78 @@ public final class TextContent
 
         return (h & 0xFFFFFF) / (float) 0x1000000;
     }
+
+    /**
+     * True when {@link #resolve} can return a different string on another frame without any edit.
+     *
+     * <p>Render caches that key by "document content" must treat such layers as time dependent;
+     * a typewriter reveal, a timecode, a counter or a glyph scramble all change with the frame
+     * even though the layer fields stay identical. Data helper for the render-cache fingerprints
+     * ({@code CompRenderCache}, {@code CompLayerSourceCache}); it does not change text semantics.</p>
+     */
+    public static boolean isTimeDependent(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return false;
+        }
+
+        int mode = layer.textMode == null ? 0 : layer.textMode;
+
+        if (mode == 1 || mode == 2)
+        {
+            return true;
+        }
+
+        if (layer.textRandom != null && layer.textRandom > 0.0001F)
+        {
+            return true;
+        }
+
+        return layer.textProgress != null && layer.textProgress < 0.999F;
+    }
+
+    /**
+     * Fingerprint of the content-level text fields (timecode/counter/random/reveal). Nullable
+     * fields are normalised to their documented "off" values so {@code null} and an explicit 0
+     * hash the same way the renderer resolves them.
+     */
+    public static long contentHash(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return 0L;
+        }
+
+        long h = 0x9E3779B97F4A7C15L;
+
+        h = mix(h, layer.textMode == null ? 0 : layer.textMode);
+        h = mix(h, layer.textRandom == null ? 0F : layer.textRandom);
+        h = mix(h, layer.textRandomSeed == null ? 0 : layer.textRandomSeed);
+        h = mix(h, layer.textProgress == null ? 1F : layer.textProgress);
+        h = mix(h, layer.textCounterOffset == null ? 0F : layer.textCounterOffset);
+        h = mix(h, layer.textCounterScale == null ? 1F : layer.textCounterScale);
+
+        return h;
+    }
+
+    private static long mix(long hash, long value)
+    {
+        long h = hash ^ value;
+
+        h *= 0x100000001B3L;
+        h ^= h >>> 29;
+
+        return h;
+    }
+
+    private static long mix(long hash, float value)
+    {
+        return mix(hash, Float.floatToIntBits(value));
+    }
+
+    private static long mix(long hash, int value)
+    {
+        return mix(hash, (long) value);
+    }
 }

@@ -8,6 +8,7 @@ import dev.bbsae.client.render.CompRenderCache;
 import dev.bbsae.client.render.CompRenderContext;
 import dev.bbsae.client.render.CompScene;
 import dev.bbsae.client.render.CompViewportCamera;
+import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompMask;
 import dev.bbsae.comp.CompPathGeometry;
@@ -184,6 +185,78 @@ public final class UIPenTool implements CompPenSession.Listener
         this.structureDirty = false;
     }
 
+    /**
+     * True when the pen's session target still exists: the layer is part of {@code doc} and the
+     * mask/shape slot it points at is still there. Static so the integration rules can be tested on
+     * plain model objects (no panel, no GL).
+     */
+    public static boolean targetExists(CompDocument doc, CompLayer layer, boolean mask, int index)
+    {
+        if (doc == null || layer == null || doc.layers == null || !doc.layers.contains(layer))
+        {
+            return false;
+        }
+
+        if (mask)
+        {
+            return layer.masks != null && index >= 0 && index < layer.masks.size();
+        }
+
+        return layer.shapes != null && index >= 0 && index < layer.shapes.size()
+            && CompShape.PATH.equals(layer.shapes.get(index).type);
+    }
+
+    /**
+     * Drops a session whose layer/path was deleted or whose composition was switched behind its
+     * back (delete layer, enter/exit precomp, project reload). Every gesture entry point calls this
+     * first, so the pen can never write into an object that is no longer in the document.
+     */
+    private boolean ensureSessionValid()
+    {
+        if (this.sessionLayer == null)
+        {
+            return true;
+        }
+
+        boolean mask = this.targetKind == KIND_MASK;
+        int index = mask ? this.targetMask : this.targetShape;
+
+        if (this.targetKind != KIND_NONE
+            && targetExists(this.panel.getDocument(), this.sessionLayer, mask, index))
+        {
+            return true;
+        }
+
+        this.forget();
+        this.panel.setStatus("钢笔目标已不存在（图层/路径被删除或切换了合成），已退出编辑");
+
+        return false;
+    }
+
+    /** The camera tool and the pen must never be armed at the same time (they share the buttons). */
+    private void enforceToolExclusivity()
+    {
+        if (this.active && this.panel.cameraToolActive())
+        {
+            this.panel.setCameraTool(false);
+        }
+    }
+
+    /**
+     * AE's tool switch: pressing {@code V} (or {@code A}, the alternative scheme's selection
+     * binding) while the pen is armed returns to plain layer selection. Modifier combinations are
+     * left to the shortcut table (Ctrl+A selects all layers, Shift+A is selection-add).
+     */
+    public static boolean isSelectionToolSwitchKey(int glfwKey, boolean ctrl, boolean shift, boolean alt)
+    {
+        if (ctrl || shift || alt)
+        {
+            return false;
+        }
+
+        return glfwKey == GLFW.GLFW_KEY_V || glfwKey == GLFW.GLFW_KEY_A;
+    }
+
     public boolean isDrawing()
     {
         return this.session.isDrawing();
@@ -245,6 +318,13 @@ public final class UIPenTool implements CompPenSession.Listener
     public boolean onPress(UIContext context, View view)
     {
         if (!this.active || view == null || view.rc == null)
+        {
+            return false;
+        }
+
+        this.enforceToolExclusivity();
+
+        if (!this.ensureSessionValid())
         {
             return false;
         }
@@ -406,6 +486,13 @@ public final class UIPenTool implements CompPenSession.Listener
             return false;
         }
 
+        this.enforceToolExclusivity();
+
+        if (!this.ensureSessionValid())
+        {
+            return false;
+        }
+
         this.mouseX = context.mouseX;
         this.mouseY = context.mouseY;
 
@@ -508,6 +595,24 @@ public final class UIPenTool implements CompPenSession.Listener
         if (!this.active || context.getKeyAction() != KeyAction.PRESSED)
         {
             return false;
+        }
+
+        this.enforceToolExclusivity();
+
+        if (!this.ensureSessionValid())
+        {
+            return false;
+        }
+
+        /* AE: V (selection) while the pen is armed returns to the selection tool. A is the same
+         * command in the alternative scheme. Modifiers stay with the shortcut table. */
+        if (isSelectionToolSwitchKey(context.getKeyCode(),
+            CompInput.ctrlDown(), CompInput.shiftDown(), CompInput.altDown()))
+        {
+            this.setActive(false);
+            this.panel.setStatus("已切换到选择工具（钢笔关闭）");
+
+            return true;
         }
 
         int command = CompPenSession.commandForKey(context.getKeyCode());
@@ -849,6 +954,15 @@ public final class UIPenTool implements CompPenSession.Listener
     public void renderOverlay(UIContext context, View view)
     {
         if (!this.active || view == null || view.rc == null || view.area == null)
+        {
+            return;
+        }
+
+        /* The camera tool grabs the same buttons; if it was armed after the pen (toolbar click),
+         * disarm it here before it can orbit on the next press. */
+        this.enforceToolExclusivity();
+
+        if (!this.ensureSessionValid())
         {
             return;
         }
@@ -1727,6 +1841,7 @@ public final class UIPenTool implements CompPenSession.Listener
         this.dirty = true;
         this.panel.penSave();
         this.panel.penRefreshInspector();
+        this.refreshKeyframeSheets();
 
         return true;
     }
@@ -1761,9 +1876,43 @@ public final class UIPenTool implements CompPenSession.Listener
             this.panel.penRefreshInspector();
         }
 
+        if (this.structureDirty)
+        {
+            this.refreshKeyframeSheets();
+        }
+
         this.panel.penSave();
         this.dirty = false;
         this.structureDirty = false;
+    }
+
+    /**
+     * Rebuilds the panel's dope sheet / curve-editor row set after the channel structure changed.
+     *
+     * <p>{@code UICompositorPanel.refreshSheets()} is private and the pen may not edit that file.
+     * The planned one-line package-private bridge {@code penRefreshSheets()} is looked up
+     * reflectively so this class compiles now and starts working the moment the bridge lands (see
+     * report §12). Without the bridge the channel data is still correct — only the sheet row list
+     * refreshes on the next selection change, and a structural edit's new {@code p/<i>} rows stay
+     * invisible until then.</p>
+     */
+    private void refreshKeyframeSheets()
+    {
+        try
+        {
+            java.lang.reflect.Method method = UICompositorPanel.class.getDeclaredMethod("penRefreshSheets");
+
+            method.setAccessible(true);
+            method.invoke(this.panel);
+        }
+        catch (NoSuchMethodException e)
+        {
+            /* Bridge not integrated yet; harmless, documented in report §12. */
+        }
+        catch (ReflectiveOperationException | RuntimeException e)
+        {
+            /* A sheet refresh must never break an edit. */
+        }
     }
 
     /* ------------------------------------------------------------------ listener */
@@ -1798,6 +1947,15 @@ public final class UIPenTool implements CompPenSession.Listener
         CompLayerSourceCache.clear();
         CompPrecache.markDirty();
         this.structureDirty = true;
+    }
+
+    @Override
+    public void structureChanged()
+    {
+        /* Point count/order changed: the dope sheet rows are keyed by p/<i> paths, so the host has
+         * to rebuild them (deferred to flush() for the common case, immediate for one-shot edits). */
+        this.structureDirty = true;
+        this.refreshKeyframeSheets();
     }
 
     /* ------------------------------------------------------------------ small helpers */

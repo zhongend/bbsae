@@ -218,6 +218,12 @@ public class AmEffectLibraryTest
         assertNeutral("am_color_hot", "intensity", 0F);
         assertNeutral("am_pinch_bulge_2", "strength", 0F);
         assertNeutral("am_swirl_4", "strength", 0F);
+        assertNeutral("am_pinch_bulge_inside", "strength", 0F);
+        assertNeutral("am_wave_warp", "m2", 0F);
+        assertNeutral("am_turbulent_displace_3", "intensity", 0F);
+        assertNeutral("am_tileshift_2", "strength", 0F);
+        assertNeutral("am_stretch_segment", "stretch", 0F);
+        assertNeutral("am_omino_glass", "strength", 0F);
 
         /* Hex rotate's identity is "no rotation at all", i.e. a combination of six zero values. */
         CompEffect hex = CompEffectRegistry.create("am_hex_rotate", 1);

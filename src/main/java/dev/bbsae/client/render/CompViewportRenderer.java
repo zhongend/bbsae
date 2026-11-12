@@ -167,6 +167,10 @@ public final class CompViewportRenderer
         camera.update();
 
         CompRenderContext context = new CompRenderContext(project, doc, time, null, null, null);
+
+        /* Draft view: only this viewport may use the cheap precomp plate. The composition panel
+         * preview and the encoder render the real nested composition. */
+        context.draftViewport = true;
         GlFramebuffer target = sceneTarget(width, height);
 
         int previousFramebuffer = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);

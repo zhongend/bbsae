@@ -261,6 +261,66 @@ public final class CompExportManager
         }
     }
 
+    /**
+     * Composition frame index for output frame {@code outputFrame}.
+     *
+     * <p>Package-private so the fps-mapping rule is testable without a client: output frame N of an
+     * export at {@code outputFps} samples composition frame
+     * {@code round((start + N / outputFps) * compFps)} (clamped by
+     * {@link CompRenderer#frameIndex}). A preset fps different from the composition fps therefore
+     * holds/skips frames deterministically instead of depending on float rounding.</p>
+     */
+    public static int sourceFrame(CompDocument comp, float start, int outputFrame, float outputFps)
+    {
+        if (comp == null)
+        {
+            return 0;
+        }
+
+        float time = Math.max(0F, start) + Math.max(0, outputFrame) / Math.max(0.001F, outputFps);
+
+        return CompRenderer.frameIndex(comp, time);
+    }
+
+    /**
+     * Deletes {@code frame_*.png} left in the output folder by an earlier export.
+     *
+     * <p>FFmpeg's sequence input would otherwise pick up stale higher-numbered frames from a
+     * previous longer render into the same output folder, extending the video past the requested
+     * range. Only files owned by the exporter are removed; other contents are left alone.</p>
+     */
+    public static void clearStaleFrames(Path framesFolder)
+    {
+        if (framesFolder == null || !Files.isDirectory(framesFolder))
+        {
+            return;
+        }
+
+        try (java.util.stream.Stream<Path> stream = Files.list(framesFolder))
+        {
+            stream.filter((path) ->
+            {
+                String name = path.getFileName().toString();
+
+                return name.startsWith("frame_") && name.endsWith(".png");
+            }).forEach((path) ->
+            {
+                try
+                {
+                    Files.deleteIfExists(path);
+                }
+                catch (IOException ignored)
+                {
+                    /* A locked stale frame only affects a later encode; never fail the export. */
+                }
+            });
+        }
+        catch (IOException e)
+        {
+            BbsAeAddon.LOGGER.warn("Could not clear stale export frames at {}", framesFolder, e);
+        }
+    }
+
     private static final class Session
     {
         private final CompProject project;
@@ -336,6 +396,11 @@ public final class CompExportManager
                 if (!this.audioOnly && !this.pipeMode)
                 {
                     Files.createDirectories(this.framesFolder);
+                    /* A previous (longer) export into the same output folder left its PNGs behind.
+                     * FFmpeg's pattern input would happily append them to this render, so the video
+                     * could contain stale frames past the requested range. A new render owns the
+                     * folder. */
+                    clearStaleFrames(this.framesFolder);
                 }
 
                 this.job.status = CompRenderJob.RENDERING;
@@ -429,8 +494,15 @@ public final class CompExportManager
 
         private void renderFrame()
         {
-            float time = this.start + this.frame / this.fps;
-            GlFramebuffer fbo = CompRenderer.renderForExport(this.project, this.comp, time, this.batcher, this.preset.alpha);
+            /* Sample the composition on its own frame grid. The old code passed a float time
+             * derived from the OUTPUT fps and let the renderer quantise it to a composition frame:
+             * when the preset fps differs from the composition fps that is still deterministic, but
+             * the frame number (the artist's unit) was lost, and float drift near a .5 boundary
+             * could duplicate or skip a comp frame. Mapping to the comp frame first keeps "frame N
+             * of the output is comp frame round(N * compFps / outputFps)" exact. */
+            int compFrame = sourceFrame(this.comp, this.start, this.frame, this.fps);
+            GlFramebuffer fbo = CompRenderer.renderForExport(this.project, this.comp, compFrame,
+                this.batcher, this.preset.alpha);
 
             if (fbo == null)
             {

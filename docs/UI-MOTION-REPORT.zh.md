@@ -247,3 +247,55 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 5. **全局 prune 会清理“2 秒没被查询的 tween”**：如果某个宿主把 tween 当作跨帧但每帧不查询的状态，会被提前清理；
    现有调用方（`CloseFade`、时间轴/overlay 的 flash）都是每帧查询，未受影响。
 
+---
+
+## 9. Round 4（0.95）：曲线编辑器 / 关键帧抽屉
+
+> 0.94 之前唯一没被动效覆盖的宿主是时间轴「曲线」页的 `UICompCurveEditor`（约 2400 行）。
+> 本轮补齐它的 hover/选中/播放头/拖动 HUD，并检查了关键帧抽屉 `UICompositorKeyframes`。
+> **没有新增 CompPrefs 开关**；没有开客户端；所有动画只改绘制，不动关键帧位置/图表缩放/滚动。
+
+### 9.1 改动文件
+
+| 文件 | Round 4 改动 |
+| --- | --- |
+| `UICompCurveEditor.java` | Graph 增加单一 `UiMotion`（`render()` 开头 tick 一次）；通道列表行 hover/选中 wash + 左侧 accent 条 + chip/文字颜色插值；曲线本体按“激活量”插值线宽（1→1.6px）与 halo（glow 时 4.4px、随激活淡入淡出，受 intensity）；关键帧 hover/选中插值（颜色渐白、外环 4.5→7px、字形 +1px，全部在 10px 命中半径内）；播放头呼吸发光（受 glow + intensity，X 永远来自模型时间）；光标十字线/数值提示淡入淡出；选中信息卡淡入上浮；拖动 key/handle 时跟随指针的 HUD（值+帧 / 影响+速度，6px 上浮）；框选矩形淡入。通道/行/关键帧通道名在首次见到时预生成（行按 id，关键帧按 identity + 序列号），不每帧拼字符串；全局 prune 自动清理滚出视口的 key 通道 |
+| `UICompositorKeyframes.java` | 包裹 BBS `UIKeyframes`（dope sheet 内部不动）；自绘部分只有 `renderOverlay` 的 playhead 光标，因此只补了光标背后的呼吸光晕（与曲线页同色同节奏，受 glow + intensity，不改光标 X）。工具条按钮本来就是 `UICompButton`，自动有按下/悬停反馈 |
+| `src/test/java/dev/bbsae/client/ui/UiCurveMotionTest.java` | 新增 6 个纯逻辑测试（见 9.2） |
+| `UiMotion.java` / `UiPageTransition.java` | 本轮无需改动（全局 prune、CloseFade 已在 Round 3 就位） |
+
+### 9.2 新增纯逻辑测试（6 个）
+
+| 测试 | 断言 |
+| --- | --- |
+| `curveThicknessAndOpacityReachTheActiveEnds` | 曲线线宽 1→1.6、opacity 0.35→1，强调量 clamp 且单调 |
+| `keyEmphasisGrowsRingAndGlyphButStaysInsideTheHitRadius` | 关键帧外环 4.5→7px（<10px 命中半径）、字形最多 +1px、intensity=0 时不长 |
+| `playheadGlowFollowsBreatheAndIntensity` | 呼吸光晕 0.10–0.20、intensity 0 时为 0、输入 clamp |
+| `animationsOffSnapsEveryCurveFeedbackChannel` | 关动效时 anim 第一帧即目标 → 线宽/外环/光晕立即到位、breathe 冻结在 0.5；开启时需多帧收敛 |
+| `dragHudTextFormatsTheFrameOnce` | 拖动 HUD 文本格式（值 + 帧），null 不输出 "null" |
+| `handleHudTextNamesDirectionInfluenceAndSpeed` | 出/入切线、影响百分比、速度格式 |
+
+加上此前三轮：`UiCurveMotionTest`（6）+ `UiMotionGlobalPruneTest`（8）+ `UiFeedbackMotionTest`（10）+ `UiMotionSpringTest`（9）= **33 个动效纯逻辑测试**。
+
+### 9.3 回归结果
+
+- 串行包装器全量（含并行任务测试）：**117 suites / 699 tests / 0 failed / 0 errors / 1 skipped，BUILD SUCCESSFUL**。
+- 曲线相关既有测试（`CurveInteractionTest`、`CurveSpansTest`、`CurveGeometryReproTest`）与新增 `UiCurveMotionTest` 全绿。
+- 工作区仍有 5 个并行任务在改，合并前建议再跑一次全量。
+
+### 9.4 纪律核对
+
+- **每帧每宿主一次 tick**：`Graph.render()` 一次；`UICompositorKeyframes.renderOverlay()` 一次（BBS `UIKeyframes.render` 每帧调用一次）。
+- **稳定 key**：通道行按 `"c:<channelId>"`/`"g:<group>"` 缓存；关键帧按 identity + 递增序列号缓存（`kf:N:h` / `kf:N:s`），上限 4096 后重建；滚出视口的 key 通道由 `UiMotion.tickFrame` 的自动 prune 回收。
+- **animations/intensity 关立即归位**：所有量经由 `motion.anim/breathe` 推导；强度缩放加在外环半径、字形增量、曲线线宽/halo、播放头光晕、HUD 上浮/发光上。
+- **不改命中区域**：外环最大 7px < 关键帧 10px 命中半径；字形最多 +1px；曲线线宽/高亮只是绘制；**关键帧位置、图表缩放到数值轴、滚动/平移完全不参与动画**。
+- **不写工程数据**：所有新增代码只读 `Keyframe` 的现有字段与面板时间，不 set/insert/save。
+
+### 9.5 Round 4 剩余风险
+
+1. **每帧 hover 命中扫描**：`render()` 每帧调用一次 `keyAt()` 来找悬停关键帧（可见通道的所有 key，先按 X 距离早退）。500 key × 18 通道的极端工程会多几千次轻量循环/帧；曲线本身已按屏宽采样，真机应无感，但这是本轮唯一的额外 CPU 成本，若卡顿可改为“两帧一次”或复用 renderKeys 的遍历。
+2. **key 通道被 prune 后重建**：滚出视口 >2s 的关键帧再次进入时，hover/选中会从 0 重新淡入（视觉上像一次轻微入场）；这是有意的回收代价，不会错位。
+3. **hover 外环是方框描边**（BBS `outline` 只有矩形），在圆形/菱形键周围读作“选中框”而不是光晕；若真机觉得突兀，可换成 4 段斜线或第二层 drawDisc。
+4. **拖动 HUD 只在 DRAG_KEY/DRAG_HANDLE**：平移/框选没有 HUD（框选本身有淡入），与 AE 行为一致。
+5. **真机验收点**：切换通道时旧曲线淡出/新曲线淡入；关键帧 hover 环 + 选中渐白；拖动键/手柄时指针旁 HUD 6px 上浮；播放头缓慢呼吸（关 glow 后静止）；曲线页与关键帧抽屉两条光标光晕节奏一致；关动效后所有反馈一帧到位。
+

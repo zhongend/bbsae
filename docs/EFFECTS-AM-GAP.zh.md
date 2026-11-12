@@ -18,13 +18,13 @@
 | --- | --- |
 | AM 非 internal 定义（去重 token） | 277 |
 | 其中有可执行 shader | 180 |
-| 本项目 AM 定义 | 140（0.93 +3 repeat/2 调色，0.94 +13 P1 批） |
-| 自动匹配（同名/历史别名） | 107 |
-| 未匹配：deprecated 旧版本 | 72 |
+| 本项目 AM 定义 | 146（0.93 +5、0.94 +13、0.95 +6） |
+| 自动匹配（同名/历史别名） | 113 |
+| 未匹配：deprecated 旧版本 | 71 |
 | 未匹配：非 shader（图层属性 / 复制器） | 20 |
 | 未匹配：3D 图元（本项目 `s3d_*` + MeshRenderer） | 19 |
-| 未匹配：同族旧版本（boxblur→boxblur3 等） | 6 |
-| 未匹配：可执行 shader、真正缺失 | 54 |
+| 未匹配：同族旧版本（boxblur→boxblur3 等） | 7 |
+| 未匹配：可执行 shader、真正缺失 | 48 |
 
 自动匹配覆盖了大部分"效果语义"，没有覆盖的 66 条多数是成员限定/冷门 procedural（grunge、ominodiff、
 voronoi、turbulence、ribbons 等）与 drawing 家族（electricedges、roughenedges、smoothbevel）。
@@ -95,10 +95,11 @@ generated 文件第 2 节按"AM 直接参数 vs 本项目同名键"列出。缺�
 
 | 优先级 | AM id | 类别 | 参数数 | 备注 |
 | --- | --- | --- | --- | --- |
-| **剩余 P1（未完成）** | `pinchbulgeinside` / `ominoglass` / `wavewarp2` / `turbulentdisplace3` / `tileshift2` / `stretchsegment` | distort | 4–23 | 有同族条目，但参考版参数/公式差异大（ominoglass 23 参数、wavewarp2 9 参数），留待下一批 |
+| **P1（变形）✅ 0.95** | `pinchbulgeinside` / `ominoglass` / `wavewarp2` / `turbulentdisplace3` / `tileshift2` / `stretchsegment` | distort | 4–22 | 已补 6 个数据驱动 body（见 3.4） |
+| **文字语义判定** | `texttransform` / `textspacing` / `textprogress` / `textrand` / `timecode` / `counter` | text | 0–16 | **判定：不做**。AM 里这些是非 shader 的"文字图层属性/逐字符动画预设"，不是像素效果；本项目已用文字内容模式（timecode/counter/random/reveal）与文字动画器实现同等能力，硬塞进效果库只会得到重复入口且需要 UI 写域。详见第 3.5 节。 |
 | **剩余 P1（未完成）** | `texttransform` / `textspacing` 等 6 个文字效果 | text | 0–16 | 非 shader，需要 UI 写域接入图层属性，本轮不做 |
 | **P0（重复）✅ 0.93** | `repeat` / `radial` / `scatter` | repeat | 6/21/19 | 非 shader；已用 REPLICATE 机制补齐为 `am_repeat` / `am_repeat_radial` / `am_repeat_scatter`（见第 3 节） |
-| P0（重复） | `path` | repeat | 19 | 非 shader；沿**路径**复制，需要给效果提供路径几何（本项目文字/图形路径数据在 `CompShape`/排版层，不进效果参数表），本轮未做，列出接口方案后再定 |
+| **P0（重复）** | `path` | repeat | 19 | **判定：不做**。AM 的 repeat.path 是"沿图层自身路径复制"，需要路径几何 + UI 上给效果指定路径的入口；本项目效果参数域只有 float/color，UI 没有路径选择器，用"第一个 PATH 形状/蒙版"当路径是隐式约定（对 99% 图层静默无效、还会和蒙版语义冲突）。详见第 3.5 节。 |
 | P0（重复） | `shapefield` | repeat | 18 | shader 版重复，可随后 |
 | P1（模糊） | `unsharpmask` ✅ / `lensblur2` ✅ / `spinblur2` ✅ / `streakstrips` ✅ / `warpblur` ✅ / `chromaticzoomblur` ✅ | blur | 3/5/5/5/11/2 | 0.94 已补（数据驱动 body，单 pass tap 循环近似参考实现的 buffer 模糊输入） |
 | P1（调色） | `rgb-mixer` ✅ / `solidcolor` ✅ / `spectralmap` ✅ / `softglow` ✅ / `darkglow` ✅ / `lightglow` ✅ / `colorhot` ✅ | color | 6/4/8/8/6/8/2 | rgb-mixer、solidcolor 0.93 已补；其余 0.94 已补（glow 家族单 pass 环采样，参考实现的多段 buffer 模糊未复刻） |
@@ -164,6 +165,41 @@ generated 文件第 2 节按"AM 直接参数 vs 本项目同名键"列出。缺�
 测试：`EffectP1BatchTest`（隐藏 GL，3 个测试，逐条覆盖 13 个新效果 + 对齐后的 `am_spin_blur`）、
 `AmEffectLibraryTest.p1BatchDeclaresItsZeroValues`；`ShaderCompileTest` 自动编译新 body；
 效果缩略图生成器已修退化检查（本轮新缩略图 13 张 + `am_spin_blur` 更新 1 张）。
+
+### 3.4 0.95（AM 剩余变形族：6 个）
+
+| id | 名称 | 零点契约 | 与 AM 的差异 |
+| --- | --- | --- | --- |
+| `am_pinch_bulge_inside` | 内部收缩与膨胀 | strength=0 | 复刻参考的 inside 阻尼公式（逐像素从图层边缘羽化）；参考的 centerPoint 拆成 center_x/y |
+| `am_wave_warp` | 波浪扭曲 | m2=0（波幅） | 按参考 shader 的方向/波长/双阻尼实现；AM 的 screenSpace 选项未暴露（本项目效果始终按图层空间，与其它变形一致） |
+| `am_turbulent_displace_3` | 湍流置换 3 | intensity=0 | 参考的 4 方向 selector 保留为数值参数；position 点参数拆 position_x/y；octaves 控制 fbm 层数 |
+| `am_tileshift_2` | 平铺错位 2 | strength=0 | 复刻随机格位移 + 采样；参考的 mirror 采样简化为按 alpha 乘回（视觉差异小） |
+| `am_stretch_segment` | 拉伸段 | stretch=0 | 复刻参考的 sminCubic 平滑采样公式 |
+| `am_omino_glass` | Omino 玻璃 | strength=0 | 参考版本折射**下方合成**（Comp+buffer 纹理）；本项目对图层自身像素做同样的噪声折射/色差/光照（不带额外输入纹理），因此 2D/3D 烘焙/导出行为一致。shading 下拉选择器以数值 0–3 暴露 |
+
+测试：`EffectP1BatchTest` 的 `DISTORT_BATCH` 复用同一套"默认可见 + 中性双路径恒等"断言；
+`AmEffectLibraryTest.p1BatchDeclaresItsZeroValues` 增加 6 条；缩略图 6 张入库。
+
+### 3.5 重复 `repeat.path` 与文字 6 项的可行性判定（不做，原因如下）
+
+**`repeat.path`（沿路径复制）——不做。**
+1. AM 的定义是"把图层沿一条路径重复摆放"，参数只有 count/offset/scale/alpha 外加路径相位；路径本身不是效果参数，
+   而是 AM 图层"路径图层"（shape/path layer）的数据来源（repeat.path 的 19 个参数里没有路径点列表）。
+2. 本项目的效果参数域是 `CompEffect.params`（float/color），**没有**路径引用类型；图层路径几何在
+   `CompShape`/`CompMask`（pen 写域）里，效果侧只读它无法表达"沿哪个图层/哪条子路径"。
+3. 界面（`UICompositorPanel`，本轮禁止改）没有"给效果指定路径"的入口；若退化为"自动取本图层第一个 PATH 形状/蒙版"，
+   对绝大多数图层会**静默无效**，并且会与"蒙版是 alpha 运算"的既有语义冲突（用户无法预期）。
+4. 结论：需要先有"效果参数引用路径"的模型 + UI 选择器（至少涉及 CompEffect 参数类型、检查器、路径数据只读接口），
+   不在本轮写域内；不做假实现（不塞一个永不生效的效果）。
+
+**文字 6 项（texttransform/textspacing/textprogress/textrand/timecode/counter）——不做。**
+1. 从 `_research/am/effects.json` 看，这 6 条 `shaderPresent=false`，参数是字符/间距/进度/随机种子/时间码格式等，
+   属于**图层属性动画预设**（逐字符排版/内容生成），不是像素函数；AM 里它们也作用于文字图层的排版阶段，而非栅格之后。
+2. 本项目已有对应的图层能力：文字内容模式（timecode / counter / random / reveal，见 `TextContent` + 文字检查器）
+   与文字动画器（`CompTextAnimator`）。把它们再包装成"效果"会造成两个入口做同一件事，且需要在检查器里加参数控件
+   （`UICompositorPanel` 是禁止写域）。
+3. 结论：不塞空效果；已记入第 2 节 E 表"文字语义判定"。若将来要统一入口，建议在 UI 层把现有文字属性"提升为效果行"，
+   而不是在效果库里复制一份。
 
 ### 3.1b 0.93（P1 调色首批：2 个）
 

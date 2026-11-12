@@ -250,4 +250,40 @@ public class CompUiResponsiveTest
         assertTrue(CompUi.previewRailLayout(640).shown[0], "camera view must stay visible when it fits");
         assertTrue(!CompUi.previewRailLayout(120).shown[0], "nothing fits in a 120px preview");
     }
+
+    /**
+     * Regression: a dock panel dragged narrow used to draw its overflow tabs on top of the
+     * neighbour. The strip now hides trailing tabs and shows a "»" cycle control; the arithmetic
+     * is pure so the "never zero tabs / never off-screen control" invariant is testable.
+     */
+    @Test
+    public void tabStripDegradesToAnOverflowControl()
+    {
+        int[] sevenTabs = {48, 44, 44, 44, 44, 44, 44};
+
+        int[] wide = CompUi.tabStripLayout(sevenTabs, 400);
+
+        assertEquals(7, wide[0], "all tabs fit in a wide bar");
+        assertEquals(0, wide[2], "no overflow control in a wide bar");
+
+        for (int width : new int[] {80, 120, 180, 240, 300, 340})
+        {
+            int[] layout = CompUi.tabStripLayout(sevenTabs, width);
+
+            assertTrue(layout[0] >= 1, "at least one tab must stay visible at " + width + "px");
+            assertTrue(layout[0] <= 7, "cannot show more tabs than exist at " + width + "px");
+
+            if (layout[2] == 1)
+            {
+                assertTrue(layout[1] >= 0, "overflow control off-screen at " + width + "px");
+                assertTrue(layout[1] + 20 <= width, "overflow control past the bar at " + width + "px");
+                assertTrue(layout[0] < 7, "overflow flag with all tabs visible at " + width + "px");
+            }
+        }
+
+        int[] empty = CompUi.tabStripLayout(new int[0], 200);
+
+        assertEquals(0, empty[0]);
+        assertEquals(0, empty[2]);
+    }
 }

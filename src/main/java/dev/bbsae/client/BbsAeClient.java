@@ -199,7 +199,7 @@ public class BbsAeClient implements BBSAddonMod
          */
         String shot = System.getProperty("bbsae.debugShot", "");
 
-        if (!shot.isBlank())
+        if (!shot.isBlank() && !dev.bbsae.client.replay.ReplayInteractionScript.isEnabled())
         {
             int shotAt = Integer.getInteger("bbsae.debugShotTicks", 260);
             final int[] shotTicks = {0};
@@ -216,6 +216,10 @@ public class BbsAeClient implements BBSAddonMod
                     saveVerificationShot(client, shot);
                 }
             });
+        }
+        else if (!shot.isBlank())
+        {
+            BbsAeAddon.LOGGER.info("Generic debugShot '{}' suppressed: the replay interaction script owns the screenshots", shot);
         }
 
         /* Composition-frame verification: writes the exact CompRenderer output (no viewport gizmos
@@ -331,6 +335,24 @@ public class BbsAeClient implements BBSAddonMod
      */
     private static void saveVerificationShot(net.minecraft.client.MinecraftClient client, String name)
     {
+        debugScreenshot(name, Boolean.getBoolean("bbsae.debugQuitAfterShot"));
+    }
+
+    /**
+     * Public verification-screenshot entry for scripted runs (the replay interaction script takes
+     * several screenshots per launch and decides itself when to quit).
+     */
+    public static void debugScreenshot(String name, boolean quitAfter)
+    {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+
+        if (client == null || client.getFramebuffer() == null)
+        {
+            BbsAeAddon.LOGGER.warn("Debug screenshot '{}' skipped: no client framebuffer", name);
+
+            return;
+        }
+
         /* The name comes from a -P property; give it its extension so the PNG lands where the
          * caller/documentation expects it (a name without ".png" was saved as a bare file). */
         String fileName = name.toLowerCase(java.util.Locale.ROOT).endsWith(".png") ? name : name + ".png";
@@ -343,7 +365,7 @@ public class BbsAeClient implements BBSAddonMod
             {
                 BbsAeAddon.LOGGER.info("screenshot: {}", text.getString());
 
-                if (Boolean.getBoolean("bbsae.debugQuitAfterShot"))
+                if (quitAfter)
                 {
                     client.execute(client::scheduleStop);
                 }

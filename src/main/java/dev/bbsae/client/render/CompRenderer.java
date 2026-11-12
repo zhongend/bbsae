@@ -302,18 +302,32 @@ public final class CompRenderer
             /* In the editor the world has already been drawn for this frame, so its depth is the
              * only correct depth for a depth effect: copying the *compositor's* framebuffer here
              * (the old behaviour) read an empty depth attachment and every depth effect silently
-             * degraded to a no-op. The bridge copies the world depth at WorldRenderEvents.LAST;
-             * use that copy while previewing, and a fresh capture only in the export path. */
-            SceneDepth bridged = preview ? dev.bbsae.client.overlay.BbsPreviewBridge.depth() : null;
+             * degraded to a no-op. The bridge copies the world depth at WorldRenderEvents.LAST.
+             *
+             * AE mode (renderFrame / renderForExport) used to pass preview=false and therefore
+             * never looked at the bridge at all: depth_fog/dof silently did nothing in the AE
+             * preview and the encoder while the BBS-overlay export (which runs inside the live
+             * world) worked. A non-capturing frame now reuses the bridge copy; an explicit
+             * {@code captureDepth} request still takes the fresh capture it asks for, and a frame
+             * with neither reports the visible degradation instead of failing silently. */
+            SceneDepth bridged = dev.bbsae.client.overlay.BbsPreviewBridge.depth();
 
-            if (bridged != null && bridged.isAvailable())
+            if (captureDepth)
             {
-                depth = bridged;
-            }
-            else if (captureDepth)
-            {
+                /* Explicit request (overlay/legacy path, right after the world was drawn): the
+                 * freshly captured depth is the authoritative copy for this frame. */
                 depth = ensureDepth();
                 depth.capture();
+                noteDepthAvailable();
+            }
+            else if (bridged != null && bridged.isAvailable())
+            {
+                depth = bridged;
+                noteDepthAvailable();
+            }
+            else
+            {
+                noteDepthMissing(project, doc, preview);
             }
         }
 
@@ -444,6 +458,108 @@ public final class CompRenderer
         return false;
     }
 
+    /**
+     * True when this composition needs the world depth buffer (enabled depth effects).
+     * Package-private for the degradation regression test.
+     */
+    static boolean needsWorldDepth(CompProject project, CompDocument doc)
+    {
+        return project != null && doc != null && doc.layers != null && needsDepth(project, doc);
+    }
+
+    /* --- depth degradation status (AE path) ------------------------------
+     * depth_fog / depth_dof need the live world depth. The deterministic AE frame path can only
+     * see the copy BbsPreviewBridge took during the last rendered world frame; when that copy does
+     * not exist (e.g. exporting without ever opening the compositor preview), the effects cannot
+     * run. Silently doing nothing was the audit finding: BBS-overlay exports worked, AE exports
+     * did not, with no hint. The message below is the visible degradation the UI can surface. */
+    private static boolean depthDegraded;
+    private static String depthDegradedMessage;
+    private static boolean depthDegradedLogged;
+
+    /** True when the last AE frame needed world depth but could not get it. */
+    public static boolean isDepthEffectsDegraded()
+    {
+        return depthDegraded;
+    }
+
+    /** User-visible explanation for the degraded depth effects, or null when they are fine. */
+    public static String depthEffectsDegradedMessage()
+    {
+        return depthDegradedMessage;
+    }
+
+    /** Called by the editor when it (re)enters the live preview, which captures a fresh depth copy. */
+    public static void resetDepthEffectsStatus()
+    {
+        depthDegraded = false;
+        depthDegradedMessage = null;
+        depthDegradedLogged = false;
+    }
+
+    private static void noteDepthAvailable()
+    {
+        depthDegraded = false;
+        depthDegradedMessage = null;
+    }
+
+    private static void noteDepthMissing(CompProject project, CompDocument doc, boolean preview)
+    {
+        if (!needsDepth(project, doc))
+        {
+            return;
+        }
+
+        depthDegraded = true;
+        depthDegradedMessage = "深度效果（depth_*）已降级：AE 模式没有可用的世界深度。"
+            + "请先在合成器预览里播放一帧（BBS 模式会采集世界深度），或改用 BBS 叠加导出。";
+
+        if (!depthDegradedLogged)
+        {
+            depthDegradedLogged = true;
+            BbsAeAddon.LOGGER.warn("AE frame path has no world depth copy; depth_* effects are disabled "
+                + "(comp={}, preview={}). Open the compositor preview once or use the BBS-overlay encoder.",
+                doc.id, preview);
+        }
+    }
+
+    /**
+     * Render pixels per layer pixel for a projected 3D mask: the projected diagonal of the layer's
+     * content rectangle at the current camera, over the rectangle's own diagonal. Feather and
+     * expansion are authored in layer pixels and are scaled by this before rasterization, exactly
+     * like the affine proxy path's {@code maskScale}.
+     */
+    private static float projectedMaskScale(CompRenderContext context, CompLayer layer, CompCamera camera)
+    {
+        float width = Math.max(1F, layer.width);
+        float height = Math.max(1F, layer.height);
+        float x = -width * layer.anchorX;
+        float y = -height * layer.anchorY;
+        Matrix4f world = CompScene.world(context, layer);
+        Vector3f a = new Vector3f(x, y, 0F);
+        Vector3f b = new Vector3f(x + width, y + height, 0F);
+
+        world.transformPosition(a);
+        world.transformPosition(b);
+
+        Vector2f projectedA = camera.project(a, context.width, context.height);
+        Vector2f projectedB = camera.project(b, context.width, context.height);
+
+        if (projectedA == null || projectedB == null)
+        {
+            return 1F;
+        }
+
+        float renderScaleX = context.renderWidth() / (float) Math.max(1, context.width);
+        float renderScaleY = context.renderHeight() / (float) Math.max(1, context.height);
+        float dx = (projectedB.x - projectedA.x) * renderScaleX;
+        float dy = (projectedB.y - projectedA.y) * renderScaleY;
+        float projectedDiagonal = (float) Math.sqrt(dx * dx + dy * dy);
+        float layerDiagonal = (float) Math.sqrt(width * width + height * height);
+
+        return Math.max(0.01F, projectedDiagonal / Math.max(0.0001F, layerDiagonal));
+    }
+
     public static GlFramebuffer renderOffscreen(CompProject project, CompDocument doc, float time, Batcher2D batcher)
     {
         return renderOffscreen(project, doc, time, batcher, false);
@@ -548,6 +664,25 @@ public final class CompRenderer
 
         float scale = Math.max(0.05F, Math.min(1F, Math.min(width / (float) Math.max(1, doc.width), height / (float) Math.max(1, doc.height))));
 
+        return renderForCache(project, doc, time, scale);
+    }
+
+    /**
+     * Pre-render cache frame at an explicit scale.
+     *
+     * <p>The scale is passed straight to the graph (not re-derived from a requested pixel size):
+     * the pre-render cache used to compute a size by rounding each axis, the renderer then derived
+     * a single scale back from that size, and odd/proxy rasters could disagree by a pixel — the
+     * cached texture and the rendered FBO then had different dimensions. Both sides now use
+     * {@link #renderSizeFor} so the dimensions are the same formula.</p>
+     */
+    public static GlFramebuffer renderForCache(CompProject project, CompDocument doc, float time, float scale)
+    {
+        if (project == null || doc == null)
+        {
+            return null;
+        }
+
         /* A cached frame has to be exactly the exported frame, and guide layers are editor-only.
          * Without this the green bar (and therefore the AE preview, which trusts it first) contained
          * 参考层 shapes that the encoder never wrote. */
@@ -555,12 +690,38 @@ public final class CompRenderer
 
         try
         {
-            return renderToTexture(project, doc, time, false, true, true, false, null, scale);
+            return renderToTexture(project, doc, time, false, true, true, false, null,
+                Math.max(0.05F, Math.min(1F, scale)), previewStageTransparent(project));
         }
         finally
         {
             endExport();
         }
+    }
+
+    /** Render-target size the graph will use for {@code scale}; one formula shared by all caches. */
+    public static int[] renderSizeFor(CompDocument doc, float scale)
+    {
+        float clamped = Math.max(0.05F, Math.min(1F, scale));
+
+        return new int[]
+        {
+            Math.max(1, Math.round((doc == null ? 1920 : doc.width) * clamped)),
+            Math.max(1, Math.round((doc == null ? 1080 : doc.height) * clamped)),
+        };
+    }
+
+    /**
+     * True when the BBS-mode preview shows the live world behind the composition (transparent
+     * stage). The pre-render cache has to bake the same stage or the green frame hides the world
+     * that the live preview shows. AE mode keeps the encoder-exact opaque/alpha stage.
+     */
+    static boolean previewStageTransparent(CompProject project)
+    {
+        return project != null
+            && project.settings != null
+            && project.settings.previewBackground == 1
+            && !CompProject.ENCODER_AE.equals(project.settings.encoder);
     }
 
     /** Marks the film-overlay/recording path, where guide layers must not be baked in. */
@@ -578,6 +739,55 @@ public final class CompRenderer
     public static boolean isExporting()
     {
         return exportDepth > 0;
+    }
+
+    /**
+     * Per-pixel depth gate, shared by the preview and the export path.
+     *
+     * <p>Both paths go through {@link #renderCompToFbo}: the preview passes {@code preview=true} and
+     * a proxy scale, the export/render-cache passes {@code preview=false} and scale 1 (or the
+     * alpha-stage flag). None of those parameters appears in this decision — only the frame's
+     * geometry ({@link CompScene#spatial}) and the user/developer switch — so a frame cannot use
+     * per-pixel depth in the editor and whole-layer order in the encoder, or the reverse.</p>
+     */
+    static boolean perPixelDepthFrame(CompRenderContext context)
+    {
+        return CompScene.spatial(context) && perPixelDepthRequested();
+    }
+
+    /**
+     * The preference plus its developer override. Kept independent of preview/scale/stage so the
+     * preview and the export agree, and tolerant of the headless test environment where the
+     * FabricLoader-backed preference store is unreachable.
+     */
+    static boolean perPixelDepthRequested()
+    {
+        if (Boolean.getBoolean("bbsae.debugForceDepthPlane"))
+        {
+            return true;
+        }
+
+        try
+        {
+            return CompPrefs.get().perPixelDepth;
+        }
+        catch (RuntimeException | LinkageError ignored)
+        {
+            /* Headless unit test / early init: the preference store needs FabricLoader. */
+            return false;
+        }
+    }
+
+    /**
+     * True when this layer must be composited through the depth plane. Everything here is frame
+     * geometry too (shared depth target, perspective projection) plus the debug kill switch; the
+     * preview/export flags never enter it.
+     */
+    static boolean perPixelDepthLayer(CompRenderContext context, CompLayer layer)
+    {
+        return context.spatialDepth != null
+            && CompScene.usePerspective(context, layer)
+            && !Boolean.getBoolean("bbsae.debugNoDepthPlane");
     }
 
     static GlFramebuffer renderCompToFbo(CompProject project, CompDocument comp, float time, SceneDepth depth, Matrix4f projection, Camera camera, Set<String> stack, Batcher2D batcher, int recursion, boolean renderEffects, boolean renderMasks)
@@ -617,8 +827,7 @@ public final class CompRenderer
         context.preview = preview;
         context.scale = Math.max(0.05F, Math.min(1F, scale));
 
-        if (CompScene.spatial(context)
-            && (CompPrefs.get().perPixelDepth || Boolean.getBoolean("bbsae.debugForceDepthPlane")))
+        if (perPixelDepthFrame(context))
         {
             context.spatialDepth = DepthPlaneCompositor.acquire(context.renderWidth(), context.renderHeight());
         }
@@ -688,6 +897,31 @@ public final class CompRenderer
                     float maskScale = Math.max(0.0001F, maskWidth / (float) Math.max(1, comp.width));
                     Matrix4f maskModel = new Matrix4f(model).scale(maskScale, maskScale, 1F);
                     MaskCache.MaskTexture mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame, maskScale);
+
+                    if (mask != null)
+                    {
+                        GlFramebuffer masked = PassRenderer.mask(content, mask.texture.id, 0);
+
+                        FboPool.release(content);
+                        content = masked;
+                    }
+                }
+                else if (!is2D && !effectsBaked && renderMasks && layer.masks != null && !layer.masks.isEmpty())
+                {
+                    /* A perspective 3D layer whose bake was skipped (replay-entity layers never
+                     * bake; a precomp without a cached raster falls back to the direct path) still
+                     * needs its masks. The direct-path content is already camera-projected in
+                     * composition space, so the layer-local affine mask cannot address it: project
+                     * the mask path with the same view-projection and rasterize it at render size.
+                     * Before this the mask was simply dropped, so a masked 3D entity/precomp layer
+                     * showed unmasked with per-pixel-depth-independent paths too. */
+                    CompCamera maskCamera = CompScene.camera(context);
+                    Matrix4f maskViewProjection = new Matrix4f(maskCamera.projection)
+                        .mul(maskCamera.view)
+                        .mul(CompScene.world(context, layer));
+                    float maskScale = projectedMaskScale(context, layer, maskCamera);
+                    MaskCache.MaskTexture mask = MaskCache.getProjected(layer, context.renderWidth(),
+                        context.renderHeight(), maskViewProjection, context.frame, maskScale);
 
                     if (mask != null)
                     {
@@ -871,8 +1105,7 @@ public final class CompRenderer
 
                 GlFramebuffer blended;
 
-                if (context.spatialDepth != null && CompScene.usePerspective(context, layer)
-                    && !Boolean.getBoolean("bbsae.debugNoDepthPlane"))
+                if (perPixelDepthLayer(context, layer))
                 {
                     /* 3D layers carry a plane; per-pixel depth resolves crossings that whole-layer
                      * painter order cannot. Blend mode/opacity still goes through PassRenderer. */
@@ -1761,5 +1994,19 @@ public final class CompRenderer
     public static GlFramebuffer renderForExport(CompProject project, CompDocument comp, float time, Batcher2D batcher, boolean alpha)
     {
         return renderFrame(project, comp, frameIndex(comp, time), alpha);
+    }
+
+    /**
+     * Export one explicit composition frame.
+     *
+     * <p>The render queue maps every output frame to a composition frame number itself and passes
+     * it here instead of round-tripping through a float time and quantising twice. That keeps a
+     * preset fps different from the composition fps deterministic: frame N of the output samples
+     * {@code round(N / outputFps * compFps)} of the composition, regardless of float drift.</p>
+     */
+    public static GlFramebuffer renderForExport(CompProject project, CompDocument comp, int frame,
+                                                Batcher2D batcher, boolean alpha)
+    {
+        return renderFrame(project, comp, frame, alpha);
     }
 }

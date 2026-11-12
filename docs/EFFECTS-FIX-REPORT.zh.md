@@ -349,3 +349,19 @@ RGB 分离图并断言同一相对位置采样一致。
 验证：全量 `test`（串行 wrapper）**110 suites / 669 tests / 0 failures / 1 skipped**；本轮新增
 `EffectP1BatchTest`（3）+ `AmEffectLibraryTest`（1）+ `EffectRepeatTest`（2）+
 `PreviewProxyTest`（1）+ `EffectPipelineTest`（1）。未开客户端。
+
+## Round 4（0.95）AM 剩余变形族 + repeat.path/文字判定
+
+- **新增 6 个变形效果**（数据驱动 body，全部有零点契约 + 缩略图）：
+  `am_pinch_bulge_inside`（内部收缩与膨胀，strength=0）、`am_wave_warp`（波浪扭曲，m2=0）、
+  `am_turbulent_displace_3`（湍流置换 3，intensity=0）、`am_tileshift_2`（平铺错位 2，strength=0）、
+  `am_stretch_segment`（拉伸段，stretch=0）、`am_omino_glass`（Omino 玻璃，strength=0；
+  参考版折射下方合成，这里对图层自身做同样的噪声折射/色差/光照，2D/3D/导出一致）。
+- **`repeat.path`：判定不做**。AM 的路径来自"路径图层"而非效果参数；本项目效果参数域没有路径引用、UI 没有
+  路径选择器，用"第一个 PATH 形状/蒙版"当路径会静默无效并和蒙版语义冲突。需要先做"效果参数引用路径 + UI
+  选择器"（跨 CompEffect/检查器/路径只读接口），不在本轮写域内——不做假实现。
+- **文字 6 项：判定不做**。AM 里它们是非 shader 的文字图层属性/逐字符动画预设；本项目已用文字内容模式
+  （timecode/counter/random/reveal）+ 文字动画器实现同等能力，再包装成效果只会产生重复入口且需要 UI 写域。
+- 验证：全量 **117 suites / 699 tests / 0 failures / 1 skipped**；`EffectP1BatchTest` 的
+  `DISTORT_BATCH` 复用"默认可见 + 中性双路径恒等"断言，`AmEffectLibraryTest` 增加 6 条零点断言。
+  未开客户端、未 git commit。

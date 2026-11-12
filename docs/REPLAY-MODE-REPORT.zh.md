@@ -29,6 +29,7 @@
 | **P5-R2** | **真机验证钩子 + 性能裁剪 + 空状态/健壮性** | ✅ 完成 | `ReplayDebugHook`（`-Dbbsae.debugReplayFilm` / `-Dbbsae.debugView=replay`）；`ReplayCulling` 视锥裁剪 + 选中优先；`ReplayLogLimiter` 失败日志限流；`ReplayCalibration` 标定常量可 `-D` 覆盖；空状态/错误提示；`onAppear` 自动绑定复核并修复「换影片后不回绑」。 |
 | **P5-R3** | **真机验证收尾：崩溃/可见性/光照** | ✅ 本次完成（有截图证据） | 修复 ① `StackOverflowError`（列表选择回调 ↔ `scrollToReplay` 递归）；② 模型 pass 的 model-view 应为**旋转-only**（camera-relative 几何，不能带 comp 锚点平移）；③ UI pass 绑白色 lightmap（Sampler2）+ 固定 `setShaderLights`，否则模型全黑；④ 单模型 framing 最小距离 600px（只框有模型的 replay）；⑤ 验证钩子默认选中**有模型**的 replay。真机截图：`docs/verify/round48-replay-models.png`（模型有明暗 + 原版 gizmo 在模型上）。 |
 | **P6** | **交互写回/模型库/列表增删的无头测试与 bug 审查** | ✅ 本次完成（未开客户端） | 新增 `ReplayListOps`（身份选择/索引映射）、`ReplayFraming`（NaN/Inf 保护）、`ReplayPickIds`（pick id 往返），`ReplayTime.clampTick/phase` NaN 保护，`ReplayCulling` 非有限矩阵/位置降级，`ReplayWriteback.placement` 一次性七通道写入；修 5 类数据层 bug；replay 单测 38 → **71**。 |
+| **P7** | **脚本化真机交互验证（task-17）** | 🟡 Run A/B/C 已跑（用户客户端频率限制，不再开客户端）：**数据层验收通过**（Run C：MOVE 通道正确、UNDO restored=true、REDO、FORM、LIST、done failed=false）；Run C 截图暴露出「filmPanel 挂回放页子树 → UI 不渲染」的回归，已改为 **screen root 隐藏 holder** 方案修复，待下次真机确认 UI 可见性 | 新增 `ReplayScriptTimeline`（tick 计划）+ `ReplayInteractionScript`：tick 30 非 0 播放头 → **UIReplayPropTransform.setT/setR（gizmo 同路径）**写位置+旋转 → 截图；undo/redo → 截图；`ReplayFormSwap` 换模型 → 截图；原版列表 `dupeReplay()` → 截图；每步 settle 20 tick，日志逐项打印通道值/undoRestored/计数。详见 §3.8。 |
 
 ---
 
@@ -48,6 +49,8 @@
 | `ReplayListOps.java` | **Round 4 新增：列表身份 bookkeeping（纯泛型）**：`indexOfIdentical/containsIdentical`（`Replay extends ValueGroup` 的 `equals` 比内容，用 `List.indexOf` 会选错回放）、`sameOrder`、`clampIndex/elementAt`、`selectionAfterChange`（增删/重排后保持选中；被删时落到最近索引而不是首条/等值孪生）。 |
 | `ReplayFraming.java` | **Round 4 新增：framing NaN/Inf 保护（纯函数）**：`isFinite/accumulate/isValidBounds/center/safeDistance`；坏坐标不进入 bounds，bounds 非法/为空时回到默认机位，相机距离永远有限。 |
 | `ReplayPickIds.java` | **Round 4 新增：pick id 算术**：`offsetFor/idFor/indexFor/isGizmoHandle`；stencil 写入与点击反查用同一公式，gizmo 句柄区间显式隔离（纯函数，可用假 gizmo 边界单测）。 |
+| `ReplayScriptTimeline.java` | **Round 5 新增：脚本 tick 计划（纯逻辑 + 单测）**：OPEN_DELAY/SETTLE/四个 action→shot 的严格递增时间表、4 个截图名；一次客户端 run 的计划不能靠试错，先由单测固定。 |
+| `ReplayInteractionScript.java` | **Round 5 新增：单次真机脚本**：打开回放页后按计划执行 ①非 0 tick 用 `UIReplayPropTransform.setT/setR`（gizmo 同路径）写位置+旋转→截图 ②`filmPanel.undo()` + 重绑→截图 ③`redo` ④`ReplayFormSwap` 换模型→截图 ⑤原版列表 `dupeReplay()`→截图 ⑥清理/退出；每步 settle 20 tick，异常继续后续步骤，日志 `Replay script:` 可审计。 |
 | `ReplayEditSession.java` | 编辑会话：借用唯一 `UIFilmPanel` 的 film/controller/entities/undo；playhead 用 filmPanel tick cursor；`ensureEntities/recreateEntities`；`applyPose`；双相机；`frameAll`；transport；**Round 2：`updateVisibility()` / `isReplayVisible()` / `visibleCount/culledCount/placeableCount`**；**Round 3：`frameAll` 只框有模型的 replay，单模型最小距离 `ReplayCalibration.frameMinDistance()`（默认 600px）；`hasModel(replay)`**。 |
 | `ReplayViewCamera.java` | 从 `CompViewportCamera` 生成 BBS Camera（gizmo 拖动）与 MC Camera（`FilmEntityRenderer`；`setPos/setRotation` protected → 私有子类）；**Round 2：yaw/pitch 偏移走 `ReplayCalibration`**；**Round 3：`camera.view`/`ModelViewMat` 改为旋转-only（`viewport.view · linearFromWorld`，清掉平移），因为 film actor 几何是 camera-relative、BBS `Camera.view` 本身也是 rotation-only——这是模型“看不见”的根因**。 |
 | `ReplayModelPass.java` | **3D 模型 pass**：私有颜色+深度 FBO → 逐可见 replay `applyPose` + `FilmEntityRenderer` → `GlStateGuard` 全量还原 → `texturedBox` blit；**Round 2：按 `session.isReplayVisible` 跳过裁剪模型、失败日志限流、`lastError/hasRecentError/lastDrawn/lastAttempted/lastSkipped` 供 HUD**；**Round 3：`ModelViewMat = rotation-only view`；UI pass 绑 16×16 全白 lightmap 到 `Sampler2`（`RenderSystem.setShaderTexture(2, …)`，BBS 粒子编辑器同款）+ 固定 `setShaderLights`，修复黑色剪影；texture 停机释放**。 |
@@ -63,7 +66,7 @@
 | --- | --- |
 | `client/BbsAeClient.java` | 上一轮：`replayModePanel` 注册 + `openReplayMode(...)` + 停机释放 FBO。**Round 2：`ReplayDebugHook.install()`；`-PbbsaeView=replay` 时跳过合成器 debug 视图（避免抢面板）。** |
 
-### 2.3 测试（10 个文件 / 71 个 test）
+### 2.3 测试（11 个文件 / 75 个 test）
 
 | 文件 | 数量 | 断言 |
 | --- | --- | --- |
@@ -77,6 +80,7 @@
 | `ReplayListOpsTest` | 10 | 身份 index/contains（等值孪生不算同一对象）、elementAt/clampIndex、sameOrder、重排保选中、删除落邻近/不落等值孪生、新增保选中、空列表清选择 |
 | `ReplayFramingTest` | 6 | NaN/Inf 位置不入 bounds、非法 bounds 拒绝、center、safeDistance 回退、坏 fallback 仍有有限距离 |
 | `ReplayPickIdsTest` | 5 | replay id 紧接 gizmo 区间、id↔index 往返、gizmo/空像素不是 replay、越界拒绝、句柄区间闭区间 |
+| `ReplayScriptTimelineTest` | 4 | tick 计划严格递增、每个截图在 action 后 settle 20、4 个唯一截图名、warmup 足够且整轮 <1 分钟 |
 
 ---
 
@@ -232,6 +236,76 @@ culling 强制选中可见；空影片/空 replay 文案；`ReplayFormSwap` copy
 
 ---
 
+### 3.8 Round 5 脚本化真机交互（task-17）
+
+**目的**：P6（无头）覆盖不到的真实交互链路——「gizmo 手势写回 → 原版 undo → 换模型 → 列表新增」——用一次
+`runClientView` 按 tick 脚本自动执行并分 4 张截图；日志同时打印通道值，截图不清晰时可从日志判断。
+
+**命令（Lead 安排的三次 run，用户限制客户端频率）**：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 runClientView --offline `
+  -PbbsaeView=replay -PbbsaeQuitAfterShot=true --console=plain
+```
+
+（`-PbbsaeView=replay` = debugPreview + debugView=replay，回放钩子载入真实影片并进面板；脚本自动启动。
+通用 `-PbbsaeShot` 在脚本激活时被抑制，避免重复截图/提前退出。脚本默认跑完自动退出，
+`-Dbbsae.replayInteractionStay=true` 可让它留在客户端。）
+
+**Tick 计划（`ReplayScriptTimeline`，单测固定）**：OPEN_DELAY=40 / SETTLE=20：
+
+| tick | 动作 | 截图 |
+| --- | --- | --- |
+| 40 | MOVE：seek 到 **tick 30**，记录 before 通道，然后 `UIReplayPropTransform.setT(Axis.X, x+2,y,z+1)` + `setR(Axis.Y, pitch+15, -yaw+40, 0)`（与 gizmo 拖动同一代码路径） | — |
+| 60 | — | `replay-interact-move` |
+| 80 | UNDO：`filmPanel.undo()` → 重建实体/重绑 session/刷新轨道与属性 | — |
+| 100 | — | `replay-interact-undo` |
+| 110 | REDO：`filmPanel.redo()`（恢复移动状态供后续步骤） | — |
+| 130 | FORM：`ReplayFormSwap` 把 form 换成 `minecraft:zombie` → 重建实体/自动关键帧/轨道 | — |
+| 150 | — | `replay-interact-form` |
+| 170 | LIST：原版列表 `dupeReplay()` 新增一条 replay | — |
+| 190 | — | `replay-interact-list` |
+| 210 | CLEANUP：删除新增 replay、重绑 | — |
+| 230 | QUIT：日志汇总 `failed/undoRestored/replayCount` 后退出 | — |
+
+**日志审计点（grep `Replay script:`）**：`MOVE ... before=[...] after=[...]`（x/y/z/yaw/headYaw/bodyYaw/pitch 与实体 pose）、
+`UNDO ... restored=true/false`、`REDO ...`、`FORM applied=... placeable=...`、`LIST duplicate before/after/selectedIndex`、
+`CLEANUP`、`done failed=? undoRestored=? replayCount=?`。
+
+**运行结果（三次 run，用户限制后不再开客户端）**：
+
+| Run | 目的 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| A | 首次脚本 run | ✅ MOVE/FORM/LIST 正常；❌ UNDO/REDO 抛 NPE：`filmPanel.undo()` → `UIElement.getRoot().applyAllUndoData(...)`，回放模式下 filmPanel 未挂 UI 树 → `getRoot()==null`。**真实 Ctrl+Z 会踩的 P0** | 日志 `_tools/runclient-replay-interact.log` |
+| B | 临时挂载修复后 | ✅ MOVE 写回通道正确（tick=30：x -15.69→-13.69、z 1→2、yaw 211.95→171.95、pitch 0→15）；FORM donkey→zombie；LIST 2→3；❌ 仍失败：`MapType.has ... "data" is null`。**根因**：undo 条目的 `uiBefore` 在**写回时**由 `handlePreValues` 经 `getRoot().collectAllUndoData()` 采集；写回时 filmPanel 仍未挂树 → `uiBefore=null`，临时挂载只修 apply 侧；且 redo 的临时 add/remove 让后续 UI 渲染异常（form/list 截图空白 UI） | `_tools/runclient-r50b.log`；`docs/verify/round50-run2-{move,undo,form,list}.png` |
+| C | 常驻挂载修复后（Run C） | ✅ **数据层全绿**：`MOVE tick=30` 通道逐项正确；`UNDO ... restored=true`（after == expectedPreMove，位置/朝向/实体 pose 全部还原）；`REDO` 恢复移动值；`FORM applied=true donkey→zombie`；`LIST duplicate before=2 after=3` + cleanup 恢复 2；**`done failed=false undoRestored=true`**。❌ **截图验收不通过**：4 张只剩世界+小 gizmo、无回放 UI（对照 A 的 ~149KB 完整界面，C 为 ~405KB 世界画面）——常驻挂载把 `UIFilmPanel` 塞进回放页子树引入 UI 渲染/布局回归 | 日志 `_tools/runclient-r50c.log`；证据图 `docs/verify/round50-run3-{move,undo,form,list}.png`（历史保留，不作验收） |
+
+**三层根因与最终修复（Undo P0）**：
+
+1. **apply 侧无 root**（Run A）：`filmPanel.undo()` 的 `handleUndos` 经 `uiElement.getRoot()` 应用 UI 数据，回放模式借用的
+   filmPanel 未挂 UI 树 → `getRoot()==null` NPE。
+2. **采集侧无 root**（Run B）：undo 条目的 `uiBefore` 是**写回时**采集的（`handlePreValues` → `getRoot().collectAllUndoData()`），
+   临时挂载只覆盖 undo 调用，写回时仍无 root → `uiBefore=null` → `applyAllUndoData(null)` NPE。
+3. **UI 渲染回归**（Run C）：把 filmPanel **常驻挂在回放页子树**后数据层全绿，但页面 UI 不再渲染
+   （截图只有世界+世界预览 gizmo）。结论：不能把 `UIDashboardPanel` 作为回放页的普通子元素。
+
+**最终修复**：`attachBorrowedFilmPanel()` / `detachBorrowedFilmPanel()` 改为把 filmPanel 挂在 **screen root 下的隐藏
+holder**（`UIElement holder`，`visible=false`、`relative(root)` 全屏）而不是回放页子树：
+- 写回时 `filmPanel.getRoot()` 非空 → undo 条目的 `uiBefore` 正常采集；undo/redo 时 root 也在 → apply 正常；
+- holder 不在回放页 children/layout 里，页面子树与 dashboard 当前 panel 不受影响（修复 Run C 的 UI 回归方向）；
+- 挂载时机放在 `UIReplayModePanel.update()`（每 tick、render 前，避免 render 期间改 root children 触发 CME）；
+- `disappear` 时移除 holder、把 filmPanel 从 holder 摘下并恢复原可见性，路线 A（切回原版编辑器）不受影响；
+- 回放页自己的 keyframe editor 使用独立 undo id `replay_mode_keyframe_editor`，避免与隐藏 filmPanel 的
+  `replay_keyframe_editor` 快照互相覆盖；`runFilmHistory` 的临时挂载仅作兜底。
+
+**验证状况（不再开客户端，按 Lead 指示单测/代码层兜底）**：
+- `compileJava`、replay 单测 **75 tests / 11 suites 全绿**；
+- Run C 数据层验收已通过（日志为证）；**Run C 截图空白是修复前的历史证据**，已存 `round50-run3-*`；
+- UI 可见性回归的最终修复（root 隐藏 holder）**未再截图验证**，下次真机第一个检查点；Run B 的
+  `round50-replay-move.png`（同一脚本、同一 MOVE 数据、UI 完整）保留作数据/视觉参考，不作为新修复的验收图。
+
+---
+
 ## 4. 性能 / 标定（Round 2）
 
 - **视锥裁剪**：`ReplayModelPass` 与 `ReplayPickPass` 只在 `ReplayCulling.shouldCull(影片 replay 数)` 为真
@@ -271,7 +345,7 @@ culling 强制选中可见；空影片/空 replay 文案；`ReplayFormSwap` copy
 
 ```
 powershell ... gradle-run.ps1 test --offline --console=plain --tests "dev.bbsae.client.replay.*"
-→ BUILD SUCCESSFUL，71 tests（10 suites，Round 4 后）
+→ BUILD SUCCESSFUL，75 tests（11 suites，Round 5 脚本计划加入后）
 ```
 
 ### 6.2 编译
@@ -281,24 +355,28 @@ powershell ... gradle-run.ps1 compileJava compileTestJava --offline --console=pl
 → BUILD SUCCESSFUL
 ```
 
-### 6.3 全量测试（Round 4 运行时刻）
+### 6.3 全量测试（Round 5 收尾）
 
 ```
 powershell ... gradle-run.ps1 test --offline --console=plain
-→ 663 tests completed, 4 failed, 1 skipped
-  EffectLibraryNamingTest / EffectThumbnailResourceTest  （effects 队友并发改动）
-  PreviewProxyTest / CompUiResponsiveTest                （UI/effects 队友并发改动）
+→ 720 tests completed, 2 failed, 1 skipped
+  RenderCacheAuditTest ×2（渲染缓存/导出帧映射，render 队友并发改动范围）
 ```
 
-> replay 包 71 tests 全绿、编译绿；4 个失败均不在 `replay` 范围（effects/UI 队友当轮正在改的
-> `EffectRenderer`/`CompUi` 等），以对应负责人收尾为准。Round 3 收尾时全量曾为
-> 96 suites / 565 tests / 0 failed；Round 4 起新增的是 replay 无头测试与其它队友的测试。
+> replay 包 **75 tests / 11 suites 全绿**、编译绿；2 个失败均不在 `replay` 范围，以对应负责人收尾为准。
+> Round 3 收尾曾为 96 suites / 565 tests / 0 failed，Round 4-5 新增了 replay 脚本/无头测试与其它队友的测试。
 
-### 6.4 真机（Round 3 证据，Round 4 未开客户端）
+### 6.4 真机
 
 ```
+# Round 3：面板/模型/gizmo 可见性
 runClientView -PbbsaeView=replay -PbbsaeShot=replay-models -PbbsaeShotTicks=420 -PbbsaeQuitAfterShot=true
 → BUILD SUCCESSFUL；截图 docs/verify/round48-replay-models.png；无 StackOverflowError
+
+# Round 5：脚本化交互（Run A/B/C，用户限制客户端频率）
+runClientView -PbbsaeView=replay -PbbsaeQuitAfterShot=true
+→ Run C 数据验收：MOVE tick=30 通道正确、UNDO restored=true、REDO、FORM、LIST、done failed=false
+→ Run C 截图 UI 回归（无页面 UI），修复为 screen-root 隐藏 holder，待下次真机确认
 ```
 
 ### 6.5 UTF-8
@@ -378,6 +456,7 @@ runClientView -PbbsaeView=replay -PbbsaeShot=replay-models -PbbsaeShotTicks=420 
 | R8 | **原版列表/属性面板副作用** | add/dupe/delete 会同步隐藏的 `filmPanel.replayEditor`（借用唯一面板的预期结果，切回原版状态一致） |
 | R9 | **全量测试** | Round 4 运行时刻：663 tests / 4 failed / 1 skipped；4 个失败都在 effects/UI 队友的并发改动范围，replay 包 **71 tests 全绿**、编译绿 |
 | R10 | **无头覆盖的硬边界** | BBS 的 `Replay`/`UIReplayPropTransform`/`UIFilmPanel.undo()` 不能在 JUnit 里构造（`BBSMod.<clinit>` → `Registries` 需要 game bootstrap；补 `Bootstrap.initialize()` 又在 loom 测试运行时抛 `IllegalAccessError`）。所以「真实 gizmo 手势 → 原版 `UIReplayPropTransform` → 原版 undo」仍需真机（§7.1）；本轮把可测层抽成纯函数并模拟通道语义 |
+| R11 | **Run C 的 UI 可见性回归修复未再真机验证（用户限制客户端频率）** | 数据层已由 Run C 日志验收（`restored=true / failed=false`）；截图回归根因是「filmPanel 挂在回放页子树」→ 已改为 **screen root 下的隐藏 holder**（不在页面 children/layout、render 前在 `update()` 挂载、`disappear` 卸载），编译 + 75 replay tests 绿。**下次真机第一验证点**：进「实体回放」页面标题条/左列表/右属性/底部轨道齐全，再测 Ctrl+Z/拖动/换模型/列表增删；若 UI 仍异常，回退路径：`-Dbbsae.replayInteractionScript.disable=true` 只开面板观察（不跑脚本）|
 
 ---
 

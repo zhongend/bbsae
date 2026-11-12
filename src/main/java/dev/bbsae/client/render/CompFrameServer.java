@@ -138,12 +138,12 @@ public final class CompFrameServer
     /** Pixel width of a frame at {@code scale}. Shared with the preview so both agree on the raster. */
     public static int widthOf(CompDocument doc, float scale)
     {
-        return Math.max(1, Math.round((doc == null ? 1920 : doc.width) * Math.max(0.05F, Math.min(1F, scale))));
+        return CompRenderer.renderSizeFor(doc, scale)[0];
     }
 
     public static int heightOf(CompDocument doc, float scale)
     {
-        return Math.max(1, Math.round((doc == null ? 1080 : doc.height) * Math.max(0.05F, Math.min(1F, scale))));
+        return CompRenderer.renderSizeFor(doc, scale)[1];
     }
 
     /**

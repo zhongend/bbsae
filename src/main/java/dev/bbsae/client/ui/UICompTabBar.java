@@ -26,10 +26,26 @@ import java.util.function.IntSupplier;
  */
 public class UICompTabBar extends UIElement
 {
+    private static final int OVERFLOW_W = 20;
+    private static final String OVERFLOW_HOVER_KEY = "tab-overflow-hover";
+    private static final String OVERFLOW_PRESS_KEY = "tab-overflow-press";
+
     private final List<UITextTab> tabs = new ArrayList<>();
+    private final List<Integer> tabWidths = new ArrayList<>();
     private int nextX;
     private final UiMotion motion = new UiMotion();
     private int motionFrames;
+
+    /**
+     * When the bar is narrower than its tabs (dock panel dragged narrow), the trailing tabs are
+     * hidden and a "»" control advances the active page. Before this the overflow tabs were drawn
+     * on top of the neighbouring panel (and, since BBS dispatches clicks by child rectangle, they
+     * could steal those panels' clicks — 0.94 added a hit guard, this makes the hidden pages
+     * reachable instead of merely unreachable).
+     */
+    private boolean overflow;
+    private int visibleTabs;
+    private int overflowX;
 
     /**
      * Which tab the pointer button went down on, or -1. BBS's click fires on the press and clears
@@ -63,6 +79,108 @@ public class UICompTabBar extends UIElement
         }
 
         super.render(context);
+        this.renderOverflow(context);
+    }
+
+    /** True when the tab strip does not fit and the "»" control is active. */
+    public boolean isOverflowing()
+    {
+        return this.overflow;
+    }
+
+    public int visibleTabCount()
+    {
+        return this.visibleTabs;
+    }
+
+    @Override
+    public void resize()
+    {
+        super.resize();
+        this.layoutTabs();
+    }
+
+    /**
+     * Fits the absolute-positioned tabs into the current bar width. Tabs keep their natural width;
+     * the ones that do not fit are hidden and the active page can still be reached through the
+     * overflow control. Must run after addTab and on every resize.
+     */
+    private void layoutTabs()
+    {
+        if (this.area.w <= 0 || this.tabs.isEmpty())
+        {
+            return;
+        }
+
+        int[] widths = new int[this.tabWidths.size()];
+
+        for (int index = 0; index < widths.length; index++)
+        {
+            widths[index] = this.tabWidths.get(index);
+        }
+
+        int[] layout = CompUi.tabStripLayout(widths, this.area.w);
+
+        this.overflow = layout[2] == 1;
+        this.visibleTabs = layout[0];
+        this.overflowX = layout[1];
+
+        for (int index = 0; index < this.tabs.size(); index++)
+        {
+            this.tabs.get(index).setVisible(index < this.visibleTabs);
+        }
+    }
+
+    /** Draws the "»" control (and the hidden-active-page accent) when tabs overflow. */
+    private void renderOverflow(UIContext context)
+    {
+        if (!this.overflow || this.area.w <= 0)
+        {
+            return;
+        }
+
+        int x = this.area.x + this.overflowX;
+        int y = this.area.y;
+        boolean hot = context.mouseX >= x && context.mouseX < this.area.ex()
+            && context.mouseY >= y && context.mouseY < this.area.ey();
+        float hover = this.motion.anim(OVERFLOW_HOVER_KEY, hot ? 1F : 0F, 22F);
+        float press = this.motion.spring(OVERFLOW_PRESS_KEY, this.pressedTab == -2 ? 1F : 0F, 520F, 30F);
+        int active = this.active.getAsInt();
+        boolean hiddenActive = active >= this.visibleTabs;
+
+        if (hover > 0.01F)
+        {
+            context.batcher.box(x + 2, y + 3, this.area.ex() - 2, this.area.ey() - 3,
+                UiGfx.mulA(0xFFFFFFFF, 0.05F * hover * (1F - 0.5F * press)));
+        }
+
+        int color = UiMotion.lerpColor(hiddenActive ? 0xFFCCD6E6 : 0xFF8A94A6, 0xFFFFFFFF, hover);
+        context.batcher.textShadow("»", x + 6, y + 6, color);
+
+        if (hiddenActive)
+        {
+            context.batcher.box(x + 5, this.area.ey() - 2, this.area.ex() - 5, this.area.ey() - 1,
+                UiGfx.mulA(0xFF4C9AFF, 0.9F));
+        }
+
+        if (press > 0.01F && this.pressedTab == -2 && !Window.isMouseButtonPressed(0))
+        {
+            this.pressedTab = -1;
+        }
+    }
+
+    private void cycleOverflow()
+    {
+        int size = this.tabs.size();
+
+        if (size <= 0 || this.onSelect == null)
+        {
+            return;
+        }
+
+        int next = (Math.max(0, this.active.getAsInt()) + 1) % size;
+
+        this.select(next);
     }
 
     /**
@@ -76,6 +194,14 @@ public class UICompTabBar extends UIElement
         if (!this.area.isInside(context))
         {
             return false;
+        }
+
+        if (this.overflow && context.mouseButton == 0 && context.mouseX >= this.area.ex() - OVERFLOW_W)
+        {
+            this.pressedTab = -2;
+            this.cycleOverflow();
+
+            return true;
         }
 
         return super.subMouseClicked(context);
@@ -196,8 +322,10 @@ public class UICompTabBar extends UIElement
         /* h(1F) fills whatever bar height the host gives us, so the tab can never overflow it. */
         tab.relative(this).x(this.nextX).y(0).w(width).h(1F);
         this.nextX += width + 2;
+        this.tabWidths.add(width);
         this.tabs.add(tab);
         this.add(tab);
+        this.layoutTabs();
     }
 
     public void select(int index)

@@ -211,6 +211,13 @@ public final class ReplayDebugHook
                 floatProperty("bbsae.debugReplayPitch"),
                 floatProperty("bbsae.debugReplayDistance")
             );
+
+            /* The scripted interaction run (P6) rides on the same verification hook: it performs
+             * the gizmo-write/undo/form/library/list interactions and screenshots each state. */
+            if (ReplayInteractionScript.isEnabled())
+            {
+                ReplayInteractionScript.start(panel);
+            }
         }
 
         BbsAeAddon.LOGGER.info("Replay debug hook: opened film='{}' replays={} panel={}",

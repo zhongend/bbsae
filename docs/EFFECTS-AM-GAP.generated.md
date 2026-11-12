@@ -1,6 +1,6 @@
 # AM 参数对齐差异清单（自动生成）
 
-对比对象：`_research/am/effects.json`（AM apk 提取的 277 条非 internal 定义）与 `comp/AmEffectLibrary.java`（数据驱动效果库，140 条定义）。
+对比对象：`_research/am/effects.json`（AM apk 提取的 277 条非 internal 定义）与 `comp/AmEffectLibrary.java`（数据驱动效果库，146 条定义）。
 参数 `kind` 覆盖：本项目 `AmEffectDef` 直接表达 `spinner/slider/color`；AM 的 `point/selector/texture` 在移植时被拆成两个 float 键或数值模式键，这属于既定的模式差异，不算缺失（但在第 2 节逐条标出）。
 
 ## 0. 规模
@@ -8,15 +8,15 @@
 | 指标 | 数量 |
 | --- | --- |
 | AM 非 internal 定义（去重后 token） | 277 |
-| 本项目 AM 定义 | 140 |
-| 自动匹配（同名/别名） | 107 |
-| 缺失：deprecated 旧版本 | 72 |
+| 本项目 AM 定义 | 146 |
+| 自动匹配（同名/别名） | 113 |
+| 缺失：deprecated 旧版本 | 71 |
 | 缺失：非 shader（图层属性/复制器） | 20 |
 | 缺失：3D 图元（本项目 MeshRenderer） | 19 |
-| 缺失：同族旧版本（boxblur→boxblur3 等） | 6 |
-| 缺失：可执行 shader 效果（候选） | 54 |
+| 缺失：同族旧版本（boxblur→boxblur3 等） | 7 |
+| 缺失：可执行 shader 效果（候选） | 48 |
 
-## 1. 已匹配（107 条）的参数差异
+## 1. 已匹配（113 条）的参数差异
 
 ### `am_bend` ↔ `bendwarp`（弯曲）
 
@@ -279,9 +279,17 @@
 
 - `scale`: default: 本项目 2 / AM 1
 
+### `am_turbulent_displace_3` ↔ `turbulentdisplace3`（湍流置换 3）
+
+- `scale`: min: 本项目 0.01 / AM 0.1
+
 ### `am_warp_blur` ↔ `warpblur`（湍流模糊）
 
 - `scale`: min: 本项目 0.01 / AM 0.1
+
+### `am_wave_warp` ↔ `wavewarp`（波浪扭曲）
+
+- `phase`: max: 本项目 500 / AM 1000
 
 ### `am_zoom_blur` ↔ `zoomblur2`（径向模糊）
 
@@ -333,6 +341,7 @@
 | `am_luma_key` | `lumakey3` | 3 | 0 | `feather`, `highThreshold`, `lowThreshold` |
 | `am_matte_fringe` | `mattefringe` | 8 | 0 | `excludeColor1`, `excludeColor2`, `excludeColor3`, `feather`, `thickness`, `threshold1`, `threshold2`, `threshold3` |
 | `am_mirror_warp` | `mirror` | 4 | 2 | `offset`, `radius` |
+| `am_omino_glass` | `ominoglass` | 17 | 8 | `featureSize`, `lightAmbient`, `lightColor`, `lightDepth`, `lightIntensity`, `lightShine`, `lightSpec`, `roughnessScale` |
 | `am_palette_map` | `palettemap` | 9 | 0 | `alpha`, `color1`, `color2`, `color3`, `color4`, `color5`, `color6`, `color7` |
 | `am_pixelate` | `pixelate2` | 5 | 3 | `angle`, `threshold` |
 | `am_polar` | `polar` | 7 | 3 | `crop`, `feather`, `radius` |
@@ -362,17 +371,18 @@
 | `am_swing` | `swing` | 4 | 1 | `a1`, `a2`, `freq` |
 | `am_tile` | `tile` | 3 | 1 | `angle`, `phase` |
 | `am_vortex_blur` | `vortexblur` | 2 | 0 | `radius`, `strength` |
+| `am_wave_warp` | `wavewarp` | 5 | 1 | `xamp`, `xspace`, `yamp`, `yspace` |
 | `am_zoom_blur` | `zoomblur2` | 4 | 1 | `cx`, `cy`, `radius` |
 
 ## 3. 缺失效果分类
 
-### 3.1 deprecated 旧版本（不补）（72 条）
+### 3.1 deprecated 旧版本（不补）（71 条）
 
-`outlinebad`、`outlinebasic`、`shadow`、`test`、`test2`、`test3`、`testblur`、`cube`、`flip`、`flip2`、`heart`、`spherize`、`triprism`、`boxblur`、`boxblur2`、`fastboxblur`、`lensblur`、`motionblur`、`motionblur3`、`zoomblur`、`brightcont`、`bumpmap`、`colorhot2`、`colortint`、`colortune`、`gradientoverlay`、`layernormtest`、`longshadow`、`circularripple`、`displacemap`、`displacemap2`、`fractalwarp`、`fractalwarp2`、`fractalwarp3`、`glass`、`pixelate`、`swirl2`、`swirl3`、`tilerotate`、`tileshift`、`turbulentdisplace`、`turbulentdisplace2`、`wavewarp`、`differencematte`、`lumakey`、`lumakey2`、`wipe`、`blink`、`checkerdissolve`、`flicker`、`pulseopacity`、`blocknoise`、`checker`、`clouds`、`clouds2`、`dots`、`irridescence`、`noise`、`noise2`、`ridges`、`simplestars`、`starfield2`、`turbulence`、`voronoi`、`facemotion`、`movealongpath`、`movealongpath2`、`oscillate`、`oscillate2`、`perlindisplace`、`shake`、`stretch`
+`outlinebad`、`outlinebasic`、`shadow`、`test`、`test2`、`test3`、`testblur`、`cube`、`flip`、`flip2`、`heart`、`spherize`、`triprism`、`boxblur`、`boxblur2`、`fastboxblur`、`lensblur`、`motionblur`、`motionblur3`、`zoomblur`、`brightcont`、`bumpmap`、`colorhot2`、`colortint`、`colortune`、`gradientoverlay`、`layernormtest`、`longshadow`、`circularripple`、`displacemap`、`displacemap2`、`fractalwarp`、`fractalwarp2`、`fractalwarp3`、`glass`、`pixelate`、`swirl2`、`swirl3`、`tilerotate`、`tileshift`、`turbulentdisplace`、`turbulentdisplace2`、`differencematte`、`lumakey`、`lumakey2`、`wipe`、`blink`、`checkerdissolve`、`flicker`、`pulseopacity`、`blocknoise`、`checker`、`clouds`、`clouds2`、`dots`、`irridescence`、`noise`、`noise2`、`ridges`、`simplestars`、`starfield2`、`turbulence`、`voronoi`、`facemotion`、`movealongpath`、`movealongpath2`、`oscillate`、`oscillate2`、`perlindisplace`、`shake`、`stretch`
 
-### 3.2 同族旧版本（已有新版本，不补）（6 条）
+### 3.2 同族旧版本（已有新版本，不补）（7 条）
 
-`motionblur4`、`spinblur2`、`zoomblur3`、`radialshadow2`、`spotcolor2`、`starfield3`
+`motionblur4`、`spinblur2`、`zoomblur3`、`radialshadow2`、`spotcolor2`、`wavewarp2`、`starfield3`
 
 ### 3.3 非 shader 效果（AM 用图层属性/复制器实现）（20 条）
 
@@ -382,7 +392,7 @@
 
 `box`、`cube2`、`cylinder`、`ellipsoid`、`extrude`、`heart2`、`hexprism`、`hollowbox`、`octahedron`、`pagecurl`、`plus`、`pyramid`、`ring`、`spherize2`、`starpoly`、`starprism`、`torus`、`triprism2`、`tunnel`
 
-### 3.5 可执行 shader 效果：真正缺失（候选批次）（54 条）
+### 3.5 可执行 shader 效果：真正缺失（候选批次）（48 条）
 
 | AM id | 类别 | 参数数 | 备注 |
 | --- | --- | --- | --- |
@@ -398,13 +408,7 @@
 | `brightcont2` | color | 3 | 高优先级 |
 | `posterize` | color | 3 | 高优先级 |
 | `invert` | color | 1 | 高优先级 |
-| `ominoglass` | distort | 23 | 高优先级 |
-| `turbulentdisplace3` | distort | 12 | 高优先级 |
-| `wavewarp2` | distort | 9 | 高优先级 |
 | `displacemaprad` | distort | 8 | 高优先级 |
-| `tileshift2` | distort | 7 | 高优先级 |
-| `pinchbulgeinside` | distort | 5 | 高优先级 |
-| `stretchsegment` | distort | 5 | 高优先级 |
 | `vrcombined` | distort | 4 | 高优先级 |
 | `vrplayer` | distort | 4 | 高优先级 |
 | `360-reorient-sphere` | distort | 1 | 高优先级 |

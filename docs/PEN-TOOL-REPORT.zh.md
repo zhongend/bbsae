@@ -101,8 +101,9 @@
 | P4 路径动画最低要求（已动画路径**不再**禁止增删点） | ✅（Round 2 已升级） | 见 §9：求值 → CountOp → 回写全部通道，曲线在关键帧处保形 |
 | P4 “整条路径打关键帧”助手 | ✅ | 检查器按钮/右键菜单：对 6N 通道在播放头 `insert`，一步 undo |
 | P4 求值→CountOp→回写全部关键帧的通道重映射 | ✅（Round 2） | 段上加点/末尾加点/删除点（含 Multi-delete）全支持；详见 §9 |
-| 逐点羽化（Mask Feather 工具） | ❌ | 数据模型缺 `FeatherPoint`，单独立项 |
-| RotoBezier / Convert To Bezier / Free Transform Points | ❌ | 依赖通道重排，后置 |
+| 逐点羽化（Mask Feather 工具） | ⏳ 评估完成/未实现 | `CompMask` 只有整条蒙版的 `feather`；无 per-point 字段、渲染器也只做整层 boxBlur。实现需数据+渲染+UI 三处联动（本轮禁止 client/render），见 §12.1 |
+| RotoBezier 自动切线 | ⏳ 评估完成/未实现 | `CompMaskPoint.smooth` 字段无消费者；`convertVertex` 只做一次性 1/6 切线。见 §12.3 |
+| Convert To Bezier / Free Transform Points | ❌ | 依赖通道重排，后置 |
 | Set First Vertex | ✅（Round 3） | 闭合路径右键菜单“设为第一顶点”；几何轮转 + 动画通道/loops 轮转，见 §11 |
 | 点通道 KeyframeLoop 保真 | ✅（Round 3） | 索引搬移、新点通道、Set First Vertex 都携带 loops；见 §11 |
 | 2D/3D 命中与手势 bug 审查 | ✅（Round 3） | 修复“动画路径叠加/命中/拖动用 base 值而非当前帧求值”“Shift 在屏幕+局部被约束两次”；新增命中/边界/段 t 回归；见 §11 |
@@ -131,6 +132,9 @@
 13. **叠加/命中现在按当前帧求值**（Round 3）：`MaskTarget/ShapeTarget` 每次读取都走 `layer.scalarAt`，因此动画路径的锚点/手柄/吸附都跟随播放头。代价是钢笔激活时每帧对可见路径做 O(点数×6) 次 `scalarAt`（小蒙版可忽略；50×40 路径同时可见时是后台开销，未做性能基准）。
 14. **Set First Vertex 只支持闭合路径**（AE 对开放路径也允许“轮转起点”，但开放路径的起点是钢笔续画/闭合手势的语义锚点，轮转容易让用户困惑；当前明确拒绝并提示）。
 15. **KeyframeLoop 的语义边界**：loop 是绝对时间块，随通道搬移保留；**新插入点**的 loop 从段起点分量复制（通常同一 block 共享 id）。被删点的 loop 随通道清空；若 loop 只存在于某些分量，新点只继承起点分量那一组。
+16. **dope sheet/曲线通道同步需要 Lead 1 行钩子**（Round 4）：增删点/Set First Vertex 后 session 会发 `structureChanged`，`UIPenTool` 通过反射调用计划中的 `penRefreshSheets()`；面板未加桥时 sheet 行列表要到下一次选择变化才刷新（通道数据已正确）。补丁见 §12.5。
+17. **残留空通道**：点被删除/索引轮转后，旧通道对象仍留在 `CompLayer.scalarChannels`（无删除 API，CompLayer 不在写域），刷新 sheet 后可能出现空行；建议后续加 `removeScalarChannel`.
+18. **逐点羽化 / RotoBezier 仍未实现**（Round 4 评估，见 §12.1/§12.3）：需要数据模型 + client/render 栅格器/自动切线 + 工具 UI，属单独立项。
 
 ---
 
@@ -159,6 +163,10 @@
 19. **Set First Vertex（Round 3）**：闭合蒙版选中第二个锚点 → 右键“设为第一顶点” → 闭合形状不变、起点圆点移动；动画路径在 0/24 帧轮廓不变；撤销一步。
 20. **KeyframeLoop 保真（Round 3）**：给路径点通道设 loop → 在段上加点/删点/Set First Vertex → 跨 loop 区域播放时形状仍重复，新点跟随循环。
 21. **Shift 约束在旋转/透视图层（Round 3 修复）**：旋转 30°、非均匀缩放的图层上 Shift+拖动锚点 → 屏幕上沿 45° 方向（修复前先屏幕约束又在局部约束一次，方向偏）。
+22. **集成：钢笔中点选工具（Round 4）**：钢笔激活时按 V 或 A → 回到选择工具；Ctrl+A 仍是全选图层。
+23. **集成：钢笔中删图层 / 进 precomp（Round 4）**：绘制/编辑中删除当前图层或进入 precomp → 钢笔自动退出编辑并提示，不会往已删除对象写数据；在新合成里可直接继续画。
+24. **集成：摄像机工具（Round 4）**：钢笔激活时去点摄像机工具按钮 → 下一次预览帧自动关闭摄像机工具，不会出现“左键同时环绕+画点”。
+25. **集成：动画路径增删点后的 dope sheet（Round 4，需 §12.5 钩子集成后验证）**：加点/删点后检查器/关键帧抽屉应出现/移除对应的 `p/<i>` 行，曲线编辑器同步；未集成钩子时形状正确但行列表可能滞后到下一次选择。
 
 ---
 
@@ -171,8 +179,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 test --offline --console=plain
 ```
 
-钢笔相关 10 个测试类（全量 test 会一并跑）：
-`CompPathGeometryTest`、`CompPenSessionTest`、`AnimatedPathRemapTest`、`PathLoopSetFirstVertexTest`、`AnimatedPenHitTest`、`PenPathPersistenceTest`、`MaskPathRasterTest`、`MaskGlRenderTest`、`ShapeOpenPathTest`、`PenProjectionTest`。
+钢笔相关 12 个测试类（全量 test 会一并跑）：
+`CompPathGeometryTest`、`CompPenSessionTest`、`AnimatedPathRemapTest`、`PathLoopSetFirstVertexTest`、`AnimatedPenHitTest`、`MaskKeyframeResolutionTest`、`PenPathPersistenceTest`、`MaskPathRasterTest`、`MaskGlRenderTest`、`ShapeOpenPathTest`、`PenProjectionTest`、`PenIntegrationRulesTest`。
 
 结果：
 
@@ -181,6 +189,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 - Round 2 全量 `gradle-run.ps1 test`：**97 suites / 565 tests / 0 failures / 0 errors**。
 - Round 3（2026-11-13 00:3x）新增 `PathLoopSetFirstVertexTest`（7）、`AnimatedPenHitTest`（2），并扩充 `CompPenSessionTest`（15→18：命中边界、段 t、闭合半径）、`PenProjectionTest`（6→10：旋转/透视命中、屏幕 45° 约束）。10 类合计 **90 tests / 0 fail**（`compileJava`/`compileTestJava` BUILD SUCCESSFUL）。
 - Round 3 全量 `gradle-run.ps1 test`：**643 tests / 3 failed / 1 skipped**；3 个失败全部在 effects 队友进行中的新增效果（`EffectP1BatchTest` 默认值可见性、`EffectLibraryNamingTest` 唯一名、`EffectThumbnailResourceTest` 预览图缺失），与钢笔无关，已在本轮汇报里标给 Lead。
+- Round 4（2026-11-13 01:0x）新增 `MaskKeyframeResolutionTest`（2：maskAt 对 feather/opacity/expansion 关键帧的 2D/3D 共用解析、逐点羽化缺失守卫）、`PenIntegrationRulesTest`（2：targetExists 失效规则、V/A 切选择工具）；扩充 `CompPenSessionTest`（18→19：`structureChanged` 通知）、`PenProjectionTest`（10→11：3D 透视下手柄拖动投影回光标）。12 类合计 **96 tests / 0 fail**。
+- Round 4 全量 `gradle-run.ps1 test`：**117 suites / 699 tests / 0 failures / 0 errors**（含 effects/replay 队友本轮改动）。
 - 受 `MaskCache`/`ShapeRasterizer` 改动影响的既有测试回归：`CompLayerSourceCacheTest`、`MaskCombineTest`、`EntityMaskSizingTest`、`ReplayEntityMaskRequestTest`、`CompScenePlaneDepthTest` 全绿。
 
 ---
@@ -193,7 +203,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 - 空白处**单击**：加角点（开放路径；蒙版路径未闭合前不遮罩）。
 - 空白处**按下并拖动**：加平滑点，拖出对称贝塞尔手柄。
 - **点击起点**（8px 内）：闭合路径并结束本次绘制（蒙版此时开始遮罩）。
-- **Enter**：结束路径（保持开放）。**Esc**：结束/取消当前绘制与选择。
+- **Enter**：结束路径（保持开放）。**Esc**：结束/取消当前绘制与选择。**V / A**：切回选择工具（关闭钢笔，AE 语义）。
+- 钢笔激活期间删图层/进 precomp → 自动退出编辑并提示；摄像机工具会被自动关闭（两者不会同时吃鼠标）。
 - **Shift+单击**：新点约束到相对上一点 45°（屏幕空间）。
 - 画完后**点击开放路径末点**：从末点续画。**点击开放路径起点**（≥3 点）：闭合。
 - **右键**：钢笔菜单（结束路径 / 闭合·断开 / 转角点·转平滑点 / 删除所选 / 整条路径打关键帧 / 退出钢笔）——右键不会再误入 3D 视口。
@@ -326,4 +337,78 @@ this.smallButton("设为第一顶点", () -> this.penTool().setFirstVertex(/* �
 2. 动画路径叠加/命中按帧求值带来每帧 `scalarAt` 开销（小路径可忽略；未做性能基准，见 §5-13）。
 3. 新插入点的 loop 从段起点分量继承（同一 block 通常一致，见 §5-15）。
 4. 本轮仍未做：逐点羽化、RotoBezier、Free Transform、Contents 组、跨路径框选、拖拽性能降采样。
+
+---
+
+## 12. Round 4：逐点羽化/RotoBezier 评估 + 集成 bug 审查
+
+### 12.1 逐点羽化（per-point feather）现状评估 —— **未实现，本轮不硬做**
+
+| 问题 | 结论与证据 |
+|---|---|
+| 数据模型有逐点羽化字段吗？ | **没有**。`CompMask.CompMaskPoint` 只有 `x/y/inX/inY/outX/outY/smooth`（`comp/CompMask.java`）；`CompMask` 上只有一个 `float feather`。`MaskKeyframeResolutionTest.featherIsOneScalarPerMaskNotPerPoint` 用反射把“没有 per-point feather 字段”钉住（未来谁加了字段，这个守卫会失败提醒接渲染/检查器）。 |
+| 渲染支持逐点羽化吗？ | **不支持**。`MaskCache.alphaFor` 用 `mask.feather` 对整张 mask alpha 做一次 `boxBlur`（半径 = round(feather)），与点位置无关；没有沿路径的逐点羽化宽度插值，也没有 `FeatherPoint` 数据。 |
+| AE / Alight Motion 的语义 | AE 的 Mask Feather 是**逐点**的（每个锚点两侧各有羽化向量，路径内部线性插值）；Alight Motion 也提供逐边/逐点羽化。本项目当前是“整条蒙版一个羽化半径”，只能做均匀柔边。 |
+| 要真正实现需要什么 | ① `CompMaskPoint` 增加羽化数据（如 `featherIn/featherOut` 或独立 `List<FeatherPoint>`）+ 序列化/迁移；② 新增标量通道 `mask/<id>/p/<i>/feather*` 并让 remap/Set First Vertex 一起轮转；③ `MaskCache` 改为“沿轮廓逐段羽化”（AWT 没有直接支持，需要导出 alpha 后用距离场/双轮廓填充，或在 3D 烘焙时用 SDF），是 client/render 的大改；④ 检查器/钢笔工具加 Feather 工具与叠加层。 |
+| 本轮决定 | **不做**（写域禁止 client/render 大改；数据模型 + 渲染 + UI 三处联动，属单独立项）。建议作为需求 6 的后续条目，验收时按 §1.2 的 C 类标注“明确不做”。 |
+
+> 顺带评估：`CompMaskPoint.smooth` 字段存在但**没有任何代码读取**（RotoBezier 的雏形）。RotoBezier（自动切线）同样未实现：没有 UI 开关、`convertVertex` 只做 1/6 规则的一次性转换，移动锚点不会重算切线。见 §12.3。
+
+### 12.2 mask expansion / opacity 关键帧在 2D / 3D 路径都生效 —— **确认生效**
+
+证据链（只读代码，不在本轮写域内改动）：
+
+| 路径 | 调用 | 解析 |
+|---|---|---|
+| 2D 普通图层 | `client/render/CompRenderer.java:738`（`maskModel`/`context.frame`）和图层内遮罩 pass `:1400` | `MaskCache.get(layer, w, h, world, frame, scale)` → `MaskCache.java:72` `layer.maskAt(mask, frame)` |
+| 3D 烘焙图层 | `client/render/CompLayerSourceCache.java:511`（`parent.frame`） | 同上 `MaskCache.get(...)` → `maskAt` |
+| 轨道遮罩（track matte） | `CompRenderer.java:868` | 同上 |
+| 解析实现 | `comp/CompLayer.java:1226` `maskAt` | 对 `mask/<id>/{opacity,feather,expansion}` 逐个 `scalarAt(frame)`，点坐标/手柄也按帧求值；结果拷贝，不动原数据。 |
+
+`MaskCache.get` 在解析后把 `feather/expansion` 乘 raster scale（3D 代理分辨率），2D/3D 两条路径行为一致。回归：`MaskKeyframeResolutionTest`（0/12/24 帧的 feather/opacity/expansion 求值 + 不污染原 mask + 关闭状态拷贝）。
+结论：**关键帧化蒙版标量在 2D/3D 都生效，无 bug**。`mask.enabled/mode/inverted` 不是动画通道（有意设计）。
+
+### 12.3 RotoBezier / 3D 透视下手柄切线 —— 拖拽投影正确；RotoBezier 本身未实现
+
+- **屏幕拖动 → 局部切线**：3D 透视下把鼠标映射回图层平面一次（`screenToLocal`），手柄向量按局部空间存；因此把手柄端点再投影回屏幕必须正好落在鼠标下。新增 `PenProjectionTest.handleDragOnATiltedCardProjectsBackUnderTheCursor`：yaw 30° 卡片，投影误差 < 0.05px；镜像手柄在局部空间严格相反，屏幕方向点积 < 0（透视会让两侧长度看起来不同，符合 AE 的局部空间语义）。
+- **平滑点切线规则**：`convertVertex`/`smoothTangents` 用 1/6 相邻距离（effectcraft 同规则）；Round 3 已按帧求值，动画路径下切线基于当前帧邻居。
+- **RotoBezier 自动切线：未实现**。`CompMaskPoint.smooth` 无消费者；右键“转为平滑点”只是一次性写切线，移动锚点不会重新自动切线（AE RotoBezier 会）。原因：需要每帧/每次拖动的切线重算 + UI 开关 + 与动画通道写入的交互，属新功能而非 bug。建议后续条目。
+
+### 12.4 集成 bug 审查（能修的已修）
+
+| # | 审查项 | 结论 | 处理/证据 |
+|---|---|---|---|
+| 1 | 钢笔 + 选择工具切换 | **缺口**：此前只有 `G` 关钢笔；用户按 V/A 不会退回选择工具（面板的 `tool.select` 只设状态） | **已修**：`UIPenTool.onKey` 在钢笔激活时消费无修饰的 V/A → 关闭钢笔并提示；`isSelectionToolSwitchKey` 可单测（`PenIntegrationRulesTest`）。带修饰键仍走快捷键表（Ctrl+A 全选等） |
+| 2 | 钢笔过程中切图层 | 已有：`selectLayer` → `penTool.forget()`（Round 1） | 新增 `ensureSessionValid()` 防御（见 #3） |
+| 3 | 钢笔过程中**删除图层/删除路径/切 precomp** | **真 bug**：`deleteLayer` 用 `setSingleSelection`（不经过 `selectLayer`）；`enterPrecomp/exitPrecomp` 直接换 `this.doc` —— 都不会通知钢笔，session 持有已删除/旧合成对象 | **已修**：静态 `UIPenTool.targetExists(doc, layer, mask, index)` + `ensureSessionValid()`（doc 内 layer 存在 + 槽位存在 + PATH 类型），在 `onPress/onDrag/onKey/renderOverlay` 入口调用；失效则 `forget()` + 状态栏提示。测试 `PenIntegrationRulesTest.targetStopsExistingWhenLayerOrPathGoesAway` |
+| 4 | 钢笔与摄像机工具同时激活 | **真 bug**：面板 `toggleCameraTool` 不检查钢笔；两者同开会双吃鼠标（摄像机工具轮询在钢笔之前） | **已修**：`enforceToolExclusivity()`（钢笔激活时若 cameraToolActive → `setCameraTool(false)`），在 `renderOverlay`（每帧）/`onPress`/`onKey`/`onDrag` 调用；开启钢笔时本来就互相 disarm（Round 1） |
+| 5 | precomp 内外 | 同 #3 的 doc 身份校验覆盖；进 precomp 后第一次 overlay 即失效旧 target；在新合成里可直接继续画 | 报告 §12.4-3 测试（换 doc 场景） |
+| 6 | Esc / Enter / G / F 冲突 | Esc/Enter 在绘制时优先（Round 1）；G 面板级切换钢笔（绘制中按 G = 取消绘制但保留已落点，每点已 save）；**F 不消费**：F 是聚焦模式/摄像机飞行（需选中摄像机层，钢笔拒绝摄像机层，两者不会同时进入） | 无需改；V/A 新增见 #1。若未来 F 改成常用键，可在 UIPenTool.onKey 按需消费（一行） |
+| 7 | 动画路径增删点后 dope sheet / 曲线通道同步 | **部分修复，需要 Lead 1 行钩子**：`CompPenSession.Listener` 新增 `structureChanged()`，session 在 段上加点/末尾加点/删除点/Set First Vertex 后通知；`UIPenTool` 收到后 `structureDirty=true` 并调用 `refreshKeyframeSheets()`（反射查找计划中的 `penRefreshSheets` 桥）。**面板目前没有这个桥**，所以 sheet 行列表要等下一次选择变化才刷新（通道数据本身已正确）。另：被搬空的旧通道对象仍留在 `CompLayer.scalarChannels`（CompLayer 无删除 API，不在写域），刷新后可能出现空行/工程里残留空通道。 | 补丁见 §12.5 |
+| 8 | Set First Vertex 后选中索引 | 正确：rotate 后 `selection={0}`、`anchorPoint=count-1`；右键菜单与后续拖动/删除都按 0 号点工作；`PathLoopSetFirstVertexTest` 断言 | 无 bug |
+| 9 | 钢笔中删除**当前路径所属蒙版**（不是图层） | 同 #3：`ensureSessionValid` 检查 mask/shape 槽位存在；失效即 forget | 已修 |
+
+### 12.5 需要 Lead 的 1 行钩子（第 7 项的完整修复）
+
+`UICompositorPanel` 的 pen bridge 区块（`/* pen tool bridge */`，`penRefreshInspector()` 附近）加：
+
+```java
+    /** Rebuilds the dope sheet / curve editor after the pen changed the channel structure. */
+    void penRefreshSheets()
+    {
+        this.refreshSheets();
+    }
+```
+
+`UIPenTool.refreshKeyframeSheets()` 已经通过反射查找这个方法：加上即生效，钢笔/编辑器两侧无需再改。未加时无副作用（catch NoSuchMethodException）。
+
+### 12.6 Round 4 未做项与原因
+
+| 项 | 原因 |
+|---|---|
+| 逐点羽化（数据 + 渲染 + UI） | 需要 client/render 的栅格器大改 + 数据模型迁移 + 检查器/工具 UI；本轮禁止改 client/render，且是三处联动的新功能，已出评估（§12.1） |
+| RotoBezier 自动切线 | 需要 UI 开关 + 每帧切线重算 + 动画写入交互；`smooth` 字段是雏形但无消费者，属新功能（§12.3） |
+| 空通道清理（删除点后残留的 `scalarChannels` 空条目） | `CompLayer` 无 remove 通道 API，且 CompLayer 不在写域；建议后续加 `removeScalarChannel(path)` 并在 remap/rotate 后调用 |
+| F 键冲突处理 | 当前 F 不会造成双触发（见 §12.4-6）；若用户反馈再消费 |
+| 3D 工作区内的 precomp/摄像机混合场景 | 依赖 #3/#5 的同一套校验；无独立代码路径 |
 

@@ -349,6 +349,47 @@ public final class CompUi
         return new PreviewRailLayout(Math.max(32, Math.min(PREVIEW_BAR_MAX, available)), xs, shown);
     }
 
+    /**
+     * Overflow layout of a fixed tab strip (inspector / timeline / left column tabs).
+     *
+     * <p>Tabs are absolutely positioned with their natural width. When the dock panel is dragged
+     * narrower than the sum, the trailing tabs are hidden and a "»" control (20 px) cycles the
+     * active page. Returns {@code [visibleCount, overflowX, overflowFlag]}; {@code overflowX} is
+     * relative to the bar's left edge and only meaningful when the flag is 1.</p>
+     */
+    public static int[] tabStripLayout(int[] widths, int available)
+    {
+        int width = Math.max(0, available);
+        int total = 0;
+
+        for (int item : widths)
+        {
+            total += Math.max(0, item) + 2;
+        }
+
+        if (total <= width || widths.length == 0)
+        {
+            return new int[] {widths.length, width, 0};
+        }
+
+        int limit = Math.max(1, width - 20);
+        int used = 0;
+        int count = 0;
+
+        for (int item : widths)
+        {
+            if (used + Math.max(0, item) > limit && count > 0)
+            {
+                break;
+            }
+
+            used += Math.max(0, item) + 2;
+            count++;
+        }
+
+        return new int[] {Math.max(1, count), Math.max(0, width - 20), 1};
+    }
+
     /** Minimum width of the floating preview bar when the icon rail competes for the same row. */
     public static final int MIN_BAR_WIDTH = 150;
     public static final int PREVIEW_BAR_MAX = 292;

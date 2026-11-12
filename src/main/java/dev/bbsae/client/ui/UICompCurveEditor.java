@@ -23,10 +23,12 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -202,6 +204,55 @@ public class UICompCurveEditor extends UIElement
         this.graph.focusChannel(path);
     }
 
+    /* ---------------------------------------------------------------- motion tuning
+     * Pure mappings from an animated 0..1 amount to the drawn weight of the graph's elements.
+     * Kept static and package-private so the feedback curves can be pinned headlessly: drawing a
+     * curve needs a GL context, the numbers behind it do not. */
+
+    /** Stroke thickness of a channel at an animated emphasis (0 = ghost, 1 = fully active). */
+    static float curveThickness(float emphasis)
+    {
+        return 1F + 0.6F * UiMotion.clamp01(emphasis);
+    }
+
+    /** Stroke opacity of a channel at an animated emphasis. */
+    static float curveOpacity(float emphasis)
+    {
+        return 0.35F + 0.65F * UiMotion.clamp01(emphasis);
+    }
+
+    /** Radius of the soft ring drawn around a hovered/selected key. */
+    static float keyRingRadius(float emphasis, float intensity)
+    {
+        return 4.5F + 2.5F * UiMotion.clamp01(emphasis) * UiMotion.clamp01(intensity);
+    }
+
+    /** Extra size added to a key glyph; the 10 px hit radius stays authoritative. */
+    static int keyGlyphGrowth(float emphasis, float intensity)
+    {
+        return Math.round(UiMotion.clamp01(emphasis) * UiMotion.clamp01(intensity));
+    }
+
+    /** Alpha of the playhead's breathing glow; 0 when the glow switch is off. */
+    static float playheadGlowAlpha(float breathe, float intensity)
+    {
+        return (0.10F + 0.10F * UiMotion.clamp01(breathe)) * UiMotion.clamp01(intensity);
+    }
+
+    /** Readout shown next to the pointer while a keyframe is dragged. */
+    static String dragHudText(String label, String valueText, float frame)
+    {
+        return (label == null ? "" : label) + "  " + (valueText == null ? "" : valueText)
+            + "  帧 " + String.format(Locale.ROOT, "%.1f", frame);
+    }
+
+    /** Readout shown next to the pointer while a bezier handle is dragged. */
+    static String handleHudText(boolean outgoing, float influence, float speed)
+    {
+        return (outgoing ? "出切线" : "入切线")
+            + String.format(Locale.ROOT, "  影响 %.0f%%  速度 %.1f/s", influence * 100F, speed);
+    }
+
     private final class Graph extends UIElement
     {
         private static final int DRAG_NONE = 0;
@@ -286,6 +337,19 @@ public class UICompCurveEditor extends UIElement
         private int lastClickX;
         private int lastClickY;
         private long lastClickTime;
+
+        /* --- motion state -------------------------------------------------------
+         * One clock per graph (ticked once in render()). Channel names are built on first sight,
+         * never inside a draw loop; the automatic UiMotion prune drops rows/keys that scrolled
+         * away, so a long editing session does not accumulate one channel per key ever seen. */
+        private final UiMotion motion = new UiMotion();
+        /** Row emphasis channels keyed by "c:&lt;channelId&gt;" or "g:&lt;group&gt;". */
+        private final Map<String, String[]> rowKeys = new HashMap<>();
+        /** Per-key {hover, select} channels, identity-mapped and capped on structural churn. */
+        private final IdentityHashMap<Keyframe<?>, String[]> keyKeys = new IdentityHashMap<>();
+        private int keyKeySerial;
+        /** Keyframe under the pointer this frame (hover ring); null while dragging. */
+        private Keyframe<?> hoveredKey;
 
         /* --- curve geometry ------------------------------------------------------
          * One reusable span array per channel, refilled every frame (see spansFor for why it is
@@ -1053,6 +1117,8 @@ public class UICompCurveEditor extends UIElement
         @Override
         public void render(UIContext context)
         {
+            this.motion.tickFrame();
+
             this.ensureView();
 
             if (this.layer != UICompCurveEditor.this.panel.getSelectedLayer())
@@ -1062,6 +1128,15 @@ public class UICompCurveEditor extends UIElement
 
             this.updateAreas();
             this.updateAxis();
+
+            /* Hover targets are resolved once per frame and read by the draw passes below. Hit
+             * geometry is untouched, so a hover ring can never change what a click selects. */
+            boolean dragging = this.dragMode != DRAG_NONE;
+
+            this.hoveredKey = !dragging && this.curveArea.isInside(context)
+                ? this.keyAt(context.mouseX, context.mouseY) : null;
+            this.hoverRow = this.listArea.isInside(context) ? this.rowIndexAt(context.mouseY) : -1;
+
             this.handleDrag(context);
 
             /* Every box() in BBS's Batcher2D is a separate draw call unless a batch scope is
@@ -1138,8 +1213,11 @@ public class UICompCurveEditor extends UIElement
                     this.buildRows();
                 }
 
-                for (ListRow row : this.rows)
+                int accent = BBSSettings.primaryColor() & 0xFFFFFF;
+
+                for (int i = 0; i < this.rows.size(); i++)
                 {
+                    ListRow row = this.rows.get(i);
                     int y = this.listArea.y + row.y;
 
                     if (y + row.height < this.listArea.y || y > this.listArea.ey())
@@ -1147,22 +1225,49 @@ public class UICompCurveEditor extends UIElement
                         continue;
                     }
 
+                    /* Stable channel names per row id (channel or group), never per frame. */
+                    String id = row.channel == null ? "g:" + row.group : "c:" + row.channel.id;
+                    String[] keys = this.rowKeys(id);
+                    boolean hover = i == this.hoverRow;
+                    float hov = this.motion.anim(keys[1], hover ? 1F : 0F, 24F);
+
                     if (row.channel == null)
                     {
                         context.batcher.box(this.listArea.x, y, this.listArea.ex() - 1, y + row.height, 0xFF1B212B);
-                        context.batcher.textShadow(row.group, this.listArea.x + 6, y + 3, 0xFF7C8798);
+
+                        if (hov > 0.004F)
+                        {
+                            context.batcher.gradientHBox(this.listArea.x, y, this.listArea.ex() - 1, y + row.height,
+                                UiMotion.alpha(accent, 0.14F * hov), UiMotion.alpha(accent, 0.02F * hov));
+                        }
+
+                        context.batcher.textShadow(row.group, this.listArea.x + 6, y + 3,
+                            UiMotion.lerpColor(0xFF7C8798, 0xFFD6DEEB, hov));
+
                         continue;
                     }
 
                     boolean isActive = row.channel == this.active;
                     boolean isVisible = this.isVisible(row.channel);
+                    float act = this.motion.anim(keys[0], isActive ? 1F : 0F, 22F);
 
-                    if (isActive)
+                    if (act > 0.01F)
                     {
-                        context.batcher.box(this.listArea.x, y, this.listArea.ex() - 1, y + row.height, 0xFF223047);
+                        context.batcher.box(this.listArea.x, y, this.listArea.ex() - 1, y + row.height,
+                            UiMotion.alpha(0xFF223047, act));
+                        context.batcher.box(this.listArea.x, y, this.listArea.x + 2, y + row.height,
+                            UiMotion.alpha(accent, act));
+                    }
+
+                    if (hov > 0.004F)
+                    {
+                        context.batcher.gradientHBox(this.listArea.x, y, this.listArea.ex() - 1, y + row.height,
+                            UiMotion.alpha(accent, hov * 0.16F), UiMotion.alpha(accent, hov * 0.02F));
                     }
 
                     int chip = isVisible ? row.channel.color : Colors.setA(row.channel.color, 0.25F);
+
+                    chip = UiMotion.lerpColor(chip, 0xFFFFFFFF, Math.max(act * 0.20F, hov * 0.15F));
 
                     context.batcher.box(this.listArea.x + 7, y + 5, this.listArea.x + 13, y + 11, chip);
 
@@ -1171,7 +1276,8 @@ public class UICompCurveEditor extends UIElement
                         context.batcher.box(this.listArea.x + 7, y + 5, this.listArea.x + 13, y + 11, 0x33000000);
                     }
 
-                    int color = isActive ? 0xFFFFFFFF : (isVisible ? 0xFFC3CCDA : 0xFF6E7787);
+                    int idle = isVisible ? 0xFFC3CCDA : 0xFF6E7787;
+                    int color = UiMotion.lerpColor(idle, 0xFFFFFFFF, Math.max(act, hov * 0.5F));
 
                     context.batcher.textShadow(this.trim(row.channel.label, 16), this.listArea.x + 19, y + 4, color);
                 }
@@ -1190,6 +1296,65 @@ public class UICompCurveEditor extends UIElement
             }
 
             return text.length() <= length ? text : text.substring(0, length - 1) + "…";
+        }
+
+        /** Emphasis channels of one list row: 0 = active amount, 1 = hover amount. */
+        private String[] rowKeys(String id)
+        {
+            String[] keys = this.rowKeys.get(id);
+
+            if (keys == null)
+            {
+                /* A layer can expose a few dozen channels; the cap only guards pathological
+                 * projects, and rebuilding a string on the next frame is cheaper than leaking. */
+                if (this.rowKeys.size() > 512)
+                {
+                    this.rowKeys.clear();
+                }
+
+                keys = new String[] {"row:" + id + ":a", "row:" + id + ":h"};
+                this.rowKeys.put(id, keys);
+            }
+
+            return keys;
+        }
+
+        /** Emphasis channels of one keyframe: 0 = hover amount, 1 = selection amount. */
+        private String[] keyKeys(Keyframe<?> key)
+        {
+            String[] keys = this.keyKeys.get(key);
+
+            if (keys == null)
+            {
+                if (this.keyKeys.size() > 4096)
+                {
+                    this.keyKeys.clear();
+                }
+
+                String base = "kf:" + (this.keyKeySerial++);
+
+                keys = new String[] {base + ":h", base + ":s"};
+                this.keyKeys.put(key, keys);
+            }
+
+            return keys;
+        }
+
+        /** Index of the channel-list row under a pointer Y, or -1. */
+        private int rowIndexAt(int mouseY)
+        {
+            for (int i = 0; i < this.rows.size(); i++)
+            {
+                ListRow row = this.rows.get(i);
+                int y = this.listArea.y + row.y;
+
+                if (mouseY >= y && mouseY < y + row.height)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         private void renderGrid(UIContext context)
@@ -1341,7 +1506,7 @@ public class UICompCurveEditor extends UIElement
                             continue;
                         }
 
-                        this.drawChannel(context, channel, false, 0.24F);
+                        this.drawChannel(context, channel, 0F, true);
                     }
                 }
 
@@ -1362,7 +1527,12 @@ public class UICompCurveEditor extends UIElement
                         continue;
                     }
 
-                    this.drawChannel(context, channel, channel == this.active, channel == this.active ? 1F : 0.35F);
+                    /* Active amount is animated: switching the active channel fades the old line
+                     * out and the new one in instead of swapping its weight in one frame. */
+                    float act = this.motion.anim(this.rowKeys("c:" + channel.id)[0],
+                        channel == this.active ? 1F : 0F, 22F);
+
+                    this.drawChannel(context, channel, act, false);
                 }
             }
             finally
@@ -1416,17 +1586,16 @@ public class UICompCurveEditor extends UIElement
             return CompCurves.isScaleAxis(a) && CompCurves.isScaleAxis(b);
         }
 
-        private void drawChannel(UIContext context, CompCurveChannel channel)
-        {
-            this.drawChannel(context, channel, channel == this.active, channel == this.active ? 1F : 0.35F);
-        }
-
-        private void drawChannel(UIContext context, CompCurveChannel channel, boolean active, float opacity)
+        private void drawChannel(UIContext context, CompCurveChannel channel, float emphasis, boolean ghost)
         {
             int color = channel.color;
-            float thickness = active ? 1.6F : 1F;
+            float animated = UiMotion.clamp01(emphasis);
+            float intensity = UiMotion.clamp01(this.motion.intensity());
+            /* The static mapping gives the shape; intensity scales how much of it is used. */
+            float thickness = 1F + (curveThickness(animated) - 1F) * intensity;
+            float opacity = ghost ? 0.24F : curveOpacity(animated);
 
-            if (active && DEBUG_SPANS)
+            if (DEBUG_SPANS && !ghost && animated > 0.5F)
             {
                 StringBuilder line = new StringBuilder();
 
@@ -1448,10 +1617,12 @@ public class UICompCurveEditor extends UIElement
 
             /* A 3–4 px translucent halo under the active curve. The coverage rasterizer below
              * gives the core a soft edge and this halo makes it read as an AE graph instead of a
-             * Minecraft 1 px strip. */
-            if (active && CompPrefs.get().glow)
+             * Minecraft 1 px strip. It fades with the active amount, so switching channels is a
+             * cross-fade rather than a pop. */
+            if (!ghost && animated > 0.01F && CompPrefs.get().glow)
             {
-                this.drawSmoothCurve(context, color, 0.10F, 4.4F);
+                this.drawSmoothCurve(context, color, 0.10F * animated * intensity,
+                    3.2F + 1.2F * animated * intensity);
             }
 
             this.drawSmoothCurve(context, color, opacity, thickness);
@@ -1712,12 +1883,19 @@ public class UICompCurveEditor extends UIElement
                         float value = this.speedMode ? this.keySpeed(channel, raw, true) : channel.numericValue(raw);
                         float y = this.toY(value);
                         boolean selected = this.selection.contains(raw);
-                        int color = selected ? 0xFFFFFFFF
-                            : ghost ? Colors.setA(channel.color, 0.30F)
+                        String[] keys = this.keyKeys(raw);
+                        /* A key that was just clicked fades to white instead of snapping; a key
+                         * that scrolls away is pruned by UiMotion, so the identity map stays sane. */
+                        float hov = this.motion.anim(keys[0], raw == this.hoveredKey ? 1F : 0F, 28F);
+                        float sel = this.motion.anim(keys[1], selected ? 1F : 0F, 22F);
+                        int base = ghost ? Colors.setA(channel.color, 0.30F)
                             : (isActive ? channel.color : Colors.setA(channel.color, 0.6F));
-                        int outline = selected ? 0xFF000000 : (ghost ? 0x33000000 : 0xAA000000);
+                        int color = UiMotion.lerpColor(base, 0xFFFFFFFF, Math.max(sel, hov * 0.55F));
+                        int outline = UiMotion.lerpColor(ghost ? 0x33000000 : 0xAA000000, 0xFF000000,
+                            Math.max(sel, hov * 0.5F));
 
-                        this.drawKeyShape(context, x, y, raw, color, outline);
+                        this.drawKeyShape(context, x, y, raw, color, outline,
+                            Math.max(sel, hov), channel.color);
                     }
                 }
             }
@@ -1728,8 +1906,24 @@ public class UICompCurveEditor extends UIElement
         }
 
         /** AE's keyframe glyphs: square = linear, circle = bezier, diamond = hold. */
-        private void drawKeyShape(UIContext context, float x, float y, Keyframe<?> key, int color, int outline)
+        private void drawKeyShape(UIContext context, float x, float y, Keyframe<?> key, int color, int outline,
+                                  float emphasis, int channelColor)
         {
+            float amount = UiMotion.clamp01(emphasis);
+            boolean glow = CompPrefs.get().glow;
+
+            if (amount > 0.01F)
+            {
+                /* Hover/selection ring sits outside the glyph, so the 10 px hit radius still
+                 * decides what a click selects — the ring is feedback, not geometry. */
+                float radius = keyRingRadius(amount, this.motion.intensity());
+                int ringColor = UiMotion.alpha(amount > 0.6F ? 0xFFFFFFFF : channelColor,
+                    (glow ? 0.26F : 0.18F) * amount);
+
+                context.batcher.outline(x - radius, y - radius, x + radius, y + radius, ringColor);
+            }
+
+            int grow = keyGlyphGrowth(amount, this.motion.intensity());
             boolean hold = key.getInterpolation().has(Interpolations.CONST);
             boolean bezier = key.getInterpolation().has(Interpolations.BEZIER)
                 || key.getInterpolation().has(Interpolations.AUTO)
@@ -1737,9 +1931,9 @@ public class UICompCurveEditor extends UIElement
 
             if (hold)
             {
-                for (int i = -3; i <= 3; i++)
+                for (int i = -3 - grow; i <= 3 + grow; i++)
                 {
-                    int w = 3 - Math.abs(i);
+                    int w = 3 + grow - Math.abs(i);
 
                     context.batcher.box(x - w, y + i, x + w + 1, y + i + 1, color);
                 }
@@ -1749,13 +1943,13 @@ public class UICompCurveEditor extends UIElement
 
             if (bezier)
             {
-                this.drawDisc(context, x, y, 3.4F, color, outline);
+                this.drawDisc(context, x, y, 3.4F + 0.8F * amount * this.motion.intensity(), color, outline);
 
                 return;
             }
 
-            context.batcher.box(x - 3, y - 3, x + 3, y + 3, outline);
-            context.batcher.box(x - 2, y - 2, x + 2, y + 2, color);
+            context.batcher.box(x - 3 - grow, y - 3 - grow, x + 3 + grow, y + 3 + grow, outline);
+            context.batcher.box(x - 2 - grow, y - 2 - grow, x + 2 + grow, y + 2 + grow, color);
         }
 
         /** A rounded AE key dot. Rows are fractional-width rectangles, so it reads as a disc even
@@ -1807,6 +2001,9 @@ public class UICompCurveEditor extends UIElement
                 float pxPerFrame = this.pxPerSecond() / this.fps();
                 float pxPerValue = Math.abs(this.toY(0F) - this.toY(1F));
                 List<Keyframe> keys = (List<Keyframe>) (List<?>) channel.raw().getKeyframes();
+                /* One shared amount: only one handle can be dragged at a time. */
+                float drag = this.motion.anim("handle-drag", this.dragMode == DRAG_HANDLE ? 1F : 0F, 26F);
+                float dragRadius = 3.4F + 0.9F * drag * this.motion.intensity();
 
                 for (int i = 0; i < keys.size(); i++)
                 {
@@ -1824,18 +2021,36 @@ public class UICompCurveEditor extends UIElement
                     {
                         float hx = x + key.rx * pxPerFrame;
                         float hy = y - key.ry * pxPerValue;
+                        boolean dragged = this.dragMode == DRAG_HANDLE
+                            && this.dragHandleKey == key && this.dragHandleOutgoing;
 
                         this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
-                        this.drawDisc(context, hx, hy, 3.4F, 0xFFE8C86A, 0xFF0D1015);
+
+                        if (dragged && drag > 0.01F)
+                        {
+                            context.batcher.outline(hx - 7F, hy - 7F, hx + 7F, hy + 7F,
+                                UiMotion.alpha(0xFFFFFFFF, 0.45F * drag));
+                        }
+
+                        this.drawDisc(context, hx, hy, dragged ? dragRadius : 3.4F, 0xFFE8C86A, 0xFF0D1015);
                     }
 
                     if (CompCurves.hasBezierHandle(keys, i, false))
                     {
                         float hx = x - key.lx * pxPerFrame;
                         float hy = y - key.ly * pxPerValue;
+                        boolean dragged = this.dragMode == DRAG_HANDLE
+                            && this.dragHandleKey == key && !this.dragHandleOutgoing;
 
                         this.line(context, x, y, hx, hy, 0xAAE8C86A, 1);
-                        this.drawDisc(context, hx, hy, 3.4F, 0xFFE8C86A, 0xFF0D1015);
+
+                        if (dragged && drag > 0.01F)
+                        {
+                            context.batcher.outline(hx - 7F, hy - 7F, hx + 7F, hy + 7F,
+                                UiMotion.alpha(0xFFFFFFFF, 0.45F * drag));
+                        }
+
+                        this.drawDisc(context, hx, hy, dragged ? dragRadius : 3.4F, 0xFFE8C86A, 0xFF0D1015);
                     }
                 }
             }
@@ -1854,6 +2069,20 @@ public class UICompCurveEditor extends UIElement
                 return;
             }
 
+            /* Breathing glow (only when the glow switch is on): the playhead is the graph's
+             * "you are here", so it gets the same slow pulse as the editor's header hairline.
+             * The line itself never moves — time is read from the model, not animated. */
+            float glow = CompPrefs.get().glow
+                ? playheadGlowAlpha(this.motion.breathe(2.8F), this.motion.intensity()) : 0F;
+
+            if (glow > 0.001F)
+            {
+                int spread = 2 + Math.round(2F * this.motion.intensity());
+
+                context.batcher.box(x - spread, this.area.y, x + 1 + spread, this.curveArea.ey(),
+                    UiMotion.alpha(0xFFFF5A5A, glow));
+            }
+
             context.batcher.box(x, this.area.y, x + 1, this.curveArea.ey(), 0xFFFF5A5A);
 
             for (int i = -4; i <= 4; i++)
@@ -1866,7 +2095,9 @@ public class UICompCurveEditor extends UIElement
 
         private void renderMarquee(UIContext context)
         {
-            if (this.dragMode != DRAG_MARQUEE)
+            float fade = this.motion.anim("marquee", this.dragMode == DRAG_MARQUEE ? 1F : 0F, 30F);
+
+            if (this.dragMode != DRAG_MARQUEE || fade < 0.01F)
             {
                 return;
             }
@@ -1876,8 +2107,8 @@ public class UICompCurveEditor extends UIElement
             int x2 = Math.max(this.marqueeX, this.dragStartX);
             int y2 = Math.max(this.marqueeY, this.dragStartY);
 
-            context.batcher.box(x1, y1, x2, y2, 0x2255AAFF);
-            context.batcher.outline(x1, y1, x2, y2, 0xAA55AAFF);
+            context.batcher.box(x1, y1, x2, y2, UiMotion.alpha(0xFF55AAFF, 0.13F * fade));
+            context.batcher.outline(x1, y1, x2, y2, UiMotion.alpha(0xFF55AAFF, 0.67F * fade));
         }
 
         private void renderReadout(UIContext context)
@@ -1890,9 +2121,13 @@ public class UICompCurveEditor extends UIElement
             }
 
             int frame = Math.round(this.frame());
+            int mouseX = context.mouseX;
+            int mouseY = context.mouseY;
 
-            /* The card is a function of (channel, frame, mode); rebuilding the string every
-             * display frame was pure garbage. The playhead only moves at the comp frame rate. */
+            /* Playhead card: a short fade + 2 px rise the first time a channel becomes readable.
+             * The string itself is still rebuilt only when (channel, frame, mode) changes. */
+            float card = this.motion.anim("playhead-card", 1F, 16F);
+
             if (frame != this.readoutFrame || channel != this.readoutChannel)
             {
                 this.readoutFrame = frame;
@@ -1902,12 +2137,17 @@ public class UICompCurveEditor extends UIElement
                     : channel.label + "  " + channel.format(channel.valueAt(this.frame()));
             }
 
-            context.batcher.textCard(this.readoutText, this.curveArea.x + 6, this.curveArea.y + 4, 0xFFE6ECF5, 0x99000000, 3F);
+            context.batcher.textCard(this.readoutText, this.curveArea.x + 6,
+                this.curveArea.y + 4 + Math.round((1F - card) * 2F * this.motion.intensity()),
+                UiMotion.alpha(0xFFE6ECF5, card), UiMotion.alpha(0x99000000, card), 3F);
 
             /* AE always tells you which key you are editing, not only what the playhead is at.
              * Without this, selecting a key and reading the playhead card looked like the key had
-             * that value — the editor and the preview appeared to disagree. */
-            if (!this.selection.isEmpty())
+             * that value — the editor and the preview appeared to disagree. The card fades with
+             * the selection instead of appearing and disappearing whole. */
+            float selectionCard = this.motion.anim("selection-card", this.selection.isEmpty() ? 0F : 1F, 22F);
+
+            if (selectionCard > 0.01F && !this.selection.isEmpty())
             {
                 Keyframe<?> first = this.selection.iterator().next();
                 CompCurveChannel selectedChannel = this.channelOf(first);
@@ -1921,26 +2161,49 @@ public class UICompCurveEditor extends UIElement
                         selectedChannel.format(selectedChannel.numericValue(first)),
                         this.interpolationName(first));
 
-                    context.batcher.textCard(selectedText, this.curveArea.x + 6, this.curveArea.y + 25,
-                        0xFFE8C86A, 0x99000000, 3F);
+                    context.batcher.textCard(selectedText, this.curveArea.x + 6,
+                        this.curveArea.y + 25 + Math.round((1F - selectionCard) * 3F * this.motion.intensity()),
+                        UiMotion.alpha(0xFFE8C86A, selectionCard),
+                        UiMotion.alpha(0x99000000, selectionCard), 3F);
                 }
             }
 
             /* Cursor crosshair: AE's graph editor always tells you what the point under the
-             * mouse is worth. Without it, placing a key by eye is guesswork. */
-            int mouseX = context.mouseX;
-            int mouseY = context.mouseY;
-
-            if (mouseX >= this.curveArea.x && mouseX <= this.curveArea.ex()
+             * mouse is worth. It fades in/out with the pointer being over the graph. */
+            boolean overGraph = mouseX >= this.curveArea.x && mouseX <= this.curveArea.ex()
                 && mouseY >= this.curveArea.y && mouseY <= this.curveArea.ey()
-                && this.dragMode == 0)
+                && this.dragMode == 0;
+            float cursor = this.motion.anim("cursor-readout", overGraph ? 1F : 0F, 18F);
+
+            if (cursor > 0.01F)
             {
                 double seconds = this.fromX(mouseX);
                 float value = this.channelValueAt(channel, (float) seconds * this.fps());
                 String readout = String.format(Locale.ROOT, "%.2fs  %s", seconds, channel.format(value));
 
-                context.batcher.box(mouseX, this.curveArea.y, mouseX + 1, this.curveArea.ey(), 0x55FFFFFF);
-                context.batcher.textCard(readout, Math.min(mouseX + 8, this.curveArea.ex() - 96), this.curveArea.y + 4, 0xFFB9C6D8, 0x99000000, 3F);
+                context.batcher.box(mouseX, this.curveArea.y, mouseX + 1, this.curveArea.ey(),
+                    UiMotion.alpha(0xFFFFFFFF, 0.33F * cursor));
+                context.batcher.textCard(readout, Math.min(mouseX + 8, this.curveArea.ex() - 96),
+                    this.curveArea.y + 4 + Math.round((1F - cursor) * 3F * this.motion.intensity()),
+                    UiMotion.alpha(0xFFB9C6D8, cursor), UiMotion.alpha(0x99000000, cursor), 3F);
+            }
+
+            /* Drag HUD: follows the pointer while a key/handle is dragged, fading in with a 6 px
+             * rise. The status bar shows the same numbers, but during a drag the pointer is where
+             * the eye is. */
+            boolean draggingKey = this.dragMode == DRAG_KEY || this.dragMode == DRAG_HANDLE;
+            float dragHud = this.motion.anim("drag-hud", draggingKey ? 1F : 0F, 26F);
+
+            if (draggingKey && dragHud > 0.01F)
+            {
+                String hud = this.currentDragHud();
+
+                if (hud != null)
+                {
+                    context.batcher.textCard(hud, mouseX + 12,
+                        mouseY + 18 + Math.round((1F - dragHud) * 6F * this.motion.intensity()),
+                        UiMotion.alpha(0xFFFFFFFF, dragHud), UiMotion.alpha(0xE010141A, dragHud), 3);
+                }
             }
 
             String hint = this.selection.isEmpty()
@@ -1948,6 +2211,61 @@ public class UICompCurveEditor extends UIElement
                 : ("已选 " + this.selection.size() + " 个关键帧 · 拖手柄改切线 · Alt 断开 · 中键/Space 平移");
 
             context.batcher.textShadow(hint, this.curveArea.x + 6, this.curveArea.ey() - 14, 0x887C8798);
+        }
+
+        /** HUD text for the in-progress drag, or null when there is nothing meaningful to show. */
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        private String currentDragHud()
+        {
+            if (this.dragMode == DRAG_KEY)
+            {
+                Keyframe<?> key = this.dragPrimaryKey;
+                CompCurveChannel channel = this.channelOf(key);
+
+                if (key == null || channel == null)
+                {
+                    return null;
+                }
+
+                float value = this.speedMode ? this.keySpeed(channel, key, true) : channel.numericValue(key);
+                String valueText = this.speedMode
+                    ? String.format(Locale.ROOT, "%.1f /s", value)
+                    : channel.format(value);
+
+                return dragHudText(this.trim(channel.label, 14), valueText, key.getTick());
+            }
+
+            if (this.dragMode == DRAG_HANDLE)
+            {
+                Keyframe key = (Keyframe) this.dragHandleKey;
+                CompCurveChannel channel = this.dragHandleChannel;
+
+                if (key == null || channel == null)
+                {
+                    return null;
+                }
+
+                List<Keyframe> keys = (List<Keyframe>) (List<?>) channel.raw().getKeyframes();
+                int index = CompCurves.indexOfIdentity(keys, key);
+
+                if (index < 0)
+                {
+                    return null;
+                }
+
+                Keyframe neighbor = this.dragHandleOutgoing
+                    ? (index + 1 < keys.size() ? keys.get(index + 1) : null)
+                    : (index > 0 ? keys.get(index - 1) : null);
+                float length = neighbor == null ? 0F
+                    : Math.max(0.0001F, Math.abs(neighbor.getTick() - key.getTick()));
+                float influence = neighbor == null ? 0F
+                    : (this.dragHandleOutgoing ? key.rx : key.lx) / length;
+
+                return handleHudText(this.dragHandleOutgoing, influence,
+                    this.keySpeed(channel, key, this.dragHandleOutgoing));
+            }
+
+            return null;
         }
 
         private String interpolationName(Keyframe<?> key)

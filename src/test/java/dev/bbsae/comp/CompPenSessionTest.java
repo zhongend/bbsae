@@ -115,6 +115,7 @@ public class CompPenSessionTest
         int actions;
         int changes;
         int closedChanges;
+        int structureChanges;
         String status = "";
 
         @Override
@@ -139,6 +140,12 @@ public class CompPenSessionTest
         public void closedChanged()
         {
             this.closedChanges += 1;
+        }
+
+        @Override
+        public void structureChanged()
+        {
+            this.structureChanges += 1;
         }
     }
 
@@ -580,6 +587,41 @@ public class CompPenSessionTest
         session.press(0F, 0F, 3F, 0F, false, false, CLOSE, vertexHit(0, 3F));
         assertTrue(target.closed);
         assertFalse(session.isDrawing());
+    }
+
+    @Test
+    public void structuralEditsNotifyTheHost()
+    {
+        Recorder recorder = new Recorder();
+        CompPenSession session = new CompPenSession(recorder);
+        FakeTarget target = new FakeTarget();
+
+        target.add(0F, 0F);
+        target.add(100F, 0F);
+        target.add(100F, 100F);
+        target.closed = true;
+        session.setTarget(target);
+
+        /* Insert on a segment = vertex count changed. */
+        session.press(50F, 0F, 50F, 0F, false, false, CLOSE, segmentHit(0, 0.5F));
+        assertEquals(1, recorder.structureChanges, "segment insert must tell the host to rebuild sheets");
+
+        /* Append = vertex count changed. */
+        session.setTick(0F);
+        assertTrue(session.appendPoint(200F, 200F));
+        assertEquals(2, recorder.structureChanges);
+
+        /* Delete = vertex count changed. */
+        session.selectVertex(0, false);
+        assertTrue(session.deleteSelection());
+        assertEquals(3, recorder.structureChanges);
+
+        /* Pure vertex moves / handle edits must NOT rebuild the sheet structure. */
+        session.selectVertex(0, false);
+        session.press(target.x(0), target.y(0), target.x(0), target.y(0), false, false, CLOSE, vertexHit(0));
+        session.drag(target.x(0) + 10F, target.y(0) + 10F, target.x(0) + 10F, target.y(0) + 10F, false, false);
+        session.release();
+        assertEquals(3, recorder.structureChanges, "a drag keeps the point count, no sheet rebuild needed");
     }
 
     private static void assertHit(int expected, CompPenSession.Hit hit)

@@ -324,30 +324,17 @@ public final class CompLayerSourceCache
                 -1000F, 1000F
             );
 
-            if ("precomp".equals(layer.type))
+            if ("precomp".equals(layer.type) && wantsPrecompPlate(layer, context))
             {
-                /* The plate is a draft annotation for the 3D workspace. An export must never
-                 * contain the text "预合成（草稿）", so refuse to build a raster there: the caller
-                 * falls back to the direct path, which renders the real nested composition. */
-                if (!context.preview)
-                {
-                    if (reuseContent != null && reuseContent != reuseStraightTarget)
-                    {
-                        FboPool.release(reuseContent);
-                    }
-
-                    if (reuseStraightTarget != null)
-                    {
-                        FboPool.release(reuseStraightTarget);
-                    }
-
-                    return null;
-                }
-
+                /* The plate is a draft annotation for the 3D workspace only. It must never leak
+                 * into the composition panel preview or the encoder: those render the real nested
+                 * composition (see the else branch). */
                 drawPrecompPlate(layer, batcher, rect);
             }
             else
             {
+                /* Outside the 3D workspace a precomp is drawn as its real nested composition into
+                 * the layer-local raster; everything else is ordinary layer content. */
                 LayerContentRenderer.draw(layer, context, batcher, new Matrix4f(), projection);
             }
 
@@ -853,6 +840,20 @@ public final class CompLayerSourceCache
      * mouse move. The draft shows a plate with the target's name instead; look-through renders the
      * real thing.
      */
+    /**
+     * True when a precomp layer may be drawn as the cheap "预合成（草稿）" plate.
+     *
+     * <p>Only the free 3D workspace may: it is explicitly a draft view (the HUD says 草稿) and
+     * rendering the real nested graph there would cost a second full composition per orbit frame.
+     * The composition panel preview and the encoder must show the real nested composition, so they
+     * fall through to {@link LayerContentRenderer#draw}, which calls the nested graph.</p>
+     */
+    static boolean wantsPrecompPlate(CompLayer layer, CompRenderContext context)
+    {
+        return layer != null && "precomp".equals(layer.type)
+            && context != null && context.preview && context.draftViewport;
+    }
+
     private static void drawPrecompPlate(CompLayer layer, Batcher2D batcher, Rect rect)
     {
         float x = rect.x;
@@ -915,6 +916,17 @@ public final class CompLayerSourceCache
      */
     static long signature(CompLayer layer, CompRenderContext context, int pixelWidth, int pixelHeight)
     {
+        return signature(layer, context, pixelWidth, pixelHeight, 0, new java.util.HashSet<>());
+    }
+
+    /**
+     * Recursive variant: a precomp layer's raster contains the nested composition, so editing a
+     * child layer must change this layer's content fingerprint too. Same depth cap (8) and cycle
+     * guard as the render graph.
+     */
+    private static long signature(CompLayer layer, CompRenderContext context, int pixelWidth, int pixelHeight,
+                                  int depth, java.util.Set<String> stack)
+    {
         long h = 0x9E3779B97F4A7C15L;
         float frame = context.frame;
 
@@ -938,6 +950,8 @@ public final class CompLayerSourceCache
         h = mix(h, layer.strokeColor);
         h = mix(h, layer.strokeWidth);
         h = mix(h, layer.fill);
+        /* Content-level text effects are part of the drawn string; see TextContent.contentHash. */
+        h = mix(h, dev.bbsae.comp.TextContent.contentHash(layer));
         h = mix(h, layer.text == null ? 0 : layer.text.hashCode());
         h = mix(h, layer.fontName == null ? 0 : layer.fontName.hashCode());
         h = mix(h, layer.fontSizeAt(frame));
@@ -1197,6 +1211,71 @@ public final class CompLayerSourceCache
             }
         }
 
+        h = precompContent(h, context, layer, frame, pixelWidth, pixelHeight, depth, stack);
+
+        return h;
+    }
+
+    /**
+     * Mixes the nested composition's content into a precomp layer's raster fingerprint.
+     *
+     * <p>The raster of a precomp layer is the real nested composition (panel preview / encoder), so
+     * without this the per-layer raster cache would keep serving the old nested picture after an
+     * edit inside the precomp even though the composite-level frame was invalidated. The 3D
+     * workspace draft plate does not depend on the nested content, but hashing it costs little and
+     * keeping one rule avoids a mode-dependent cache.</p>
+     */
+    private static long precompContent(long h, CompRenderContext context, CompLayer layer, float frame,
+                                       int pixelWidth, int pixelHeight, int depth, java.util.Set<String> stack)
+    {
+        if (layer == null || !"precomp".equals(layer.type)
+            || layer.precompId == null || layer.precompId.isEmpty() || context.project == null)
+        {
+            return h;
+        }
+
+        h = mix(h, layer.precompId.hashCode());
+
+        CompDocument sub = context.project.getComp(layer.precompId);
+
+        if (sub == null)
+        {
+            return mix(h, 21L);
+        }
+
+        if (depth >= 8 || (sub.id != null && stack.contains(sub.id)))
+        {
+            return mix(h, 22L);
+        }
+
+        h = mix(h, sub.width);
+        h = mix(h, sub.height);
+        h = mix(h, sub.fps);
+        h = mix(h, sub.activeCameraId == null ? 0 : sub.activeCameraId.hashCode());
+
+        CompRenderContext subContext = new CompRenderContext(context.project, sub, context.time, null, null, null);
+        boolean pushed = sub.id != null && stack.add(sub.id);
+
+        try
+        {
+            if (sub.layers == null)
+            {
+                return mix(h, 23L);
+            }
+
+            for (CompLayer child : sub.layers)
+            {
+                h = mix(h, signature(child, subContext, pixelWidth, pixelHeight, depth + 1, stack));
+            }
+        }
+        finally
+        {
+            if (pushed)
+            {
+                stack.remove(sub.id);
+            }
+        }
+
         return h;
     }
 
@@ -1212,6 +1291,13 @@ public final class CompLayerSourceCache
         }
 
         if (layer.textAnimators != null && !layer.textAnimators.isEmpty())
+        {
+            return true;
+        }
+
+        /* Content-level text effects (timecode/counter/glyph scramble/reveal) change the drawn
+         * string from frame to frame without any layer edit. */
+        if (dev.bbsae.comp.TextContent.isTimeDependent(layer))
         {
             return true;
         }

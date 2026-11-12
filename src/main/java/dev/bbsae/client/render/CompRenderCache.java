@@ -150,6 +150,10 @@ public final class CompRenderCache
             /* The developer switch changes the projection of every 2D layer: without it in the
              * signature the parked-playhead cache kept returning the old picture after a toggle. */
             h = mix(h, project.settings.legacy3DLogic ? 1 : 0);
+            /* The encoder decides the preview stage composition (BBS mode may show the live world
+             * behind a transparent stage, AE mode must show the encoder's exact frame), so the
+             * pre-render cache must not share a frame between the two modes. */
+            h = mix(h, project.settings.encoder == null ? 0 : project.settings.encoder.hashCode());
         }
 
         /* 逐像素深度是 CompRenderer 的渲染路径开关，不属于文档内容；不放进指纹时，停住播放头切换
@@ -173,9 +177,93 @@ public final class CompRenderCache
             return h;
         }
 
+        /* Precomps are content too: editing a child composition must invalidate the parent frame,
+         * otherwise the AE preview/green bar/frame server keep showing the old nested picture
+         * while the exporter (which re-renders the graph) shows the new one. The traversal mirrors
+         * renderCompToFbo: depth-limited and cycle-guarded by composition id. */
+        java.util.Set<String> stack = new java.util.HashSet<>();
+
+        if (doc.id != null)
+        {
+            stack.add(doc.id);
+        }
+
         for (CompLayer layer : doc.layers)
         {
-            h = layer(h, layer, frame);
+            h = layerRecursive(h, project, layer, frame, 0, stack);
+        }
+
+        return h;
+    }
+
+    /**
+     * {@link #layer} plus the recursive content of the precomp this layer shows.
+     *
+     * <p>Same rules as {@code CompRenderer.renderCompToFbo}: stop at recursion depth 8 and stop
+     * on a composition that is already on the current stack (A shows B shows A). A cycle hashes
+     * only the layers up to the repeated id and then stops, so the signature terminates and is
+     * still sensitive to every reachable edit.</p>
+     */
+    private static long layerRecursive(long h, CompProject project, CompLayer layer, float frame,
+                                       int depth, java.util.Set<String> stack)
+    {
+        h = layer(h, layer, frame);
+
+        if (project == null || layer == null || layer.precompId == null || layer.precompId.isEmpty())
+        {
+            return h;
+        }
+
+        CompDocument sub = project.getComp(layer.precompId);
+
+        h = mix(h, layer.precompId.hashCode());
+
+        if (sub == null)
+        {
+            return mix(h, 11L);
+        }
+
+        if (depth >= 8 || (sub.id != null && stack.contains(sub.id)))
+        {
+            /* The renderer cannot recurse further either, so hashing deeper would invalidate on
+             * edits the renderer never shows. */
+            return mix(h, 12L);
+        }
+
+        h = mix(h, sub.id == null ? 0 : sub.id.hashCode());
+        h = mix(h, sub.width);
+        h = mix(h, sub.height);
+        h = mix(h, sub.fps);
+        h = mix(h, sub.activeCameraId == null ? 0 : sub.activeCameraId.hashCode());
+        h = mix(h, sub.hasSolo() ? 1 : 0);
+
+        /* The nested composition is evaluated at its own mapped time. Content-keyframe hashes do
+         * not depend on the sampled frame, but text timecode/counter resolve does, and the parent
+         * frame is already part of the top-level signature. */
+        float subFrame = (frame + layer.precompTimeOffset) * layer.precompTimeScale;
+        boolean pushed = sub.id != null && stack.add(sub.id);
+
+        try
+        {
+            if (sub.layers != null)
+            {
+                for (CompLayer child : sub.layers)
+                {
+                    h = layerRecursive(h, project, child, subFrame, depth + 1, stack);
+                }
+            }
+
+            if (sub.layers == null || sub.layers.isEmpty())
+            {
+                h = mix(h, 13L);
+            }
+        }
+        finally
+        {
+            if (pushed)
+            {
+                stack.remove(sub.id);
+            }
         }
 
         return h;
@@ -267,6 +355,10 @@ public final class CompRenderCache
         h = mix(h, layer.motion ? 1 : 0);
         h = mix(h, layer.motionAmount);
         h = mix(h, layer.fill);
+        /* Content-level text effects (timecode / counter / glyph scramble / typewriter reveal) change
+         * the drawn string without touching layer.text; without this the parked frame kept the old
+         * glyphs after the inspector edit. */
+        h = mix(h, dev.bbsae.comp.TextContent.contentHash(layer));
 
         h = channels(h, layer.transformChannel());
         h = channels(h, layer.opacityChannel());

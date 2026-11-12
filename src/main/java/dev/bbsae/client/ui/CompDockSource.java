@@ -317,6 +317,22 @@ public final class CompDockSource implements ILayoutSource
     }
 
     /**
+     * Alternative default: the effect library and the inspector stacked to the **right** of the
+     * preview (the layout the user asked for: "把图层的效果列表并入预览框右侧的区域"). Selecting it
+     * from the layout menu is a normal layout change (persisted per project), not a mode.
+     */
+    public static EditorLayoutNode effectsRightLayout()
+    {
+        return new EditorLayoutNode.SplitterNode(true, 0.72F,
+            new EditorLayoutNode.SplitterNode(false, 0.72F,
+                new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
+                new EditorLayoutNode.SplitterNode(true, 0.5F,
+                    new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
+                    new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
+            new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
+    }
+
+    /**
      * Workspace presets mapped onto dock trees so "界面布局" keeps working in dock mode.
      *
      * <p>Standard / focal / compact / wide mirror the four onboarding cards: the ratios change, the

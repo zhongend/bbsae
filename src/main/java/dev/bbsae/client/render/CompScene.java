@@ -255,14 +255,22 @@ public final class CompScene
         }
 
         CompCamera camera = camera(ctx);
-        boolean spatial = camera.perspective && (camera.tilted || hasDepth(ctx.comp));
+        boolean spatial = camera.perspective && (camera.tilted || hasDepth(ctx.comp, ctx.frame));
 
         ctx.spatial = spatial;
 
         return spatial;
     }
 
-    private static boolean hasDepth(CompDocument comp)
+    /**
+     * True when any content layer sits off the composition plane at this frame.
+     *
+     * <p>The animated {@code z} channel is sampled, not the static field: a keyframed 3D layer that
+     * only leaves z=0 in the middle of the shot used to keep the whole frame non-spatial (and make
+     * the 3D layers jump when it finally moved). The static field remains the fallback for layers
+     * without a channel, exactly like {@link CompLayer#scalarAt}.</p>
+     */
+    private static boolean hasDepth(CompDocument comp, float frame)
     {
         if (comp == null || comp.layers == null)
         {
@@ -274,7 +282,8 @@ public final class CompScene
             /* A camera's own z is the dolly distance, not content depth. Counting it made
              * "hide the camera row → the frame stops being spatial", which is a visibility switch
              * changing the projection of unrelated layers. */
-            if (layer != null && layer.visible && !"camera".equals(layer.type) && Math.abs(layer.z) > 0.01F)
+            if (layer != null && layer.visible && !"camera".equals(layer.type)
+                && Math.abs(layer.scalarAt("z", layer.z, frame)) > 0.01F)
             {
                 return true;
             }

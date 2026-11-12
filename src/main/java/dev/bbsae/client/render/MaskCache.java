@@ -13,6 +13,7 @@ import java.awt.image.BufferedImage;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.joml.Matrix4f;
+import org.joml.Vector4f;
 
 /**
  * Rasterizes a layer's mask stack into one alpha texture.
@@ -204,27 +205,8 @@ public final class MaskCache
                 continue;
             }
 
-            Path2D.Float path = new Path2D.Float();
-            CompMask.CompMaskPoint first = mask.points.get(0);
+            Path2D.Float path = bezierPath(mask);
 
-            path.moveTo(first.x, first.y);
-
-            for (int i = 1; i < mask.points.size(); i++)
-            {
-                CompMask.CompMaskPoint previous = mask.points.get(i - 1);
-                CompMask.CompMaskPoint point = mask.points.get(i);
-
-                path.curveTo(previous.x + previous.outX, previous.y + previous.outY, point.x + point.inX, point.y + point.inY, point.x, point.y);
-            }
-
-            /* The closing segment from the last vertex back to the first one is a bezier too. It
-             * used to be a bare closePath() (a straight chord), which silently flattened the last
-             * segment of every handle-carrying closed mask — an ellipse mask lost a quarter of its
-             * handles, and a pen path closed on a smooth vertex got a visible kink. */
-            CompMask.CompMaskPoint last = mask.points.get(mask.points.size() - 1);
-
-            path.curveTo(last.x + last.outX, last.y + last.outY, first.x + first.inX, first.y + first.inY, first.x, first.y);
-            path.closePath();
             path.transform(transform);
 
             Area area = new Area(path);
@@ -285,10 +267,250 @@ public final class MaskCache
         return any ? combined : null;
     }
 
-    private static MaskTexture rasterize(java.util.List<CompMask> masks, int width, int height, Matrix4f world)
+    /**
+     * Builds the mask path in layer-local coordinates: anchor points plus both handles, closed with
+     * the last segment's bezier (a bare closePath would flatten pen-drawn smooth closing segments).
+     */
+    private static Path2D.Float bezierPath(CompMask mask)
     {
-        float[] combined = alphaFor(masks, width, height, world);
+        Path2D.Float path = new Path2D.Float();
+        CompMask.CompMaskPoint first = mask.points.get(0);
 
+        path.moveTo(first.x, first.y);
+
+        for (int i = 1; i < mask.points.size(); i++)
+        {
+            CompMask.CompMaskPoint previous = mask.points.get(i - 1);
+            CompMask.CompMaskPoint point = mask.points.get(i);
+
+            path.curveTo(previous.x + previous.outX, previous.y + previous.outY,
+                point.x + point.inX, point.y + point.inY, point.x, point.y);
+        }
+
+        CompMask.CompMaskPoint last = mask.points.get(mask.points.size() - 1);
+
+        path.curveTo(last.x + last.outX, last.y + last.outY,
+            first.x + first.inX, first.y + first.inY, first.x, first.y);
+        path.closePath();
+
+        return path;
+    }
+
+    /**
+     * Comp-space mask for a perspective-projected 3D layer.
+     *
+     * <p>The direct (non-bake) render path draws a 3D layer's content already camera-projected in
+     * composition space, so the affine layer-local mask used by 2D cannot address it. Here the mask
+     * path is flattened in layer space and every vertex is projected through
+     * {@code viewProjection = camera.projection · camera.view · world} into render pixels
+     * (top-down image coordinates, the same convention the affine mask texture uses); then the
+     * regular boolean combine / feather / expansion / invert pipeline runs on that raster.</p>
+     *
+     * <p>{@code scale} is projected render pixels per layer pixel; feather and expansion are
+     * authored in layer pixels and multiplied by it, exactly like the affine proxy path. Masks
+     * partially behind the camera are approximated by dropping the off-screen vertices.</p>
+     */
+    public static MaskTexture getProjected(CompLayer layer, int width, int height, Matrix4f viewProjection,
+                                           float frame, float scale)
+    {
+        if (layer.masks == null || layer.masks.isEmpty() || viewProjection == null)
+        {
+            return null;
+        }
+
+        java.util.List<CompMask> masks = new java.util.ArrayList<>();
+        float safeScale = Math.max(0.0001F, scale);
+
+        for (CompMask mask : layer.masks)
+        {
+            if (isMatte(mask))
+            {
+                CompMask resolved = layer.maskAt(mask, frame);
+
+                if (Math.abs(safeScale - 1F) > 0.0001F)
+                {
+                    resolved.feather *= safeScale;
+                    resolved.expansion *= safeScale;
+                }
+
+                masks.add(resolved);
+            }
+        }
+
+        if (masks.isEmpty())
+        {
+            return null;
+        }
+
+        String key = layer.id + ":proj:" + width + "x" + height + ":" + hash(masks) + ":"
+            + hash(viewProjection) + ":" + Math.round(safeScale * 1000F);
+        MaskTexture texture = CACHE.get(key);
+
+        if (texture != null)
+        {
+            return texture;
+        }
+
+        texture = rasterizeProjected(masks, width, height, viewProjection);
+
+        if (texture != null)
+        {
+            CACHE.put(key, texture);
+
+            while (CACHE.size() > MAX)
+            {
+                String oldest = CACHE.keySet().iterator().next();
+                CACHE.remove(oldest).texture.delete();
+            }
+        }
+
+        return texture;
+    }
+
+    /** Pure-CPU half of {@link #getProjected}: projected, boolean-combined coverage. */
+    static float[] alphaForProjected(java.util.List<CompMask> masks, int width, int height,
+                                     Matrix4f viewProjection)
+    {
+        float[] combined = new float[width * height];
+        boolean any = false;
+
+        for (CompMask mask : masks)
+        {
+            if (!isMatte(mask))
+            {
+                continue;
+            }
+
+            Path2D.Float path = projectedPath(mask, viewProjection, width, height);
+
+            if (path == null)
+            {
+                continue;
+            }
+
+            Area area = new Area(path);
+
+            if (mask.expansion > 0F)
+            {
+                area.add(new Area(new BasicStroke(mask.expansion * 2F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND).createStrokedShape(path)));
+            }
+            else if (mask.expansion < 0F)
+            {
+                area.subtract(new Area(new BasicStroke(-mask.expansion * 2F, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND).createStrokedShape(path)));
+            }
+
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = image.createGraphics();
+
+            g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setComposite(AlphaComposite.Src);
+            g.setColor(java.awt.Color.WHITE);
+            g.fill(area);
+            g.dispose();
+
+            float[] alpha = new float[width * height];
+            int[] raster = image.getRGB(0, 0, width, height, null, 0, width);
+
+            for (int i = 0; i < alpha.length; i++)
+            {
+                alpha[i] = ((raster[i] >>> 24) & 0xFF) / 255F;
+            }
+
+            if (mask.feather > 0.1F)
+            {
+                boxBlur(alpha, width, height, Math.min(128, Math.round(mask.feather)));
+            }
+
+            if (mask.inverted)
+            {
+                for (int i = 0; i < alpha.length; i++)
+                {
+                    alpha[i] = 1F - alpha[i];
+                }
+            }
+
+            float opacity = Math.max(0F, Math.min(1F, mask.opacity));
+
+            for (int i = 0; i < alpha.length; i++)
+            {
+                float a = alpha[i] * opacity;
+
+                combined[i] = any
+                    ? combine(combined[i], a, mask.mode)
+                    : combineFirst(mask.mode, a);
+            }
+
+            any = true;
+        }
+
+        return any ? combined : null;
+    }
+
+    /** Flatten the layer-local bezier and project every vertex into top-down render pixels. */
+    private static Path2D.Float projectedPath(CompMask mask, Matrix4f viewProjection, int width, int height)
+    {
+        java.awt.geom.PathIterator iterator = bezierPath(mask).getPathIterator(null, 0.5D);
+        Path2D.Float projected = new Path2D.Float();
+        boolean started = false;
+        boolean any = false;
+
+        while (!iterator.isDone())
+        {
+            double[] coords = new double[6];
+            int type = iterator.currentSegment(coords);
+
+            iterator.next();
+
+            if (type == java.awt.geom.PathIterator.SEG_CLOSE)
+            {
+                if (started)
+                {
+                    projected.closePath();
+                }
+
+                continue;
+            }
+
+            Vector4f point = new Vector4f((float) coords[0], (float) coords[1], 0F, 1F);
+
+            viewProjection.transform(point);
+
+            if (point.w <= 1.0e-6F)
+            {
+                /* Behind the camera: the projection of this vertex is meaningless. Drop it; a mask
+                 * straddling the camera plane is approximated by its visible part. */
+                continue;
+            }
+
+            float ndcX = point.x / point.w;
+            float ndcY = point.y / point.w;
+            float px = (ndcX * 0.5F + 0.5F) * width;
+            float py = (1F - (ndcY * 0.5F + 0.5F)) * height;
+
+            if (type == java.awt.geom.PathIterator.SEG_MOVETO || !started)
+            {
+                projected.moveTo(px, py);
+                started = true;
+            }
+            else
+            {
+                projected.lineTo(px, py);
+            }
+
+            any = true;
+        }
+
+        return any ? projected : null;
+    }
+
+    private static MaskTexture rasterizeProjected(java.util.List<CompMask> masks, int width, int height,
+                                                  Matrix4f viewProjection)
+    {
+        return upload(alphaForProjected(masks, width, height, viewProjection), width, height);
+    }
+
+    private static MaskTexture upload(float[] combined, int width, int height)
+    {
         if (combined == null)
         {
             return null;
@@ -309,6 +531,11 @@ public final class MaskCache
         texture.uploadTopDown(pixels);
 
         return new MaskTexture(texture, width, height);
+    }
+
+    private static MaskTexture rasterize(java.util.List<CompMask> masks, int width, int height, Matrix4f world)
+    {
+        return upload(alphaFor(masks, width, height, world), width, height);
     }
 
     /**

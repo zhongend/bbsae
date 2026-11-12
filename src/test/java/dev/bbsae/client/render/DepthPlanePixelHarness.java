@@ -32,16 +32,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Test-only pixel harness for the main-composition per-pixel depth path.
  *
  * <p>{@code CompRenderer} cannot be instantiated headless (it needs {@code MinecraftClient},
- * {@code Batcher2D}, the game render thread), so these tests drive the same primitive the renderer
- * calls — {@link DepthPlaneCompositor#composite} — with the same camera matrices, the same
- * composition-space content pass ({@code projection · model}, un-premultiplied straight alpha) and
- * the same final {@link PassRenderer#draw} composite. {@link #routed} mirrors the renderer's own
- * branch: one shared compositor for the spatial composition, per-pixel depth only for
- * {@link CompScene#usePerspective} layers, whole-layer painter order for the rest.</p>
+ * {@code Batcher2D}, the game render thread), so these tests drive the same primitives the renderer
+ * calls — {@link DepthPlaneCompositor#composite} for depth, {@link PassRenderer#draw} for painter
+ * order — with the same camera matrices, the same composition-space content pass
+ * ({@code projection · model}, un-premultiplied straight alpha) and the same final composite.
+ * {@link #routed} mirrors the renderer's own branch ({@link CompRenderer#perPixelDepthFrame} /
+ * {@link CompRenderer#perPixelDepthLayer}): one pooled compositor per frame, per-pixel depth only
+ * for {@link CompScene#usePerspective} layers, whole-layer order for the rest.</p>
  *
  * <p>The user project {@code ____bug} camera (eye 1968.67/596.55/1370.67, yaw -25.74, pitch -5.26,
  * fov 50) and its two shape layers (hexagon z=198.36, star z=736.85) are reproduced verbatim from
  * {@code run/config/bbsae/projects/____bug.json}.</p>
+ *
+ * <p>{@link #setPlate} lets a test give a layer a pre-rendered composition plate (the nested comp
+ * of a precomp layer) instead of a shape raster, so precomp combinations can be composed through
+ * both paths too.</p>
  */
 final class DepthPlanePixelHarness
 {
@@ -49,6 +54,8 @@ final class DepthPlanePixelHarness
     static final int H = 216;
     /** Opaque stage colour the renderer clears the accumulation with. */
     static final int STAGE = 0xFF000000;
+    /** Transparent stage colour used by alpha exports (and nested comps). */
+    static final int TRANSPARENT_STAGE = 0x00000000;
 
     private static final String CONTENT_VERTEX = """
         #version 150 core
@@ -80,6 +87,9 @@ final class DepthPlanePixelHarness
     private static GlslProgram contentProgram;
     private static int quadVao;
     private static int quadVbo;
+
+    /** Pre-rendered composition plates keyed by the layer they replace (precomp layers). */
+    private static Map<CompLayer, GlFramebuffer> plates = new IdentityHashMap<>();
 
     private DepthPlanePixelHarness()
     {}
@@ -153,6 +163,7 @@ final class DepthPlanePixelHarness
         }
 
         System.clearProperty("bbsae.debugDepthPlaneThrow");
+        plates.clear();
         ShapeCache.clear();
         DepthPlaneCompositor.deleteAll();
         FboPool.clear();
@@ -235,6 +246,29 @@ final class DepthPlanePixelHarness
         return comp;
     }
 
+    /**
+     * N opaque 3D shape layers spread over the composition at different z. Parallel-plane scenes:
+     * whole-layer painter order is exact here, so the depth path must reproduce it exactly. Used by
+     * the cost benchmark; contents are small enough for a 1080p target.
+     */
+    static CompDocument multiLayerScene(int layers)
+    {
+        CompDocument comp = bugScene();
+        int[] fills = {0xFFE53935, 0xFF43A047, 0xFF1E88E5, 0xFFFDD835, 0xFF8E24AA, 0xFF00ACC1, 0xFFFB8C00, 0xFF6D4C41};
+
+        for (int i = 0; i < layers; i++)
+        {
+            float x = 400F + (i % 4) * 420F;
+            float y = 300F + (i / 4) * 380F;
+            CompLayer layer = shape("bench" + i, x, y, 40F * i, 1F, fills[i % fills.length],
+                CompShape.POLYGON, 5 + (i % 3));
+
+            comp.addLayer(layer);
+        }
+
+        return comp;
+    }
+
     /** Project whose developer switch selects legacy "every layer follows the camera" logic. */
     static CompProject project(boolean legacy3DLogic)
     {
@@ -244,6 +278,43 @@ final class DepthPlanePixelHarness
 
         return project;
     }
+
+    /** All pixel layers of a scene, in stack order (cameras have no pixels). */
+    static List<CompLayer> layersOf(CompDocument comp)
+    {
+        List<CompLayer> layers = new ArrayList<>();
+
+        for (CompLayer layer : comp.layers)
+        {
+            if (!"camera".equals(layer.type))
+            {
+                layers.add(layer);
+            }
+        }
+
+        return layers;
+    }
+
+    static List<CompLayer> farFirst(CompRenderContext context, List<CompLayer> layers)
+    {
+        List<CompLayer> ordered = new ArrayList<>(layers);
+
+        ordered.sort(Comparator.comparingDouble((CompLayer layer) -> CompScene.planeDepth(context, layer)));
+
+        return ordered;
+    }
+
+    static CompRenderContext context(CompProject project, CompDocument comp)
+    {
+        return new CompRenderContext(project, comp, 0F, null, null, null);
+    }
+
+    static float opacity(CompLayer layer)
+    {
+        return Math.max(0F, Math.min(1F, layer.opacity));
+    }
+
+    /* -------------------------------------------------------- shape / plate */
 
     private static CompLayer shape(String id, float x, float y, float z, float scale,
                                    int fillColor, String shapeType, int sides)
@@ -282,47 +353,61 @@ final class DepthPlanePixelHarness
         return layer;
     }
 
-    /** All pixel layers of a scene, in stack order (cameras have no pixels). */
-    static List<CompLayer> layersOf(CompDocument comp)
+    /** Adds a plain solid rectangle layer (used by the translucent-plate combination test). */
+    static CompLayer addRect(CompDocument comp, String id, float x, float y, float z,
+                             float width, float height, int color, float opacity, boolean threeD)
     {
-        List<CompLayer> layers = new ArrayList<>();
+        CompLayer layer = new CompLayer(id, id, "shape");
+        CompShape shape = new CompShape();
 
-        for (CompLayer layer : comp.layers)
-        {
-            if (!"camera".equals(layer.type))
-            {
-                layers.add(layer);
-            }
-        }
+        layer.visible = true;
+        layer.in = 0F;
+        layer.out = 12F;
+        layer.threeD = threeD;
+        layer.x = x;
+        layer.y = y;
+        layer.z = z;
+        layer.width = width;
+        layer.height = height;
+        layer.anchorX = 0.5F;
+        layer.anchorY = 0.5F;
+        layer.opacity = opacity;
+        layer.blendMode = CompLayer.BLEND_NORMAL;
 
-        return layers;
+        shape.id = "shape_1";
+        shape.type = CompShape.RECT;
+        shape.enabled = true;
+        shape.width = width;
+        shape.height = height;
+        shape.fillColor = color;
+        layer.shapes.add(shape);
+        comp.addLayer(layer);
+
+        return layer;
     }
 
-    static List<CompLayer> farFirst(CompRenderContext context, List<CompLayer> layers)
+    /** Lets a layer (normally a precomp) composite a pre-rendered composition plate. */
+    static void setPlate(CompLayer layer, GlFramebuffer plate)
     {
-        List<CompLayer> ordered = new ArrayList<>(layers);
-
-        ordered.sort(Comparator.comparingDouble((CompLayer layer) -> CompScene.planeDepth(context, layer)));
-
-        return ordered;
+        plates.put(layer, plate);
     }
 
-    static CompRenderContext context(CompProject project, CompDocument comp)
+    static void clearPlates()
     {
-        return new CompRenderContext(project, comp, 0F, null, null, null);
-    }
-
-    static float opacity(CompLayer layer)
-    {
-        return Math.max(0F, Math.min(1F, layer.opacity));
+        plates.clear();
     }
 
     /* ------------------------------------------------------------ primitives */
 
     static GlFramebuffer solid(int argb)
     {
-        GlFramebuffer framebuffer = new GlFramebuffer(W, H);
-        int[] pixels = new int[W * H];
+        return solid(argb, W, H);
+    }
+
+    static GlFramebuffer solid(int argb, int width, int height)
+    {
+        GlFramebuffer framebuffer = new GlFramebuffer(width, height);
+        int[] pixels = new int[width * height];
 
         for (int i = 0; i < pixels.length; i++)
         {
@@ -354,58 +439,64 @@ final class DepthPlanePixelHarness
 
     /**
      * Renders one layer's content the way {@code LayerContentRenderer} does: the layer's
-     * layer-space raster is drawn with {@code layerProjection · model} into a composition-sized
-     * target, blended SRC_ALPHA, then un-premultiplied. Both matrices come from the same
-     * {@link CompScene} calls the renderer uses, so perspective 3D layers get the camera
+     * layer-space raster (or a precomp plate) is drawn with {@code layerProjection · model} into a
+     * composition-sized target, blended SRC_ALPHA, then un-premultiplied. Both matrices come from
+     * the same {@link CompScene} calls the renderer uses, so perspective 3D layers get the camera
      * projection and 2D layers the affine {@code view2D}.
      */
     static GlFramebuffer content(CompRenderContext context, CompCamera camera, CompLayer layer)
     {
-        ShapeCache.Raster raster = ShapeCache.get(layer, 0F);
+        return content(context, camera, layer, W, H);
+    }
 
-        assertNotNull(raster, "shape raster for layer " + layer.id);
-
-        GlFramebuffer target = new GlFramebuffer(W, H);
+    static GlFramebuffer content(CompRenderContext context, CompCamera camera, CompLayer layer,
+                                 int width, int height)
+    {
+        GlFramebuffer target = new GlFramebuffer(width, height);
 
         target.begin(0);
 
-        Matrix4f model = CompScene.model(context, layer);
-        Matrix4f mvp = new Matrix4f(CompScene.projection(context, layer)).mul(model);
-        float x0 = raster.originX;
-        float y0 = raster.originY;
-        float x1 = raster.originX + raster.width;
-        float y1 = raster.originY + raster.height;
-
-        /* Same vertex layout as Batcher2D.fillTexturedBox: (top-left, bottom-right) UVs, v down. */
-        float[] data =
-        {
-            x0, y1, 0F, 1F,
-            x1, y1, 1F, 1F,
-            x1, y0, 1F, 0F,
-            x0, y1, 0F, 1F,
-            x1, y0, 1F, 0F,
-            x0, y0, 0F, 0F,
-        };
+        Matrix4f mvp = new Matrix4f(CompScene.projection(context, layer)).mul(CompScene.model(context, layer));
 
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         GL11.glDisable(GL11.GL_CULL_FACE);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glColorMask(true, true, true, true);
-
         contentProgram.use();
-        PassRenderer.bindRaw(contentProgram, "Source", 0, raster.texture.id);
-        contentProgram.set("Mvp", mvp);
         contentProgram.set("Tint", 1F, 1F, 1F, 1F);
 
-        FloatBuffer buffer = BufferUtils.createFloatBuffer(data.length);
+        GlFramebuffer plate = plates.get(layer);
 
-        buffer.put(data).flip();
-        GL30.glBindVertexArray(quadVao);
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, quadVbo);
-        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, buffer, GL15.GL_STREAM_DRAW);
-        GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
-        GL30.glBindVertexArray(0);
+        if (plate != null)
+        {
+            /* Same placement as LayerContentRenderer.drawPrecomp: the nested plate is fitted into
+             * the layer rectangle (imageFit 0 = contain) and drawn as the layer-local image. The
+             * plate is a top-down FBO, so the V axis is flipped like every composition blit. */
+            float sx = layer.width / Math.max(1F, plate.width);
+            float sy = layer.height / Math.max(1F, plate.height);
+            float fit = layer.imageFit == 1 ? Math.max(sx, sy) : layer.imageFit == 2 ? 0F : Math.min(sx, sy);
+            float qw = fit == 0F ? layer.width : plate.width * fit;
+            float qh = fit == 0F ? layer.height : plate.height * fit;
+            float qx = -qw * layer.anchorX;
+            float qy = -qh * layer.anchorY;
+
+            drawTexturedQuad(mvp, plate.color.id, qx, qy, qx + qw, qy + qh,
+                0F, 1F, 1F, 0F);
+        }
+        else
+        {
+            ShapeCache.Raster raster = ShapeCache.get(layer, 0F);
+
+            assertNotNull(raster, "shape raster for layer " + layer.id);
+
+            float x0 = raster.originX;
+            float y0 = raster.originY;
+            float x1 = raster.originX + raster.width;
+            float y1 = raster.originY + raster.height;
+
+            drawTexturedQuad(mvp, raster.texture.id, x0, y0, x1, y1, 0F, 0F, 1F, 1F);
+        }
 
         GlFramebuffer straight = PassRenderer.unpremultiply(target);
 
@@ -417,21 +508,91 @@ final class DepthPlanePixelHarness
         return straight;
     }
 
+    /** One textured quad; UVs are (top-left, bottom-right) in the same layout texturedBox uses. */
+    private static void drawTexturedQuad(Matrix4f mvp, int texture, float x0, float y0, float x1, float y1,
+                                         float uTopLeft, float vTopLeft, float uBottomRight, float vBottomRight)
+    {
+        /* Same vertex layout as Batcher2D.fillTexturedBox: (top-left, bottom-right) UVs. */
+        float[] data =
+        {
+            x0, y1, uTopLeft, vBottomRight,
+            x1, y1, uBottomRight, vBottomRight,
+            x1, y0, uBottomRight, vTopLeft,
+            x0, y1, uTopLeft, vBottomRight,
+            x1, y0, uBottomRight, vTopLeft,
+            x0, y0, uTopLeft, vTopLeft,
+        };
+
+        PassRenderer.bindRaw(contentProgram, "Source", 0, texture);
+
+        FloatBuffer buffer = BufferUtils.createFloatBuffer(data.length);
+
+        buffer.put(data).flip();
+        GL30.glBindVertexArray(quadVao);
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, quadVbo);
+        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, buffer, GL15.GL_STREAM_DRAW);
+        contentProgram.set("Mvp", mvp);
+        GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
+        GL30.glBindVertexArray(0);
+    }
+
+    /**
+     * Renders a whole composition through the painter path into a transparent-stage target, which
+     * is exactly what a precomp layer nests (see {@code LayerContentRenderer.drawPrecomp}).
+     */
+    static GlFramebuffer renderNestedPlate(CompProject project, CompDocument comp, CompCamera camera,
+                                           int width, int height)
+    {
+        CompRenderContext context = context(project, comp);
+        List<GlFramebuffer> owned = new ArrayList<>();
+        GlFramebuffer accumulation = new GlFramebuffer(width, height);
+
+        owned.add(accumulation);
+        accumulation.begin(TRANSPARENT_STAGE);
+
+        for (CompLayer layer : farFirst(context, layersOf(comp)))
+        {
+            GlFramebuffer content = content(context, camera, layer, width, height);
+
+            owned.add(content);
+            accumulation = PassRenderer.draw(content, accumulation, null, layer.blendMode,
+                opacity(layer), 0F, 0F, 0xFFFFFF);
+            owned.add(accumulation);
+        }
+
+        /* Keep the result; every other target in the chain is dead once it is drawn. */
+        for (GlFramebuffer framebuffer : owned)
+        {
+            if (framebuffer != accumulation)
+            {
+                framebuffer.delete();
+            }
+        }
+
+        return accumulation;
+    }
+
     /* -------------------------------------------------------------- rendering */
 
     /** Whole-layer painter path: exactly what the composition renders with depth-off. */
     static int[] paint(CompProject project, CompDocument comp, CompCamera camera)
     {
+        return paint(project, comp, camera, W, H, STAGE);
+    }
+
+    static int[] paint(CompProject project, CompDocument comp, CompCamera camera,
+                       int width, int height, int stage)
+    {
         CompRenderContext context = context(project, comp);
         List<GlFramebuffer> owned = new ArrayList<>();
-        GlFramebuffer accumulation = new GlFramebuffer(W, H);
+        GlFramebuffer accumulation = new GlFramebuffer(width, height);
 
         owned.add(accumulation);
-        accumulation.begin(STAGE);
+        accumulation.begin(stage);
 
         for (CompLayer layer : farFirst(context, layersOf(comp)))
         {
-            GlFramebuffer content = content(context, camera, layer);
+            GlFramebuffer content = content(context, camera, layer, width, height);
 
             owned.add(content);
             accumulation = PassRenderer.draw(content, accumulation, null, layer.blendMode,
@@ -450,16 +611,22 @@ final class DepthPlanePixelHarness
     static int[] depthAll(CompProject project, CompDocument comp, CompCamera camera,
                           DepthPlaneCompositor compositor)
     {
+        return depthAll(project, comp, camera, compositor, W, H, STAGE);
+    }
+
+    static int[] depthAll(CompProject project, CompDocument comp, CompCamera camera,
+                          DepthPlaneCompositor compositor, int width, int height, int stage)
+    {
         CompRenderContext context = context(project, comp);
         List<GlFramebuffer> owned = new ArrayList<>();
-        GlFramebuffer accumulation = new GlFramebuffer(W, H);
+        GlFramebuffer accumulation = new GlFramebuffer(width, height);
 
         owned.add(accumulation);
-        accumulation.begin(STAGE);
+        accumulation.begin(stage);
 
         for (CompLayer layer : farFirst(context, layersOf(comp)))
         {
-            GlFramebuffer content = content(context, camera, layer);
+            GlFramebuffer content = content(context, camera, layer, width, height);
 
             owned.add(content);
             accumulation = compositor.composite(content, CompScene.world(context, layer), camera,
@@ -477,9 +644,9 @@ final class DepthPlanePixelHarness
     /**
      * Mirrors {@code CompRenderer.renderCompToFbo}'s branch: when the composition is spatial and
      * the per-pixel-depth switch is on, one compositor is shared by the frame and only the
-     * {@link CompScene#usePerspective} layers go through it; every other layer keeps the painter
-     * path. The switch is passed explicitly because {@code CompPrefs} needs FabricLoader (not
-     * available headless); the renderer reads the same boolean from the preference.
+     * perspective layers go through it; every other layer keeps the painter path. The switch is
+     * passed explicitly because {@code CompPrefs} needs FabricLoader; the renderer reads the same
+     * boolean from the preference (and both use the same gate helpers, see the tests).
      *
      * @param pooled optional pre-acquired compositor to reuse across calls (pooled-target test);
      *               ignored when the switch is off.
@@ -487,22 +654,29 @@ final class DepthPlanePixelHarness
     static int[] routed(CompProject project, CompDocument comp, CompCamera camera,
                         boolean perPixelDepth, DepthPlaneCompositor pooled)
     {
+        return routed(project, comp, camera, perPixelDepth, pooled, W, H, STAGE);
+    }
+
+    static int[] routed(CompProject project, CompDocument comp, CompCamera camera,
+                        boolean perPixelDepth, DepthPlaneCompositor pooled,
+                        int width, int height, int stage)
+    {
         CompRenderContext context = context(project, comp);
         boolean useDepth = CompScene.spatial(context) && perPixelDepth;
         DepthPlaneCompositor compositor = useDepth
-            ? (pooled != null ? pooled : new DepthPlaneCompositor(W, H))
+            ? (pooled != null ? pooled : new DepthPlaneCompositor(width, height))
             : null;
         List<GlFramebuffer> owned = new ArrayList<>();
-        GlFramebuffer accumulation = new GlFramebuffer(W, H);
+        GlFramebuffer accumulation = new GlFramebuffer(width, height);
 
         owned.add(accumulation);
-        accumulation.begin(STAGE);
+        accumulation.begin(stage);
 
         try
         {
             for (CompLayer layer : farFirst(context, layersOf(comp)))
             {
-                GlFramebuffer content = content(context, camera, layer);
+                GlFramebuffer content = content(context, camera, layer, width, height);
 
                 owned.add(content);
 
@@ -534,6 +708,55 @@ final class DepthPlanePixelHarness
         deleteAll(owned);
 
         return pixels;
+    }
+
+    /**
+     * Renders one frame into a returned target without reading it back (the caller must delete the
+     * returned framebuffer). Used by the cost benchmark, where {@code glReadPixels} would otherwise
+     * dominate the measurement.
+     */
+    static GlFramebuffer renderFrameFbo(CompProject project, CompDocument comp, CompCamera camera,
+                                        boolean depth, DepthPlaneCompositor compositor,
+                                        int width, int height, int stage)
+    {
+        CompRenderContext context = context(project, comp);
+        List<GlFramebuffer> owned = new ArrayList<>();
+        GlFramebuffer accumulation = new GlFramebuffer(width, height);
+
+        owned.add(accumulation);
+        accumulation.begin(stage);
+
+        boolean useDepth = depth && CompScene.spatial(context);
+
+        for (CompLayer layer : farFirst(context, layersOf(comp)))
+        {
+            GlFramebuffer content = content(context, camera, layer, width, height);
+
+            owned.add(content);
+
+            if (useDepth && CompScene.usePerspective(context, layer))
+            {
+                accumulation = compositor.composite(content, CompScene.world(context, layer), camera,
+                    accumulation, layer.blendMode, opacity(layer));
+            }
+            else
+            {
+                accumulation = PassRenderer.draw(content, accumulation, null, layer.blendMode,
+                    opacity(layer), 0F, 0F, 0xFFFFFF);
+            }
+
+            owned.add(accumulation);
+        }
+
+        for (GlFramebuffer framebuffer : owned)
+        {
+            if (framebuffer != accumulation)
+            {
+                framebuffer.delete();
+            }
+        }
+
+        return accumulation;
     }
 
     static DepthPlaneCompositor acquire(int width, int height)
@@ -587,23 +810,73 @@ final class DepthPlanePixelHarness
 
         if (differing > 0 || worst > tolerance)
         {
-            File directory = new File("build/depth-ghost-evidence");
-            directory.mkdirs();
-            writePng(new File(directory, what + "-painter.png"), expected);
-            writePng(new File(directory, what + "-depth.png"), actual);
+            writeEvidence(what, expected, actual);
         }
 
         assertTrue(differing == 0, what + ": " + differing + " channel values differ by more than "
             + tolerance + " (worst " + worst + "); see build/depth-ghost-evidence/");
     }
 
-    private static void writePng(File file, int[] pixels)
+    /** Writes painter/depth evidence; the frame size is inferred from the pixel count (16:9). */
+    private static void writeEvidence(String what, int[] painter, int[] depth)
     {
         try
         {
-            BufferedImage image = new BufferedImage(W, H, BufferedImage.TYPE_INT_ARGB);
+            File directory = new File("build/depth-ghost-evidence");
+            directory.mkdirs();
 
-            image.setRGB(0, 0, W, H, pixels, 0, W);
+            int width = frameWidth(painter.length);
+            int height = Math.max(1, painter.length / width);
+
+            writePng(new File(directory, what + "-painter.png"), painter, width, height);
+            writePng(new File(directory, what + "-depth.png"), depth, width, height);
+        }
+        catch (RuntimeException ignored)
+        {
+            /* Evidence is a debugging aid; never fail the regression because of it. */
+        }
+    }
+
+    private static int frameWidth(int pixels)
+    {
+        int width = Math.max(1, (int) Math.round(Math.sqrt(pixels * 16.0 / 9.0)));
+
+        while (width > 1 && pixels % width != 0)
+        {
+            width -= 1;
+        }
+
+        return width;
+    }
+
+    /** Pixels per channel value that differ (0 = identical frames). */
+    static int pixelDiff(int[] a, int[] b)
+    {
+        if (a.length != b.length)
+        {
+            return Integer.MAX_VALUE;
+        }
+
+        int different = 0;
+
+        for (int i = 0; i < a.length; i++)
+        {
+            if (a[i] != b[i])
+            {
+                different += 1;
+            }
+        }
+
+        return different;
+    }
+
+    private static void writePng(File file, int[] pixels, int width, int height)
+    {
+        try
+        {
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+
+            image.setRGB(0, 0, width, height, pixels, 0, width);
             ImageIO.write(image, "png", file);
         }
         catch (Exception e)

@@ -43,6 +43,22 @@ public class EffectP1BatchTest
         "am_light_glow", "am_color_hot", "am_pinch_bulge_2", "am_swirl_4", "am_hex_rotate",
     };
 
+    /** 0.95: remaining reference distort family. */
+    private static final String[] DISTORT_BATCH =
+    {
+        "am_pinch_bulge_inside", "am_wave_warp", "am_turbulent_displace_3",
+        "am_tileshift_2", "am_stretch_segment", "am_omino_glass",
+    };
+
+    private static java.util.List<String> allBatch()
+    {
+        java.util.List<String> types = new ArrayList<>(java.util.Arrays.asList(BATCH));
+
+        types.addAll(java.util.Arrays.asList(DISTORT_BATCH));
+
+        return types;
+    }
+
     private static long window;
 
     @BeforeAll
@@ -180,7 +196,7 @@ public class EffectP1BatchTest
         int[] source = source();
         List<String> flat = new ArrayList<>();
 
-        for (String type : BATCH)
+        for (String type : allBatch())
         {
             CompEffect effect = CompEffectRegistry.create(type, 1);
             int[] pixels = apply(effect, source, false);
@@ -209,7 +225,7 @@ public class EffectP1BatchTest
         int[] source = source();
         List<String> failures = new ArrayList<>();
 
-        for (String type : BATCH)
+        for (String type : allBatch())
         {
             AmEffectDef definition = AmEffectLibrary.get(type);
 
@@ -268,7 +284,7 @@ public class EffectP1BatchTest
     @Test
     public void everyBatchEntryIsRegisteredAndRenderable()
     {
-        for (String type : BATCH)
+        for (String type : allBatch())
         {
             AmEffectDef definition = AmEffectLibrary.get(type);
 

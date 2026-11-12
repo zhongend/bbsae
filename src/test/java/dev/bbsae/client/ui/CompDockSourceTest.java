@@ -196,4 +196,31 @@ class CompDockSourceTest
             CompDockSource.encode(source.getRoot()), "reload must read the new project's layout");
         assertFalse(source.isDirty());
     }
+
+    @Test
+    void effectsRightLayoutKeepsEveryPanelAndPutsPreviewLeftOfIt()
+    {
+        Set<String> ids = new HashSet<>();
+
+        EditorLayoutNode.collectPanelIds(CompDockSource.effectsRightLayout(), ids);
+
+        assertEquals(Set.of(CompDockSource.PANEL_EFFECTS, CompDockSource.PANEL_PREVIEW,
+            CompDockSource.PANEL_INSPECTOR, CompDockSource.PANEL_TIMELINE), ids);
+
+        /* The left child of the outer row splitter is the preview; the right column stacks the
+         * effect library over the inspector. This is the "effect list on the right of the preview"
+         * layout the layout menu applies. */
+        EditorLayoutNode root = CompDockSource.effectsRightLayout();
+
+        assertTrue(root instanceof EditorLayoutNode.SplitterNode);
+
+        EditorLayoutNode.SplitterNode outer = (EditorLayoutNode.SplitterNode) root;
+
+        assertTrue(outer.getFirst() instanceof EditorLayoutNode.SplitterNode);
+
+        EditorLayoutNode.SplitterNode row = (EditorLayoutNode.SplitterNode) outer.getFirst();
+
+        assertTrue(row.getFirst() instanceof EditorLayoutNode.PanelNode);
+        assertEquals(CompDockSource.PANEL_PREVIEW, ((EditorLayoutNode.PanelNode) row.getFirst()).getPanelId());
+    }
 }

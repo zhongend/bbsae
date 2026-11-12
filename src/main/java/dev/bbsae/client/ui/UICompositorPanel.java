@@ -343,6 +343,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private PanelResizeHandle rightHandle;
     private PanelResizeHandle timelineHandle;
     private PanelResizeHandle keyframeHandle;
+    /** One-shot status for "AE depth effects degraded" (depth_* without world depth). */
+    private String depthDegradedNotice;
 
     /* BBS-native dockable panel layout. Null when the legacy fixed three-column splitter layout is
      * used (Settings → 开发者 → 停靠式面板, read when the panel is constructed). */
@@ -351,6 +353,17 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Header button: left click locks/unlocks the dock, right click opens the layout menu. */
     private UIButton layoutButton;
     private boolean dockLayoutEnabled;
+    /**
+     * Top inset of the timeline content in dock mode.
+     *
+     * <p>BBS's dock splitter handle is 14 px wide and centred on the seam, so 7 px of it sit inside
+     * each panel. The timeline's toolbar starts at y=0/3, which meant the top few pixels of its
+     * buttons belonged to the splitter (a press there resized the panel instead of pressing the
+     * button). Keeping the content 6 px below the panel edge removes that overlap without touching
+     * BBS's dock internals.</p>
+     */
+    private static final int TIMELINE_DOCK_INSET = 6;
+    private static final int TIMELINE_HEADER_H = 26;
     /** Dock structure/visibility changed this frame; the source is flushed once per frame. */
     private boolean dockLayoutDirty;
     private long lastDockFlushMs;
@@ -468,7 +481,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.effectLibrary.relative(this.effectColumn = new UIElement()).x(0).y(22).w(1F).h(1F, -22);
 
         this.assetPanel = new UIScrollView(ScrollDirection.VERTICAL);
-        this.assetPanel.relative(this.effectColumn).x(0).y(22).w(1F).h(1F, -22);
+        /* 6 px right inset: the dock splitter hot zone is 7 px wide and would otherwise eat the scrollbar drag. */
+        this.assetPanel.relative(this.effectColumn).x(0).y(22).w(1F, -6).h(1F, -22);
         this.assetPanel.column(4).vertical().stretch().scroll().padding(4);
         this.assetPanel.setVisible(false);
 
@@ -583,6 +597,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private int ctStartX;
             private int ctStartY;
             private float ctStartDistance;
+            private float ctStartRadius;
             private final org.joml.Vector3f ctStartEye = new org.joml.Vector3f();
             private final org.joml.Vector3f ctStartTarget = new org.joml.Vector3f();
             private final org.joml.Vector3f ctStartRight = new org.joml.Vector3f(1F, 0F, 0F);
@@ -3706,6 +3721,11 @@ public class UICompositorPanel extends UIDashboardPanel
                     this.ctStartTarget.set(this.ctStartEye)
                         .add(new org.joml.Vector3f(view.forward).mul(this.ctStartDistance));
                 }
+
+                /* Dolly must scale the eye→target radius, not |cameraZ|: with an off-axis point of
+                 * interest (the normal AE framing) the two differ and the first Track Z event
+                 * teleported the eye onto the z axis. */
+                this.ctStartRadius = Math.max(1F, this.ctStartEye.distance(this.ctStartTarget));
             }
 
             private void applyCameraToolDrag(UIContext context)
@@ -3772,7 +3792,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     {
                         float factor = dev.bbsae.client.render.CompCameraOps.dollyFactor(dx);
                         float distance = Math.max(camera.cameraNear + 10F,
-                            Math.min(camera.cameraFar - 10F, this.ctStartDistance * factor));
+                            Math.min(camera.cameraFar - 10F, this.ctStartRadius * factor));
                         org.joml.Vector3f direction = new org.joml.Vector3f(this.ctStartEye).sub(this.ctStartTarget);
                         float length = direction.length();
 
@@ -5045,6 +5065,15 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.project.settings.previewBackground = toggle.getValue() ? 1 : 0;
                 this.project.settings.previewBackgroundChosen = true;
                 dev.bbsae.client.overlay.BbsPreviewBridge.setBackdropRequested(this.project.settings.previewBackground == 1);
+
+                /* The BBS live backdrop frame is the only source of world depth in the editor.
+                 * Switching it on may re-enable depth_* effects that were degraded without a
+                 * world frame; give the renderer a fresh chance and re-arm the notice. */
+                if (toggle.getValue())
+                {
+                    dev.bbsae.client.render.CompRenderer.resetDepthEffectsStatus();
+                    this.depthDegradedNotice = null;
+                }
                 this.save();
             }
         });
@@ -5223,6 +5252,22 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             menu.action(Icons.ADD, IKey.constant("在播放头添加变换关键帧"), () -> this.addTransformKey(false));
             menu.action(Icons.ADD, IKey.constant("在播放头添加不透明度关键帧"), this::addOpacityKey);
+        });
+
+        /* BBS calls this after any dope-sheet edit (drag, delete, paste, duplicate). Without it
+         * editing keys in the drawer neither marked the project dirty (no disk write, no undo
+         * sampler, stale green frames) nor refreshed the inspector values — the only write path
+         * was the 60 s autosave. Undo granularity stays the 1 s sampler because BBS does not
+         * expose an edit-start hook. */
+        this.keyframeEditor.view.changed(() ->
+        {
+            if (this.restoring)
+            {
+                return;
+            }
+
+            this.rebindInspectorValues();
+            this.save();
         });
         this.keyframeEditor.setUndoId("bbsae_compositor_timeline");
         this.keyframeEditor.view.resetView();
@@ -5470,13 +5515,13 @@ public class UICompositorPanel extends UIDashboardPanel
             .w(this.quickPanelWidth).h(TIMELINE_HEIGHT);
 
         this.trackTimeline = new UICompTrackTimeline(this);
-        this.trackTimeline.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
+        this.trackTimeline.relative(this.timeline).x(0).y(this.timelineContentTop()).w(1F).h(1F, -this.timelineContentTop());
 
         /* The same strip hosts two editors: the track timeline and the AE curve editor. They are
          * mutually exclusive views of the selected layer's animation, never a second source of
          * keyframes - both edit the very same BBS channels. */
         this.curveEditor = new UICompCurveEditor(this);
-        this.curveEditor.relative(this.timeline).x(0).y(26).w(1F).h(1F, -26);
+        this.curveEditor.relative(this.timeline).x(0).y(this.timelineContentTop()).w(1F).h(1F, -this.timelineContentTop());
         this.curveEditor.setVisible(false);
 
         this.timelineHeader = new UIElement()
@@ -5489,7 +5534,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 super.render(context);
             }
         };
-        this.timelineHeader.relative(this.timeline).x(0).y(0).w(1F).h(26);
+        this.timelineHeader.relative(this.timeline).x(0).y(this.timelineHeaderTop()).w(1F).h(TIMELINE_HEADER_H);
 
         this.addLayer.relative(this.timelineHeader).x(4).y(3).w(20).h(20);
 
@@ -5594,7 +5639,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             /* The quick transform panel belongs to the timeline: it shares the timeline's dock
              * panel, so dragging the timeline to another edge/tab keeps it with its tracks. */
-            this.quickPanel.relative(this.timeline).x(1F, -210).y(26).w(210).h(1F, -26);
+            this.quickPanel.relative(this.timeline).x(1F, -210).y(this.timelineContentTop()).w(210).h(1F, -this.timelineContentTop());
 
             this.timeline.add(this.quickPanel);
 
@@ -10312,6 +10357,15 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.applySelection(layer);
+
+        /* Human expectation: selecting a layer shows that layer's controls. If the inspector was
+         * left on a composition-level page (合成/输出), jump back to 效果控件; explicitly chosen
+         * per-layer pages (调色/图层/蒙版/文字) are kept so the tab does not fight the user. */
+        if (layer != null && this.inspectorTabs != null
+            && (this.inspectorPage == PAGE_COMP || this.inspectorPage == PAGE_OUTPUT))
+        {
+            this.setInspectorPage(PAGE_EFFECTS);
+        }
     }
 
     /**
@@ -10528,7 +10582,35 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         this.refreshInspector();
         this.refreshSheets();
+        this.discardCancelledAction();
         this.setStatus("已取消拖动");
+    }
+
+    /**
+     * Drops the undo point raised by a gesture that was cancelled back to its start state.
+     *
+     * <p>beginAction() records the pre-gesture snapshot. A cancelled drag restores exactly that
+     * state, so keeping the checkpoint would add a no-op undo step. Only pop when the top entry
+     * equals the current state (a real edit since the checkpoint must keep its history).</p>
+     */
+    void discardCancelledAction()
+    {
+        if (this.actionInProgress)
+        {
+            this.actionInProgress = false;
+        }
+
+        String top = this.undoStack.peek();
+
+        if (top != null && this.project != null && top.equals(this.snapshotForUndo()))
+        {
+            this.undoChars -= this.undoStack.pop().length();
+
+            if (!this.lastSnapshot.isEmpty())
+            {
+                this.lastSnapshot = top;
+            }
+        }
     }
 
     /**
@@ -11097,6 +11179,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        this.beginAction("微移图层");
         layer.moveTo(layer.in + frames / Math.max(1F, this.doc.fps), Math.max(1F, this.doc.fps), this.doc.duration);
         this.refreshInspector();
         this.save();
@@ -11263,6 +11346,8 @@ public class UICompositorPanel extends UIDashboardPanel
     public void applyTimelineRowHeight(int height)
     {
         this.trackTimeline.setRowHeight(Math.max(18, Math.min(62, height)));
+        CompPrefs.get().timelineRowHeight = this.trackTimeline.rowHeight();
+        CompPrefs.markDirty();
         this.trackTimeline.resize();
     }
 
@@ -11282,10 +11367,19 @@ public class UICompositorPanel extends UIDashboardPanel
          * hides the drawer without clearing the flag, and returning to the track page must put
          * the drawer back. The old early return made the button say "open" while the drawer stayed
          * invisible until it was clicked twice. */
+        boolean wasOpen = this.keyframeOpen;
+
         this.keyframeOpen = open;
         this.keyframeSlideNanos = System.nanoTime();
 
-        if (open)
+        /* Only the closed→open transition replays the slide. selectKeyframe()/navigateKeyframe()
+         * call this on every click, and resetting the slide each time made the drawer replay its
+         * opening animation (and the sheet rebuild below reset the time zoom) while the user was
+         * simply walking keyframes. `slide == 0` also covers the curve-page → track-page return,
+         * where the flag stayed true but the drawer was hidden. */
+        boolean needsReveal = open && (!wasOpen || this.keyframeDrawerSlide < 0.01F);
+
+        if (needsReveal)
         {
             this.keyframeDrawerSlide = 0F;
         }
@@ -11302,9 +11396,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (open)
         {
-            this.primedWidth = -1;
+            if (needsReveal)
+            {
+                this.primedWidth = -1;
+                this.primeTimeline();
+            }
+
             this.keyframeEditor.resize();
-            this.primeTimeline();
         }
 
         this.updateToolbarLabels();
@@ -11319,6 +11417,22 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
+    /** Top of the timeline content (below the strip header) in the current layout engine. */
+    private int timelineContentTop()
+    {
+        return TIMELINE_HEADER_H + this.timelineHeaderTop();
+    }
+
+    /**
+     * Dock splitter handles are 14 px wide and centred on the seam: 7 px of each panel edge is a
+     * resize hot zone. The timeline strip starts 6 px lower in dock mode so its toolbar buttons do
+     * not own pixels the splitter consumes.
+     */
+    private int timelineHeaderTop()
+    {
+        return this.dock != null ? TIMELINE_DOCK_INSET : 0;
+    }
+
     private void layoutKeyframeDrawer()
     {
         if (this.timeline == null || this.trackTimeline == null || this.keyframeHandle == null)
@@ -11331,18 +11445,19 @@ public class UICompositorPanel extends UIDashboardPanel
             ? Math.max(0, CompUi.quickWidth(this.timeline.area.w, this.quickPanelWidth))
             : 0;
         int stripWidth = Math.max(1, this.timeline.area.w - quickWidth);
+        int top = this.timelineContentTop();
 
         if (quickWidth > 0)
         {
-            this.quickPanel.relative(this.timeline).x(1F, -quickWidth).y(26)
-                .w(quickWidth).h(1F, -26);
+            this.quickPanel.relative(this.timeline).x(1F, -quickWidth).y(top)
+                .w(quickWidth).h(1F, -top);
         }
 
         if (this.timelinePage != 0)
         {
             if (this.curveEditor != null)
             {
-                this.curveEditor.relative(this.timeline).x(0).y(26).w(stripWidth).h(1F, -26);
+                this.curveEditor.relative(this.timeline).x(0).y(top).w(stripWidth).h(1F, -top);
             }
             this.keyframeDrawer.setVisible(false);
             this.keyframeHandle.setVisible(false);
@@ -11353,11 +11468,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
         int timelineHeight = this.dock != null ? Math.max(0, this.timeline.area.h) : this.timelinePanelHeight;
 
-        /* The drawer must leave room for the 26 px strip header, at least two track rows and the
-         * 5 px splitter. The old "timelineHeight - 96" cap ignored the header: in focus mode the
-         * timeline is only ~16 % of the dock, so opening the drawer produced a negative track
-         * height (the tracks vanished and the drawer covered the timeline toolbar). */
-        int max = Math.max(0, timelineHeight - 26 - MIN_TRACKS_HEIGHT - 5);
+        /* The drawer must leave room for the strip header (plus the dock top inset), at least two
+         * track rows and the 5 px splitter. The old "timelineHeight - 96" cap ignored the header:
+         * in focus mode the timeline is only ~16 % of the dock, so opening the drawer produced a
+         * negative track height (the tracks vanished and the drawer covered the toolbar). */
+        int max = Math.max(0, timelineHeight - top - MIN_TRACKS_HEIGHT - 5);
 
         if (max < KEYFRAME_DRAWER_MIN)
         {
@@ -11386,13 +11501,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (shownHeight > 1)
         {
-            this.trackTimeline.relative(this.timeline).x(0).y(26).w(stripWidth).h(1F, -26 - shownHeight);
+            this.trackTimeline.relative(this.timeline).x(0).y(top).w(stripWidth).h(1F, -top - shownHeight);
             this.keyframeDrawer.relative(this.timeline).x(0).y(1F, -shownHeight).w(stripWidth).h(shownHeight);
             this.keyframeHandle.relative(this.timeline).x(0).y(1F, -shownHeight - 2).w(stripWidth).h(5);
         }
         else
         {
-            this.trackTimeline.relative(this.timeline).x(0).y(26).w(stripWidth).h(1F, -26);
+            this.trackTimeline.relative(this.timeline).x(0).y(top).w(stripWidth).h(1F, -top);
         }
 
         this.keyframeEditor.setVisible(shownHeight > 30);
@@ -11586,6 +11701,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
             float frame = this.getFrame();
 
+            /* Base fields must be the interpolated pose, not the last authored value: with an X/Y
+             * animation, pressing F at a mid-timeline frame snapped the camera to the old base
+             * position (and then wrote that wrong position as a keyframe). */
+            Transform currentPose = camera.transformAt(frame);
+
+            camera.x = currentPose.translate.x;
+            camera.y = currentPose.translate.y;
             camera.rotationX = camera.scalarAt("rotationX", camera.rotationX, frame);
             camera.rotationY = camera.scalarAt("rotationY", camera.rotationY, frame);
             camera.cameraZ = camera.scalarAt("cameraZ", camera.cameraZ, frame);
@@ -11737,6 +11859,11 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.keyCameraPose(camera);
+
+        /* Flight writes the pose every frame without going through save(); green pre-rendered
+         * frames only see markDirty(), so without this the preview froze on the old cached frame
+         * until flight ended (and then jumped). */
+        dev.bbsae.client.render.CompPrecache.markDirty();
     }
 
     private boolean hasDepthEffects()
@@ -12416,6 +12543,14 @@ public class UICompositorPanel extends UIDashboardPanel
             this.dock.resetLayout();
             this.dockLayoutDirty = true;
             this.setStatus("面板布局已重置");
+        });
+        manager.action(Icons.MATERIAL, IKey.constant("效果库 + 属性停靠到预览右侧（AE 效果面板布局）"), () ->
+        {
+            this.dockSource.setRoot(CompDockSource.effectsRightLayout());
+            this.dockSource.setHiddenPanels(new java.util.LinkedHashSet<>());
+            this.dock.refresh();
+            this.dockLayoutDirty = true;
+            this.setStatus("已把效果库与属性栏停靠到预览右侧（可在「布局」菜单重置）");
         });
         manager.action(Icons.UNDO, IKey.constant("撤销布局改动（Ctrl+Alt+Z）"), () ->
         {
@@ -13495,6 +13630,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             dev.bbsae.comp.CompAudio clip = this.selectedAudio;
 
+            this.beginAction("移除音频");
             this.doc.audio.remove(clip);
             this.selectedAudio = null;
             dev.bbsae.client.audio.CompAudioPlayer.invalidate();
@@ -14680,7 +14816,7 @@ public class UICompositorPanel extends UIDashboardPanel
             + "需要 0.91 之前的全图层 3D 行为，可在 设置 → 开发者 切换 3D 逻辑"));
         section.fields.add(threeD);
 
-        if (layer.threeD)
+        if (layer.threeD && !layer.isCamera())
         {
             section.fields.add(this.animatedNumberRow("Z 深度", layer, "z", layer.scalarAt("z", layer.z, this.getFrame()), (value) ->
             {
@@ -15764,6 +15900,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         section.fields.add(this.smallButton("移除这条音频", () ->
         {
+            this.beginAction("移除音频");
             comp.audio.remove(clip);
             this.selectedAudio = null;
             dev.bbsae.client.audio.CompAudioPlayer.invalidate();
@@ -17532,12 +17669,34 @@ public class UICompositorPanel extends UIDashboardPanel
 
     /* Keyframes and timeline */
 
+    /**
+     * Pen-tool bridge: structural path edits (insert/remove anchor, set-first-vertex) add or
+     * re-index animated channels, so the dope sheet / curve sheet list has to be rebuilt.
+     * UIPenTool looks this method up from the host (see PEN-TOOL-REPORT §12.5).
+     */
+    void penRefreshSheets()
+    {
+        this.refreshSheets();
+    }
+
     private void refreshSheets()
     {
+        /* The sheet list is rebuilt from scratch here, and BBS stores each sheet's selection on
+         * the sheet object — a refresh therefore used to clear the dope-sheet multi-selection.
+         * BBS offers cacheState()/applyState() for exactly this; selections are re-applied by
+         * sheet id afterwards (channels that disappeared simply drop out). */
+        mchorse.bbs_mod.ui.framework.elements.input.keyframes.KeyframeState selection =
+            this.keyframeEditor == null ? null : this.keyframeEditor.view.cacheState();
+
         this.keyframeEditor.view.removeAllSheets();
 
         if (this.selectedLayer == null || this.doc == null)
         {
+            if (selection != null)
+            {
+                this.keyframeEditor.view.applyState(selection);
+            }
+
             return;
         }
 
@@ -17579,6 +17738,15 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             KeyframeChannel<Float> channel = layer.scalarChannel(path);
+
+            /* Undo / deleted effects can leave empty channel objects behind (removeChannel has no
+             * data-layer counterpart yet). They have nothing to edit, so keep them out of the make-
+             * key list instead of showing a permanently blank "Effect · param" row. */
+            if (channel == null || channel.getKeyframes().isEmpty())
+            {
+                continue;
+            }
+
             int c = UIKeyframeEditor.COLORS[color % UIKeyframeEditor.COLORS.length];
 
             color += 1;
@@ -17610,6 +17778,11 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 this.keyframeViewNeedsFit = true;
             }
+        }
+
+        if (selection != null)
+        {
+            this.keyframeEditor.view.applyState(selection);
         }
     }
 
@@ -18367,7 +18540,7 @@ public class UICompositorPanel extends UIDashboardPanel
      *
      * <p>The name is reserved for the undo UI; it is not shown yet.</p>
      */
-    private void beginAction(String name)
+    void beginAction(String name)
     {
         if (this.restoring || this.project == null)
         {
@@ -18538,6 +18711,21 @@ public class UICompositorPanel extends UIDashboardPanel
          * edit made right after the command would be merged into the next undo step. */
         if (this.actionInProgress)
         {
+            /* A discrete command is over in one frame, but beginAction() is also raised by
+             * continuous gestures (curve key drag, pen handle drag, timeline drag). For those the
+             * first frame is NOT the post-command baseline: consuming it here made the sampler
+             * push the "dragged a few pixels" state as the next undo step, so the first Ctrl+Z
+             * after a long drag only undid a few pixels (the user had to press it twice). Wait
+             * until the gesture has actually finished, then record its end state as baseline. */
+            boolean gestureActive = mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0)
+                || (this.trackTimeline != null && this.trackTimeline.isInteracting())
+                || (this.curveEditor != null && this.curveEditor.isInteracting());
+
+            if (gestureActive)
+            {
+                return;
+            }
+
             this.actionInProgress = false;
 
             if (!this.restoring && this.project != null)
@@ -18637,6 +18825,12 @@ public class UICompositorPanel extends UIDashboardPanel
         String compId = this.doc == null ? null : this.doc.id;
         String layerId = this.selectedLayer == null ? null : this.selectedLayer.id;
         CompProject.CompSettings liveSettings = this.project == null ? null : this.project.settings;
+        /* Undo replaces the object graph; keep the user's selection / picker state instead of
+         * collapsing a 3-layer selection to the primary layer and resetting the dope-sheet view. */
+        java.util.List<String> restoreIds = new ArrayList<>(this.selectedIds);
+        String restoreAudioId = this.selectedAudio == null ? null : this.selectedAudio.id;
+        mchorse.bbs_mod.ui.framework.elements.input.keyframes.KeyframeState restoreDrawer =
+            this.keyframeEditor == null ? null : this.keyframeEditor.view.cacheState();
 
         this.restoring = true;
 
@@ -18655,18 +18849,77 @@ public class UICompositorPanel extends UIDashboardPanel
 
             this.setSingleSelection(null);
 
-            if (layerId != null && this.doc != null)
+            /* Re-resolve the whole selection by id (multi-select survives undo). */
+            CompLayer primary = null;
+
+            if (this.doc != null)
             {
-                this.setSingleSelection(this.doc.getLayer(layerId));
+                for (String id : restoreIds)
+                {
+                    CompLayer layer = this.doc.getLayer(id);
+
+                    if (layer != null)
+                    {
+                        this.selectedIds.add(layer.id);
+
+                        if (primary == null)
+                        {
+                            primary = layer;
+                        }
+                    }
+                }
+
+                if (primary == null && layerId != null)
+                {
+                    primary = this.doc.getLayer(layerId);
+                }
+
+                if (primary != null)
+                {
+                    this.selectedIds.clear();
+                    this.selectedIds.add(primary.id);
+
+                    for (String id : restoreIds)
+                    {
+                        CompLayer layer = this.doc.getLayer(id);
+
+                        if (layer != null && !this.selectedIds.contains(layer.id))
+                        {
+                            this.selectedIds.add(layer.id);
+                        }
+                    }
+                }
+                else if (!this.doc.layers.isEmpty())
+                {
+                    primary = this.doc.layers.get(this.doc.layers.size() - 1);
+                    this.selectedIds.add(primary.id);
+                }
             }
 
-            if (this.selectedLayer == null && this.doc != null && !this.doc.layers.isEmpty())
+            this.selectedLayer = primary;
+
+            if (this.selectedAudio != null)
             {
-                this.setSingleSelection(this.doc.layers.get(this.doc.layers.size() - 1));
+                this.selectedAudio = null;
+            }
+
+            if (restoreAudioId != null && this.doc != null && this.doc.audio != null)
+            {
+                for (dev.bbsae.comp.CompAudio clip : this.doc.audio)
+                {
+                    if (clip != null && restoreAudioId.equals(clip.id))
+                    {
+                        this.selectedAudio = clip;
+
+                        break;
+                    }
+                }
             }
 
             this.lastSnapshot = json;
-            this.primedWidth = -1;
+            this.primedWidth = this.keyframeEditor == null ? -1 : Math.max(1, this.keyframeEditor.area.w);
+            this.primedHeight = this.keyframeEditor == null ? -1 : this.keyframeEditor.area.h;
+            this.resetTimelineView = false;
 
             /* The restored project is a new object graph. The old precomp stack pointed at
              * documents that no longer belong to it, so restoring while inside a nested comp
@@ -18694,6 +18947,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.refreshInspector();
             this.refreshSheets();
             this.refreshQueue();
+
+            /* The dope sheet was just rebuilt with fresh sheets, so restore the drawer's selected
+             * keys and time zoom on top of them (cacheState was taken before the undo). */
+            if (restoreDrawer != null && this.keyframeEditor != null)
+            {
+                this.keyframeEditor.view.applyState(restoreDrawer);
+            }
             /* The bridge caches the document it renders; without this an undo leaves the BBS
              * preview/backdrop pointing at the pre-undo object graph. */
             dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
@@ -19359,7 +19619,10 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.openKeyframes();
+        /* pickKeyframe() only feeds the keyframe-properties panel; the dope-sheet highlight (and
+         * the Delete/duplicate actions that read the sheet's selection) come from the graph. */
         this.keyframeEditor.view.pickKeyframe(target);
+        this.keyframeEditor.view.getGraph().selectKeyframe(target);
         this.setFrame(target.getTick());
         this.trackTimeline.revealTime(this.time);
     }
@@ -19422,7 +19685,10 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.openKeyframes();
+        /* pickKeyframe() only feeds the keyframe-properties panel; the dope-sheet highlight (and
+         * the Delete/duplicate actions that read the sheet's selection) come from the graph. */
         this.keyframeEditor.view.pickKeyframe(target);
+        this.keyframeEditor.view.getGraph().selectKeyframe(target);
         this.setFrame(target.getTick());
         this.trackTimeline.revealTime(this.time);
     }
@@ -19699,6 +19965,22 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.updateCameraFlight(context);
         this.syncPreviewAudio();
+
+        /* AE preview/export cannot capture the world depth buffer unless the BBS live frame is
+         * available; depth_* effects then silently no-op (and BBS-overlay export differs). The
+         * renderer exposes a degraded state + a one-line reason — surface it once instead of
+         * letting the user wonder why the fog does nothing. */
+        String degraded = dev.bbsae.client.render.CompRenderer.depthEffectsDegradedMessage();
+
+        if (degraded == null || degraded.isEmpty())
+        {
+            this.depthDegradedNotice = null;
+        }
+        else if (!degraded.equals(this.depthDegradedNotice))
+        {
+            this.depthDegradedNotice = degraded;
+            this.setStatus(degraded);
+        }
 
         /* Opaque backdrop, unconditionally.
          *

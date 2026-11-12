@@ -97,6 +97,10 @@ public class UIReplayModePanel extends UIDashboardPanel
     private final java.util.List<Replay> knownOrder = new java.util.ArrayList<>();
     private String selectedPart = "";
     private String cachedStatus = "";
+    /** Visibility the borrowed film panel had before being attached hidden; restored on detach. */
+    private boolean borrowedFilmPanelVisible = true;
+    /** Invisible root-level holder that keeps the borrowed film panel connected (see attach). */
+    private UIElement borrowedFilmPanelHolder;
 
     /* Verification setup requested by ReplayDebugHook; applied once the viewport has framed. */
     private boolean debugCameraPending;
@@ -151,6 +155,9 @@ public class UIReplayModePanel extends UIDashboardPanel
             {
                 this.session.setPlaying(false);
             }
+
+            /* Leaving the page hands the film panel back before the dashboard reparents it. */
+            this.detachBorrowedFilmPanel();
         });
     }
 
@@ -201,6 +208,8 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         if (this.built && current == this.film)
         {
+            this.attachBorrowedFilmPanel();
+
             if (currentReplay != null && currentReplay != this.replay)
             {
                 this.selectReplay(currentReplay);
@@ -227,6 +236,10 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.filmPanel = panel;
         this.film = film;
+
+        /* Attach it before anything below can write into the film: BBS' undo data is collected
+         * through UIElement.getRoot() at the moment of the edit (see attachBorrowedFilmPanel). */
+        this.attachBorrowedFilmPanel();
 
         if (filmChanged)
         {
@@ -259,6 +272,88 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.knownOrder.clear();
         this.knownOrder.addAll(film.replays.getList());
+    }
+
+    /**
+     * Keeps the borrowed {@link UIFilmPanel} connected to the UI tree (hidden), without putting it
+     * inside this page.
+     *
+     * <p>BBS' undo handler collects the "before" UI snapshot through {@code UIElement.getRoot()} at
+     * the moment of the first value edit and applies it again on undo. A detached film panel has no
+     * root, so an edit made here wrote an undo entry whose UI snapshot was null; Ctrl+Z then threw
+     * {@code NullPointerException: ... MapType.has ... because "data" is null}.</p>
+     *
+     * <p><b>Why a root-level holder and not a child of this page:</b> the first attempt attached
+     * the film panel to the replay page itself, which made the dashboard render the film panel's
+     * world pass and drop the page UI on the real machine (Run C screenshots were world + gizmo
+     * only). Attaching it to an invisible holder under the screen root keeps {@code getRoot()}
+     * non-null for the undo data without touching the page's children or layout: a hidden sibling
+     * is skipped by the root's render/input passes, and the page subtree stays exactly as it was.</p>
+     *
+     * <p>Called from {@link #update()}, i.e. once per client tick before rendering, so the holder
+     * is added while the root is not iterating its children (adding during render would throw a
+     * {@code ConcurrentModificationException}).</p>
+     */
+    private void attachBorrowedFilmPanel()
+    {
+        UIFilmPanel panel = this.filmPanel;
+
+        if (panel == null || panel.getRoot() != null)
+        {
+            return;
+        }
+
+        if (this.borrowedFilmPanelHolder != null && this.borrowedFilmPanelHolder.getParent() != null)
+        {
+            return;
+        }
+
+        UIElement root = this.getRoot();
+
+        if (root == null)
+        {
+            /* Not on screen yet: retried from update() on the frame the page appears. */
+            return;
+        }
+
+        if (panel.getParent() != null)
+        {
+            /* Someone else owns it (it is the dashboard's current panel): it already has a root. */
+            return;
+        }
+
+        this.borrowedFilmPanelVisible = panel.isVisible();
+
+        panel.setVisible(false);
+
+        if (this.borrowedFilmPanelHolder == null)
+        {
+            this.borrowedFilmPanelHolder = new UIElement();
+            this.borrowedFilmPanelHolder.setVisible(false);
+            this.borrowedFilmPanelHolder.relative(root).x(0).y(0).w(1F).h(1F);
+            this.borrowedFilmPanelHolder.add(panel);
+        }
+
+        root.add(this.borrowedFilmPanelHolder);
+    }
+
+    /** Undoes {@link #attachBorrowedFilmPanel()}, restoring the visibility it had. */
+    private void detachBorrowedFilmPanel()
+    {
+        UIFilmPanel panel = this.filmPanel;
+
+        if (panel != null && this.borrowedFilmPanelHolder != null
+            && panel.getParent() == this.borrowedFilmPanelHolder)
+        {
+            panel.removeFromParent();
+            panel.setVisible(this.borrowedFilmPanelVisible);
+        }
+
+        if (this.borrowedFilmPanelHolder != null)
+        {
+            this.borrowedFilmPanelHolder.removeFromParent();
+            this.borrowedFilmPanelHolder = null;
+        }
     }
 
     private void build(UIFilmPanel panel)
@@ -488,7 +583,10 @@ public class UIReplayModePanel extends UIDashboardPanel
         );
 
         editor.target(this.replayProperties);
-        editor.setUndoId("replay_keyframe_editor");
+        /* Unique undo id: the borrowed film panel's own replay editor already registers
+         * "replay_keyframe_editor" for its hidden keyframe editor. Sharing the id would let the
+         * hidden editor's snapshot overwrite this one's selection on every undo. */
+        editor.setUndoId("replay_mode_keyframe_editor");
         editor.view.rulerRenderer((context) -> UIReplaysEditor.renderRuler(
             context, editor.view, this.filmPanel.cameraEditor, this.film.camera, 0));
         editor.view.duration(() -> this.film.camera.calculateDuration());
@@ -547,6 +645,12 @@ public class UIReplayModePanel extends UIDashboardPanel
     @Override
     public void update()
     {
+        /* Keep the borrowed film panel rooted for BBS' undo data collection. The dashboard calls
+         * update() on the active panel once per client tick, before rendering — the only safe
+         * moment to add a root child (adding during render would mutate the root's children while
+         * it iterates them). */
+        this.attachBorrowedFilmPanel();
+
         super.update();
 
         if (this.session != null)
@@ -769,6 +873,244 @@ public class UIReplayModePanel extends UIDashboardPanel
         return this.viewport;
     }
 
+    /* ------------------------------------------------------------ scripted-run hooks */
+
+    /**
+     * Verification hooks used by {@link ReplayInteractionScript}. They are public only so the
+     * script can drive the same private paths a user's actions go through (selection, form swap,
+     * list duplicate/remove) without duplicating that logic — the script must exercise production
+     * code or its screenshots mean nothing.
+     */
+
+    public int debugReplayCount()
+    {
+        return this.film == null ? 0 : this.film.replays.getList().size();
+    }
+
+    public int debugSelectPlayableReplay()
+    {
+        int index = this.firstPlayableReplayIndex();
+
+        this.debugSelectIndex(index);
+
+        return index;
+    }
+
+    public void debugSelectIndex(int index)
+    {
+        this.selectReplayFromIndex(index);
+    }
+
+    /**
+     * Re-binds the panel after an external film-data edit (undo/redo rebuilds the film's value
+     * objects, so the selected {@code Replay} instance and the actor entities are stale).
+     */
+    public void debugAfterExternalEdit(int selectedIndex)
+    {
+        if (this.film != null)
+        {
+            this.knownOrder.clear();
+            this.knownOrder.addAll(this.film.replays.getList());
+        }
+
+        if (this.session != null)
+        {
+            this.session.recreateEntities();
+            this.session.applyAllPoses();
+        }
+
+        this.debugSelectIndex(selectedIndex);
+        this.rebuildKeyframeEditor();
+        this.tracksDirty = true;
+    }
+
+    /** Undo through BBS's original film history (Ctrl+Z in the replay editor). */
+    public boolean undoReplay()
+    {
+        return this.runFilmHistory(false);
+    }
+
+    /** Redo through BBS's original film history (Ctrl+Shift+Z / Ctrl+Y). */
+    public boolean redoReplay()
+    {
+        return this.runFilmHistory(true);
+    }
+
+    /**
+     * Runs BBS's film undo/redo history while the borrowed {@link UIFilmPanel} is temporarily
+     * attached to this page.
+     *
+     * <p>In replay mode the dashboard's film panel is deliberately not the active screen — only its
+     * film data, controller and editor children are reused. BBS applies per-element undo data via
+     * {@code UIElement.getRoot().applyAllUndoData(...)}, and {@code getRoot()} returns null for a
+     * detached panel, so Ctrl+Z/Ctrl+Y threw a NullPointerException (the real-machine interaction
+     * script caught it: "Cannot invoke UIRootElement.applyAllUndoData because getRoot() is null").
+     * Attaching it for the duration of the synchronous call gives it a root; it is detached again
+     * before any render happens, so there is no flicker and add/remove does not run panel
+     * lifecycle callbacks.</p>
+     */
+    private boolean runFilmHistory(boolean redo)
+    {
+        UIFilmPanel panel = this.filmPanel;
+
+        if (panel == null || panel.getData() == null)
+        {
+            return false;
+        }
+
+        int selected = 0;
+
+        if (this.film != null)
+        {
+            int index = ReplayListOps.indexOfIdentical(this.film.replays.getList(), this.replay);
+
+            if (index >= 0)
+            {
+                selected = index;
+            }
+        }
+
+        boolean attached = panel.getRoot() != null;
+        boolean wasVisible = panel.isVisible();
+
+        if (!attached)
+        {
+            panel.setVisible(false);
+            panel.relative(this).x(0).y(0).w(1F).h(1F);
+            this.add(panel);
+        }
+
+        try
+        {
+            if (redo)
+            {
+                panel.redo();
+            }
+            else
+            {
+                panel.undo();
+            }
+        }
+        finally
+        {
+            if (!attached)
+            {
+                panel.removeFromParent();
+                panel.setVisible(wasVisible);
+            }
+        }
+
+        this.debugAfterExternalEdit(selected);
+
+        return true;
+    }
+
+    /** Duplicate through the original list action; returns the new replay, or null. */
+    public Replay debugDuplicateReplay()
+    {
+        if (this.replaysList == null || this.film == null)
+        {
+            return null;
+        }
+
+        int before = this.film.replays.getList().size();
+
+        try
+        {
+            this.replaysList.replays.dupeReplay();
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.warn("Replay script: list duplicate threw", e);
+
+            return null;
+        }
+
+        if (this.film.replays.getList().size() <= before)
+        {
+            return null;
+        }
+
+        int selectedIndex = ReplayListOps.indexOfIdentical(this.film.replays.getList(), this.replay);
+
+        this.debugAfterExternalEdit(selectedIndex < 0 ? 0 : selectedIndex);
+        this.knownOrder.clear();
+        this.knownOrder.addAll(this.film.replays.getList());
+
+        return this.film.replays.getList().get(this.film.replays.getList().size() - 1);
+    }
+
+    /** Removes a replay added by the script (data-level; no confirmation overlay). */
+    public void debugRemoveReplay(Replay replay)
+    {
+        if (this.film == null || replay == null)
+        {
+            return;
+        }
+
+        try
+        {
+            this.film.replays.remove(replay);
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.warn("Replay script: list remove threw", e);
+
+            return;
+        }
+
+        this.debugAfterExternalEdit(0);
+        this.knownOrder.clear();
+        this.knownOrder.addAll(this.film.replays.getList());
+    }
+
+    /** Replaces the selected replay's form through the palette callback's copy path. */
+    public boolean debugApplyForm(Form picked)
+    {
+        if (this.replay == null || picked == null)
+        {
+            return false;
+        }
+
+        ReplayFormSwap.apply(picked, FormUtils::copy, this.replay.form::set);
+        this.afterFormChanged();
+
+        return true;
+    }
+
+    /** The channel values at the playhead, for the script's log (x/y/z/yaw/headYaw/bodyYaw/pitch). */
+    public String debugChannelSummary()
+    {
+        if (this.replay == null || this.session == null)
+        {
+            return "-";
+        }
+
+        float tick = this.session.keyframeTick();
+        IEntity entity = this.session.entity(this.replay);
+        String pose = entity == null ? "-"
+            : String.format(java.util.Locale.ROOT, "pos=(%.2f,%.2f,%.2f) pitch=%.2f yaw=%.2f",
+                entity.getX(), entity.getY(), entity.getZ(), entity.getPitch(), entity.getYaw());
+
+        return String.format(java.util.Locale.ROOT,
+            "tick=%.2f x=%.2f y=%.2f z=%.2f yaw=%.2f headYaw=%.2f bodyYaw=%.2f pitch=%.2f %s",
+            tick,
+            channel(this.replay.keyframes.x.interpolate(tick)),
+            channel(this.replay.keyframes.y.interpolate(tick)),
+            channel(this.replay.keyframes.z.interpolate(tick)),
+            channel(this.replay.keyframes.yaw.interpolate(tick)),
+            channel(this.replay.keyframes.headYaw.interpolate(tick)),
+            channel(this.replay.keyframes.bodyYaw.interpolate(tick)),
+            channel(this.replay.keyframes.pitch.interpolate(tick)),
+            pose
+        );
+    }
+
+    private static double channel(Double value)
+    {
+        return value == null ? Double.NaN : value;
+    }
+
     /* ------------------------------------------------------------ transport */
 
     private void togglePlayback()
@@ -958,14 +1300,17 @@ public class UIReplayModePanel extends UIDashboardPanel
                 if (key == GLFW.GLFW_KEY_Z && this.filmPanel != null)
                 {
                     /* Undo goes through the original panel's history. Assigning film.preCallback
-                     * would evict BBS' own UIFilmUndoHandler and break the undo chain (plan R6). */
+                     * would evict BBS' own UIFilmUndoHandler and break the undo chain (plan R6).
+                     * The helper attaches the borrowed panel for the synchronous call: its
+                     * getRoot() is null while it is not the active dashboard panel and BBS undo
+                     * applies UI data through the root. */
                     if (Window.isShiftPressed())
                     {
-                        this.filmPanel.redo();
+                        this.redoReplay();
                     }
                     else
                     {
-                        this.filmPanel.undo();
+                        this.undoReplay();
                     }
 
                     return true;
@@ -973,7 +1318,7 @@ public class UIReplayModePanel extends UIDashboardPanel
 
                 if (key == GLFW.GLFW_KEY_Y && this.filmPanel != null)
                 {
-                    this.filmPanel.redo();
+                    this.redoReplay();
 
                     return true;
                 }

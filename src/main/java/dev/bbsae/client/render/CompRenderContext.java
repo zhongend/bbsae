@@ -30,6 +30,18 @@ public final class CompRenderContext
     public boolean preview = true;
 
     /**
+     * True only for the free 3D workspace draft viewport ({@link CompViewportRenderer}).
+     *
+     * <p>The 3D workspace draws a cheap <b>draft</b>: a precomp layer is represented by a blue
+     * "预合成（草稿）" plate instead of rendering the nested composition (that would be a second
+     * full graph per orbit frame). That plate is editor chrome and must never leak into the
+     * composition panel preview or the encoder — those render the real nested comp. Before this
+     * flag existed, {@code CompLayerSourceCache} keyed the plate off {@code preview} alone, so the
+     * panel preview (also "preview") showed a blue placeholder instead of the actual precomp.</p>
+     */
+    public boolean draftViewport = false;
+
+    /**
      * Whether this pass applies the effect stack and masks.
      *
      * <p>A sub-composition must inherit the parent's answer: a depth or guide pass renders the

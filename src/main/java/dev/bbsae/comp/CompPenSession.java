@@ -145,6 +145,15 @@ public final class CompPenSession
 
         /** The closed flag changed: render caches that fingerprint paths have to be dropped. */
         void closedChanged();
+
+        /**
+         * The vertex structure changed (point added/removed or the order rotated): the dope sheet /
+         * curve editor row set is derived from the channel paths ({@code p/<i>/...}), so the host has
+         * to rebuild its sheets. Default no-op keeps test listeners source-compatible.
+         */
+        default void structureChanged()
+        {
+        }
     }
 
     public enum Phase
@@ -782,6 +791,7 @@ public final class CompPenSession
         this.dragStartScreenY = screenY;
         this.anchorPoint = count;
         this.listener.changed();
+        this.listener.structureChanged();
 
         return PRESS_CONSUMED;
     }
@@ -1187,6 +1197,7 @@ public final class CompPenSession
         this.drag = Drag.NONE;
         this.dragPoint = -1;
         this.listener.changed();
+        this.listener.structureChanged();
         this.listener.status("已把锚点 " + (index + 1) + " 设为第一顶点");
 
         return true;
@@ -1233,6 +1244,7 @@ public final class CompPenSession
         this.selection.add(segment + 1);
         this.anchorPoint = this.target.count() - 1;
         this.listener.changed();
+        this.listener.structureChanged();
         this.listener.status("已在路径段上加点");
 
         return true;
@@ -1278,6 +1290,7 @@ public final class CompPenSession
         this.selection.add(index);
         this.anchorPoint = this.target.count() - 1;
         this.listener.changed();
+        this.listener.structureChanged();
         this.listener.status("已在路径末尾加点");
 
         return true;
@@ -1397,6 +1410,7 @@ public final class CompPenSession
         this.drag = Drag.NONE;
         this.dragPoint = -1;
         this.listener.changed();
+        this.listener.structureChanged();
         this.listener.status("已删除 " + slot + " 个顶点");
 
         return true;
@@ -1513,6 +1527,7 @@ public final class CompPenSession
         this.selection.add(at);
         this.anchorPoint = this.target.count() - 1;
         this.listener.changed();
+        this.listener.structureChanged();
         this.listener.status("已在路径段上加点，并重映射了 " + ticks.length + " 个动画关键时间");
 
         return true;
@@ -1627,6 +1642,7 @@ public final class CompPenSession
         this.drag = Drag.NONE;
         this.dragPoint = -1;
         this.listener.changed();
+        this.listener.structureChanged();
         this.listener.status("已删除 " + slot + " 个顶点，并重映射了动画关键帧");
 
         return true;

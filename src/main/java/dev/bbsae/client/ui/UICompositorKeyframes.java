@@ -21,6 +21,8 @@ import java.util.function.Consumer;
 public class UICompositorKeyframes extends UIKeyframes
 {
     private final UICompositorPanel panel;
+    /** The drawer's only self-drawn motion: the playhead glow behind BBS' cursor. */
+    private final UiMotion motion = new UiMotion();
 
     public UICompositorKeyframes(UICompositorPanel panel, Consumer<Keyframe> callback)
     {
@@ -180,6 +182,8 @@ public class UICompositorKeyframes extends UIKeyframes
     @Override
     protected void renderOverlay(UIContext context)
     {
+        this.motion.tickFrame();
+
         super.renderOverlay(context);
 
         /* The editor's own ruler is supplied by UICompositorPanel via
@@ -190,6 +194,23 @@ public class UICompositorKeyframes extends UIKeyframes
         if (x < this.graphArea.x || x > this.graphArea.ex())
         {
             return;
+        }
+
+        /* A slow breath behind the shared BBS cursor (glow switch respected). The line and label
+         * stay BBS-drawn; this is the drawer's half of the curve editor's playhead pulse, so the
+         * two keyframe surfaces read as one editor. It is paint-only: the cursor X is the model
+         * time, never an animated value. */
+        if (CompPrefs.get().glow)
+        {
+            float glow = UICompCurveEditor.playheadGlowAlpha(this.motion.breathe(2.8F), this.motion.intensity());
+
+            if (glow > 0.001F)
+            {
+                int spread = 2 + Math.round(2F * this.motion.intensity());
+
+                context.batcher.box(x - spread, this.graphArea.y, x + 1 + spread, this.graphArea.ey(),
+                    UiMotion.alpha(0xFFFF5A5A, glow));
+            }
         }
 
         String label = String.format(Locale.ROOT, "%.0f", tick);

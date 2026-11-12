@@ -93,8 +93,12 @@ public class UICompTrackTimeline extends UIElement
     private int dragStartX;
     private int dragStartY;
     private int dragReorderTarget = -1;
+    private boolean dragCheckpoint;
     private float dragIn;
     private float dragOut;
+    private float dragOrigStartTime;
+    private float dragOrigFrame;
+    private float dragAudioRawDuration;
     private double dragShift;
     private float snapGuide = Float.NaN;
 
@@ -629,6 +633,11 @@ public class UICompTrackTimeline extends UIElement
     {
         this.rowHeight = Math.max(ROW_MIN, Math.min(ROW_MAX, height));
         this.clampScroll();
+    }
+
+    public int rowHeight()
+    {
+        return this.rowHeight;
     }
 
     public int getRowHeight()
@@ -1553,10 +1562,19 @@ public class UICompTrackTimeline extends UIElement
         if (context.mouseX < this.headerArea.x + REORDER_GRIP)
         {
             this.selectWithModifiers(layer);
+
+            if (layer.locked)
+            {
+                this.panel.setStatus("轨道已锁定：先解锁再调整顺序");
+
+                return;
+            }
+
             this.dragMode = MODE_REORDER;
             this.dragId = layer.id;
             this.dragStartY = context.mouseY;
             this.dragReorderTarget = row;
+            this.dragCheckpoint = false;
 
             return;
         }
@@ -1688,6 +1706,9 @@ public class UICompTrackTimeline extends UIElement
         this.dragStartY = context.mouseY;
         this.dragIn = layer.in;
         this.dragOut = layer.out;
+        this.dragOrigStartTime = layer.startTime;
+        this.dragOrigFrame = this.panel.getFrame();
+        this.dragCheckpoint = false;
 
         if (context.mouseX - start <= EDGE)
         {
@@ -1733,6 +1754,9 @@ public class UICompTrackTimeline extends UIElement
         this.dragAudioStart = clip.start;
         this.dragAudioOffset = clip.offset;
         this.dragAudioLength = this.audioLength(clip);
+        this.dragAudioRawDuration = clip.duration;
+        this.dragOrigFrame = this.panel.getFrame();
+        this.dragCheckpoint = false;
 
         if (context.mouseX - start <= EDGE)
         {
@@ -1801,6 +1825,9 @@ public class UICompTrackTimeline extends UIElement
     {
         CompDocument doc = this.doc();
 
+        this.dragOrigFrame = this.panel.getFrame();
+        this.dragCheckpoint = false;
+
         if (doc != null && (doc.workAreaIn > 0.0001F || doc.workAreaOut < doc.duration - 0.0001F))
         {
             if (Math.abs(mouseX - this.toX(doc.workAreaIn)) <= 6)
@@ -1845,7 +1872,6 @@ public class UICompTrackTimeline extends UIElement
         {
             return;
         }
-
         if (!Window.isMouseButtonPressed(0))
         {
             this.endDrag();
@@ -1881,6 +1907,7 @@ public class UICompTrackTimeline extends UIElement
 
             if (doc != null)
             {
+                this.beginDragCheckpoint("调整工作区");
                 float frame = 1F / this.fps();
                 float value = this.quantize(this.fromX(context.mouseX));
 
@@ -1901,6 +1928,7 @@ public class UICompTrackTimeline extends UIElement
 
         if (this.dragMode == MODE_AUDIO_MOVE || this.dragMode == MODE_AUDIO_TRIM_IN || this.dragMode == MODE_AUDIO_TRIM_OUT)
         {
+            this.beginDragCheckpoint("编辑音频");
             this.dragAudioClip(context);
 
             return;
@@ -1914,6 +1942,8 @@ public class UICompTrackTimeline extends UIElement
 
             return;
         }
+
+        this.beginDragCheckpoint(this.dragMode == MODE_MOVE ? "移动片段" : "裁剪片段");
 
         float delta = this.fromX(context.mouseX) - this.fromX(this.dragStartX);
         float fps = this.fps();
@@ -1999,6 +2029,7 @@ public class UICompTrackTimeline extends UIElement
 
             if (layer != null)
             {
+                this.beginDragCheckpoint("重排图层");
                 this.panel.moveLayerToDisplayIndex(layer, this.dragReorderTarget);
             }
         }
@@ -2007,12 +2038,29 @@ public class UICompTrackTimeline extends UIElement
         this.dragId = null;
         this.dragAudio = null;
         this.dragReorderTarget = -1;
+        this.dragCheckpoint = false;
         this.snapGuide = Float.NaN;
 
         if (edited)
         {
             this.panel.onTrackEdited();
         }
+    }
+
+    /**
+     * Records exactly one undo checkpoint per gesture (the first frame that actually starts
+     * mutating data). Without it every drag was folded into the 1 s sampler window, so two quick
+     * drags became one undo step and the checkpoint could land mid-drag.
+     */
+    private void beginDragCheckpoint(String name)
+    {
+        if (this.dragCheckpoint)
+        {
+            return;
+        }
+
+        this.dragCheckpoint = true;
+        this.panel.beginAction(name);
     }
 
     /**
@@ -2028,8 +2076,9 @@ public class UICompTrackTimeline extends UIElement
             || this.dragMode == MODE_AUDIO_TRIM_OUT;
         boolean workDrag = this.dragMode == MODE_WORK_IN || this.dragMode == MODE_WORK_OUT;
         boolean reorder = this.dragMode == MODE_REORDER;
+        boolean scrub = this.dragMode == MODE_SCRUB;
 
-        if (!layerDrag && !audioDrag && !workDrag && !reorder)
+        if (!layerDrag && !audioDrag && !workDrag && !reorder && !scrub)
         {
             return false;
         }
@@ -2040,8 +2089,20 @@ public class UICompTrackTimeline extends UIElement
 
             if (layer != null)
             {
+                /* moveTo() shifted keyframes and markers by the cumulative in-point delta; undoing
+                 * only in/out would leave the animation at the dragged position (silently saved on
+                 * the next edit). Shift them back by exactly the distance the bar travelled. */
+                float moved = layer.in - this.dragIn;
+
+                if (Math.abs(moved) > 0.00001F)
+                {
+                    layer.shiftKeyframes(moved * this.fps());
+                    layer.shiftMarkers(moved);
+                }
+
                 layer.in = this.dragIn;
                 layer.out = this.dragOut;
+                layer.startTime = this.dragOrigStartTime;
             }
         }
 
@@ -2049,7 +2110,9 @@ public class UICompTrackTimeline extends UIElement
         {
             this.dragAudio.start = this.dragAudioStart;
             this.dragAudio.offset = this.dragAudioOffset;
-            this.dragAudio.duration = this.dragAudioLength;
+            /* Restore the authored duration (<=0 means "until the composition ends"), not the
+             * resolved length shown on screen. Writing the resolved seconds froze auto-length. */
+            this.dragAudio.duration = this.dragAudioRawDuration;
         }
 
         CompDocument doc = this.doc();
@@ -2060,11 +2123,19 @@ public class UICompTrackTimeline extends UIElement
             doc.workAreaOut = this.dragWorkOut;
         }
 
+        if (scrub)
+        {
+            this.panel.setFrame(this.dragOrigFrame);
+        }
+
         this.dragMode = MODE_NONE;
         this.dragId = null;
         this.dragAudio = null;
         this.dragReorderTarget = -1;
+        this.dragCheckpoint = false;
         this.snapGuide = Float.NaN;
+        this.lastClickRow = -1;
+        this.lastLaneRow = -1;
         this.panel.onTrackDragCancelled();
 
         return true;
@@ -2163,6 +2234,8 @@ public class UICompTrackTimeline extends UIElement
             {
                 this.rowHeight = next;
                 this.clampScroll();
+                CompPrefs.get().timelineRowHeight = this.rowHeight;
+                CompPrefs.markDirty();
                 this.panel.setStatus("轨道高度 " + this.rowHeight + "px（Alt+滚轮）");
             }
         }

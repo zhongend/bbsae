@@ -129,6 +129,8 @@ public final class CompPrecache
         int generation;
         int width;
         int height;
+        /** Single scale both {@link #width}/{@link #height} and the render call are derived from. */
+        float scale = 1F;
         boolean valid;
         boolean broken;
         /** Set by {@link #markDirty()}: an edit happened, so the pixels are no longer trusted. */
@@ -235,6 +237,7 @@ public final class CompPrecache
         cache.signature = signature;
         cache.width = size[0];
         cache.height = size[1];
+        cache.scale = cacheScale(comp);
         cache.valid = true;
         cache.broken = false;
         cache.stale = false;
@@ -340,13 +343,24 @@ public final class CompPrecache
 
     public static int[] cacheSize(CompDocument comp)
     {
-        int width = Math.max(1, comp.width);
-        int height = Math.max(1, comp.height);
-        float scale = Math.min(1F, Math.min(MAX_WIDTH / (float) width, MAX_HEIGHT / (float) height));
-        int w = Math.max(16, Math.round(width * scale));
-        int h = Math.max(16, Math.round(height * scale));
+        return CompRenderer.renderSizeFor(comp, cacheScale(comp));
+    }
 
-        return new int[] {w - (w & 1), h - (h & 1)};
+    /**
+     * Scale the pre-render cache stores frames at (never enlarging, capped at {@link #MAX_WIDTH} /
+     * {@link #MAX_HEIGHT}).
+     *
+     * <p>This is the single source of truth for the cache raster: both {@link #cacheSize} and the
+     * render call derive their pixels from it. The old code rounded each axis to an even number and
+     * then the renderer re-derived a scale back from that size, so a proxy raster could end up one
+     * pixel different from the cached texture (and an odd composition could never match at all).</p>
+     */
+    public static float cacheScale(CompDocument comp)
+    {
+        int width = Math.max(1, comp == null ? 1920 : comp.width);
+        int height = Math.max(1, comp == null ? 1080 : comp.height);
+
+        return Math.min(1F, Math.min(MAX_WIDTH / (float) width, MAX_HEIGHT / (float) height));
     }
 
     /* ------------------------------------------------------------------ job */
@@ -490,10 +504,27 @@ public final class CompPrecache
 
     private static void renderFrame(CompProject project, CompDocument comp, Cache cache, int frame, float time)
     {
-        GlFramebuffer fbo = CompRenderer.renderForCache(project, comp, time, cache.width, cache.height);
+        GlFramebuffer fbo = CompRenderer.renderForCache(project, comp, time, cache.scale);
 
         if (fbo == null)
         {
+            return;
+        }
+
+        /* Defensive: cache raster and render raster are derived from the same scale, so a size
+         * mismatch means a bug. Reading a wrong-sized FBO into the cached texture would corrupt the
+         * green frame silently, so drop the frame (and say so once) instead. */
+        if (fbo.width != cache.width || fbo.height != cache.height)
+        {
+            FboPool.release(fbo);
+
+            if (!cache.broken)
+            {
+                cache.broken = true;
+                BbsAeAddon.LOGGER.warn("Pre-render cache size mismatch for {}: expected {}x{}, got {}x{}",
+                    cache.key, cache.width, cache.height, fbo.width, fbo.height);
+            }
+
             return;
         }
 
@@ -713,6 +744,7 @@ public final class CompPrecache
             cache.signature = signature;
             cache.width = width;
             cache.height = height;
+            cache.scale = cacheScale(comp);
             cache.valid = true;
 
             try (java.util.stream.Stream<Path> stream = Files.list(dir(key)))

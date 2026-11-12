@@ -338,6 +338,58 @@ public class PenProjectionTest
         return path;
     }
 
+    /**
+     * RotoBezier-style handle editing: the cursor is mapped to the layer plane once and the handle
+     * vector is stored in layer space, so projecting the handle endpoint must land exactly under the
+     * cursor — on a perspective card too. The mirrored opposite handle is exactly opposite in layer
+     * space (the only space the path is authored in); perspective may make it look asymmetric on
+     * screen, which is expected.
+     */
+    @Test
+    public void handleDragOnATiltedCardProjectsBackUnderTheCursor()
+    {
+        CompDocument doc = document();
+        CompProject project = project(doc);
+        CompRenderContext rc = context(project, doc, camera(doc, true));
+        CompLayer layer = card(doc, true);
+
+        layer.rotationY = 30F;
+
+        UIPenTool.View view = view(rc, doc);
+        float pointX = 40F;
+        float pointY = 20F;
+        float[] anchor = UIPenTool.localToScreen(layer, view, pointX, pointY);
+
+        assertNotNull(anchor);
+
+        float mouseX = anchor[0] + 45F;
+        float mouseY = anchor[1] - 25F;
+        float[] local = UIPenTool.screenToLocal(layer, view, mouseX, mouseY);
+
+        assertNotNull(local);
+
+        float outX = local[0] - pointX;
+        float outY = local[1] - pointY;
+        float[] handle = UIPenTool.localToScreen(layer, view, pointX + outX, pointY + outY);
+
+        assertNotNull(handle);
+        assertEquals(mouseX, handle[0], 0.05F, "the dragged handle must follow the cursor exactly");
+        assertEquals(mouseY, handle[1], 0.05F);
+
+        /* Mirror in layer space: the opposite handle is exactly -out, so its projected direction is
+         * roughly opposite (perspective can skew the lengths, not the sign of the dot product). */
+        float[] mirrored = UIPenTool.localToScreen(layer, view, pointX - outX, pointY - outY);
+
+        assertNotNull(mirrored);
+
+        float ax = handle[0] - anchor[0];
+        float ay = handle[1] - anchor[1];
+        float bx = mirrored[0] - anchor[0];
+        float by = mirrored[1] - anchor[1];
+
+        assertTrue(ax * bx + ay * by < 0F, "mirrored handle points the other way on screen");
+    }
+
     @Test
     public void shiftConstraintIs45DegreesOnScreenOnARotatedLayer()
     {

@@ -148,35 +148,123 @@ legacy 兼容（全部走 depth）、全 2D/纯平面帧（不 acquire depth tar
 另：`DepthPlaneCompositorTest`（4 例）继续覆盖平面深度/绘制顺序无关/半透明语义/池复用，
 全绿。
 
+### 4.5 导出/预览路径一致性（`PerPixelDepthExportConsistencyTest`，5 例，task-19）
+
+**代码路径结论：导出与预览共用同一个 depth 分支，开关不会在两边产生不同路径。**
+
+- 导出：`CompExportManager` → `CompRenderer.renderForExport` → `renderFrame(frame, transparentStage, scale)`
+  → `renderToTexture(preview=false, scale=1 或 proxy, transparentStage)` → `renderCompToFbo`；
+  预览：`renderCached`/`renderFrameCached` 也走 `renderToTexture` → 同一个 `renderCompToFbo`。
+- depth 决策只依赖 `CompRenderer.perPixelDepthFrame(context)` / `perPixelDepthLayer(context, layer)`
+  （task-19 把原来两处内联条件抽成这两个 helper，行为不变，便于无头验证），输入是
+  `CompScene.spatial` / `usePerspective` + 偏好/调试开关；`preview`、`scale`、stage 颜色
+  **都不参与决策**。
+- 无头验证（同一 `____bug` 场景，两种分辨率）：导出尺度 768×432 与预览 proxy 尺度 384×216 下，
+  depth-on、routed-on 与 depth-off 帧都是 **0 像素差**。即“打开开关”在导出与预览两边都是同一张
+  画面；两个分辨率之间只剩下普通光栅化抗锯齿差异，而 depth 路径在该差异上不引入额外项
+  （它与同尺度 painter 帧完全相等）。
+- Alpha 导出（透明 stage，PNG/ProRes4444 路径）：stage=`0x00000000` 时 depth-on == painter 0 像素差。
+- gate 独立性：`preview=true/false`、`scale=1/0.5` 的 context 得到相同 frame/layer 决策；
+  `-Dbbsae.debugForceDepthPlane` / `-Dbbsae.debugNoDepthPlane` 行为不变；无头环境偏好不可达时
+  `perPixelDepthRequested()` 安全返回 false（与 `CompRenderCache.signature` 同样的容错策略）。
+- 局限（诚实说明）：完整 `CompRenderer` 无法无头实例化（需要 `MinecraftClient`/`Batcher2D`/渲染线程），
+  所以“完整导出帧”的最终真机验证仍留给 Lead；本测试覆盖决策函数 + 两条路径在两种分辨率/透明
+  stage 下的像素等价。导出与预览的其它已知差异不属于本开关：预览可因 `previewBackground` 用透明
+  stage、空预合成占位/参考层是编辑期 chrome、proxy 分辨率抗锯齿——导出始终合成到文档背景或 alpha stage。
+
+### 4.6 AUTO 策略量化评估（`PerPixelDepthAutoPolicyTest` 6 例 + `DepthPlaneCostBenchmarkTest`，task-19）
+
+**成本（分析）**：painter 每层 = 1 个全屏合成 pass；depth 每透视 3D 层 = 4 个（深度预写、不透明颜色、
+半透明颜色写入私有目标，再把私有目标合成到 accumulation），**净 +3 个全屏 pass/3D 层**；每帧额外
+持有 1 个 render-size 颜色+深度目标，并多一次目标 clear（acquire/release）。
+
+**实测**（无头隐藏 GL，NVIDIA GTX 1650，960×540，7 reps 取 min，render-only + `glFinish`；共享构建机
+有并发负载，数值只作量级参考）：
+
+| 场景 | 2 层 | 3 层 | 4 层 | 6 层 |
+| --- | --- | --- | --- | --- |
+| 合成阶段仅（预渲染内容，隔离 depth pass 成本） | 1.36× | 1.91× | 1.57× | 1.85× |
+| 整帧（含内容生成） | 0.99× | 1.11× | 1.25× | — |
+
+- 合成阶段额外时间约 1.6–6.5 ms/帧 @960×540（2–6 层）；内容生成占比大的真实页面整帧只增加约
+  0–25%。1080p 面积约 4 倍 → 合成额外约 6–26 ms/帧（估算，视 GPU/层数）。
+- 完整数据见测试写出的 `build/depth-cost-benchmark.txt`（不提交，供真机对比）。
+
+**AUTO 判据（原型实现于测试，纯算术，无 GL）**：逐像素深度只有在「≥2 个透视层、屏幕投影 AABB
+重叠、且两平面法线不平行」时才可能改变画面；平行平面（含 `____bug` 的 z=198/736 两层）或单 3D 层
+时整层画家排序已经精确。测试结果：
+
+- `____bug` 平行平面 → AUTO=false，且像素证据 painter==depth（0 像素差）；
+- 交叉平面场景 → AUTO=true，且像素证据 painter≠depth（>1000 像素不同，逐像素深度真的在起作用）；
+- 单透视层 / 不相交旋转层 → false；legacy 模式下的平行场景 → false。
+
+**建议**：
+1. **0.95 保持默认 `false`**（本轮未改默认，不做行为变化）。
+2. 不建议无条件默认 `true`：对 `____bug` 这类平行平面工程只有 +3 全屏 pass/3D 层的成本、零视觉收益。
+3. **推荐未来实现 AUTO 并作为默认**（成本低、收益精确）：平行平面/单 3D 层自动 painter（0 视觉
+   差异、0 额外成本），交叉平面自动 depth。补丁设计（本轮只给设计，不改默认）：
+   - `CompPrefs.Data` 增加 `perPixelDepthMode` 枚举 `AUTO | ON | OFF`（Lead/UI 写域）；
+   - 在 `CompScene`（或 `CompRenderer` 新增 helper）实现 `needsPerPixelDepth(ctx)`：取所有
+     `usePerspective` 层，任两层的平面法线叉积 > ε 且投影 AABB 重叠即为 true，层数 <2 直接 false；
+   - `CompRenderer.perPixelDepthRequested()` 按 mode 返回：`OFF=false`，`ON=true`，
+     `AUTO=needsPerPixelDepth(当前 context)`（需要把 context 传进去或在 acquire 前算一次）；
+   - 设置页开关变三态（默认 AUTO），`-Dbbsae.debugForceDepthPlane` / `debugNoDepthPlane` 仍可覆盖；
+   - 待 Lead 真机验证 AUTO 语义后再改为默认。
+
+### 4.7 边界健壮性（task-19）
+
+- **near/far 极端值 + `GL_EQUAL`**：`extremeNearFarKeepsTheEqualityPassExact` 用三组极端相机
+  （near=0.1/far=1e6、near=10/far=1e7、near=0.1/far=5e6）验证 depth-on 与 painter **0 像素差**。
+  结论：`DEPTH_PLANE` 的等深颜色 pass 不会因 24bit 深度量化丢片元——深度预写与颜色两遍用同一
+  uniform、同一公式，算出同一位模式；极端 near/far 影响的是层与层之间的 LESS 判定精度（本场景仍与
+  float 排序一致）。真正精度风险是“两层深度差小于 24bit 分辨率且顺序浮动”的极端情况，无头用例
+  未复现，保留为真机抽样项。
+- **组合回归** `precompTranslucentAndMultiple3dLayersCombineExactly`：父合成含 4 类层——真实嵌套
+  合成作为预合成 plate（透明 stage 渲染、按 `drawPrecomp` 规则贴到图层矩形）、半透明 3D 层
+  （opacity 0.5）、多个不透明 3D 形状层；depth-on / routed-on 与 painter **0 像素差**。覆盖
+  「depth-on + 半透明 + 多 3D 层 + 预合成」组合。
+
 ## 5. 验证命令与结果
 
 ```powershell
-# 定向（5 个深度路径测试类）
+# 定向（8 个深度路径测试类）
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 test --offline --console=plain --tests "dev.bbsae.client.render.DepthPlane*" --tests "dev.bbsae.client.render.PerPixelDepth*"
-# BUILD SUCCESSFUL（25 tests / 0 failed）
+# BUILD SUCCESSFUL
 
 # 全量
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 test --offline --console=plain
 ```
 
-- 定向：**25/25 通过**（`DepthPlaneGhostRegressionTest` 4 + `DepthPlaneCompositorTest` 4 +
-  `DepthPlaneStateRobustnessTest` 4 + `PerPixelDepthSwitchTest` 7 + `PerPixelDepthRoutingTest` 6）。
-- 全量（共享工作区，含其他队友本轮新增/在建的测试）：**110 suites / 669 tests / 0 failures /
-  1 skipped**，全绿。task-12 新增 17 个用例（4 个健壮性 + 7 个开关路径 + 6 个路由 contract），
-  并把 task-7 的 4 个重影回归容差收紧到 0。
-- 基线：0.93 前 90 suites / 511 tests 全绿；task-12 开始前（0.93 已发布）为 106 suites / 643 tests。
+- 定向：**37/37 通过**（重影 4 + 平面深度 4 + 健壮性 4 + 开关 7 + 路由 6 + 导出一致性 5 +
+  AUTO 6 + 成本测量 1）。
+- 全量（共享工作区，含其他队友本轮新增的测试）：**117 suites / 699 tests / 0 failures / 1 skipped**，
+  全绿。task-19 新增 12 个用例（导出一致性 5 + AUTO 6 + 成本测量 1）。
+- 基线：0.93 前 90 suites / 511 tests 全绿；task-12 前 106 suites / 643 tests；task-19 前
+  （0.94 已发布）约 110 suites / 669 tests。
+- task-19 把 `CompRenderer` 的两处 depth 内联条件抽成可无头测试的 gate helper（行为不变），
+  因此导出/预览共用分支这件事现在有单测证据（§4.5）。
+
+## 5.2 task-19 全量结果明细
+
+- 117 suites / 699 tests / 0 failures / 1 skipped（未开客户端；串行 wrapper）。
+- 其中深度路径相关 8 个测试类共 37 例全绿；其余计数来自其他队友本轮的测试。
+- 成本测量测试会写 `build/depth-cost-benchmark.txt`（含 GL renderer 标识与逐层正确性断言），
+  该文件是构建产物、不提交；报告中的 §4.6 数字取自该文件。
 
 ## 5.1 编译/工作区协作备注
 
-本轮共享工作区出现过几次**他人并发写入**导致的临时红：pen/effects 用 PowerShell
-`Set-Content -Encoding UTF8` 回写测试文件时带入 UTF-8 BOM（`compileTestJava` 报
+task-12/13 期间共享工作区出现过几次**他人并发写入**导致的临时红：pen/effects 用 PowerShell
+`Set-Content -Encoding UTF8` 回写 Java 文件时带入 UTF-8 BOM（`compileTestJava` 报
 `非法字符: '\ufeff'`），以及 effects 正在重构 `CompEffect`/`StyleRenderer` 时的半成品
-`compileJava` 错误。均已由对应队友修复；本报告 §5 的全量结果是在三处修复后重跑的稳定树结果。
-本任务自己的 5 个测试类始终 25/25 全绿。
+`compileJava` 错误。均已由对应队友修复；本报告的全量结果都是在修复后重跑的稳定树结果。
+本任务自己的 8 个测试类始终全绿（task-19 结束时 37/37）。
 
 ## 6. `CompPrefs.perPixelDepth` 默认值建议
 
-**保持 `false`，直到用户真机确认后再改回 `true`。** 本轮按任务要求未改默认值。
+**保持 `false`，直到用户真机确认后再决定是否改默认。** 本轮按任务要求未改默认值。
+task-19 的量化评估（§4.6）进一步支持这个结论：无条件 `true` 对常见的平行平面工程只有
++3 全屏 pass/3D 层的成本、没有像素收益；真正需要它的是相交平面。**推荐的长期默认是 AUTO
+（相交平面才开，平行平面/单 3D 层保持 painter），补丁设计见 §4.6，等真机验证后再启用。**
 
 一句话开关说明（给设置页/用户）：**「3D 逐像素深度」默认关闭；打开后主合成器对开启 3D 的图层
 逐像素比较深度，用于正确显示相交的 3D 平面；若发现异常可随时关闭，画面回到整层排序。**
@@ -195,18 +283,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 - `FBO 不完整` 无法无头构造：`GlFramebuffer` 仅在 `-Dbbsae.debugFbo` 下检查完整性，若目标不完整
   绘制会静默失效；代码上 composite 不做完整性判定（与渲染图其它 pass 一致），已记录备查。
 
-## 7. 变更文件（累计 task-7 + task-12）
+## 7. 变更文件（累计 task-7 + task-12 + task-19）
 
 | 文件 | 变更 |
 | --- | --- |
 | `src/main/java/dev/bbsae/client/render/DepthPlaneCompositor.java` | 每层清颜色；acquire/release/构造清颜色+深度；target 写入关混合；全部 GL 状态走 GlStateManager 保存/恢复；异常路径恢复 framebuffer+viewport；`pooled`/`deleted` 守卫；测试用 `-Dbbsae.debugDepthPlaneThrow` 注入点 |
 | `src/main/java/dev/bbsae/client/render/GlFramebuffer.java` | `clearColorOnly()` 强制真实 `glColorMask(true)` 并同步缓存，清屏不再可能被缓存短路 |
 | `src/main/java/dev/bbsae/client/render/ShaderSources.java` | 仅 `DEPTH_PLANE`：删除 `if (source.a < 0.004) discard;`（1/255 抗锯齿边），其余 shader 未动 |
-| `src/test/java/dev/bbsae/client/render/DepthPlanePixelHarness.java` | 测试 harness（真实工程数据 + 内容 pass + painter/depth/routed 三路径） |
+| `src/main/java/dev/bbsae/client/render/CompRenderer.java` | 仅 depth 分支：两处内联条件抽成 `perPixelDepthFrame` / `perPixelDepthRequested` / `perPixelDepthLayer` gate helper（行为不变；偏好读取容错；供导出/预览一致性与无头测试） |
+| `src/test/java/dev/bbsae/client/render/DepthPlanePixelHarness.java` | 测试 harness：真实工程数据 + 内容 pass + painter/depth/routed 三路径 + 多分辨率 + 预合成 plate + render-only FBO 入口 |
 | `src/test/java/dev/bbsae/client/render/DepthPlaneGhostRegressionTest.java` | 4 个重影像素回归（容差已收紧到 0） |
 | `src/test/java/dev/bbsae/client/render/PerPixelDepthSwitchTest.java` | 7 个开关两条路径 renderer 级测试 |
 | `src/test/java/dev/bbsae/client/render/PerPixelDepthRoutingTest.java` | 6 个开关路由 contract（纯逻辑） |
 | `src/test/java/dev/bbsae/client/render/DepthPlaneStateRobustnessTest.java` | 4 个状态恢复/异常/池化健壮性测试 |
+| `src/test/java/dev/bbsae/client/render/PerPixelDepthExportConsistencyTest.java` | 5 个导出/预览一致性测试（两种分辨率 0 像素差、透明 stage、gate 独立性、极端 near/far、预合成+半透明+多 3D 层组合） |
+| `src/test/java/dev/bbsae/client/render/PerPixelDepthAutoPolicyTest.java` | 6 个 AUTO 策略测试（平行/交叉/单层/不相交/legacy 判据 + 像素证据） |
+| `src/test/java/dev/bbsae/client/render/DepthPlaneCostBenchmarkTest.java` | 成本测量（写 `build/depth-cost-benchmark.txt`，含 renderer 标识与正确性断言） |
 | `docs/DEPTH-GHOST-FIX.zh.md` | 本报告 |
 
-未 commit/push、未开客户端、未改版本号；`CompPrefs` 默认值未动。
+未 commit/push、未开客户端、未改版本号；`CompPrefs` 默认值未动（保持 `false`）。
