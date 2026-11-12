@@ -382,7 +382,7 @@ public final class EffectRenderer
                 return pixel(input, effect, context, space);
             case "grid_repeat":
             case "random_repeat":
-                return repeat(input, effect, type, space);
+                return replicate(input, effect, type, space);
             case "linear_wipe":
             case "radial_wipe":
             case "dissolve":
@@ -400,6 +400,13 @@ public final class EffectRenderer
             case "depth_dof":
                 return depth(input, effect, context, type, space);
             default:
+                if (isReplication(type))
+                {
+                    /* Reference repeat entries live in AmEffectLibrary but are replicators, not
+                     * data-driven fragment bodies. */
+                    return replicate(input, effect, type, space);
+                }
+
                 if (MeshRenderer.supports(type))
                 {
                     return MeshRenderer.apply(layer, effect, input, context);
@@ -1172,8 +1179,7 @@ public final class EffectRenderer
      * Grid / random repetition. The shader works in layer space, so the pattern is part of the
      * layer and follows every transform, effect and 3D projection.
      */
-    private static GlFramebuffer repeat(GlFramebuffer input, CompEffect effect, String type, EffectSpace space)
-    {
+    private static GlFramebuffer repeat(GlFramebuffer input, CompEffect effect, String type, EffectSpace space)    {
         GlslProgram program = CompShaders.repeat;
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
 
@@ -1205,6 +1211,135 @@ public final class EffectRenderer
         program.drawFullscreen();
 
         return output;
+    }
+
+    /**
+     * Effects that replicate the layer across the composition instead of warping it in place.
+     *
+     * <p>Alight Motion's "repeat" category is not a pixel shader (its definitions carry no shader):
+     * it draws the layer N times. Our first implementation squeezed the copies inside the layer
+     * rectangle, which is why a repeated layer looked like a masked tile instead of an infinite
+     * pattern. These types therefore run in composition space; see
+     * {@link #isCompositionSpace(String)}.</p>
+     */
+    static boolean isReplication(String type)
+    {
+        return "grid_repeat".equals(type) || "random_repeat".equals(type)
+            || "am_grid_repeat".equals(type) || "am_line_repeat".equals(type);
+    }
+
+    /**
+     * True when the effect has to see the whole composition instead of the layer's own rectangle.
+     *
+     * <p>Composition-space effects are the ones that can write pixels outside the layer: the
+     * layer-local bake rasterizes exactly the layer box, so they can never be "infinite" there.
+     * The compositor runs them after the projection (3D layers) or directly on the composition
+     * target (2D layers), where the input already covers the frame.</p>
+     */
+    public static boolean isCompositionSpace(String type)
+    {
+        return isReplication(type);
+    }
+
+    /**
+     * Draws the layer several times across the composition (repeat / tile family).
+     *
+     * <p>The pass is a plain full-screen shader over the composition-sized layer image: for every
+     * output pixel and every copy it samples the source at the inverse of that copy's transform.
+     * Copy placement and size come from the effect space ({@link EffectSpace#centerUv()},
+     * {@code sizeU/sizeV}) so a copy keeps the layer's own on-screen size and no copy is clipped
+     * by the layer rectangle — only the composition bounds remain.</p>
+     */
+    private static GlFramebuffer replicate(GlFramebuffer input, CompEffect effect, String type, EffectSpace space)
+    {
+        GlslProgram program = CompShaders.replicate;
+
+        if (program == null)
+        {
+            return input;
+        }
+
+        boolean line = "am_line_repeat".equals(type);
+        boolean scatter = "random_repeat".equals(type);
+        float columns = 1F;
+        float rows = 1F;
+        float gap = 0F;
+        float scale = 1F;
+        float rotation = 0F;
+        float randomness = 0F;
+        float opacity = 1F;
+        float seed = 0F;
+        float offsetX = 0F;
+        float offsetY = 0F;
+        int vertical = 0;
+
+        if (line)
+        {
+            float count = clamp(effect.valueF("count", 4F), 1F, 8F);
+            float duty = clamp(effect.valueF("duty", 0.7F), 0.05F, 1F);
+
+            columns = count;
+            scale = duty;
+            opacity = clamp(effect.valueF("amount", 1F), 0F, 1F);
+            vertical = effect.valueI("vertical", 1);
+        }
+        else if (scatter)
+        {
+            columns = clamp(effect.valueF("columns", 5F), 1F, 8F);
+            rows = clamp(effect.valueF("rows", 4F), 1F, 8F);
+            gap = clamp(effect.valueF("gap", 0.05F), 0F, 0.9F);
+            scale = Math.max(0.02F, effect.valueF("scale", 0.75F));
+            rotation = (float) Math.toRadians(effect.valueF("rotation", 45F));
+            randomness = clamp(effect.valueF("randomness", 0.4F), 0F, 1F);
+            opacity = clamp(effect.valueF("opacity", 1F), 0F, 1F);
+            seed = effect.valueF("seed", 7F);
+        }
+        else if ("am_grid_repeat".equals(type))
+        {
+            columns = clamp(effect.valueF("columns", 2F), 1F, 8F);
+            rows = clamp(effect.valueF("rows", 2F), 1F, 8F);
+            gap = clamp(effect.valueF("gap", 0.05F), 0F, 0.9F);
+            opacity = clamp(effect.valueF("amount", 1F), 0F, 1F);
+        }
+        else
+        {
+            columns = clamp(effect.valueF("columns", 4F), 1F, 8F);
+            rows = clamp(effect.valueF("rows", 3F), 1F, 8F);
+            gap = clamp(effect.valueF("gap", 0.04F), 0F, 0.9F);
+            scale = Math.max(0.02F, effect.valueF("scale", 0.9F));
+            rotation = (float) Math.toRadians(effect.valueF("rotation", 0F));
+            /* The author-facing offsets are fractions of the layer box (down = +y). */
+            offsetX = effect.valueF("offset_x", 0F) * space.sizeU;
+            offsetY = -effect.valueF("offset_y", 0F) * space.sizeV;
+        }
+
+        GlFramebuffer output = FboPool.acquire(input.width, input.height);
+
+        output.begin();
+        GlStateManager._disableBlend();
+        program.use();
+        PassRenderer.bind(program, "Source", 0, input);
+        program.set("Size", refWidth(space, input), refHeight(space, input));
+        program.set("Mode", line ? 1 : scatter ? 2 : 0);
+        program.set("Grid", columns, rows);
+        program.set("CopySize", space.sizeU, space.sizeV);
+        program.set("Gap", gap);
+        program.set("Scale", Math.max(0.02F, scale));
+        program.set("Rotation", rotation);
+        program.set("Randomness", randomness);
+        program.set("Seed", seed);
+        program.set("Opacity", opacity);
+        program.set("Offset", offsetX, offsetY);
+        program.set("Vertical", vertical);
+        program.set("Center", space.centerU, space.centerV);
+        program.drawFullscreen();
+
+        return output;
+    }
+
+    private static float clamp(float value, float min, float max)
+    {
+        return Math.max(min, Math.min(max, value));
     }
 
     private static GlFramebuffer transition(GlFramebuffer input, CompEffect effect, CompRenderContext context, String type, EffectSpace space)

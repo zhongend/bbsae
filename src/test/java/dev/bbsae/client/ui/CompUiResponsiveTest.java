@@ -48,6 +48,35 @@ public class CompUiResponsiveTest
     }
 
     /**
+     * Regression: the timeline-height splitter used to span the whole body, so its grip sat on the
+     * bottom edge of the left and right columns. Dragging a list row there resized the timeline
+     * instead of the row ("拖拽数据时面板大小也跟着拖拽"). The grip must stay inside the preview.
+     */
+    @Test
+    public void timelineSplitterStaysInsideThePreview()
+    {
+        int[] widths = {360, 420, 640, 800, 960, 1280, 1600, 1920};
+
+        for (int width : widths)
+        {
+            int[] columns = CompUi.fitColumns(width, 190, 300, 12, 120);
+            int[] span = CompUi.timelineSplitterSpan(width, columns[0], columns[1], 6, 6);
+
+            assertTrue(span[0] >= columns[0], "splitter starts inside the left column at " + width);
+            assertTrue(span[0] + span[1] <= width - columns[1],
+                "splitter reaches into the right column at " + width);
+            assertTrue(span[1] > 0, "splitter must stay draggable at " + width);
+        }
+
+        int[] hidden = CompUi.timelineSplitterSpan(800, 0, 0, 0, 0);
+        assertEquals(0, hidden[0]);
+        assertEquals(800, hidden[1], "with no side columns the splitter spans the body");
+
+        int[] tiny = CompUi.timelineSplitterSpan(80, 40, 40, 0, 0);
+        assertTrue(tiny[0] >= 0 && tiny[1] >= 0 && tiny[0] + tiny[1] <= 80, "tiny panel stays in bounds");
+    }
+
+    /**
      * Regression: the 48 px settings button used to be placed at {@code 1F - 66} while the 18 px
      * focus button occupied {@code 1F - 40 .. 1F - 22}, so the two overlapped by 22 px at every
      * window size. The layout is now arithmetic, and arithmetic can be asserted.

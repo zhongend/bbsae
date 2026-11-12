@@ -1328,6 +1328,13 @@ public class UICompTrackTimeline extends UIElement
     @Override
     protected boolean subMouseClicked(UIContext context)
     {
+        if (this.panel.isPanelResizing())
+        {
+            /* A splitter drag owns the pointer; a track must not start a second gesture from the
+             * same press (that is how a row drag could end up resizing a panel). */
+            return true;
+        }
+
         if (!this.area.isInside(context))
         {
             return super.subMouseClicked(context);

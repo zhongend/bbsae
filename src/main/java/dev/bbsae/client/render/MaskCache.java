@@ -67,7 +67,7 @@ public final class MaskCache
 
         for (CompMask mask : layer.masks)
         {
-            if (mask.enabled && mask.points.size() >= 2)
+            if (isMatte(mask))
             {
                 CompMask resolved = layer.maskAt(mask, frame);
 
@@ -110,6 +110,19 @@ public final class MaskCache
         return texture;
     }
 
+    /**
+     * Whether a mask contributes to the alpha matte at all.
+     *
+     * <p>Three points is the smallest path with an area, and an open path is a stroke being drawn
+     * rather than a region. Before this rule a two-point mask (the state after the pen tool's second
+     * click) rasterized to zero coverage and made the entire layer disappear — which looked like
+     * "the pen tool broke the layer" while the path was still being drawn.</p>
+     */
+    static boolean isMatte(CompMask mask)
+    {
+        return mask != null && mask.enabled && mask.closed && mask.points != null && mask.points.size() >= 3;
+    }
+
     private static int hash(Matrix4f matrix)
     {
         if (matrix == null)
@@ -131,7 +144,8 @@ public final class MaskCache
         return hash;
     }
 
-    private static int hash(java.util.List<CompMask> masks)
+    /** Package-private so the pen tool's regression tests can prove that {@code closed} invalidates. */
+    static int hash(java.util.List<CompMask> masks)
     {
         int hash = 17;
 
@@ -139,6 +153,7 @@ public final class MaskCache
         {
             hash = hash * 31 + mask.id.hashCode();
             hash = hash * 31 + mask.mode;
+            hash = hash * 31 + (mask.closed ? 1 : 0);
             hash = hash * 31 + Float.floatToIntBits(mask.opacity);
             hash = hash * 31 + Float.floatToIntBits(mask.feather);
             hash = hash * 31 + Float.floatToIntBits(mask.expansion);
@@ -158,17 +173,33 @@ public final class MaskCache
         return hash;
     }
 
-    private static MaskTexture rasterize(java.util.List<CompMask> masks, int width, int height, Matrix4f world)
+    /**
+     * Pure-CPU half of {@link #rasterize}: boolean-combines every mask into one coverage buffer.
+     *
+     * <p>Split out so the matte semantics (open paths do not matte, three points minimum, feather,
+     * expansion, combine modes, world matrix) can be asserted in JUnit without a GL context — the
+     * upload is the only part that needs one. Production still has exactly one code path: the
+     * texture is always built from this buffer.</p>
+     *
+     * @return per-pixel coverage in {@code [0,1]}, or {@code null} when no mask can matte.
+     */
+    static float[] alphaFor(java.util.List<CompMask> masks, int width, int height, Matrix4f world)
     {
         float[] combined = new float[width * height];
         boolean any = false;
+        /* JOML and AWT use opposite index conventions for the shear terms: JOML's transformPosition
+         * computes x' = m00·x + m10·y + m30, while AffineTransform's constructor takes
+         * (m00, m10, m01, m11, m02, m12) for x' = m00·x + m01·y + m02. Passing the fields in JOML
+         * order mirrored every rotated mask: the overlay (comp-space projection) and the pixels
+         * disagreed by the layer's rotation, which is invisible on an axis-aligned mask and very
+         * visible on a pen-drawn one. */
         AffineTransform transform = world == null ? new AffineTransform() : new AffineTransform(
-            world.m00(), world.m10(), world.m01(), world.m11(), world.m30(), world.m31()
+            world.m00(), world.m01(), world.m10(), world.m11(), world.m30(), world.m31()
         );
 
         for (CompMask mask : masks)
         {
-            if (!mask.enabled || mask.points.size() < 2)
+            if (!isMatte(mask))
             {
                 continue;
             }
@@ -186,6 +217,13 @@ public final class MaskCache
                 path.curveTo(previous.x + previous.outX, previous.y + previous.outY, point.x + point.inX, point.y + point.inY, point.x, point.y);
             }
 
+            /* The closing segment from the last vertex back to the first one is a bezier too. It
+             * used to be a bare closePath() (a straight chord), which silently flattened the last
+             * segment of every handle-carrying closed mask — an ellipse mask lost a quarter of its
+             * handles, and a pen path closed on a smooth vertex got a visible kink. */
+            CompMask.CompMaskPoint last = mask.points.get(mask.points.size() - 1);
+
+            path.curveTo(last.x + last.outX, last.y + last.outY, first.x + first.inX, first.y + first.inY, first.x, first.y);
             path.closePath();
             path.transform(transform);
 
@@ -244,7 +282,14 @@ public final class MaskCache
             any = true;
         }
 
-        if (!any)
+        return any ? combined : null;
+    }
+
+    private static MaskTexture rasterize(java.util.List<CompMask> masks, int width, int height, Matrix4f world)
+    {
+        float[] combined = alphaFor(masks, width, height, world);
+
+        if (combined == null)
         {
             return null;
         }

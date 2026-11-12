@@ -129,7 +129,6 @@ public final class AmEffectRenderer
         program.set("Size", pixelWidth, pixelHeight);
         program.set("Texel", 1F / pixelWidth, 1F / pixelHeight);
         program.set("LayerTexel", 1F / Math.max(1F, space.width), 1F / Math.max(1F, space.height));
-        program.set("LocalSource", context != null && context.layerLocalPass ? 1 : 0);
         program.set("Time", context == null ? 0F : context.time);
 
         for (AmEffectDef.Param param : definition.params)
@@ -208,7 +207,6 @@ public final class AmEffectRenderer
             uniform vec2 LayerY;
             uniform vec2 LayerOrigin;
             uniform float Time;
-            uniform int LocalSource;
 
             in vec2 vUv;
             out vec4 fragColor;
@@ -302,13 +300,14 @@ public final class AmEffectRenderer
                 return vec2(px.x / Size.x, 1.0 - px.y / Size.y);
             }
 
+            /* The layer raster is drawn with a y-down ortho projection, so its texture V axis
+             * points the other way: local y=0 (the top of the layer) is v=1. Sampling it with the
+             * layer UV directly ("LayerLocal" shortcut) read the raster mirrored — a 3D layer with
+             * any content-sampling effect came out upside down (text layers made it obvious). The
+             * composition mapping is the one place that owns the flip, and in the layer-local bake
+             * the proxy composition *is* the raster, so it is exact there too. */
             vec4 sampleLayer(vec2 luv)
             {
-                if (LocalSource == 1)
-                {
-                    return texture(Source, clamp(luv, vec2(0.0), vec2(1.0)));
-                }
-
                 return texture(Source, clamp(localToCompUv(luv), vec2(0.0), vec2(1.0)));
             }
 

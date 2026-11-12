@@ -28,6 +28,7 @@ public final class CompShaders
     public static GlslProgram rgbSplit;
     public static GlslProgram grade;
     public static GlslProgram repeat;
+    public static GlslProgram replicate;
     public static GlslProgram entityKey;
     public static GlslProgram opaque;
     public static GlslProgram mesh;
@@ -47,7 +48,7 @@ public final class CompShaders
         initialized = false;
         composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial
             = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter
-            = rgbSplit = grade = repeat = entityKey = opaque = mesh = viewport3d = depthPlane = null;
+            = rgbSplit = grade = repeat = replicate = entityKey = opaque = mesh = viewport3d = depthPlane = null;
     }
 
     public static synchronized void init()
@@ -81,6 +82,7 @@ public final class CompShaders
         rgbSplit = make("rgb_split", ShaderSources.RGB_SPLIT);
         grade = make("grade", ShaderSources.GRADE);
         repeat = make("repeat", ShaderSources.REPEAT);
+        replicate = make("replicate", ShaderSources.REPLICATE);
         entityKey = make("entity_key", ShaderSources.ENTITY_KEY);
         opaque = make("opaque", ShaderSources.OPAQUE);
         mesh = makeMesh();
@@ -179,13 +181,14 @@ public final class CompShaders
         delete(rgbSplit);
         delete(grade);
         delete(repeat);
+        delete(replicate);
         delete(entityKey);
         delete(opaque);
         delete(mesh);
         delete(viewport3d);
         delete(depthPlane);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = entityKey = opaque = mesh = viewport3d = depthPlane = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = replicate = entityKey = opaque = mesh = viewport3d = depthPlane = null;
         initialized = false;
     }
 

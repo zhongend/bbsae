@@ -51,10 +51,19 @@ final class EffectSpace
     final int compWidth;
     final int compHeight;
 
+    /** Composition UV of the effect box centre, V up like every other shader UV. */
+    final float centerU;
+    final float centerV;
+
+    /** The effect box size in composition UV (the layer's on-screen size). */
+    final float sizeU;
+    final float sizeV;
+
     private EffectSpace(float width, float height, float originX, float originY,
                         float ux, float uy, float uz, float vx, float vy, float vz,
                         float m00, float m01, float m10, float m11, float originCompX, float originCompY,
-                        int compWidth, int compHeight)
+                        int compWidth, int compHeight, float centerU, float centerV,
+                        float sizeU, float sizeV)
     {
         this.width = width;
         this.height = height;
@@ -74,6 +83,10 @@ final class EffectSpace
         this.originCompY = originCompY;
         this.compWidth = compWidth;
         this.compHeight = compHeight;
+        this.centerU = centerU;
+        this.centerV = centerV;
+        this.sizeU = sizeU;
+        this.sizeV = sizeV;
     }
 
     static EffectSpace of(CompLayer layer, Matrix4f world, CompRenderContext context)
@@ -149,11 +162,29 @@ final class EffectSpace
         float originCompX = matrix.m00() * bx + matrix.m10() * by + matrix.m30();
         float originCompY = matrix.m01() * bx + matrix.m11() * by + matrix.m31();
 
+        /* Comp UV of the box centre: the anchor point every positional effect and the repeat
+         * family distributes copies around. */
+        float centerU = (originCompX + matrix.m00() * bw * 0.5F + matrix.m10() * bh * 0.5F) / compW;
+        float centerV = 1F - (originCompY + matrix.m01() * bw * 0.5F + matrix.m11() * bh * 0.5F) / compH;
+
         return new EffectSpace(bw, bh, bx, by, ux, uy, uz, vx, vy, vz,
-            matrix.m00(), matrix.m01(), matrix.m10(), matrix.m11(), originCompX, originCompY, compW, compH);
+            matrix.m00(), matrix.m01(), matrix.m10(), matrix.m11(), originCompX, originCompY, compW, compH,
+            centerU, centerV, bw / compW, bh / compH);
     }
 
     static EffectSpace identity(CompRenderContext context)
+    {
+        return identity(context, 0.5F, 0.5F, 1F, 1F);
+    }
+
+    /**
+     * Identity comp-space mapping with an explicit composition-UV centre and box size.
+     *
+     * <p>Used for effects that run on an already camera-projected layer: the pixels are screen
+     * pixels, so the layer basis cannot describe them, but positional effects still need to know
+     * where the layer is and how large it looks ({@code Size}/{@code CopySize} for replication).</p>
+     */
+    static EffectSpace identity(CompRenderContext context, float centerU, float centerV, float sizeU, float sizeV)
     {
         int compW = Math.max(1, context.width);
         int compH = Math.max(1, context.height);
@@ -163,7 +194,14 @@ final class EffectSpace
          * consumer on an adjustment/3D layer sample the vertically flipped row. */
         return new EffectSpace(compW, compH, 0F, 0F,
             1F, 0F, 0F, 0F, -1F, 1F,
-            1F, 0F, 0F, 1F, 0F, 0F, compW, compH);
+            1F, 0F, 0F, 1F, 0F, 0F, compW, compH, centerU, centerV,
+            Math.max(0.0001F, sizeU), Math.max(0.0001F, sizeV));
+    }
+
+    /** Composition UV of the effect box centre (V up). */
+    Vector2f centerUv()
+    {
+        return new Vector2f(centerU, centerV);
     }
 
     /** Shader UV (comp, v up) -> local layer pixel. Used by tests and one-off maths. */

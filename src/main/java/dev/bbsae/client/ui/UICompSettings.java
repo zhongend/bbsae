@@ -17,6 +17,7 @@ import mchorse.bbs_mod.ui.utils.ScrollDirection;
 import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.utils.colors.Colors;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.util.math.MatrixStack;
 import org.lwjgl.glfw.GLFW;
 
@@ -41,11 +42,11 @@ public class UICompSettings extends UIElement
 {
     private static final String[] CATEGORIES =
     {
-        "动画与光效", "界面布局", "显示与线框", "快捷键", "项目设置", "高级", "新手引导", "赞助者"
+        "动画与光效", "界面布局", "显示与线框", "快捷键", "项目设置", "高级", "开发者", "新手引导", "赞助者"
     };
     private static final String[] CATEGORY_IDS =
     {
-        "motion", "layout", "overlay", "keys", "project", "advanced", "guide", "sponsor"
+        "motion", "layout", "overlay", "keys", "project", "advanced", "dev", "guide", "sponsor"
     };
 
     private final UICompositorPanel panel;
@@ -98,7 +99,7 @@ public class UICompSettings extends UIElement
         this.title.color(0xFFF2F5FA, false);
         this.subtitle = new UILabel(IKey.constant("外观、动效、快捷键与工程默认值。修改会立即生效并保存。"));
         this.subtitle.color(0xFF8995A8, false);
-        this.footer = new UILabel(IKey.constant("BBS AE 0.23 · 设置随工程和全局偏好保存"));
+        this.footer = new UILabel(IKey.constant("BBS AE " + versionText() + " · 设置随工程和全局偏好保存"));
         this.footer.color(0xFF687386, false);
 
         this.search = new UITextbox(96, (text) ->
@@ -126,8 +127,10 @@ public class UICompSettings extends UIElement
                 case 2 -> Icons.BOOKMARK;
                 case 3 -> Icons.FILM;
                 case 4 -> Icons.WRENCH;
-                case 5 -> Icons.HELP;
-                case 6 -> Icons.HEART;
+                case 5 -> Icons.GEAR;
+                case 6 -> Icons.CODE;
+                case 7 -> Icons.HELP;
+                case 8 -> Icons.HEART;
                 default -> Icons.LIGHT;
             });
             nav.h(22);
@@ -356,6 +359,7 @@ public class UICompSettings extends UIElement
             case "keys" -> this.buildKeys();
             case "project" -> this.buildProject();
             case "advanced" -> this.buildAdvanced();
+            case "dev" -> this.buildDev();
             case "guide" -> this.buildGuide();
             case "sponsor" -> this.buildSponsors();
             default -> this.buildMotion();
@@ -963,6 +967,100 @@ public class UICompSettings extends UIElement
             this.status("预渲染缓存已清空");
         }));
         this.add(this.fullButton("打开旧版高级对话框", "保留给编码器风险提示和极端故障排查", this.panel::showLegacySettings));
+    }
+
+    /* -------------------------------------------------------------------- dev */
+
+    /**
+     * Developer settings: compatibility switches and camera defaults.
+     *
+     * <p>These are grouped apart from the ordinary pages because they change how the whole
+     * composition is interpreted, not how the editor looks. The 3D-logic switch in particular is a
+     * <b>file compatibility</b> control: projects authored before 0.91 expect every layer to follow
+     * the camera, and this is the only way to reopen them with that look.</p>
+     */
+    private void buildDev()
+    {
+        CompProject.CompSettings settings = this.panel.getProjectSettings();
+
+        this.add(UI.label(IKey.constant("开发者设置：兼容旧工程、排查渲染问题。普通编辑不需要改这里。"), 13));
+
+        if (settings == null)
+        {
+            this.add(this.section("当前没有打开工程"));
+            this.add(UI.label(IKey.constant("3D 逻辑与摄像机默认值保存在工程文件里，打开一个工程后才能修改。"), 13));
+            this.add(this.fullButton("返回工程列表", "选择一个工程后再修改开发者设置", this.panel::showStartScreenFromSettings));
+
+            return;
+        }
+
+        this.add(this.section("3D 逻辑（兼容旧版本）"));
+        UIElement logic = this.segmented(new String[] {"AE：逐图层", "旧版：全图层"}, settings.legacy3DLogic ? 1 : 0,
+            (value) ->
+        {
+            settings.legacy3DLogic = value == 1;
+            this.panel.saveSettings();
+            this.rebuild();
+            this.panel.setStatus(value == 1
+                ? "已切换到旧版 3D 逻辑：镜头一旦有透视/倾斜，所有图层都会被投影（0.91 之前的行为）"
+                : "已切换到 AE 3D 逻辑：只有开启「3D 图层」的图层跟随摄像机，2D 图层始终屏幕附着");
+        });
+
+        this.add(this.row("图层 3D 逻辑", logic, 250,
+            "AE：只有勾选「3D 图层」的图层参与摄像机透视，2D 图层保持屏幕附着；"
+                + "旧版：只要镜头有倾斜或任意图层 z≠0，所有图层都被投影（兼容 0.91 前的旧工程）"));
+
+        this.add(this.section("摄像机"));
+        this.add(this.row("无摄像机时拖动自动创建（旧版）", this.toggle("", settings.cameraAutoCreateOnDrag,
+            (value) ->
+        {
+            settings.cameraAutoCreateOnDrag = value;
+            this.panel.saveSettings();
+        }), 170, "默认关闭：AE 里摄像机是显式对象，只有「新建摄像机」按钮会创建；"
+            + "开启后右键拖动预览框会退回旧版行为（不推荐）"));
+
+        this.add(this.row("AE 摄像机工具", this.segmented(new String[] {"关闭", "开启"},
+            settings.cameraToolActive ? 1 : 0, (value) ->
+        {
+            this.panel.setCameraTool(value == 1);
+            this.rebuild();
+        }), 170, "开启后：左键环绕 / 中键 Track XY / 右键 Track Z 推拉；"
+            + "预览里不会再选中或拖动图层，也没有摄像机时不会自动创建"));
+
+        this.add(this.row("新摄像机视场角 FOV", this.slider(settings.defaultCameraFov, 10F, 120F, (value) ->
+        {
+            settings.defaultCameraFov = (float) value;
+            CompPrefs.markDirty();
+            this.panel.saveSettings();
+        }), 170, "只影响之后新建的摄像机；已存在的摄像机在检查器「摄像机」页调整"));
+
+        this.add(this.fullButton("在这个工程里新建摄像机", "已有摄像机时只会选中它；AE 不会在拖动时偷偷创建", () ->
+        {
+            this.panel.createCamera();
+            this.rebuild();
+        }));
+
+        this.add(this.section("状态"));
+        this.add(UI.label(IKey.constant("版本 " + versionText()
+            + " · 当前 3D 逻辑：" + (settings.legacy3DLogic ? "旧版全图层" : "AE 逐图层")
+            + " · 摄像机工具：" + (settings.cameraToolActive ? "开启" : "关闭")), 13));
+        this.add(UI.label(IKey.constant("3D 工作区（自由视口）与「看穿摄像机」是两种视图；"
+            + "后者才是最终画面。右键拖预览框只进入自由视口，没有摄像机也不会创建。"), 13));
+    }
+
+    /** The mod version from Fabric metadata, so the footer can never drift from the build again. */
+    private static String versionText()
+    {
+        try
+        {
+            return FabricLoader.getInstance().getModContainer("bbsae")
+                .map((container) -> container.getMetadata().getVersion().getFriendlyString())
+                .orElse("dev");
+        }
+        catch (RuntimeException e)
+        {
+            return "dev";
+        }
     }
 
     /* ------------------------------------------------------------------ guide */

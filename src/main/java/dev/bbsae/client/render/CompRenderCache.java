@@ -147,7 +147,26 @@ public final class CompRenderCache
         {
             h = mix(h, project.settings.previewBackground);
             h = mix(h, project.settings.textureFilter);
+            /* The developer switch changes the projection of every 2D layer: without it in the
+             * signature the parked-playhead cache kept returning the old picture after a toggle. */
+            h = mix(h, project.settings.legacy3DLogic ? 1 : 0);
         }
+
+        /* 逐像素深度是 CompRenderer 的渲染路径开关，不属于文档内容；不放进指纹时，停住播放头切换
+         * 开关会一直返回旧帧（"改了没反应"）。它也是开发者/显示开关，读不到时按默认 false。
+         * 隐藏 GL 单元测试没有 Fabric 加载器（CompPrefs.load 会 NPE），所以这里必须容错。 */
+        boolean perPixelDepth = false;
+
+        try
+        {
+            perPixelDepth = dev.bbsae.client.ui.CompPrefs.get().perPixelDepth;
+        }
+        catch (RuntimeException | LinkageError ignored)
+        {
+            /* Headless test / early init: the preference store is not reachable. */
+        }
+
+        h = mix(h, perPixelDepth ? 7 : 8);
 
         if (doc.layers == null)
         {
@@ -305,6 +324,8 @@ public final class CompRenderCache
             h = mix(h, mask.id.hashCode());
             h = mix(h, mask.enabled ? 1 : 0);
             h = mix(h, mask.inverted ? 1 : 0);
+            /* Closed vs open changes whether the path mats at all (the pen tool toggles it). */
+            h = mix(h, mask.closed ? 1 : 0);
             h = mix(h, mask.mode);
             h = mix(h, mask.opacity);
             h = mix(h, mask.feather);
@@ -329,6 +350,8 @@ public final class CompRenderCache
             h = mix(h, shape.type == null ? 0 : shape.type.hashCode());
             h = mix(h, shape.enabled ? 1 : 0);
             h = mix(h, shape.operator);
+            /* Open shape paths render as outlines only; toggling must invalidate the frame. */
+            h = mix(h, shape.closed ? 1 : 0);
             h = mix(h, shape.x);
             h = mix(h, shape.y);
             h = mix(h, shape.width);

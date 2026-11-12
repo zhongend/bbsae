@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.91.jar`](https://github.com/zhongend/bbsae/releases/download/v0.91/bbsae-0.91.jar)
-   from the **v0.91** release (the asset is updated with each source push).
+1. Download [`bbsae-0.92.jar`](https://github.com/zhongend/bbsae/releases/download/v0.92/bbsae-0.92.jar)
+   from the **v0.92** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.91.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.92.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.91.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.92.jar` SHA-256: `900B1AB0A23FAAED5B95E4F9C041ABF22E2808C4326C79C6F3F55447F146A00F` (3,185,356 bytes).
 
 ## Gallery
 
@@ -2018,10 +2018,12 @@ the useful conclusions are documented in [docs/photon-research.zh.md](docs/photo
 dockable hierarchy/scene/timeline workspaces, a real-time scene preview with FX/bloom/mask
 toggles, and an isolated editor post-effect stack over a color+depth render target.
 
-Known limits relative to EffectCraft/AE: no imported 3D models inside the composition (3D
-layers are camera-projected planes over the live BBS world), no lights, no graph editor for
-arbitrary expressions, no full 306-effect catalogue, no multi-window docking, and no
-per-character text editing on canvas.
+Known limits relative to EffectCraft/AE: the compositor itself has no imported external 3D model
+files (BBS models are edited in the separate **实体回放 / Entity Replay** page, which reuses BBS's
+own replay timeline, gizmo and model library), no lights, no graph editor for arbitrary
+expressions, no full AM 306-effect catalogue (137 effects shipped; the AM gap is documented in
+`docs/EFFECTS-AM-GAP.zh.md`), and per-character text editing on canvas is still limited. Multi-panel
+docking: BBS's `UIDockLayout` is the planned base (see `docs/DOCK-LAYOUT-PLAN.zh.md`).
 
 ## Design notes
 
@@ -2082,3 +2084,4 @@ sheet. An older exported MP4 frame is still available at
 
 MIT.
 - **Round 45 (imported fonts display, .ttc extraction, v0.22.1):** [`docs/ROUND45-FONT-DISPLAY.zh.md`](docs/ROUND45-FONT-DISPLAY.zh.md)
+- **Round 47 (AE 3D layer logic / AE camera tool / effect fixes / entity replay / pen tool / UI gesture fixes, v0.92):** [`docs/ROUND47-MOTION-CAMERA.zh.md`](docs/ROUND47-MOTION-CAMERA.zh.md)

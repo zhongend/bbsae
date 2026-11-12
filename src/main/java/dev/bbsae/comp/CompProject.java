@@ -260,5 +260,64 @@ public class CompProject
         public boolean previewAudio = true;
 
         public String defaultOutputPreset = "review_h264";
+
+        /* ---------------------------------------------------------- developer (compat) */
+
+        /**
+         * Developer switch for the 3D layer logic (Settings → 开发者).
+         *
+         * <p>{@code false} is the AE rule every new project uses: only a layer whose own
+         * <b>3D 图层</b> switch is on is projected through the camera; a 2D layer stays
+         * screen-attached no matter how the camera is tilted or dollied.</p>
+         *
+         * <p>{@code true} restores the behaviour of builds before 0.91, where any spatial frame
+         * (a tilted camera or any layer at z ≠ 0) projected <b>every</b> layer. It exists only so
+         * projects authored against the old logic can be reopened with their original look; new
+         * work should not use it.</p>
+         */
+        public boolean legacy3DLogic = false;
+
+        /**
+         * Developer switch for camera creation (Settings → 开发者).
+         *
+         * <p>AE treats a camera as an explicit object: entering the 3D workspace, orbiting the
+         * view or dragging the preview must never create one. This legacy behaviour — the very
+         * bug the AE camera logic replaces — is kept behind the switch, off by default. It only
+         * ever applies to a drag gesture; the explicit "新建摄像机" button always works.</p>
+         */
+        public boolean cameraAutoCreateOnDrag = false;
+
+        /**
+         * The AE camera tool is active: dragging the composition preview manipulates the camera
+         * (left = orbit around the point of interest, middle = track XY, right = track Z / dolly)
+         * instead of picking and moving layers.
+         */
+        public boolean cameraToolActive = false;
+
+        /**
+         * Vertical field of view given to newly created cameras, in degrees.
+         *
+         * <p>Read at creation time only; changing it never re-frames existing cameras. Default 50°
+         * matches {@link CompLayer#cameraFov}.</p>
+         */
+        public float defaultCameraFov = 50F;
+
+        /* ------------------------------------------------------------ dock layout (BBS) */
+
+        /**
+         * The compositor's docked-panel tree, serialized with BBS's {@code DataToString}.
+         *
+         * <p>Empty means "the default tree". The tree is the whole layout (splitter ratios, tab
+         * stacks and which panel is active); it is written by {@code CompDockSource} whenever BBS's
+         * {@code UIDockLayout} changes it. Storing it per project keeps editor layouts with the
+         * project instead of leaking one project's panel arrangement into another.</p>
+         */
+        public String dockLayout = "";
+
+        /** Comma-separated ids of panels the user hid in the dock; empty = none. */
+        public String dockHiddenPanels = "";
+
+        /** True when the dock is unlocked (panels can be dragged). BBS ships locked by default. */
+        public boolean dockUnlocked = false;
     }
 }

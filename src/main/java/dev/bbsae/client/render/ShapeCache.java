@@ -80,7 +80,8 @@ public final class ShapeCache
         return raster;
     }
 
-    private static int hash(java.util.List<dev.bbsae.comp.CompShape> shapes)
+    /** Package-private so the open/closed regression test can prove the flag invalidates the cache. */
+    static int hash(java.util.List<dev.bbsae.comp.CompShape> shapes)
     {
         int hash = 17;
 
@@ -89,6 +90,9 @@ public final class ShapeCache
             hash = hash * 31 + shape.id.hashCode();
             hash = hash * 31 + shape.type.hashCode();
             hash = hash * 31 + shape.operator;
+            /* Open vs closed changes the raster's stroke seam, so it must invalidate the geometry
+             * cache; without it toggling the flag on a selected path kept serving the old texture. */
+            hash = hash * 31 + (shape.closed ? 1 : 0);
             hash = hash * 31 + Float.floatToIntBits(shape.x);
             hash = hash * 31 + Float.floatToIntBits(shape.y);
             hash = hash * 31 + Float.floatToIntBits(shape.width);

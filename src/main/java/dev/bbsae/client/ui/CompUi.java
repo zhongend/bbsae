@@ -258,6 +258,29 @@ public final class CompUi
         return Math.max(0, Math.min(Math.max(160, desired), max));
     }
 
+    /**
+     * Horizontal span of the timeline-height splitter, in body coordinates.
+     *
+     * <p>Only the preview column gets the grip. Spanning the whole body put the grip over the
+     * bottom four pixels of the side columns, so dragging a row at the bottom edge of the
+     * effect/asset list resized the timeline instead of the row — the reported "dragging data in
+     * the panel also drags the panel size" bug.</p>
+     *
+     * @return {@code [x, width]}; width is 0 when the preview column has collapsed.
+     */
+    public static int[] timelineSplitterSpan(int areaWidth, int left, int right, int gapLeft, int gapRight)
+    {
+        int l = Math.max(0, left);
+        int r = Math.max(0, right);
+        int gl = Math.max(0, gapLeft);
+        int gr = Math.max(0, gapRight);
+        int width = Math.max(0, areaWidth);
+        int x = Math.min(width, l + gl);
+        int w = Math.max(0, width - l - r - gl - gr);
+
+        return new int[] {x, Math.min(w, Math.max(0, width - x))};
+    }
+
     public static String densityName(int tier)
     {
         return switch (tier)

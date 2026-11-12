@@ -64,6 +64,14 @@ public class EffectPipelineTest
             /* Another GL test class in this JVM already owns the global render thread. */
         }
 
+        /* This class may run after another hidden-context GL test. Clear every cache that holds
+         * GL names from that destroyed context BEFORE compiling the new programs — otherwise a
+         * stale name can collide with a fresh object and every effect of that family fails with
+         * GL_INVALID_OPERATION. */
+        AmEffectRenderer.delete();
+        MeshRenderer.delete();
+        Viewport3DRenderer.delete();
+        FboPool.clear();
         CompShaders.reload();
         CompShaders.init();
     }
@@ -71,6 +79,12 @@ public class EffectPipelineTest
     @AfterAll
     public static void destroyContext()
     {
+        AmEffectRenderer.delete();
+        MeshRenderer.delete();
+        Viewport3DRenderer.delete();
+        FboPool.clear();
+        CompShaders.delete();
+
         if (window != 0L)
         {
             GLFW.glfwDestroyWindow(window);

@@ -1,0 +1,512 @@
+package dev.bbsae.client.replay;
+
+import dev.bbsae.BbsAeAddon;
+import dev.bbsae.client.render.CompViewportCamera;
+import mchorse.bbs_mod.BBSModClient;
+import mchorse.bbs_mod.camera.Camera;
+import mchorse.bbs_mod.film.BaseFilmController;
+import mchorse.bbs_mod.film.Film;
+import mchorse.bbs_mod.film.FilmMatrices;
+import mchorse.bbs_mod.film.replays.Replay;
+import mchorse.bbs_mod.forms.entities.IEntity;
+import mchorse.bbs_mod.forms.renderers.utils.RenderFrame;
+import mchorse.bbs_mod.ui.film.UIFilmPanel;
+import mchorse.bbs_mod.ui.film.controller.UIFilmController;
+import mchorse.bbs_mod.ui.film.replays.UIReplayPropTransform;
+import mchorse.bbs_mod.ui.utils.Area;
+import mchorse.bbs_mod.ui.utils.GizmoDrag;
+import org.joml.Vector3f;
+
+import java.util.Map;
+
+/**
+ * The editing session behind the replay mode panel: which film/replay is being edited, the
+ * free 3D camera, the playhead, and the bridge to the film's live actor entities.
+ *
+ * <h2>What this reuses instead of rebuilding</h2>
+ * <p>Everything here leans on the objects the film editor already owns: the dashboard's single
+ * {@link UIFilmPanel} supplies the film, the undo history and the BBS replay gizmo target; its
+ * {@link UIFilmController} supplies the actor entities and the pose application; and
+ * {@code UIReplayPropTransform} is the original gizmo-to-keyframe adapter. The panel is a new
+ * view onto those, never a second editor instance (see the plan's §0/R1/R2).</p>
+ *
+ * <p>The playhead is the film panel's own tick cursor, driven by this panel's transport while it
+ * is on screen. That is what keeps the original keyframe editor, its ruler, the undo snapshots and
+ * the written keyframes all speaking the same tick — an independent clock here would put every
+ * key this panel writes a fraction off the frame the user sees.</p>
+ */
+public final class ReplayEditSession
+{
+    private final UIFilmPanel filmPanel;
+    private final Film film;
+    private final CompViewportCamera camera = new CompViewportCamera();
+    private final ReplaySceneSpace space = new ReplaySceneSpace();
+    private final UIReplayPropTransform replayTransform = new UIReplayPropTransform();
+
+    private Replay replay;
+    /** Set once the viewport had a real size and the scene was framed. */
+    private boolean framed;
+    private boolean playing;
+    private long lastPlayNanos;
+
+    public ReplayEditSession(UIFilmPanel filmPanel, Film film, Replay replay)
+    {
+        this.filmPanel = filmPanel;
+        this.film = film;
+        this.replay = replay;
+    }
+
+    public UIFilmPanel filmPanel()
+    {
+        return this.filmPanel;
+    }
+
+    public Film film()
+    {
+        return this.film;
+    }
+
+    public Replay replay()
+    {
+        return this.replay;
+    }
+
+    public void setReplay(Replay replay)
+    {
+        this.replay = replay;
+    }
+
+    public CompViewportCamera camera()
+    {
+        return this.camera;
+    }
+
+    public ReplaySceneSpace space()
+    {
+        return this.space;
+    }
+
+    /* ------------------------------------------------------------ entities */
+
+    /**
+     * The controller whose entity map the actor pass renders.
+     *
+     * <p>The film editor's own controller is preferred: it is the one the original replay editor
+     * writes to, so a gizmo drag here and a gizmo drag there move the same entity. A playing film
+     * owns its own controller; only a film that is not open in the editor could ever fall back
+     * to it, and then the actor pass still renders correctly.</p>
+     */
+    public BaseFilmController controller()
+    {
+        try
+        {
+            UIFilmController controller = this.filmPanel.getController();
+
+            if (controller != null && controller.editorController != null
+                && controller.editorController.film == this.film)
+            {
+                return controller.editorController;
+            }
+
+            return BBSModClient.getFilms() == null ? null : BBSModClient.getFilms().getController(this.film.getId());
+        }
+        catch (RuntimeException e)
+        {
+            return null;
+        }
+    }
+
+    public Map<String, IEntity> entities()
+    {
+        BaseFilmController controller = this.controller();
+
+        return controller == null ? null : controller.getEntities();
+    }
+
+    public IEntity entity(Replay replay)
+    {
+        Map<String, IEntity> entities = this.entities();
+
+        return entities == null || replay == null ? null : entities.get(replay.getId());
+    }
+
+    public IEntity selectedEntity()
+    {
+        return this.entity(this.replay);
+    }
+
+    /**
+     * Makes sure the film has live actor entities. The film editor builds them when it opens a
+     * film; opening the replay mode from the compositor can happen while that panel never came on
+     * screen, so this repeats the same call the original editor makes.
+     */
+    public void ensureEntities()
+    {
+        try
+        {
+            UIFilmController controller = this.filmPanel.getController();
+
+            if (controller == null || this.filmPanel.getData() == null)
+            {
+                return;
+            }
+
+            if (controller.editorController == null || controller.editorController.film != this.film
+                || controller.getEntities().isEmpty())
+            {
+                controller.createEntities();
+            }
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.warn("Replay mode could not create the film's replay entities", e);
+        }
+    }
+
+    /**
+     * Recreates the actor entities unconditionally. Used when the replay set itself changed (a
+     * replay was added, duplicated or its form swapped): {@link #ensureEntities()} only heals a
+     * missing controller, not a controller that is one entity short.
+     */
+    public void recreateEntities()
+    {
+        try
+        {
+            UIFilmController controller = this.filmPanel.getController();
+
+            if (controller != null && this.filmPanel.getData() != null)
+            {
+                controller.createEntities();
+            }
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.warn("Replay mode could not recreate the film's replay entities", e);
+        }
+    }
+
+    /* ------------------------------------------------------------ playhead */
+
+    /** Whole ticks of the playhead; the original keyframe editor's cursor. */
+    public int tick()
+    {
+        return this.filmPanel.getCursor();
+    }
+
+    /** Film tick plus the sub-tick fraction, exactly what the actor pass samples. */
+    public float playhead()
+    {
+        return this.filmPanel.getCursor(0F);
+    }
+
+    /** Where authoring writes land (respects BBS' "snap to ticks" setting, like the original). */
+    public float keyframeTick()
+    {
+        return this.filmPanel.getKeyframeCursor(0F);
+    }
+
+    /** Sub-tick phase inside the playhead, used by the actor renderer. */
+    public float transition()
+    {
+        return ReplayTime.phase(this.playhead());
+    }
+
+    public int durationTicks()
+    {
+        int duration = this.film.camera.calculateDuration();
+
+        return Math.max(1, duration);
+    }
+
+    /** Seeks the shared film cursor, clamped to the film's duration. */
+    public void seek(float ticks)
+    {
+        float value = Math.max(0F, Math.min(this.durationTicks(), ticks));
+
+        this.filmPanel.setCursor(value);
+    }
+
+    public void step(int ticks)
+    {
+        this.playing = false;
+        this.seek(this.tick() + ticks);
+    }
+
+    public boolean isPlaying()
+    {
+        return this.playing;
+    }
+
+    public void setPlaying(boolean playing)
+    {
+        this.playing = playing;
+        this.lastPlayNanos = 0L;
+    }
+
+    public void togglePlaying()
+    {
+        this.setPlaying(!this.playing);
+    }
+
+    /**
+     * Advances the playhead while the transport runs. Driven from the panel's update, which runs
+     * once per UI frame while it is on screen — the film editor's own runner only advances while
+     * that panel is the visible one, so the replay mode cannot rely on it.
+     */
+    public void advancePlayback()
+    {
+        if (!this.playing)
+        {
+            this.lastPlayNanos = 0L;
+
+            return;
+        }
+
+        long now = System.nanoTime();
+
+        if (this.lastPlayNanos == 0L)
+        {
+            this.lastPlayNanos = now;
+
+            return;
+        }
+
+        float delta = (now - this.lastPlayNanos) / 1_000_000_000F;
+
+        this.lastPlayNanos = now;
+
+        int duration = this.durationTicks();
+        float next = this.playhead() + delta * ReplayTime.TICKS_PER_SECOND;
+
+        if (next >= duration)
+        {
+            next = next % duration;
+        }
+
+        this.seek(next);
+    }
+
+    /* ------------------------------------------------------------ pose */
+
+    /**
+     * Applies a replay's keyframes and form properties to its entity at the current playhead.
+     * Mirrors what the original film editor's update loop does before it renders an actor, but at
+     * the exact playhead instead of the simulation tick, so scrubbing shows the written keys.
+     */
+    public void applyPose(IEntity entity, Replay replay)
+    {
+        if (entity == null || replay == null)
+        {
+            return;
+        }
+
+        float playhead = this.playhead();
+        float tick = replay.getTick((int) Math.floor(playhead)) + ReplayTime.phase(playhead);
+
+        replay.keyframes.apply(tick, entity);
+
+        if (entity.getForm() != null)
+        {
+            replay.properties.applyProperties(entity.getForm(), tick);
+        }
+
+        RenderFrame.invalidate();
+    }
+
+    /** Applies the pose to every enabled replay of the film; returns how many entities it touched. */
+    public int applyAllPoses()
+    {
+        Map<String, IEntity> entities = this.entities();
+
+        if (entities == null)
+        {
+            return 0;
+        }
+
+        int applied = 0;
+
+        for (Replay candidate : this.film.replays.getList())
+        {
+            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+            {
+                continue;
+            }
+
+            IEntity entity = entities.get(candidate.getId());
+
+            if (entity == null)
+            {
+                continue;
+            }
+
+            this.applyPose(entity, candidate);
+            applied += 1;
+        }
+
+        return applied;
+    }
+
+    /* ------------------------------------------------------------ cameras & gizmos */
+
+    /** The BBS camera for gizmo dragging and the gizmo frame, built from the viewport camera. */
+    public Camera viewCamera()
+    {
+        return ReplayViewCamera.create(this.camera, this.space);
+    }
+
+    /** The Minecraft camera the actor pass and the form renderers read. */
+    public net.minecraft.client.render.Camera actorCamera()
+    {
+        return ReplayViewCamera.actorCamera(this.camera, this.space);
+    }
+
+    /** The original replay-placement gizmo target, refreshed at the playhead. */
+    public UIReplayPropTransform gizmoTransform()
+    {
+        this.replayTransform.syncFromReplay(this.replay, this.selectedEntity(), this.keyframeTick());
+
+        return this.replayTransform;
+    }
+
+    /**
+     * The drag session the original gizmo needs: screen motion is projected through the same
+     * mapped camera that drew the handles, and the GLOBAL frame is the replay's own facing (the
+     * original film gizmo sets the same axes).
+     */
+    public GizmoDrag gizmoDrag(Area area)
+    {
+        Camera camera = this.viewCamera();
+        GizmoDrag drag = GizmoDrag.fromRenderedGizmo(camera, area);
+
+        if (drag != null)
+        {
+            IEntity entity = this.selectedEntity();
+
+            if (entity != null)
+            {
+                drag.setGlobalAxes(FilmMatrices.getReplayWorldAxes(entity, this.transition()));
+            }
+        }
+
+        return drag;
+    }
+
+    /** Gizmo interaction is only valid while a replay with a live entity is selected. */
+    public boolean canEditPlacement()
+    {
+        return this.replay != null && this.selectedEntity() != null;
+    }
+
+    /* ------------------------------------------------------------ framing */
+
+    /**
+     * Frames every enabled actor in the viewport and re-centres the composition origin on them.
+     *
+     * <p>{@link ReplaySceneSpace#centerOn} is what makes the scene orbit around the actors
+     * regardless of where in the world the film was shot, and it is cheap enough to run once per
+     * selection change.</p>
+     */
+    public void frameAll()
+    {
+        Map<String, IEntity> entities = this.entities();
+
+        if (entities == null || this.film.replays.getList().isEmpty())
+        {
+            return;
+        }
+
+        Vector3f min = new Vector3f(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE);
+        Vector3f max = new Vector3f(-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE);
+        boolean any = false;
+
+        for (Replay candidate : this.film.replays.getList())
+        {
+            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+            {
+                continue;
+            }
+
+            IEntity entity = entities.get(candidate.getId());
+
+            if (entity == null)
+            {
+                continue;
+            }
+
+            this.applyPose(entity, candidate);
+
+            Vector3f comp = this.space.toComp(entity.getX(), entity.getY(), entity.getZ());
+
+            min.min(comp);
+            max.max(comp);
+            any = true;
+        }
+
+        if (!any)
+        {
+            this.space.anchor.set(0F, 0F, 0F);
+            this.camera.setTarget(0F, 0F, 0F).setPose(0F, 20F, 2000F);
+
+            return;
+        }
+
+        /* Second pass, after the origin moved: the bounds have to be measured in the final
+         * composition space (the first pass measured them around the old anchor). */
+        Vector3f centerWorld = new Vector3f(
+            (min.x + max.x) * 0.5F,
+            (min.y + max.y) * 0.5F,
+            (min.z + max.z) * 0.5F
+        );
+        Vector3f center = this.space.toWorld(centerWorld);
+
+        this.space.centerOn(center.x, center.y, center.z);
+
+        min.set(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE);
+        max.set(-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE);
+
+        for (Replay candidate : this.film.replays.getList())
+        {
+            IEntity entity = entities.get(candidate == null ? null : candidate.getId());
+
+            if (entity == null)
+            {
+                continue;
+            }
+
+            Vector3f comp = this.space.toComp(entity.getX(), entity.getY(), entity.getZ());
+
+            min.min(comp);
+            max.max(comp);
+        }
+
+        if (min.x > max.x)
+        {
+            return;
+        }
+
+        this.camera.frame(min, max);
+        this.framed = true;
+    }
+
+    public boolean isFramed()
+    {
+        return this.framed;
+    }
+
+    /** One-time framing as soon as the viewport has a real size. */
+    public void frameIfNeeded(Area area)
+    {
+        if (this.framed || area == null || area.w < 16 || area.h < 16)
+        {
+            return;
+        }
+
+        this.camera.setViewport(area.w, area.h);
+        this.frameAll();
+    }
+
+    public void resetFraming()
+    {
+        this.framed = false;
+    }
+}

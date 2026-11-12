@@ -83,6 +83,16 @@ public class CompShape
 
     public List<Point> points = new ArrayList<>();
 
+    /**
+     * Whether a {@link #PATH} shape closes its outline. Defaults to {@code true} so every project
+     * written before open paths existed renders exactly as before.
+     *
+     * <p>Only the outline is affected: AWT fills an open path as if it were closed (After Effects
+     * does the same), so this changes the stroke's end caps/seam and the overlay, not the fill
+     * rule. Non-path shape types ignore it.</p>
+     */
+    public boolean closed = true;
+
     public CompShape()
     {}
 
@@ -227,6 +237,7 @@ public class CompShape
         copy.repeaterScale = this.repeaterScale;
         copy.repeaterRotation = this.repeaterRotation;
         copy.repeaterOpacity = this.repeaterOpacity;
+        copy.closed = this.closed;
         copy.points = new ArrayList<>();
         copy.corners = this.corners == null ? new ArrayList<>() : new ArrayList<>(this.corners);
 

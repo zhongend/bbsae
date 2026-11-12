@@ -45,7 +45,8 @@ public class ShaderCompileTest
             String[] names = {
                 "composite", "premultiply", "unpremultiply", "inner", "gradient", "blur",
                 "ae_blur", "sharpen", "radial", "color", "key", "generate", "distort", "ae_distort", "pixel",
-                "stroke", "transition", "depth", "shatter", "grade", "rgb_split", "opaque"
+                "stroke", "transition", "depth", "shatter", "grade", "rgb_split", "opaque",
+                "repeat", "replicate"
             };
             String[] fragments = {
                 ShaderSources.COMPOSITE,
@@ -69,7 +70,9 @@ public class ShaderCompileTest
                 ShaderSources.SHATTER,
                 ShaderSources.GRADE,
                 ShaderSources.RGB_SPLIT,
-                ShaderSources.OPAQUE
+                ShaderSources.OPAQUE,
+                ShaderSources.REPEAT,
+                ShaderSources.REPLICATE
             };
 
             for (int i = 0; i < fragments.length; i++)

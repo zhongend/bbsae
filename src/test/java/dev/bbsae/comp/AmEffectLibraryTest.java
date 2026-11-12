@@ -201,6 +201,49 @@ public class AmEffectLibraryTest
         assertEquals(1D, effect.value(CompEffect.STRENGTH, -1D), 0.0001D);
     }
 
+    /**
+     * Ranges/steps that mean the same thing on the same scale as the reference schema were aligned
+     * with it (docs/EFFECTS-AM-GAP.zh.md). Defaults deliberately stay non-neutral for the library
+     * previews, so only the bounds/step are pinned here.
+     */
+    @Test
+    public void highPriorityRangesFollowTheReferenceSchema()
+    {
+        assertRange("am_hue_shift", "hue", 0F, 360F, 0.5F);
+        assertRange("am_glow", "radius", 0F, 400F, 0.5F);
+        assertRange("am_inner_glow", "radius", 0F, 400F, 0.5F);
+        assertRange("am_pixelate", "size", 1F, 500F, 1F);
+        assertRange("am_tile", "scale", 0.005F, 20F, 0.005F);
+        assertRange("am_hex_array", "size", 0.5F, 200F, 0.1F);
+        assertRange("am_hex_shift", "size", 0.5F, 200F, 0.1F);
+        assertRange("am_hex_tile", "size", 0.5F, 200F, 0.1F);
+        assertRange("am_four_color_gradient", "alpha", 0F, 1F, 0.001F);
+        assertRange("am_grid_lines", "angle", -180F, 180F, 0.5F);
+        assertRange("am_stripes", "angle", -180F, 180F, 0.5F);
+    }
+
+    private static void assertRange(String id, String key, float min, float max, float step)
+    {
+        AmEffectDef definition = AmEffectLibrary.get(id);
+
+        assertNotNull(definition, "missing definition " + id);
+
+        AmEffectDef.Param found = null;
+
+        for (AmEffectDef.Param param : definition.params)
+        {
+            if (param.key.equals(key))
+            {
+                found = param;
+            }
+        }
+
+        assertNotNull(found, id + " has no parameter " + key);
+        assertEquals(min, found.min, 0.0001F, id + "." + key + " min");
+        assertEquals(max, found.max, 0.0001F, id + "." + key + " max");
+        assertEquals(step, found.step, 0.0001F, id + "." + key + " step");
+    }
+
     private static void assertNeutral(String id, String key, float value)
     {
         CompEffect effect = CompEffectRegistry.create(id, 1);

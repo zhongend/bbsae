@@ -1,5 +1,7 @@
 package dev.bbsae.client.render;
 
+import dev.bbsae.comp.AmEffectDef;
+import dev.bbsae.comp.AmEffectLibrary;
 import dev.bbsae.comp.CompEffect;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompStyle;
@@ -71,6 +73,13 @@ public final class EffectPadding
 
     private static float effectPadding(CompEffect effect, String type, CompLayer layer)
     {
+        float am = amEffectPadding(effect, type, layer);
+
+        if (am > 0F)
+        {
+            return am;
+        }
+
         return switch (type)
         {
             case "blur" -> effect.valueF("radius", 10F) + 2F;
@@ -109,6 +118,55 @@ public final class EffectPadding
                 Math.abs(effect.valueF("offset_y", 0F))) + 2F;
             default -> 0F;
         };
+    }
+
+    /**
+     * Margin for the data-driven reference catalogue.
+     *
+     * <p>The definitions declare their kernel as a fraction of the layer size
+     * ({@link AmEffectDef#padding}), but nothing consumed it: a 3D layer with a reference blur,
+     * glow, shadow or warp had <b>no</b> margin at all, so the pass only had the layer rectangle
+     * to read and the effect was cut at its own edge — the "3D effect does nothing / looks like a
+     * hard border" report. Pure blur definitions run through the separable blur pass, whose radius
+     * is authored in layer pixels, so those reserve the radius itself.</p>
+     */
+    private static float amEffectPadding(CompEffect effect, String type, CompLayer layer)
+    {
+        AmEffectDef definition = AmEffectLibrary.get(type);
+
+        if (definition == null)
+        {
+            return 0F;
+        }
+
+        float padding = 0F;
+
+        if (definition.blurKey != null)
+        {
+            padding = Math.max(0F, effect.valueF(definition.blurKey,
+                paramDefault(definition, definition.blurKey))) + 2F;
+        }
+
+        if (definition.padding > 0F)
+        {
+            float size = Math.max(Math.abs(layer.width), Math.abs(layer.height));
+            padding = Math.max(padding, definition.padding * size);
+        }
+
+        return padding;
+    }
+
+    private static float paramDefault(AmEffectDef definition, String key)
+    {
+        for (AmEffectDef.Param param : definition.params)
+        {
+            if (param.key.equals(key))
+            {
+                return param.defaultValue;
+            }
+        }
+
+        return 0F;
     }
 
     private static float stylePadding(CompStyle style)

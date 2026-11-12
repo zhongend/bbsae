@@ -748,9 +748,27 @@ public final class CompRenderer
                     }
 
                     CompEffect resolved = layer.resolveEffect(effect, context.frame);
-                    GlFramebuffer processed = depthEffect
-                        ? EffectRenderer.apply(layer, resolved, content, context, EffectSpace.identity(context))
-                        : EffectRenderer.apply(layer, resolved, content, context, effectSpace);
+                    /* Effects outside the bake run on the pixels this pass holds. For a
+                     * perspective 3D layer that image is already camera-projected, so a
+                     * layer-space mapping would find a different region of the plane than the
+                     * pixel it is looking at (backdrop readers like glass/displace map sampled
+                     * mirrored or empty areas). Composition space is the honest space for them. */
+                    GlFramebuffer processed;
+
+                    if (depthEffect || effectsRunOnProjectedContent(context, layer))
+                    {
+                        /* Replication still needs to know where the layer is and how big it looks,
+                         * which only the projected corners can answer. */
+                        EffectSpace projectedSpace = EffectRenderer.isReplication(resolved.type)
+                            ? projectedEffectSpace(context, layer)
+                            : EffectSpace.identity(context);
+
+                        processed = EffectRenderer.apply(layer, resolved, content, context, projectedSpace);
+                    }
+                    else
+                    {
+                        processed = EffectRenderer.apply(layer, resolved, content, context, effectSpace);
+                    }
 
                     if (processed != content)
                     {
@@ -1387,6 +1405,107 @@ public final class CompRenderer
     }
 
     /**
+     * True when the framebuffer handed to the composition effect loop already contains the
+     * camera-projected layer rather than a composition-space image.
+     *
+     * <p>It is exactly {@link CompScene#usePerspective}: those layers are drawn through
+     * {@code projection · view}, either by the layer-local bake or by the direct fallback, so
+     * their pixels are screen pixels. Everything else (2D layers, flat 3D layers under a
+     * non-perspective camera) is painted in composition space and only gets projected later by
+     * {@code projectPlane}. Effects that resample their input need to know which one they got.</p>
+     */
+    static boolean effectsRunOnProjectedContent(CompRenderContext context, CompLayer layer)
+    {
+        return CompScene.usePerspective(context, layer);
+    }
+
+    /**
+     * Composition-space effect basis for a projected layer: comp-space mapping plus the projected
+     * centre and screen size of the layer box.
+     *
+     * <p>Replication copies must keep the layer's on-screen size; on a projected 3D layer that is
+     * neither {@code layer.width} nor the composition size, it is the bounding box of the four
+     * projected corners. Corners behind the camera are ignored when at least two of them survive;
+     * otherwise the layer's nominal size scaled by the camera zoom is a stable fallback.</p>
+     */
+    static EffectSpace projectedEffectSpace(CompRenderContext context, CompLayer layer)
+    {
+        float compW = Math.max(1F, context.width);
+        float compH = Math.max(1F, context.height);
+        float w = Math.max(1F, Math.abs(layer.width));
+        float h = Math.max(1F, Math.abs(layer.height));
+        /* Local coordinates of the layer box corners relative to the anchor. */
+        float x0 = -w * layer.anchorX;
+        float y0 = -h * layer.anchorY;
+        Vector2f centre = CompScene.project(context, layer, x0 + w * 0.5F, y0 + h * 0.5F, 0F);
+
+        if (centre == null)
+        {
+            return EffectSpace.identity(context);
+        }
+
+        float[] xs = new float[4];
+        float[] ys = new float[4];
+        boolean complete = true;
+
+        for (int i = 0; i < 4; i++)
+        {
+            Vector2f point = CompScene.project(context, layer,
+                x0 + ((i == 1 || i == 2) ? w : 0F),
+                y0 + (i >= 2 ? h : 0F), 0F);
+
+            if (point == null)
+            {
+                complete = false;
+                break;
+            }
+
+            xs[i] = point.x;
+            ys[i] = point.y;
+        }
+
+        float sizeX;
+        float sizeY;
+
+        if (complete)
+        {
+            minMax(xs);
+            minMax(ys);
+            sizeX = xs[1] - xs[0];
+            sizeY = ys[1] - ys[0];
+        }
+        else
+        {
+            float zoom = Math.abs(CompScene.camera(context).zoom);
+
+            sizeX = w * zoom;
+            sizeY = h * zoom;
+        }
+
+        return EffectSpace.identity(context,
+            centre.x / compW,
+            1F - centre.y / compH,
+            Math.max(0.0001F, sizeX) / compW,
+            Math.max(0.0001F, sizeY) / compH);
+    }
+
+    /** Sorts four values into min/max in place (xs[0] = min, xs[1] = max). */
+    private static void minMax(float[] values)
+    {
+        float min = Float.MAX_VALUE;
+        float max = -Float.MAX_VALUE;
+
+        for (float value : values)
+        {
+            min = Math.min(min, value);
+            max = Math.max(max, value);
+        }
+
+        values[0] = min;
+        values[1] = max;
+    }
+
+    /**
      * Whether an effect still has to run on the projected content.
      *
      * <p>3D layers with effects are rasterized by {@link CompLayerSourceCache}, which runs the
@@ -1425,7 +1544,8 @@ public final class CompRenderer
         }
 
         return type.startsWith("depth_") || "shake".equals(type)
-            || dev.bbsae.comp.AmEffectLibrary.usesComp(type);
+            || dev.bbsae.comp.AmEffectLibrary.usesComp(type)
+            || EffectRenderer.isCompositionSpace(type);
     }
 
     /** Index of the first effect that must run after projection, or the list size if none. */

@@ -1,7 +1,9 @@
 package dev.bbsae.client.render;
 
+import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompEffect;
 import dev.bbsae.comp.CompLayer;
+import dev.bbsae.comp.CompProject;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -62,5 +64,34 @@ public class EffectApplicationTest
         assertTrue(CompRenderer.needsCompositionEffect(false, effect("blur")));
         assertTrue(CompRenderer.needsCompositionEffect(false, effect("depth_fog")));
         assertFalse(CompRenderer.needsCompositionEffect(false, null));
+    }
+
+    /**
+     * Effects outside the bake run on the pixels the pass holds. For a perspective 3D layer those
+     * pixels are already camera-projected, so the pass must use composition space; using the
+     * layer's world matrix looked at a different part of the plane (glass/displace map sampled
+     * mirrored or empty regions — "the effect does nothing in 3D").
+     */
+    @Test
+    public void projectedLayersRunTheirPostBakeEffectsInCompositionSpace()
+    {
+        CompProject project = new CompProject();
+        CompDocument comp = new CompDocument();
+
+        comp.width = 1920;
+        comp.height = 1080;
+        project.comps.add(comp);
+
+        CompRenderContext context = new CompRenderContext(project, comp, 0F, null, null, null);
+        CompLayer threeD = new CompLayer("card", "Card", "solid");
+
+        threeD.threeD = true;
+
+        CompLayer flat = new CompLayer("flat", "Flat", "solid");
+
+        assertTrue(CompRenderer.effectsRunOnProjectedContent(context, threeD),
+            "a 3D layer is baked and projected, so composition effects must use composition space");
+        assertFalse(CompRenderer.effectsRunOnProjectedContent(context, flat),
+            "a 2D layer is painted in composition space and keeps layer-space effect mapping");
     }
 }

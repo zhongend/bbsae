@@ -179,6 +179,78 @@ switch 中拆出来：
 4.24 **程序化/绘制批**（径向光线、点阵、星形、平滑边缘、半调线；已完成）
 4.25 **边框/光束/阵列批**（边框、能量束、六边形阵列、彩色分离、描边锥度；已完成）
 4.26 **通道/合成批**（通道映射、HSV 通道映射、填充背后、实色遮罩、遮罩边缘、闪烁；已完成）
+4.74 **AE 钢笔工具（0.92）**
+    - 新增 `comp/CompPathGeometry`（纯几何）、`comp/CompPenSession`（纯状态机）、
+      `client/ui/UIPenTool`（2D 仿射 / 3D 透视射线-平面 / 3D 工作区投影）。
+    - AE 操作：单击角点、拖动平滑点、起点闭合、橡皮筋、Enter/Esc、Shift 45°、Alt 转换点/断手柄、
+      Ctrl 框选、Delete、右键菜单、段上加点；形状层编辑形状路径，其余图层编辑蒙版。
+    - 修：`MaskCache` ≥2 点即遮罩且强制闭合、`CompShape.PATH` 无 `closed`、蒙版 id 撞车、
+      闭合贝塞尔最后一段被直线弦替代（椭圆蒙版缺 1/4 圆弧）、`MaskCache` world 矩阵转置
+      （旋转图层蒙版镜像）、几何指纹不含 `closed`。
+    - 62 用例 / 7 个测试类；报告与使用说明：`docs/PEN-TOOL-REPORT.zh.md`。
+
+4.73 **实体回放编辑模式（0.92）**
+    - dashboard 面板「实体回放」+ 合成器 PLAYER 按钮；`client/replay/` 包复用唯一
+      `UIFilmPanel` 的 film/controller/undo（不 new 第二个面板/控制器）。
+    - 3D 视口：私有颜色+深度 FBO + `FilmEntityRenderer` 画全部 replay 模型；
+      comp↔world 映射（Y 翻转、默认正行列式不镜像）；`CompViewportCamera` 导航；
+      stencil 拾取选模型。
+    - 原版轨道（`UIKeyframeEditor`+`TrackCatalog`+`UIFilmKeyframes`）、原版 gizmo
+      （`Gizmo.INSTANCE`+`UIReplayPropTransform` 写回 + `filmPanel.undo/redo`）、原版模型库
+      （`UIFormPalette` + 自动关键帧）。
+    - 回退路线：面板顶部「原版回放编辑」一键回 BBS 原版影片编辑器。
+    - 报告：`docs/REPLAY-MODE-REPORT.zh.md`；集成：`docs/REPLAY-MODE-INTEGRATION.zh.md`。
+
+4.72 **图层效果三个第一性错误（0.92）**
+    - 3D 烘焙采样漏 V 翻转 → 文字/3D 内容采样效果上下颠倒；统一 `localToCompUv` 修复。
+    - 投影后效果误用图层世界矩阵 → glass/置换图/光包裹改合成空间；`AmEffectDef.padding`
+      真正参与 `EffectPadding`；AM 模糊半径按代理栅格 scale 换算。
+    - AM repeat 分类是图层复制器 → 新增合成空间 `REPLICATE` pass，重复类复制体只受合成边界
+      限制（2D/3D 都无限）；其余生成/平铺/镜像保持图层内采样（AM 同样语义）。
+    - 报告：`docs/EFFECTS-FIX-REPORT.zh.md`；AM 参数 gap：`docs/EFFECTS-AM-GAP.zh.md`。
+
+4.71 **面板 resize 手势所有权（0.92）**
+    - `UILayerQuickPanel` 的宽度拖拽原来靠**每帧轮询**：只要左键按着、鼠标落在左边缘 4px 内就
+      `resizing = true`。于是拖时间轴上的 clip/轨道数据经过快捷面板左边缘时，面板宽度会跟着变 ——
+      同一类「拖数据把面板拖大」的 bug。现在改为**按下即拥有**：`subMouseClicked` 里判断
+      `isGripPress(visible, inside, mouseX - areaX)`（纯函数 + 单测），`applyResize` 只续拖不启动。
+    - `PanelResizeHandle.subMouseClicked` 增加 `visible` 检查：BBS 的事件分发只看 `isEnabled` 不看
+      `isVisible`，隐藏的 splitter 仍会吃掉它旧矩形上的按下（左栏隐藏时预览左缘 4px 会偷偷改宽度）。
+
+4.70 **面板分栏拖拽命中修复（0.92）**
+    - 「拖轨道左侧面板的数据时面板大小也跟着拖」的根因：时间轴高度 splitter 横跨**整个 body**
+      （`.x(0).w(1F)`），于是左侧效果/素材栏底部 4px、右侧检查器底部 4px 都压着一个 resize 抓手，
+      拖最后一行的数据会被 splitter 抢走。
+    - 现在 splitter 只覆盖预览列（`CompUi.timelineSplitterSpan`，纯函数 + 单测）：
+      左/右分栏底边不再有隐藏的 resize 区；同时新增 `isPanelResizing()`，splitter 拖动期间
+      轨道时间轴不再接受第二次手势，避免同一次按下启动两种拖拽。
+    - `CompUiResponsiveTest.timelineSplitterStaysInsideThePreview` 钉住：任意面板宽度下 splitter
+      不进入左右分栏、且仍可拖动。
+
+4.69 **无摄像机时不再自动创建 + AE 摄像机工具（0.92）**
+    - 根因：`enter3DSpace()` 在摄像机为空时 `addLayer("camera")`，而 2D 预览的右键拖动会先进入
+      3D 空间 —— 于是「拖动预览」这个只读手势悄悄创建了摄像机图层。现在进入 3D 空间/右键拖动
+      **永不创建**摄像机；`CompCameraOps.ensureCamera(..., allowCreate)` 是唯一守卫
+      （`CameraLogicModeTest.viewGesturesNeverCreateACamera`）。
+    - 新增显式入口：预览右侧「新建摄像机」按钮（已有摄像机时只选中它）、「AE 摄像机工具」按钮、
+      「摄像机设置」齿轮（打开 设置 → 开发者）。
+    - AE 摄像机工具：左键 **环绕**（point of interest 为支点，球面移动机位）、中键 **Track XY**、
+      右键 **Track Z** 推拉（指数 dolly，AE 手感）；BBS 飞行摄像机自动退回 yaw/pitch 环绕。
+      工具开启时预览不再选中/拖动图层，也永远不会创建摄像机。
+    - `CompCameraOps.orbit` 纯函数（保持半径/目标、俯仰钳到 ±85°）+ 单测。
+
+4.68 **AE 3D 图层逻辑 + 开发者兼容开关（0.92）**
+    - AE 语义：只有勾选「3D 图层」的图层受摄像机透视/倾斜影响，2D 图层始终屏幕附着
+      （`CompScene.usePerspective`）。旧版（0.91 之前）行为是「只要镜头有倾斜或任意图层 z≠0，
+      所有图层都被投影」，现在收进 设置 → 开发者 →「图层 3D 逻辑」，旧工程可一键切回；
+      切换写入 `CompSettings.legacy3DLogic` 并计入 `CompRenderCache.signature`，立即重渲。
+    - 顺带修正 `CompScene.hasDepth`：摄像机自己的 z（推拉距离）不再被当成内容深度。此前
+      「显示/隐藏摄像机行」会改变整帧是否 spatial，是隐藏的开关副作用。
+    - `CameraLogicModeTest` 覆盖：AE 下 2D 图层不受倾斜影响（投影 = world + view2D）、
+      旧版下被投影、3D 图层两种逻辑都跟随、无摄像机时手势不创建、显式创建只加一个摄像机。
+    - 设置 → 开发者：3D 逻辑切换、无摄像机拖动自动创建（旧版兼容，默认关）、AE 摄像机工具开关、
+      新摄像机默认 FOV、当前状态与版本号。
+
 4.67 **2D 图层保持屏幕附着（0.91）**
     - 之前只要工程里有任意 3D 图层（z≠0）或相机倾斜，`spatial()` 为真，所有平面图层都会走
       `projectPlane()` 透视投影，连普通 2D 图层也被倾斜/移动——这就是 2D 图层的显示 bug。

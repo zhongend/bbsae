@@ -175,7 +175,7 @@ public final class AmEffectLibrary
                 vec3 rgb = mix(c.rgb, u_color.rgb, ring);
                 fragColor = vec4(rgb, clamp(c.a + ring, 0.0, 1.0));
             }
-            """, 0F, "width")
+            """, 0.25F, "width")
             .p("width", "宽度", 0F, 8F, 2F, 0.1F)
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .c("color", "颜色", 0xFF000000));
@@ -419,7 +419,7 @@ public final class AmEffectLibrary
             .p("offset2", "色标 2", 0F, 1F, 0.33F, 0.01F)
             .p("offset3", "色标 3", 0F, 1F, 0.66F, 0.01F)
             .p("scale", "缩放", 0.05F, 4F, 1F, 0.01F)
-            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.001F)
             .c("color1", "颜色 1", 0xFF55AAFF)
             .c("color2", "颜色 2", 0xFFFFE2A8)
             .c("color3", "颜色 3", 0xFFFF7AB0)
@@ -440,7 +440,7 @@ public final class AmEffectLibrary
                 fragColor = vec4(mix(c.rgb, line, clamp(u_alpha, 0.0, 1.0)), c.a);
             }
             """, 0F, "alpha")
-            .p("angle", "角度", -180F, 180F, 0F, 1F)
+            .p("angle", "角度", -180F, 180F, 0F, 0.5F)
             .p("frequency", "密度", 0.1F, 40F, 10F, 0.1F)
             .p("width", "条纹宽", 0.01F, 0.99F, 0.5F, 0.01F)
             .p("softness", "边缘柔和", 0.001F, 0.5F, 0.02F, 0.001F)
@@ -468,7 +468,7 @@ public final class AmEffectLibrary
             """, 0F, "alpha")
             .p("cell", "格子大小", 2F, 200F, 32F, 1F)
             .p("thickness", "线宽", 0.001F, 0.49F, 0.06F, 0.001F)
-            .p("angle", "旋转", -180F, 180F, 0F, 1F)
+            .p("angle", "旋转", -180F, 180F, 0F, 0.5F)
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
             .c("color", "线条颜色", 0xFFFFFFFF));
 
@@ -777,7 +777,7 @@ public final class AmEffectLibrary
 
                 fragColor = vec4(mix(c.rgb, u_color.rgb, shadow * clamp(u_opacity, 0.0, 1.0)), c.a);
             }
-            """, 0F, "opacity")
+            """, 0.5F, "opacity")
             .p("distance", "距离（像素）", 0F, 60F, 8F, 0.5F)
             .p("angle", "角度", -180F, 180F, 135F, 1F)
             .p("opacity", "不透明度", 0F, 1F, 0.6F, 0.01F)
@@ -793,7 +793,7 @@ public final class AmEffectLibrary
                 vec3 rgb = clamp(c.rgb + u_color.rgb * sheen * clamp(u_intensity, 0.0, 3.0), 0.0, 1.0);
                 fragColor = vec4(rgb, c.a);
             }
-            """, 0F, "intensity")
+            """, 0.5F, "intensity")
             .p("position", "位置", 0F, 1F, 0.3F, 0.01F)
             .p("width", "宽度", 0.001F, 0.5F, 0.12F, 0.001F)
             .p("phase", "相位", 0F, 6.2831853F, 0F, 0.01F)
@@ -817,7 +817,7 @@ public final class AmEffectLibrary
                 float averaged = sum / 12.0;
                 fragColor = vec4(c.rgb, mix(c.a, clamp(averaged * 1.5, 0.0, 1.0), clamp(u_strength, 0.0, 1.0)));
             }
-            """, 0F, "radius")
+            """, 0.5F, "radius")
             .p("radius", "范围（像素）", 0F, 40F, 4F, 0.5F)
             .p("strength", "强度", 0F, 1F, 1F, 0.01F));
 
@@ -922,8 +922,8 @@ public final class AmEffectLibrary
                 float alpha = clamp(max(c.a, halo * intensity * 0.7), 0.0, 1.0);
                 fragColor = vec4(rgb, alpha);
             }
-            """, 0F, "intensity")
-            .p("radius", "半径（像素）", 0F, 80F, 12F, 1F)
+            """, 0.5F, "intensity")
+            .p("radius", "半径（像素）", 0F, 400F, 12F, 0.5F)
             .p("intensity", "强度", 0F, 3F, 0.9F, 0.01F)
             .c("color", "光晕颜色", 0xFFFFFFFF));
 
@@ -942,7 +942,7 @@ public final class AmEffectLibrary
                 vec3 rgb = clamp(c.rgb * mix(1.0, shade * 1.6 + 0.2, strength), 0.0, 1.0);
                 fragColor = vec4(rgb, c.a);
             }
-            """, 0F, "strength")
+            """, 0.25F, "strength")
             .p("strength", "强度", 0F, 2F, 0.8F, 0.01F));
 
         add(new AmEffectDef("am_contour", "轮廓线", "AM · 绘制", """
@@ -960,7 +960,7 @@ public final class AmEffectLibrary
                 float alpha = line * clamp(u_alpha, 0.0, 1.0);
                 fragColor = vec4(mix(c.rgb, u_color.rgb, alpha), c.a);
             }
-            """, 0F, "alpha")
+            """, 0.1F, "alpha")
             .p("threshold", "阈值", 0F, 1F, 0.08F, 0.01F)
             .p("softness", "柔和", 0.001F, 0.5F, 0.08F, 0.001F)
             .p("alpha", "强度", 0F, 1F, 1F, 0.01F)
@@ -1152,7 +1152,7 @@ public final class AmEffectLibrary
                 float fringe = clamp(ring - c.a, 0.0, 1.0) * clamp(u_alpha, 0.0, 1.0);
                 fragColor = vec4(mix(c.rgb, u_color.rgb, fringe), clamp(c.a + fringe, 0.0, 1.0));
             }
-            """, 0F, "width")
+            """, 0.25F, "width")
             .p("width", "宽度（像素）", 0F, 20F, 2F, 0.5F)
             .p("alpha", "强度", 0F, 1F, 1F, 0.01F)
             .c("color", "边缘颜色", 0xFFFF5533));
@@ -1186,7 +1186,7 @@ public final class AmEffectLibrary
                 float band = 1.0 - smoothstep(width - feather, width, d);
                 fragColor = vec4(mix(c.rgb, u_color.rgb, band * clamp(u_alpha, 0.0, 1.0)), c.a);
             }
-            """, 0F, "width")
+            """, 0.25F, "width")
             .p("width", "边框宽度", 0F, 200F, 12F, 0.5F)
             .p("feather", "羽化", 0.001F, 50F, 1F, 0.1F)
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
@@ -1221,7 +1221,7 @@ public final class AmEffectLibrary
             {
                 vec2 luv = layerUv(vUv);
                 vec4 c = sampleLayer(luv);
-                vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 4.0);
+                vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 0.5);
                 vec2 p = luv * LayerSize / spacing;
                 vec2 a = mod(p, vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
                 vec2 b = mod(p + vec2(0.5, 0.0), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
@@ -1232,7 +1232,7 @@ public final class AmEffectLibrary
                 fragColor = vec4(clamp(c.rgb + u_color.rgb * intensity, 0.0, 1.0), c.a);
             }
             """, 0F, "intensity")
-            .p("size", "六边形大小", 4F, 200F, 36F, 1F)
+            .p("size", "六边形大小", 0.5F, 200F, 36F, 0.1F)
             .p("glow", "线条宽度", 0.01F, 1F, 0.12F, 0.01F)
             .p("intensity", "强度", 0F, 3F, 0.8F, 0.01F)
             .c("color", "线条颜色", 0xFF7FE0FF));
@@ -1274,7 +1274,7 @@ public final class AmEffectLibrary
                 float outline = clamp(ring - c.a, 0.0, 1.0) * clamp(u_alpha, 0.0, 1.0);
                 fragColor = vec4(mix(c.rgb, u_color.rgb, outline), clamp(c.a + outline, 0.0, 1.0));
             }
-            """, 0F, "width")
+            """, 0.25F, "width")
             .p("width", "宽度", 0F, 40F, 4F, 0.5F)
             .p("taper", "锥度", 0F, 0.95F, 0.6F, 0.01F)
             .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
@@ -1364,7 +1364,7 @@ public final class AmEffectLibrary
                 float alpha = mix(c.a, clamp(averaged * 1.6, 0.0, 1.0), clamp(u_strength, 0.0, 1.0));
                 fragColor = vec4(c.rgb, alpha);
             }
-            """, 0F, "radius")
+            """, 0.25F, "radius")
             .p("radius", "范围（像素）", 0F, 40F, 2F, 0.5F)
             .p("strength", "强度", 0F, 1F, 1F, 0.01F));
 
@@ -1461,7 +1461,7 @@ public final class AmEffectLibrary
                 vec3 rgb = clamp(c.rgb + u_color.rgb * edge * clamp(u_strength, 0.0, 3.0), 0.0, 1.0);
                 fragColor = vec4(rgb, c.a);
             }
-            """, 0F, "strength")
+            """, 0.5F, "strength")
             .p("strength", "强度", 0F, 3F, 1F, 0.01F)
             .c("color", "发光颜色", 0xFFFFFFFF));
 
@@ -1507,7 +1507,7 @@ public final class AmEffectLibrary
                 float inside = clamp(c.a, 0.0, 1.0);
                 fragColor = vec4(mix(c.rgb, blurred.rgb, inside * clamp(u_strength, 0.0, 1.0)), c.a);
             }
-            """, 0F, "radius")
+            """, 0.5F, "radius")
             .p("radius", "半径（像素）", 0F, 80F, 10F, 1F)
             .p("strength", "强度", 0F, 1F, 1F, 0.01F));
 
@@ -1664,7 +1664,7 @@ public final class AmEffectLibrary
                 vec3 sketch = mix(paper, u_ink.rgb, ink);
                 fragColor = vec4(mix(c.rgb, sketch, clamp(u_strength, 0.0, 1.0)), c.a);
             }
-            """, 0F, "strength")
+            """, 0.25F, "strength")
             .p("strength", "强度", 0F, 1F, 1F, 0.01F)
             .c("paper", "纸张颜色", 0xFFF3ECD8)
             .c("ink", "墨色", 0xFF1A1A1A));
@@ -1732,7 +1732,7 @@ public final class AmEffectLibrary
                 vec3 rgb = clamp(c.rgb + u_color.rgb * flare, 0.0, 1.0);
                 fragColor = vec4(rgb, c.a);
             }
-            """, 0F, "intensity")
+            """, 0.5F, "intensity")
             .p("light_x", "光源 X", 0F, 1F, 0.7F, 0.01F)
             .p("light_y", "光源 Y", 0F, 1F, 0.3F, 0.01F)
             .p("size", "核心大小", 0.001F, 0.5F, 0.08F, 0.001F)
@@ -1842,7 +1842,7 @@ public final class AmEffectLibrary
             {
                 vec2 luv = layerUv(vUv);
                 vec2 spacing = vec2(1.0, 1.7320508);
-                vec2 p = luv * LayerSize / max(u_size, 1.0) / spacing;
+                vec2 p = luv * LayerSize / max(u_size, 0.5) / spacing;
                 vec2 a = mod(p, spacing) - spacing * 0.5;
                 vec2 b = mod(p + vec2(0.5, 0.0), spacing) - spacing * 0.5;
                 vec2 local = dot(a, a) < dot(b, b) ? a : b;
@@ -1854,7 +1854,7 @@ public final class AmEffectLibrary
             }
             """, 0.5F, "amount")
             .p("amount", "位移（像素）", 0F, 200F, 20F, 1F)
-            .p("size", "六边形大小", 4F, 200F, 40F, 1F)
+            .p("size", "六边形大小", 0.5F, 200F, 40F, 0.1F)
             .p("seed", "随机种子", 0F, 9999F, 0F, 1F));
 
         add(new AmEffectDef("am_ripple_pulse", "波纹扩散", "AM · 变形", """
@@ -1897,8 +1897,8 @@ public final class AmEffectLibrary
                 vec3 rgb = clamp(c.rgb + u_color.rgb * inner, 0.0, 1.0);
                 fragColor = vec4(rgb, c.a);
             }
-            """, 0F, "radius")
-            .p("radius", "范围", 0F, 60F, 12F, 1F)
+            """, 0.5F, "radius")
+            .p("radius", "范围", 0F, 400F, 12F, 0.5F)
             .p("strength", "强度", 0F, 2F, 1F, 0.01F)
             .c("color", "发光颜色", 0xFFFFE08A));
 
@@ -1968,7 +1968,7 @@ public final class AmEffectLibrary
                 float line = 1.0 - smoothstep(0.0, max(u_thickness, 0.01), abs(wave));
                 fragColor = vec4(mix(c.rgb, u_color.rgb, line * clamp(u_alpha, 0.0, 1.0)), c.a);
             }
-            """, 0F, "alpha")
+            """, 0.1F, "alpha")
             .p("frequency", "密度", 0.1F, 30F, 8F, 0.1F)
             .p("thickness", "线宽", 0.01F, 1F, 0.18F, 0.01F)
             .p("phase", "相位", -1F, 1F, 0F, 0.01F)
@@ -1979,7 +1979,7 @@ public final class AmEffectLibrary
             void main()
             {
                 vec2 luv = layerUv(vUv);
-                vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 1.0);
+                vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 0.5);
                 vec2 p = luv * LayerSize / spacing;
                 vec2 a = mod(p, vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
                 vec2 b = mod(p + vec2(0.5, 0.0), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
@@ -1993,7 +1993,7 @@ public final class AmEffectLibrary
                 fragColor = vec4(rgb, c.a);
             }
             """, 0F, null)
-            .p("size", "六边形大小", 4F, 200F, 40F, 1F)
+            .p("size", "六边形大小", 0.5F, 200F, 40F, 0.1F)
             .p("gap", "缝隙", 0F, 0.9F, 0.1F, 0.01F)
             .p("line_alpha", "缝隙颜色强度", 0F, 1F, 0.6F, 0.01F)
             .c("line", "缝隙颜色", 0xFF0A0E14));
@@ -2046,7 +2046,7 @@ public final class AmEffectLibrary
                     && Math.abs(effect.valueF("offset_y", 0F)) <= 0.0001F
                     && Math.abs(effect.valueF("gap", 0F)) <= 0.0001F
                     && effect.valueF("mirror", 0F) < 0.5F)
-            .p("scale", "平铺数", 0.1F, 12F, 2F, 0.01F)
+            .p("scale", "平铺数", 0.005F, 20F, 2F, 0.005F)
             .p("offset_x", "偏移 X", -1F, 1F, 0F, 0.01F)
             .p("offset_y", "偏移 Y", -1F, 1F, 0F, 0.01F)
             .p("gap", "缝隙", 0F, 0.45F, 0F, 0.005F)
@@ -2227,7 +2227,7 @@ public final class AmEffectLibrary
                 fragColor = vec4(mix(c.rgb, shifted, clamp(u_amount, 0.0, 1.0)), c.a);
             }
             """, 0F, "amount")
-            .p("hue", "色相", -180F, 180F, 30F, 1F)
+            .p("hue", "色相", 0F, 360F, 30F, 0.5F)
             .p("amount", "强度", 0F, 1F, 1F, 0.01F));
 
         add(new AmEffectDef("am_light_leak", "漏光", "AM · 风格化", """
@@ -2578,7 +2578,7 @@ public final class AmEffectLibrary
                     && Math.abs(effect.valueF("offset_y", 0F)) <= 0.0001F
                     && Math.abs(effect.valueF("vignette", 0F)) <= 0.0001F
                     && Math.abs(effect.valueF("saturation", 0F)) <= 0.0001F)
-            .p("size", "像素大小", 1F, 128F, 16F, 1F)
+            .p("size", "像素大小", 1F, 500F, 16F, 1F)
             .p("stretch", "纵向拉伸", 0.05F, 4F, 1F, 0.01F)
             .p("offset_x", "偏移 X", -1F, 1F, 0F, 0.01F)
             .p("offset_y", "偏移 Y", -1F, 1F, 0F, 0.01F)

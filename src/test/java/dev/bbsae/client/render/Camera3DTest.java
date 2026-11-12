@@ -159,6 +159,10 @@ public class Camera3DTest
         CompProject project = project(doc);
         CompLayer camera = camera(doc);
 
+        /* A free camera: rotationX/Y must actually tilt the view. With the default look-at target
+         * the yaw/pitch fields are ignored, so this test would only have been "tilted" because the
+         * camera's own dolly z used to count as content depth (fixed in CompScene.hasDepth). */
+        camera.cameraLookAt = false;
         camera.rotationX = 25F;
         camera.rotationY = 20F;
         doc.layers.add(camera);

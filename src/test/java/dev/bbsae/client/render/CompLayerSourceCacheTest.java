@@ -110,6 +110,21 @@ public class CompLayerSourceCacheTest
     }
 
     @Test
+    public void rasterScaleConvertsTheReferenceBlurRadius()
+    {
+        CompEffect gaussian = CompEffectRegistry.create("am_gaussian_blur", 1);
+
+        gaussian.put("strength", 24D);
+
+        CompEffect scaled = CompLayerSourceCache.scaleEffectForRaster(gaussian, 0.5F);
+
+        assertEquals(12F, scaled.valueF("strength", 0F), 1e-4F,
+            "a reference blur radius is a framebuffer-pixel count in the bake");
+        assertEquals(24F, gaussian.valueF("strength", 0F), 1e-4F,
+            "the saved effect must not be mutated");
+    }
+
+    @Test
     public void maskChangesInvalidateTheLayerRaster()
     {
         CompDocument doc = new CompDocument();

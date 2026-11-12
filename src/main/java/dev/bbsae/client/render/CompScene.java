@@ -271,7 +271,10 @@ public final class CompScene
 
         for (CompLayer layer : comp.layers)
         {
-            if (layer != null && layer.visible && Math.abs(layer.z) > 0.01F)
+            /* A camera's own z is the dolly distance, not content depth. Counting it made
+             * "hide the camera row → the frame stops being spatial", which is a visibility switch
+             * changing the projection of unrelated layers. */
+            if (layer != null && layer.visible && !"camera".equals(layer.type) && Math.abs(layer.z) > 0.01F)
             {
                 return true;
             }
@@ -290,10 +293,32 @@ public final class CompScene
 
     public static boolean usePerspective(CompRenderContext ctx, CompLayer layer)
     {
-        return layer.threeD
-            && !"camera".equals(layer.type)
-            && !"adjustment".equals(layer.type)
-            && camera(ctx).perspective;
+        if (layer == null || "camera".equals(layer.type) || "adjustment".equals(layer.type))
+        {
+            return false;
+        }
+
+        if (legacy3D(ctx))
+        {
+            /* Compatibility mode (Settings → 开发者 → 3D 逻辑): every layer used to be projected
+             * through the camera as soon as the frame became spatial, whether or not the layer's
+             * own 3D switch was on. Old projects can still be opened with exactly that look. */
+            return spatial(ctx) || (layer.threeD && camera(ctx).perspective);
+        }
+
+        return layer.threeD && camera(ctx).perspective;
+    }
+
+    /**
+     * True when this project asks for the legacy (pre-AE) 3D layer logic. Off for every new
+     * project; see {@link dev.bbsae.comp.CompProject.CompSettings#legacy3DLogic}.
+     */
+    public static boolean legacy3D(CompRenderContext ctx)
+    {
+        return ctx != null
+            && ctx.project != null
+            && ctx.project.settings != null
+            && ctx.project.settings.legacy3DLogic;
     }
 
     /**

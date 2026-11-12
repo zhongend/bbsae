@@ -393,25 +393,47 @@ public class UILayerQuickPanel extends UIElement
         super.render(context);
     }
 
+    /**
+     * A resize may only start from a press that landed on the 4 px left grip.
+     *
+     * <p>The old code started resizing from the per-frame poll: any time the left button was down
+     * and the cursor happened to be within 4 px of the left edge, the panel began resizing. Dragging
+     * a clip bar / track row across that edge therefore changed the quick-panel width — one of the
+     * reported "dragging data also drags the panel size" bugs. Ownership now comes from the press,
+     * not from where the pointer happens to be later.</p>
+     */
+    static boolean isGripPress(boolean visible, boolean inside, int deltaX)
+    {
+        return visible && inside && deltaX >= 0 && deltaX <= 4;
+    }
+
+    @Override
+    protected boolean subMouseClicked(UIContext context)
+    {
+        if (context.mouseButton == 0
+            && isGripPress(this.visible, this.area.isInside(context), context.mouseX - this.area.x)
+            && (this.panel == null || !this.panel.isPanelResizing()))
+        {
+            this.resizing = true;
+            this.resizeStartX = context.mouseX;
+            this.resizeStartWidth = this.area.w;
+
+            return true;
+        }
+
+        return super.subMouseClicked(context);
+    }
+
     private void applyResize(UIContext context)
     {
-        boolean pressed = Window.isMouseButtonPressed(0);
-
-        if (this.resizing && !pressed)
+        if (!this.resizing)
         {
-            this.resizing = false;
-
             return;
         }
 
-        if (!this.resizing)
+        if (!Window.isMouseButtonPressed(0))
         {
-            if (pressed && this.area.isInside(context) && context.mouseX - this.area.x <= 4)
-            {
-                this.resizing = true;
-                this.resizeStartX = context.mouseX;
-                this.resizeStartWidth = this.area.w;
-            }
+            this.resizing = false;
 
             return;
         }

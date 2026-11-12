@@ -1806,6 +1806,139 @@ public final class ShaderSources
         }
         """;
 
+    /**
+     * Layer replication (Alight Motion's "repeat" family).
+     *
+     * <p>Repeat is not a pixel warp: it draws the layer several times. Doing that inside the layer
+     * rectangle is what made it look like a mask — four copies squeezed into a 400 px box and
+     * nothing outside it. This pass therefore runs in <b>composition space</b> on the finished
+     * layer image, sampling the source once per copy. Copies are placed across the composition,
+     * each keeps the layer's own size (scaled by {@code Scale}) and none of them is clipped by the
+     * original rectangle, which is what "无限" means here: only the composition bounds remain.</p>
+     */
+    public static final String REPLICATE = """
+        #version 150 core
+
+        uniform sampler2D Source;
+        uniform vec2 Size;         /* composition pixels (for pixel-authored offsets) */
+        uniform int Mode;          /* 0 = grid, 1 = line, 2 = scatter */
+        uniform vec2 Grid;         /* copies per axis; line mode uses Grid.x */
+        uniform vec2 CopySize;     /* the layer box in composition UV (1,1 = whole composition) */
+        uniform float Gap;         /* shrink each copy to leave a gap (0..0.9) */
+        uniform float Scale;       /* per-copy scale */
+        uniform float Rotation;    /* per-copy rotation, radians */
+        uniform float Randomness;  /* scatter jitter, 0..1 */
+        uniform float Seed;
+        uniform float Opacity;
+        uniform vec2 Offset;       /* content offset inside each copy, in composition UV */
+        uniform int Vertical;      /* line mode axis: 0 horizontal, 1 vertical */
+        uniform vec2 Center;       /* composition UV of the layer centre */
+
+        in vec2 vUv;
+        out vec4 fragColor;
+
+        float hash21(vec2 p)
+        {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+
+        vec2 hash22(vec2 p)
+        {
+            p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+
+            return fract(sin(p) * 43758.5453);
+        }
+
+        vec2 rotate(vec2 p, float a)
+        {
+            float c = cos(a);
+            float s = sin(a);
+
+            return vec2(c * p.x - s * p.y, s * p.x + c * p.y);
+        }
+
+        void main()
+        {
+            float alpha = clamp(Opacity, 0.0, 1.0);
+
+            if (alpha <= 0.0001)
+            {
+                fragColor = vec4(0.0);
+
+                return;
+            }
+
+            vec2 grid = max(Grid, vec2(1.0));
+            int cols = int(clamp(grid.x, 1.0, 8.0));
+            int rows = Mode == 1 ? 1 : int(clamp(grid.y, 1.0, 8.0));
+            float copies = float(cols * rows);
+            /* The source content spans CopySize in composition UV as well (the copy is the same
+             * layer), so a 1:1 copy needs no size factor at all: scale and gap only shrink the copy
+             * on screen relative to that content. Dividing by CopySize here zoomed every copy 8x
+             * into itself — only the copy centres carried pixels ("重复后只剩几个点"). */
+            float copyScale = max(max(Scale, 0.02) * (1.0 - clamp(Gap, 0.0, 0.9)), 0.0001);
+            vec4 acc = vec4(0.0);
+
+            for (int j = 0; j < 8; j++)
+            {
+                if (j >= rows)
+                {
+                    break;
+                }
+
+                for (int i = 0; i < 8; i++)
+                {
+                    if (i >= cols)
+                    {
+                        break;
+                    }
+
+                    vec2 copy = Center;
+
+                    if (copies > 1.0)
+                    {
+                        if (Mode == 1)
+                        {
+                            if (Vertical == 1)
+                            {
+                                copy.y = (float(i) + 0.5) / grid.x;
+                            }
+                            else
+                            {
+                                copy.x = (float(i) + 0.5) / grid.x;
+                            }
+                        }
+                        else
+                        {
+                            copy = (vec2(float(i), float(j)) + 0.5) / grid;
+                        }
+                    }
+
+                    float weight = alpha;
+
+                    if (Mode == 2)
+                    {
+                        vec2 jitter = hash22(copy + Seed + 1.7) - 0.5;
+
+                        copy += jitter * Randomness / grid;
+                        weight *= 0.55 + 0.45 * hash21(copy + Seed * 7.1);
+                        copy = mix(Center, copy, copies > 1.0 ? 1.0 : 0.0);
+                    }
+
+                    vec2 delta = rotate(vUv - copy, -Rotation) / copyScale;
+                    vec2 uv = Center + delta + Offset;
+                    vec4 texel = texture(Source, clamp(uv, vec2(0.0), vec2(1.0)));
+                    float a = texel.a * weight;
+
+                    acc.rgb = texel.rgb * a + acc.rgb * (1.0 - a);
+                    acc.a = a + acc.a * (1.0 - a);
+                }
+            }
+
+            fragColor = vec4(acc.rgb, acc.a);
+        }
+        """;
+
     public static final String STROKE = """
         #version 150 core
 

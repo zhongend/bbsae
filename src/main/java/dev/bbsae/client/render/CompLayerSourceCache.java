@@ -626,6 +626,17 @@ public final class CompLayerSourceCache
         CompEffect scaled = effect.copy();
         String type = scaled.type == null ? "" : scaled.type;
 
+        /* The data-driven blur family runs through the separable FBO blur, whose radius is a
+         * framebuffer-pixel count. On a proxy raster that radius has to travel to raster pixels,
+         * otherwise a 12 px reference blur becomes 12/s raster px and the reserved margin no
+         * longer covers the kernel. */
+        dev.bbsae.comp.AmEffectDef definition = dev.bbsae.comp.AmEffectLibrary.get(type);
+
+        if (definition != null && definition.blurKey != null)
+        {
+            scaleParam(scaled, definition.blurKey, scale);
+        }
+
         switch (type)
         {
             case "blur", "box_blur", "directional_blur", "glow", "outer_glow",
@@ -986,6 +997,9 @@ public final class CompLayerSourceCache
                 h = mix(h, resolved.opacity);
                 h = mix(h, resolved.feather);
                 h = mix(h, resolved.expansion);
+                /* The pen tool can open/close a path; an open path does not mat, so the baked
+                 * layer raster must be rebuilt when this toggles. */
+                h = mix(h, resolved.closed ? 1 : 0);
 
                 for (CompMask.CompMaskPoint point : resolved.points)
                 {
@@ -1072,6 +1086,7 @@ public final class CompLayerSourceCache
             h = mix(h, shape.type == null ? 0 : shape.type.hashCode());
             h = mix(h, shape.enabled ? 1 : 0);
             h = mix(h, shape.operator);
+            h = mix(h, shape.closed ? 1 : 0);
             h = mix(h, shape.x);
             h = mix(h, shape.y);
             h = mix(h, shape.width);

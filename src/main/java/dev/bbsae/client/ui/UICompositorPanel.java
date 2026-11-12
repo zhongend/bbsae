@@ -238,6 +238,12 @@ public class UICompositorPanel extends UIDashboardPanel
     private float flightSpeed = 780F;
     /** The Blender-like free viewport is open (see {@link #enter3DSpace()}). */
     private boolean viewportMode;
+    /** Pen tool instance; created lazily by {@link #penTool()}. */
+    private UIPenTool penTool;
+    /** Preview geometry captured for the pen overlay; the marquee needs it again on release. */
+    UIPenTool.View lastPenView;
+    /** Toolbar toggle for the pen tool (mask/shape path editing in 2D and 3D). */
+    private UIIcon penButton;
     /** The editor's own camera; never rendered into a frame. */
     private final dev.bbsae.client.render.CompViewportCamera viewportCamera = new dev.bbsae.client.render.CompViewportCamera();
     /** Red "AE 编码器" chip over the preview; visible only while the frame server drives the view. */
@@ -260,6 +266,14 @@ public class UICompositorPanel extends UIDashboardPanel
     private int lastPreviewWidth = 300;
     private UIIcon cameraViewButton;
     private UIIcon space3DButton;
+    /** AE camera tool toggle (left orbit / middle track XY / right dolly). */
+    private UIIcon cameraToolButton;
+    /** Explicit "new camera" action; the only way a camera is created besides the compat switch. */
+    private UIIcon createCameraButton;
+    /** Opens Settings → 开发者, where the 3D logic and camera defaults live. */
+    private UIIcon cameraSettingsButton;
+    /** Switches to the entity-replay editing page (BBS's own replay timeline + gizmo + models). */
+    private UIIcon replayModeButton;
     private UIIcon precompBack;
     private final UILabel compPath;
     private final java.util.ArrayDeque<PrecompReturn> precompStack = new java.util.ArrayDeque<>();
@@ -510,6 +524,27 @@ public class UICompositorPanel extends UIDashboardPanel
             private float cameraStartTargetX;
             private float cameraStartTargetY;
 
+            /* AE camera tool drag state. The tool turns the three mouse buttons into AE's three
+             * camera gestures, so it must not share the layer drag modes above: those are written
+             * by the click handler, while a camera gesture starts from raw button polling (the
+             * right button is also what BBS wants to use for context menus). */
+            private static final int CT_NONE = 0;
+            private static final int CT_ORBIT = 1;
+            private static final int CT_TRACK_XY = 2;
+            private static final int CT_TRACK_Z = 3;
+            private int ctMode = CT_NONE;
+            private int ctButton = -1;
+            private int ctStartX;
+            private int ctStartY;
+            private float ctStartDistance;
+            private final org.joml.Vector3f ctStartEye = new org.joml.Vector3f();
+            private final org.joml.Vector3f ctStartTarget = new org.joml.Vector3f();
+            private final org.joml.Vector3f ctStartRight = new org.joml.Vector3f(1F, 0F, 0F);
+            private final org.joml.Vector3f ctStartUp = new org.joml.Vector3f(0F, 1F, 0F);
+            private boolean ctLeftWasDown;
+            private boolean ctMiddleWasDown;
+            private boolean ctRightWasDown;
+
             /* 3D translate gizmo drag. Axis direction and pixels-per-unit are captured when the
              * drag starts so the layer follows the pointer even while the camera moves. */
             private int gizmoAxisIndex = -1;
@@ -588,6 +623,7 @@ public class UICompositorPanel extends UIDashboardPanel
             public void render(UIContext context)
             {
                 this.pollViewportInput(context);
+                this.pollCameraToolInput(context);
                 this.applyDrag(context);
                 this.renderBackground(context);
 
@@ -602,13 +638,21 @@ public class UICompositorPanel extends UIDashboardPanel
                     this.renderSafeArea(context);
                     this.renderGuides(context);
                     this.renderSelection(context);
-                    this.renderMaskOverlay(context);
 
-                    /* The old bottom-right hint shared the exact line with the preview readout,
-                     * producing two overprinted sentences. The 3D sphere button, its tooltip and
-                     * the camera inspector already explain the gesture, so the readout owns this
-                     * strip alone. */
+                    /* The pen overlay draws every masked path itself (closed or open, with its own
+                     * anchor/handle state), so the old mask overlay would double-draw the same
+                     * outlines while the tool is armed. */
+                    if (!UICompositorPanel.this.penTool().isActive())
+                    {
+                        this.renderMaskOverlay(context);
+                    }
                 }
+
+                /* Pen overlay on top of both preview modes: 2D and the free 3D workspace use the
+                 * same drawing code, only the projection differs. */
+                UIPenTool.View penView = this.penView();
+                UICompositorPanel.this.lastPenView = penView;
+                UICompositorPanel.this.penTool().renderOverlay(context, penView);
 
                 this.updateCursor(context);
                 super.render(context);
@@ -3066,8 +3110,53 @@ public class UICompositorPanel extends UIDashboardPanel
                 return Math.min(this.area.w / (float) UICompositorPanel.this.doc.width, this.area.h / (float) UICompositorPanel.this.doc.height);
             }
 
+            /**
+             * Snapshot of everything the pen tool needs to project a layer-local point to the
+             * screen this frame. The preview is fit-only (no zoom/pan), so scale/ox/oy are simply
+             * the letterbox fit; the 3D workspace instead projects through the free viewport camera.
+             */
+            private UIPenTool.View penView()
+            {
+                UIPenTool.View view = new UIPenTool.View();
+
+                view.area = this.area;
+                view.areaX = this.area.x;
+                view.areaY = this.area.y;
+                view.areaW = this.area.w;
+                view.areaH = this.area.h;
+                view.space3D = UICompositorPanel.this.is3DSpace();
+
+                if (UICompositorPanel.this.doc != null)
+                {
+                    view.rc = new CompRenderContext(UICompositorPanel.this.project, UICompositorPanel.this.doc,
+                        UICompositorPanel.this.time, null, null, null);
+                    view.compWidth = UICompositorPanel.this.doc.width;
+                    view.compHeight = UICompositorPanel.this.doc.height;
+                }
+
+                if (view.space3D)
+                {
+                    view.viewport = this.viewport();
+                }
+                else if (UICompositorPanel.this.doc != null)
+                {
+                    view.scale = this.fitScale();
+                    view.ox = (this.area.w - UICompositorPanel.this.doc.width * view.scale) / 2F;
+                    view.oy = (this.area.h - UICompositorPanel.this.doc.height * view.scale) / 2F;
+                }
+
+                return view;
+            }
+
             private void applyDrag(UIContext context)
             {
+                /* The pen gets first refusal on a held left button: while a vertex/handle drag is
+                 * armed the layer must not also move. */
+                if (UICompositorPanel.this.penTool().onDrag(context, UICompositorPanel.this.lastPenView))
+                {
+                    return;
+                }
+
                 if (this.maskDrag != MASK_DRAG_NONE)
                 {
                     this.applyMaskDrag(context);
@@ -3453,6 +3542,228 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.vpRightWasDown = right;
                 this.vpMiddleWasDown = middle;
                 this.vpLeftWasDown = left;
+            }
+
+            /**
+             * AE camera tool input.
+             *
+             * <p>The tool is a mode, like AE's unified camera tool: while it is on, the three mouse
+             * buttons are camera gestures and the preview stops picking layers. That separation is
+             * the whole reason the mode exists — every gesture on a camera is destructive to the
+             * frame, so it must not also be a layer drag or a context menu.</p>
+             *
+             * <ul>
+             *   <li>left drag — orbit around the point of interest</li>
+             *   <li>middle drag — track XY (move camera and target in the view plane)</li>
+             *   <li>right drag — track Z (dolly along the view axis)</li>
+             * </ul>
+             *
+             * <p>With no camera every gesture is a status hint. It never creates a camera: an
+             * explicit "新建摄像机" action is the only creator in AE.</p>
+             */
+            private void pollCameraToolInput(UIContext context)
+            {
+                if (!UICompositorPanel.this.cameraToolActive()
+                    || UICompositorPanel.this.is3DSpace()
+                    || UICompositorPanel.this.doc == null
+                    || Boolean.getBoolean("bbsae.debugViewLock"))
+                {
+                    this.ctLeftWasDown = false;
+                    this.ctMiddleWasDown = false;
+                    this.ctRightWasDown = false;
+                    this.ctMode = CT_NONE;
+
+                    return;
+                }
+
+                boolean left = Window.isMouseButtonPressed(0);
+                boolean middle = Window.isMouseButtonPressed(2);
+                boolean right = Window.isMouseButtonPressed(1);
+                boolean inside = this.area.isInside(context);
+
+                if (this.ctMode == CT_NONE && inside)
+                {
+                    if ((left && !this.ctLeftWasDown) || (middle && !this.ctMiddleWasDown)
+                        || (right && !this.ctRightWasDown))
+                    {
+                        CompLayer camera = UICompositorPanel.this.doc.activeCamera(UICompositorPanel.this.time);
+
+                        if (camera == null)
+                        {
+                            UICompositorPanel.this.setStatus("还没有摄像机：点预览右侧「新建摄像机」（AE 摄像机工具不会自动创建）");
+                        }
+                        else
+                        {
+                            int mode = left ? CT_ORBIT : (middle ? CT_TRACK_XY : CT_TRACK_Z);
+                            int button = left ? 0 : (middle ? 2 : 1);
+
+                            this.beginCameraToolDrag(camera, mode, button, context);
+                        }
+                    }
+                }
+                else if (this.ctMode != CT_NONE)
+                {
+                    boolean stillDown = this.ctButton == 0 ? left : (this.ctButton == 2 ? middle : right);
+
+                    if (stillDown)
+                    {
+                        this.applyCameraToolDrag(context);
+                    }
+                    else
+                    {
+                        this.endCameraToolDrag();
+                    }
+                }
+
+                this.ctLeftWasDown = left;
+                this.ctMiddleWasDown = middle;
+                this.ctRightWasDown = right;
+            }
+
+            private void beginCameraToolDrag(CompLayer camera, int mode, int button, UIContext context)
+            {
+                CompDocument doc = UICompositorPanel.this.doc;
+                CompRenderContext renderContext = new CompRenderContext(UICompositorPanel.this.project,
+                    doc, UICompositorPanel.this.time, null, null, null);
+                CompCamera view = CompScene.camera(renderContext);
+
+                this.ctMode = mode;
+                this.ctButton = button;
+                this.ctStartX = context.mouseX;
+                this.ctStartY = context.mouseY;
+                this.ctStartEye.set(CompCamera.eyeOf(camera, UICompositorPanel.this.getFrame(), doc.height));
+                this.ctStartDistance = Math.max(1F, view.distance);
+                this.ctStartRight.set(view.right);
+                this.ctStartUp.set(view.up);
+
+                if (camera.cameraLookAt)
+                {
+                    this.ctStartTarget.set(camera.cameraTarget(UICompositorPanel.this.getFrame()));
+                }
+                else
+                {
+                    /* A free camera has no authored pivot, so orbit/dolly use the point at the
+                     * current dolly distance along the view direction — the same pivot the 3D
+                     * viewport orbits around. */
+                    this.ctStartTarget.set(this.ctStartEye)
+                        .add(new org.joml.Vector3f(view.forward).mul(this.ctStartDistance));
+                }
+            }
+
+            private void applyCameraToolDrag(UIContext context)
+            {
+                CompDocument doc = UICompositorPanel.this.doc;
+                CompLayer camera = doc.activeCamera(UICompositorPanel.this.time);
+
+                if (camera == null)
+                {
+                    this.ctMode = CT_NONE;
+
+                    return;
+                }
+
+                float frame = UICompositorPanel.this.getFrame();
+                float scale = Math.max(0.0001F, this.fitScale());
+                float dx = context.mouseX - this.ctStartX;
+                float dy = context.mouseY - this.ctStartY;
+
+                switch (this.ctMode)
+                {
+                    case CT_ORBIT ->
+                    {
+                        if (camera.cameraStyle == CompLayer.CAMERA_BBS)
+                        {
+                            /* A BBS fly camera has no point of interest: its rotationY/X *is* the
+                             * view. Orbiting it on a look-at pivot would move the eye while the
+                             * renderer ignored the pivot and kept the old direction, so drive the
+                             * free-camera fields instead. */
+                            CompViewControls.orbit(camera, frame, dx * 0.35F, dy * 0.35F);
+                            this.writeTransform(camera, null, null, null, camera.x, camera.y);
+                            UICompositorPanel.this.setScalar(camera, "rotationY", camera.rotationY);
+                            UICompositorPanel.this.setScalar(camera, "rotationX", camera.rotationX);
+                            UICompositorPanel.this.setScalar(camera, "cameraZ", camera.cameraZ);
+                            UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                                "AE 环绕（BBS 飞行摄像机）· 位置 %.0f, %.0f, %.0f",
+                                camera.x, camera.y, camera.cameraZ));
+
+                            return;
+                        }
+
+                        org.joml.Vector3f eye = dev.bbsae.client.render.CompCameraOps.orbit(
+                            this.ctStartEye, this.ctStartTarget, dx * 0.35F, dy * 0.35F);
+
+                        /* Orbiting an AE camera is a two-node operation: the point of interest is
+                         * the pivot, so the camera keeps looking at it while its position moves. */
+                        camera.cameraLookAt = true;
+                        this.writeCameraToolPose(camera, eye, this.ctStartTarget);
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                            "AE 环绕 · 位置 %.0f, %.0f, %.0f", eye.x, eye.y, eye.z));
+                    }
+                    case CT_TRACK_XY ->
+                    {
+                        org.joml.Vector3f delta = new org.joml.Vector3f(this.ctStartRight).mul(dx / scale)
+                            .add(new org.joml.Vector3f(this.ctStartUp).mul(-dy / scale));
+                        org.joml.Vector3f eye = new org.joml.Vector3f(this.ctStartEye).add(delta);
+                        org.joml.Vector3f target = new org.joml.Vector3f(this.ctStartTarget).add(delta);
+
+                        this.writeCameraToolPose(camera, eye, target);
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                            "AE Track XY · 位置 %.0f, %.0f", eye.x, eye.y));
+                    }
+                    case CT_TRACK_Z ->
+                    {
+                        float factor = dev.bbsae.client.render.CompCameraOps.dollyFactor(dx);
+                        float distance = Math.max(camera.cameraNear + 10F,
+                            Math.min(camera.cameraFar - 10F, this.ctStartDistance * factor));
+                        org.joml.Vector3f direction = new org.joml.Vector3f(this.ctStartEye).sub(this.ctStartTarget);
+                        float length = direction.length();
+
+                        if (length < 0.0001F)
+                        {
+                            return;
+                        }
+
+                        direction.mul(1F / length);
+
+                        org.joml.Vector3f eye = new org.joml.Vector3f(this.ctStartTarget).add(direction.mul(distance));
+
+                        this.writeCameraToolPose(camera, eye, this.ctStartTarget);
+                        UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                            "AE Track Z · 距离 %.0f", distance));
+                    }
+                    default ->
+                    {
+                        /* nothing to do */
+                    }
+                }
+            }
+
+            private void writeCameraToolPose(CompLayer camera, org.joml.Vector3f eye, org.joml.Vector3f target)
+            {
+                this.writeTransform(camera, null, null, null, eye.x, eye.y);
+                camera.cameraZ = eye.z;
+                camera.z = eye.z;
+                UICompositorPanel.this.setScalar(camera, "cameraZ", eye.z);
+
+                if (camera.cameraLookAt)
+                {
+                    camera.cameraTargetX = target.x;
+                    camera.cameraTargetY = target.y;
+                    camera.cameraTargetZ = target.z;
+                    UICompositorPanel.this.setScalar(camera, "cameraTargetX", target.x);
+                    UICompositorPanel.this.setScalar(camera, "cameraTargetY", target.y);
+                    UICompositorPanel.this.setScalar(camera, "cameraTargetZ", target.z);
+                }
+            }
+
+            private void endCameraToolDrag()
+            {
+                if (this.ctMode != CT_NONE)
+                {
+                    this.ctMode = CT_NONE;
+                    UICompositorPanel.this.refreshInspector();
+                    UICompositorPanel.this.save();
+                }
             }
 
             private boolean viewportActive()
@@ -4108,6 +4419,26 @@ public class UICompositorPanel extends UIDashboardPanel
                     return super.subMouseClicked(context);
                 }
 
+                /* The pen owns every press over the preview while it is armed, including the right
+                 * button (its context menu). It must run before the camera tool and the 3D
+                 * navigation branches, which would otherwise eat the click or enter the 3D
+                 * workspace. Splitter drags own the mouse entirely. */
+                if (!UICompositorPanel.this.isPanelResizing()
+                    && UICompositorPanel.this.penTool().onPress(context, UICompositorPanel.this.lastPenView))
+                {
+                    return true;
+                }
+
+                if (!UICompositorPanel.this.is3DSpace() && UICompositorPanel.this.cameraToolActive())
+                {
+                    /* The AE camera tool owns every mouse button over the preview. Consuming the
+                     * press here also stops BBS from opening its context menu on the right button
+                     * and stops the click from selecting or moving a layer. The gesture itself is
+                     * polled from the window (pollCameraToolInput) because non-left buttons are not
+                     * guaranteed to reach a custom element through the UI event path. */
+                    return true;
+                }
+
                 if (!UICompositorPanel.this.is3DSpace() && context.mouseButton == 1
                     && !Boolean.getBoolean("bbsae.debugViewLock"))
                 {
@@ -4470,6 +4801,7 @@ public class UICompositorPanel extends UIDashboardPanel
             @Override
             protected boolean subMouseReleased(UIContext context)
             {
+                UICompositorPanel.this.penTool().onRelease(context);
                 this.endViewportDrag();
                 this.endMaskDrag();
                 this.endDrag();
@@ -4740,6 +5072,44 @@ public class UICompositorPanel extends UIDashboardPanel
         this.space3DButton.relative(this.preview).x(1F, -50).y(6).w(20).h(20);
         this.space3DButton.tooltip(IKey.constant("进入/退出 3D 空间（自由视口：右键拖动环绕、Shift+右键平移、滚轮缩放、0 看穿摄像机）"));
         this.preview.add(this.space3DButton);
+
+        /* Entity replay: switches to bbsae's own 3D replay editing page, which reuses BBS's replay
+         * timeline, gizmo and model library instead of re-implementing them. The dashboard bar also
+         * carries the same entry as a registered panel. */
+        this.replayModeButton = new UIIcon(Icons.PLAYER,
+            (button) -> BbsAeClient.openReplayMode(this.dashboard, this));
+        this.replayModeButton.relative(this.preview).x(1F, -160).y(6).w(20).h(20);
+        this.replayModeButton.tooltip(IKey.constant("实体回放：在 3D 空间里编辑影片回放（原版轨道 / 原版 gizmo / 原版模型库）"));
+        this.preview.add(this.replayModeButton);
+
+        /* AE camera tool: a mode, not a modifier. While it is on the preview stops picking layers
+         * and the three mouse buttons are orbit / track XY / dolly. */
+        this.cameraToolButton = new UIIcon(
+            () -> this.cameraToolActive() ? Icons.LOOKING : Icons.ORBIT,
+            (button) -> this.toggleCameraTool());
+        this.cameraToolButton.relative(this.preview).x(1F, -72).y(6).w(20).h(20);
+        this.cameraToolButton.tooltip(IKey.constant("AE 摄像机工具：左键环绕 / 中键 Track XY / 右键 Track Z 推拉；没有摄像机时不会自动创建"));
+        this.preview.add(this.cameraToolButton);
+
+        /* A camera is an explicit object (AE: Layer → New → Camera). */
+        this.createCameraButton = new UIIcon(Icons.CAMERA, (button) -> this.createCamera());
+        this.createCameraButton.relative(this.preview).x(1F, -94).y(6).w(20).h(20);
+        this.createCameraButton.tooltip(IKey.constant("新建摄像机（已有摄像机时选中它）。没有摄像机时预览拖动永远不会自动创建"));
+        this.preview.add(this.createCameraButton);
+
+        this.cameraSettingsButton = new UIIcon(Icons.GEAR, (button) -> this.openSettings("dev"));
+        this.cameraSettingsButton.relative(this.preview).x(1F, -116).y(6).w(20).h(20);
+        this.cameraSettingsButton.tooltip(IKey.constant("摄像机与 3D 逻辑设置（设置 → 开发者）"));
+        this.preview.add(this.cameraSettingsButton);
+
+        /* Pen tool: 2D/3D mask and shape-path editing. The icon changes with the armed state so the
+         * preview itself says which mouse behaviour is active. */
+        this.penButton = new UIIcon(
+            () -> this.penTool().isActive() ? Icons.ARC : Icons.LINE,
+            (button) -> this.togglePenTool());
+        this.penButton.relative(this.preview).x(1F, -138).y(6).w(20).h(20);
+        this.penButton.tooltip(IKey.constant("钢笔（G）：单击加角点、按下拖动加平滑点、点击起点闭合；2D 与 3D 图层的蒙版/形状路径都可编辑"));
+        this.preview.add(this.penButton);
 
         this.previewInfo = new UILabel(IKey.constant("预览"));
         this.previewInfo.relative(this.preview).x(6).y(1F, -18).w(1F, -12).h(14);
@@ -7936,6 +8306,12 @@ public class UICompositorPanel extends UIDashboardPanel
         this.playing = false;
         this.playRate = 0F;
         this.resetTimelineView = true;
+
+        /* A different composition means different layers; the pen's target is gone. */
+        if (this.penTool != null)
+        {
+            this.penTool.forget();
+        }
         this.setSingleSelection(this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1));
 
         if (this.trackTimeline != null)
@@ -8599,6 +8975,56 @@ public class UICompositorPanel extends UIDashboardPanel
 
             case "queue":
                 this.toggleRenderView();
+                break;
+
+            case "textfx":
+            {
+                /* Verification view for the "text layer + effect is upside down" report: a text
+                 * layer near the top of the frame, a glow (content resampling) and a blur (kernel
+                 * with padding) applied. The screenshot must show upright, readable text. */
+                if (this.viewportMode)
+                {
+                    this.exit3DSpace();
+                }
+
+                this.cameraPreviewMode = false;
+
+                CompLayer text = null;
+
+                for (CompLayer candidate : this.doc.layers)
+                {
+                    if ("text".equals(candidate.type))
+                    {
+                        text = candidate;
+                        break;
+                    }
+                }
+
+                if (text != null)
+                {
+                    text.y = this.doc.height * 0.32F;
+                    text.text = "文字方向 TEST 0123";
+                    text.effects.clear();
+
+                    CompEffect glow = CompEffectRegistry.create("am_glow", 1);
+
+                    glow.put("radius", 30D);
+                    glow.put("intensity", 1.2D);
+                    text.effects.add(glow);
+                    text.effects.add(CompEffectRegistry.create("blur", 1));
+
+                    this.selectLayer(text);
+                    this.time = 0F;
+                    this.setStatus("验证：文字图层 + 发光 + 模糊（文字方向应正常）");
+                }
+
+                break;
+            }
+
+            case "replay":
+                /* Entity-replay editing page: BBS's own replay timeline/gizmo/model library inside
+                 * bbsae's 3D space. */
+                BbsAeClient.openReplayMode(this.dashboard, this);
                 break;
 
             case "curve":
@@ -9628,6 +10054,12 @@ public class UICompositorPanel extends UIDashboardPanel
         if (layer == this.selectedLayer && this.selectedIds.size() == (layer == null ? 0 : 1))
         {
             return;
+        }
+
+        /* The pen is bound to one layer's path; switching layers mid-gesture must release it. */
+        if (this.penTool != null && layer != this.selectedLayer)
+        {
+            this.penTool.forget();
         }
 
         if (layer != null)
@@ -11332,11 +11764,18 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.leftHandle != null)
         {
+            /* The horizontal splitter only spans the preview. It used to span the whole body, which
+             * put a timeline-height resize grip on the bottom 4 px of the left effect/asset column:
+             * dragging the last list row (or any data at that edge) resized the timeline instead of
+             * selecting/dragging the row. That is exactly the reported "dragging data in the left
+             * panel also drags the panel size" bug. */
+            int[] splitter = CompUi.timelineSplitterSpan(this.area.w, lw, rw, gapL, gapR);
+
             this.leftHandle.relative(this.body).x(lw + 2).y(0).w(4).h(1F);
             this.leftHandle.setVisible(left);
             this.rightHandle.relative(this.body).x(1F, -rw - 6).y(0).w(4).h(1F);
             this.rightHandle.setVisible(right);
-            this.timelineHandle.relative(this.body).x(0).y(1F, -4).w(1F).h(4);
+            this.timelineHandle.relative(this.body).x(splitter[0]).y(1F, -4).w(splitter[1]).h(4);
             this.timelineHandle.setVisible(true);
         }
 
@@ -11628,6 +12067,15 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /** A 4px splitter. Drag updates one of the three layout sizes and persists on release. */
+    /** True while one of the four column/drawer splitters is being dragged. */
+    public boolean isPanelResizing()
+    {
+        return (this.leftHandle != null && this.leftHandle.isDragging())
+            || (this.rightHandle != null && this.rightHandle.isDragging())
+            || (this.timelineHandle != null && this.timelineHandle.isDragging())
+            || (this.keyframeHandle != null && this.keyframeHandle.isDragging());
+    }
+
     private class PanelResizeHandle extends UIElement
     {
         private final int mode;
@@ -11641,6 +12089,11 @@ public class UICompositorPanel extends UIDashboardPanel
         PanelResizeHandle(int mode)
         {
             this.mode = mode;
+        }
+
+        boolean isDragging()
+        {
+            return this.dragging;
         }
 
         @Override
@@ -11704,6 +12157,14 @@ public class UICompositorPanel extends UIDashboardPanel
         @Override
         protected boolean subMouseClicked(UIContext context)
         {
+            if (!this.visible)
+            {
+                /* BBS dispatches clicks to hidden children too (it only checks isEnabled), so a
+                 * hidden splitter whose old rectangle still sits over the content would silently
+                 * eat the press. Visibility must be part of the hit test. */
+                return false;
+            }
+
             if (context.mouseButton == 0 && this.area.isInside(context))
             {
                 this.dragging = true;
@@ -11727,10 +12188,17 @@ public class UICompositorPanel extends UIDashboardPanel
     private void addMask(CompLayer layer, boolean ellipse)
     {
         this.beginAction("添加蒙版");
-        CompMask mask = new CompMask("mask_" + (layer.masks.size() + 1));
+
+        /* "size + 1" reuses an id after a removal (delete mask 2 of 3, add one → two masks claim
+         * mask_3), and duplicate ids make every mask/<id>/... channel address both masks. */
+        String id = CompStore.uniqueId("mask", layer.masks, (mask) -> mask.id);
+        CompMask mask = new CompMask(id);
 
         mask.name = ellipse ? "Ellipse Mask" : "Rectangle Mask";
 
+        /* The default mask is the layer's CONTENT rectangle, not its nominal size: content is drawn
+         * at [-w·anchorX, w·(1-anchorX)], so an anchor of 0.5 means the rectangle has to start at
+         * -w/2. Using the un-anchored size put the mask half a layer off ("画了蒙版但没盖住内容"). */
         float x = -layer.width * layer.anchorX;
         float y = -layer.height * layer.anchorY;
 
@@ -12403,20 +12871,32 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        CompLayer camera = this.doc.activeCamera(this.time);
-
-        if (camera == null)
+        /* The workspace uses a different projection; an in-flight pen gesture must not continue
+         * across that switch with stale screen coordinates. */
+        if (this.penTool != null)
         {
-            this.addLayer("camera");
-            camera = this.selectedLayer;
+            this.penTool.cancel();
         }
 
-        if (camera == null)
+        CompProject.CompSettings settings = this.project.settings;
+        CompLayer existing = this.doc.activeCamera(this.time);
+
+        /* AE camera rule: entering a view never creates a camera. Only the explicit "新建摄像机"
+         * action may add one. The developer compatibility switch restores the pre-AE side effect
+         * for projects authored around it, and is off by default. */
+        boolean compatCreate = settings != null && settings.cameraAutoCreateOnDrag;
+        CompLayer camera = dev.bbsae.client.render.CompCameraOps.ensureCamera(this.doc, this.time,
+            compatCreate, settings == null ? CompCamera.DEFAULT_FOV : settings.defaultCameraFov);
+
+        if (existing == null && camera != null)
         {
-            return;
+            /* The compat switch actually created a layer: refresh the panels like addLayer() does,
+             * then leave the camera active. */
+            this.doc.activeCameraId = camera.id;
+            this.refreshLayers();
+            this.selectLayer(camera);
         }
 
-        this.doc.activeCameraId = camera.id;
         this.viewportMode = true;
         /* Enter on the free view. Look-through is one key away (numpad 0) and is the only mode that
          * renders the exact frame; starting there would make the first orbit drag re-render the
@@ -12441,10 +12921,102 @@ public class UICompositorPanel extends UIDashboardPanel
             this.project.settings.viewportPoseValid = true;
         }
 
-        this.selectLayer(camera);
+        if (camera != null)
+        {
+            this.selectLayer(camera);
+        }
+
         this.refreshInspector();
         this.savePanelLayout();
-        this.setStatus("3D 空间：右键拖动环绕（中键同效）· Shift+拖动平移 · 滚轮缩放 · 0 看穿摄像机 · 1/3/7 前/右/顶 · 5 正交");
+
+        if (camera == null)
+        {
+            this.setStatus("3D 空间（自由视图）· 还没有摄像机：点预览右侧「新建摄像机」创建（AE 不会自动创建）");
+        }
+        else
+        {
+            this.setStatus("3D 空间：右键拖动环绕（中键同效）· Shift+拖动平移 · 滚轮缩放 · 0 看穿摄像机 · 1/3/7 前/右/顶 · 5 正交");
+        }
+    }
+
+    /** True when the AE camera tool is on. Persisted per project, like every other editor mode. */
+    public boolean cameraToolActive()
+    {
+        return this.project != null && this.project.settings != null && this.project.settings.cameraToolActive;
+    }
+
+    /** Settings-page entry point: turns the AE camera tool on/off without a preview click. */
+    public void setCameraTool(boolean active)
+    {
+        if (this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        this.project.settings.cameraToolActive = active;
+        this.save();
+        this.setStatus(active
+            ? "AE 摄像机工具：左键环绕 · 中键 Track XY · 右键 Track Z 推拉；没有摄像机时不会自动创建"
+            : "已退出 AE 摄像机工具（恢复图层选择/拖动）");
+    }
+
+    private void toggleCameraTool()
+    {
+        if (this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        this.setCameraTool(!this.project.settings.cameraToolActive);
+    }
+
+    /**
+     * Creates the composition camera on explicit request.
+     *
+     * <p>This is the only creation path in the editor (AE: Layer → New → Camera). Calling it when a
+     * camera already exists selects that camera instead of silently adding a second one, so the
+     * button never doubles as "orbit" or "drag" side effects.</p>
+     */
+    public void createCamera()
+    {
+        if (this.doc == null || this.project == null)
+        {
+            this.setStatus("请先打开一个合成");
+
+            return;
+        }
+
+        CompLayer existing = this.doc.activeCamera(this.time);
+
+        if (existing != null)
+        {
+            this.setSingleSelection(existing);
+            this.refreshInspector();
+            this.setStatus("已选中现有摄像机；用 AE 摄像机工具或检查器调整它");
+
+            return;
+        }
+
+        this.beginAction("新建摄像机");
+        this.addLayer("camera");
+
+        CompLayer created = this.doc.activeCamera(this.time);
+
+        if (created == null)
+        {
+            return;
+        }
+
+        CompProject.CompSettings settings = this.project.settings;
+        float fov = settings == null ? CompCamera.DEFAULT_FOV : settings.defaultCameraFov;
+        float focal = CompCamera.focalFor(fov, this.doc.height);
+
+        created.cameraFov = Math.max(1F, Math.min(179F, fov));
+        created.cameraZ = focal;
+        created.z = focal;
+        this.refreshInspector();
+        this.save();
+        this.setStatus("已新建摄像机（AE：只有显式新建才会有摄像机）。看穿用预览右侧摄像机图标，调整用 AE 摄像机工具");
     }
 
     /** True when the free 3D viewport (not the shot camera view) is the active preview. */
@@ -12455,6 +13027,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void exit3DSpace()
     {
+        if (this.penTool != null)
+        {
+            this.penTool.cancel();
+        }
+
         this.viewportMode = false;
         this.cameraPreviewMode = false;
 
@@ -12626,6 +13203,15 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Blender's numpad 0: look through the composition camera, or back to the free view. */
     private void toggleViewportLookThrough()
     {
+        if (this.doc != null && this.doc.activeCamera(this.time) == null)
+        {
+            /* AE has no camera view without a camera, and this path must not be a back door that
+             * creates one either. */
+            this.setStatus("还没有摄像机：点预览右侧「新建摄像机」（看穿视图不会自动创建）");
+
+            return;
+        }
+
         if (!this.viewportMode)
         {
             this.enter3DSpace();
@@ -13341,6 +13927,11 @@ public class UICompositorPanel extends UIDashboardPanel
             this.refreshInspector();
             this.save();
         });
+
+        /* AE semantics, spelled out where the switch is: this is the one control that decides
+         * whether the camera affects a layer at all. */
+        threeD.tooltip(IKey.constant("AE 语义：只有开启 3D 的图层跟随摄像机透视；2D 图层始终屏幕附着。"
+            + "需要 0.91 之前的全图层 3D 行为，可在 设置 → 开发者 切换 3D 逻辑"));
         section.fields.add(threeD);
 
         if (layer.threeD)
@@ -15582,6 +16173,14 @@ public class UICompositorPanel extends UIDashboardPanel
                     section.fields.add(this.animatedNumberRow("路径" + index + " Out Y", layer, base + "outY", animValue(layer, base + "outY", point.outY), (value) -> point.outY = value.floatValue(), -5000F, 5000F));
                 }
 
+                /* Pen entry points, mirroring the mask section: a shape path can be closed/opened,
+                 * keyed as a whole, or handed to the canvas pen tool from here. */
+                section.fields.add(UI.row(
+                    this.smallButton("用钢笔编辑", () -> this.penTool().editShape(shape)),
+                    this.smallButton(shape.closed ? "断开路径" : "闭合路径", () -> this.toggleShapeClosed(shape))
+                ));
+                section.fields.add(this.smallButton("整条路径打关键帧", () -> this.penTool().keyShape(layer, shape)));
+
                 section.fields.add(UI.row(
                     this.smallButton("添加路径点", () ->
                     {
@@ -15714,6 +16313,15 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.save();
             });
             section.fields.add(UI.row(enabled, remove));
+
+            /* Pen entry points. They are inspector shortcuts for the same gestures the canvas tool
+             * provides, so a path can always be closed/opened and keyed even if the preview is
+             * hidden or the mask is too small to click. */
+            section.fields.add(UI.row(
+                this.smallButton("用钢笔编辑", () -> this.penTool().editMask(mask)),
+                this.smallButton(mask.closed ? "断开路径" : "闭合路径", () -> this.toggleMaskClosed(mask))
+            ));
+            section.fields.add(this.smallButton("整条路径打关键帧", () -> this.penTool().keyMask(layer, mask)));
             section.fields.add(this.animatedNumberRow("羽化", layer, CompLayer.maskPath(mask.id, "feather"), layer.scalarAt(CompLayer.maskPath(mask.id, "feather"), mask.feather, this.getFrame()), (value) -> mask.feather = (float) Math.max(0D, value), 0F, 200F));
             section.fields.add(this.animatedNumberRow("不透明度", layer, CompLayer.maskPath(mask.id, "opacity"), layer.scalarAt(CompLayer.maskPath(mask.id, "opacity"), mask.opacity, this.getFrame()), (value) -> mask.opacity = (float) Math.max(0D, Math.min(1D, value)), 0F, 1F));
             section.fields.add(this.animatedNumberRow("扩展", layer, CompLayer.maskPath(mask.id, "expansion"), layer.scalarAt(CompLayer.maskPath(mask.id, "expansion"), mask.expansion, this.getFrame()), (value) -> mask.expansion = value.floatValue(), -100F, 100F));
@@ -17325,6 +17933,23 @@ public class UICompositorPanel extends UIDashboardPanel
             return super.subKeyPressed(context);
         }
 
+        /* Pen gestures (Enter/Esc/Delete) must win over the generic Esc handling below: ending the
+         * path is not "deselect the layer". */
+        if (!typing && this.penTool != null && this.penTool.onKey(context))
+        {
+            return true;
+        }
+
+        /* G arms/disarms the pen. Deliberately not in CompKeybinds: the keybind table is shared
+         * with other panels, and a tool that also has a visible toolbar button does not need to be
+         * remappable. */
+        if (pressed && !typing && !ctrl && !shift && !alt && key == GLFW.GLFW_KEY_G)
+        {
+            this.togglePenTool();
+
+            return true;
+        }
+
         if (key == GLFW.GLFW_KEY_ESCAPE && pressed)
         {
             if (this.importBrowser != null)
@@ -18672,5 +19297,98 @@ public class UICompositorPanel extends UIDashboardPanel
             case CompMask.MODE_EXCLUDE -> "排除";
             default -> "相加";
         };
+    }
+
+    /* ------------------------------------------------------------------ pen tool bridge */
+
+    /**
+     * The pen tool. Lazy because the preview element is built before the toolbar in the
+     * constructor and starts calling {@link UIPenTool#renderOverlay} on its first render — by then
+     * construction is over, so the lazy accessor is always safe.
+     */
+    UIPenTool penTool()
+    {
+        if (this.penTool == null)
+        {
+            this.penTool = new UIPenTool(this);
+        }
+
+        return this.penTool;
+    }
+
+    /** One undo checkpoint per discrete pen command (see {@code beginAction}). */
+    void penBeginAction(String name)
+    {
+        this.beginAction(name);
+    }
+
+    /**
+     * Animation-aware scalar write. Every pen drag/edit goes through here, so a mask or shape path
+     * that already has keyframes keeps writing keys at the playhead instead of editing stale base
+     * values the renderer ignores.
+     */
+    void penSetScalar(CompLayer layer, String path, float value)
+    {
+        this.setScalar(layer, path, value);
+    }
+
+    /** Rebuilds the inspector after a structural pen change (path created/point added/removed). */
+    void penRefreshInspector()
+    {
+        this.refreshInspector();
+    }
+
+    /** Marks the document dirty after a pen edit (debounced write + undo sampler baseline). */
+    void penSave()
+    {
+        this.save();
+    }
+
+    /**
+     * Drops the caches whose fingerprints predate the {@code closed} field.
+     *
+     * <p>{@code CompRenderCache}/{@code CompFrameServer}/{@code CompLayerSourceCache} fingerprint
+     * mask and shape points but not the closed flag (those files are owned by other work streams),
+     * so a parked preview would keep serving the old picture after closing/opening a path. This is
+     * the deliberate stop-gap; the real fix is adding {@code closed} to the signatures.</p>
+     */
+    private void invalidatePathClosedCaches()
+    {
+        dev.bbsae.client.render.CompFrameServer.invalidate();
+        dev.bbsae.client.render.CompRenderCache.clear();
+        dev.bbsae.client.render.CompLayerSourceCache.clear();
+        dev.bbsae.client.render.CompPrecache.markDirty();
+    }
+
+    private void toggleMaskClosed(CompMask mask)
+    {
+        this.beginAction(mask.closed ? "蒙版路径断开" : "蒙版路径闭合");
+        mask.closed = !mask.closed;
+        this.invalidatePathClosedCaches();
+        this.refreshInspector();
+        this.save();
+    }
+
+    private void toggleShapeClosed(CompShape shape)
+    {
+        this.beginAction(shape.closed ? "形状路径断开" : "形状路径闭合");
+        shape.closed = !shape.closed;
+        this.invalidatePathClosedCaches();
+        this.refreshInspector();
+        this.save();
+    }
+
+    private void togglePenTool()
+    {
+        this.penTool().toggle();
+
+        /* The pen and the AE camera tool both own the preview's mouse buttons; arming one must
+         * disarm the other or a click does two things at once. */
+        if (this.penTool().isActive() && this.cameraToolActive())
+        {
+            this.setCameraTool(false);
+        }
+
+        this.refreshInspector();
     }
 }

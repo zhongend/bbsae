@@ -27,6 +27,17 @@ public class CompMask
 
     public List<CompMaskPoint> points = new ArrayList<>();
 
+    /**
+     * Whether the path is closed. <b>Old project files have no such field</b>, so the default has
+     * to be {@code true}: every mask that existed before the pen tool was introduced was rendered
+     * closed, and loading it must not change a single pixel.
+     *
+     * <p>Only closed mask paths take part in matting (see {@code MaskCache}): an open path is a
+     * stroke the user is still drawing, not a region, and letting it matte made the whole layer
+     * vanish while the second vertex was being placed.</p>
+     */
+    public boolean closed = true;
+
     public CompMask()
     {}
 
@@ -85,6 +96,7 @@ public class CompMask
         copy.opacity = this.opacity;
         copy.feather = this.feather;
         copy.expansion = this.expansion;
+        copy.closed = this.closed;
         copy.points = new ArrayList<>();
 
         if (this.points == null)

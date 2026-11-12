@@ -1,5 +1,109 @@
 # BBS AE 更新日记
 
+## 0.92 — 2026-11-12
+
+本轮处理用户八条需求里最核心的六条：3D 摄像机逻辑、图层效果、实体回放、钢笔工具、
+界面操作逻辑与面板自适应/动效基础设施。验证：90 个测试套件 / 511 项测试全绿
+（0.91 基线为 72 / 379），另有真机截图验证（见 `docs/verify/round47-*.png`）。
+
+### 3D 摄像机逻辑改成 AE 语义（需求 1）
+
+- **只有开启「3D 图层」的图层受摄像机影响**：2D 图层始终屏幕附着，摄像机倾斜/推拉不再
+  连带移动普通图层（`CompScene.usePerspective`）。旧版（0.91 之前「只要镜头有倾斜或任意
+  图层 z≠0，所有图层都被投影」）收进 **设置 → 开发者 → 图层 3D 逻辑**，旧工程可一键切回；
+  切换立即生效（计入 `CompRenderCache.signature` 缓存键）。
+- 顺带修正 `CompScene.hasDepth`：摄像机自己的 z（推拉距离）不再被当成内容深度。此前
+  「显示/隐藏摄像机行」会改变整帧是否进入 spatial 投影路径，是隐藏的开关副作用。
+- **没有摄像机时右键拖动预览框不再自动创建摄像机**：进入 3D 空间 / 右键拖动 / 看穿视图
+  都只显示提示；`CompCameraOps.ensureCamera(doc, time, allowCreate)` 是唯一创建守卫。
+- **AE 摄像机操作**：预览右侧新增「新建摄像机」（已有摄像机时只选中它）、「AE 摄像机工具」
+  （左键环绕 point-of-interest、中键 Track XY、右键 Track Z 指数推拉）与「摄像机设置」齿轮
+  （打开 设置 → 开发者）。BBS 飞行摄像机自动退回 yaw/pitch 环绕。工具开启时预览不再
+  选中/拖动图层，也永远不会创建摄像机。
+- 设置 → 新增**开发者**页：3D 逻辑切换、无摄像机拖动自动创建（旧版兼容，默认关）、
+  AE 摄像机工具开关、新摄像机默认 FOV、当前状态与动态版本号（设置页脚不再写死 0.23）。
+- 测试：`CameraLogicModeTest`（AE/旧版投影语义、无摄像机手势不创建、显式创建只加一个、
+  环绕半径/俯仰钳制/dolly）、`Camera3DTest` 修正（原测试靠摄像机 z 误判 spatial）。
+
+### 图层效果逻辑修复（需求 2）
+
+- **文字图层加效果后上下颠倒**：根因是 3D 烘焙采样分支把图层 UV 直接当纹理 UV，漏了 FBO
+  的 V 翻转（2D 正常、3D 全部镜像，文字最显眼）。现在统一走 `localToCompUv`。
+  `EffectOrientationTest` 用 12 个内容采样效果做像素级方向验收。
+- **3D 模式下效果无效**：修 4 个根因——上述 V 翻转；投影后效果误用图层世界矩阵
+  （glass/置换图/光包裹改合成空间）；`AmEffectDef.padding` 支持域从未被消费（3D 模糊/发光/
+  长阴影被图层矩形硬裁）；AM 纯模糊半径未按代理栅格 scale 换算。
+- **重复类效果被图层大小裁成「蒙版」**：按 AM 语义审计后，只有 repeat 分类是图层复制器
+  （其余生成/平铺/镜像本就在图层内采样）。新增合成空间 `REPLICATE` 全屏 pass，
+  `grid_repeat / random_repeat / am_grid_repeat / am_line_repeat` 真正复制整层横跨合成，
+  3D 走投影后 pass；`EffectRepeatTest` 钉住「复制体出现在原图层框之外」。
+- **AM 参数对齐**：`_tools/am-gap/compare.py` 对比 277 条 AM 定义与 122 条本项目定义，
+  产出 `docs/EFFECTS-AM-GAP.zh.md`（人工结论）+ `generated.md`（逐条清单）；本轮对齐
+  11 处范围/步进（hue、glow 半径、pixelate、tile、hex 系列、四色渐变 alpha、角度步进）。
+- 报告：`docs/EFFECTS-FIX-REPORT.zh.md`。
+- 逐像素深度：`perPixelDepth` 已纳入缓存签名（切换后预览立即刷新）；主合成逐像素深度
+  仍默认关闭（0.87–0.89 的摄像机预览重影修复保留），3D 工作区的逐像素深度保留。
+
+### 实体回放编辑模式（需求 5）
+
+- 主界面 dashboard 面板条新增「实体回放」入口；合成器预览工具栏新增 PLAYER 按钮直达。
+- 新增 `client/replay/` 包（11 个文件）：3D 视口用私有颜色+深度 FBO 通过
+  `FilmEntityRenderer` 显示影片里所有 replay 模型（comp↔world 映射、Y 翻转），
+  相机复用 `CompViewportCamera`（右键环绕 / Shift+右键或中键平移 / 滚轮对准光标缩放），
+  左键 stencil 拾取选模型。
+- **原版回放编辑照搬**：底部是 BBS 原版 `UIKeyframeEditor` + `TrackCatalog`/`UIFilmKeyframes`
+  轨道（位置/状态/快捷栏/装备/操作/速度/骨骼），左侧原版回放列表、右侧原版属性面板；
+  拖动播放头模型姿态跟随。
+- **原版 gizmo**：`Gizmo.INSTANCE` + `UIReplayPropTransform` 写回 x/y/z 与
+  yaw/headYaw/bodyYaw/pitch；Ctrl+Z/Y 走原版 `filmPanel.undo()/redo()`。
+- **原版模型库**：`UIFormPalette.open(...)` 选模型 → 拷贝到 replay.form → 播放头自动打
+  位置/角度关键帧（复刻 AE 的模型导入工作流）。
+- 回退路线：面板顶部「原版回放编辑」一键切回 BBS 原版影片编辑器（100% 原版体验兜底）。
+- 报告与真机清单：`docs/REPLAY-MODE-REPORT.zh.md`；集成钩子：
+  `docs/REPLAY-MODE-INTEGRATION.zh.md`。
+
+### AE 钢笔工具（需求 6）
+
+- 新增 `comp/CompPathGeometry`（纯贝塞尔几何：求值/切线/最近点/保形分割/射线内外/45° 约束/
+  镜像钳制）、`comp/CompPenSession`（纯状态机）、`client/ui/UIPenTool`（2D 仿射 / 3D 透视
+  射线-平面 / 3D 工作区投影）。
+- 复刻 AE 操作：单击角点、按下拖动平滑点（对称手柄）、点起点闭合、橡皮筋预览、Enter 结束、
+  Esc 取消、Shift 45° 吸附、Alt 转换点/断开手柄、Ctrl 框选、Delete 删点、右键菜单、
+  段上加点；形状图层编辑形状路径，其它图层编辑蒙版。
+- 修 3 个上线前必现的既有 bug：① `MaskCache` 只要 ≥2 点就遮罩且永远闭合（画第二点整层
+  变透明）→ 改为 `enabled && closed && ≥3 点`；② `CompShape.PATH` 没有 `closed` 字段、
+  渲染强制闭合 → 新增 `closed`（默认 true，旧工程兼容）；③ 蒙版 id 撞车。
+  另修：闭合贝塞尔最后一段被直线弦替代（椭圆蒙版缺 1/4 圆弧）、蒙版 world 矩阵
+  JOML→AWT 转置（旋转图层蒙版镜像）、几何指纹不含 closed。
+- 测试：7 个新类 / 62 用例（几何、状态机、持久化、蒙版栅格、无头 GL、形状开放路径、3D 投影）。
+- 报告（含使用说明与真机清单）：`docs/PEN-TOOL-REPORT.zh.md`。
+
+### 界面操作逻辑与面板基础设施（需求 4 / 8）
+
+- **修复「拖轨道左侧面板数据时面板大小也跟着拖」**（两个根因）：
+  ① 时间轴高度 splitter 原来横跨整个 body，盖住左/右分栏底部 4px（BBS 事件按子元素逆序
+  派发且不看 `isVisible`），现在 `CompUi.timelineSplitterSpan` 只覆盖预览列，隐藏把手不再
+  参与命中，并新增 `isPanelResizing()` 阻止同一按下的第二次手势；
+  ② `UILayerQuickPanel` 宽度拖拽原来是「每帧轮询鼠标位置」而不是「按下即拥有」，拖时间轴
+  数据经过它左边缘就会改宽度 → 改为 `subMouseClicked` 里命中 4px grip 才启动。
+- 新增 UI 基础设施（为下一轮「面板拖拽组合」铺路）：
+  - `UiMotion` 扩展：spring/tween/prune/isActive/可注入时钟，`CompPrefs.animations=false`
+  全通道立即归位；
+  - `UiStagger`（列表错峰入场）、`UiPageTransition`（页面滑动 + veil，不改子控件 alpha）、
+  `CompositorLayout`（纯函数面板几何：最小宽/短窗/断点/splitter 命中）、
+  `CompDockSource`（BBS `UIDockLayout` 布局树的工程侧持久化，批量写盘）与
+  `CompSettings.dockLayout/dockHiddenPanels/dockUnlocked` 字段；
+  - 计划：`docs/DOCK-LAYOUT-PLAN.zh.md`、`docs/UI-PANEL-PLAN.zh.md`
+  （BBS 原版确有完整 `UIDockLayout` 拖拽停靠系统，下一轮直接复用）。
+- 每个 PanelResizeHandle 增加 `visible` 命中检查：BBS 隐藏元素仍会收到点击，隐藏 splitter
+  的旧矩形不会再吃掉内容区的按下。
+
+### 构建与协作
+
+- 真实工程路径含空格/中文会让 Gradle Test worker 的 classpath argfile 失效；统一用 ASCII
+  junction `C:\bbsae-build` 跑构建，并新增 `_tools/gradle-run.ps1`（命名互斥量串行化多个
+  AI 协作者的构建，避免并发互删 `build/classes`）。文档：`docs/TEAM-CONTEXT.zh.md`。
+
 ## 0.24 — 2026-11-05
 
 本轮针对用户反馈的七个问题：分形杂色不是特效、蒙版异常、itrp（iterationRP）光影下黑屏、

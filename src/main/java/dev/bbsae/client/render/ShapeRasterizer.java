@@ -231,7 +231,19 @@ public final class ShapeRasterizer
             path.curveTo(previous.x + previous.outX, previous.y + previous.outY, current.x + current.inX, current.y + current.inY, current.x, current.y);
         }
 
-        path.closePath();
+        /* Open paths are a first-class outline now (the pen tool's Esc/Enter result): not closing
+         * changes the stroke's end caps and the overlay, while the fill still treats the outline as
+         * implicitly closed — exactly how After Effects fills an open shape path. */
+        if (shape.closed)
+        {
+            /* The last segment is a bezier as well. A bare closePath() drew a straight chord from
+             * the last vertex to the first, flattening the closing segment of any path whose end
+             * vertices carry handles (every pen-closed smooth path). */
+            CompShape.Point last = shape.points.get(shape.points.size() - 1);
+
+            path.curveTo(last.x + last.outX, last.y + last.outY, first.x + first.inX, first.y + first.inY, first.x, first.y);
+            path.closePath();
+        }
     }
 
     public static Shape repeat(Shape shape, CompShape data)
