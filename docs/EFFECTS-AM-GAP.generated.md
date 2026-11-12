@@ -1,6 +1,6 @@
 # AM 参数对齐差异清单（自动生成）
 
-对比对象：`_research/am/effects.json`（AM apk 提取的 277 条非 internal 定义）与 `comp/AmEffectLibrary.java`（数据驱动效果库，146 条定义）。
+对比对象：`_research/am/effects.json`（AM apk 提取的 277 条非 internal 定义）与 `comp/AmEffectLibrary.java`（数据驱动效果库，158 条定义）。
 参数 `kind` 覆盖：本项目 `AmEffectDef` 直接表达 `spinner/slider/color`；AM 的 `point/selector/texture` 在移植时被拆成两个 float 键或数值模式键，这属于既定的模式差异，不算缺失（但在第 2 节逐条标出）。
 
 ## 0. 规模
@@ -8,15 +8,15 @@
 | 指标 | 数量 |
 | --- | --- |
 | AM 非 internal 定义（去重后 token） | 277 |
-| 本项目 AM 定义 | 146 |
-| 自动匹配（同名/别名） | 113 |
-| 缺失：deprecated 旧版本 | 71 |
+| 本项目 AM 定义 | 158 |
+| 自动匹配（同名/别名） | 124 |
+| 缺失：deprecated 旧版本 | 70 |
 | 缺失：非 shader（图层属性/复制器） | 20 |
 | 缺失：3D 图元（本项目 MeshRenderer） | 19 |
-| 缺失：同族旧版本（boxblur→boxblur3 等） | 7 |
-| 缺失：可执行 shader 效果（候选） | 48 |
+| 缺失：同族旧版本（boxblur→boxblur3 等） | 8 |
+| 缺失：可执行 shader 效果（候选） | 37 |
 
-## 1. 已匹配（113 条）的参数差异
+## 1. 已匹配（124 条）的参数差异
 
 ### `am_bend` ↔ `bendwarp`（弯曲）
 
@@ -235,6 +235,10 @@
 - `scale`: min: 本项目 0.01 / AM 0
 - `alpha`: step: 本项目 0.01 / AM 0.001
 
+### `am_ridges_2` ↔ `ridges2`（山脊 2）
+
+- `scale`: min: 本项目 0.1 / AM 0.01
+
 ### `am_rotate_tile` ↔ `tilerotate2`（旋转平铺）
 
 - `angle`: min: 本项目 -180 / AM 0；max: 本项目 180 / AM 3600；step: 本项目 1 / AM 0.5
@@ -313,6 +317,7 @@
 | `am_curl` | `curl` | 5 | 1 | `circleAlpha`, `circleColor`, `offset`, `stretch` |
 | `am_dots` | `dots2` | 11 | 1 | `color`, `color2`, `density`, `feather`, `fill`, `phase`, `radius`, `scale` |
 | `am_edge_glow` | `edgeglow` | 10 | 1 | `blend`, `brightness`, `fillColor`, `gamma`, `smoothing`, `spread`, `threshold`, `tint` |
+| `am_electric_edges` | `electricedges` | 22 | 10 | `color1`, `color2`, `contourAngle`, `contourCount`, `contourOffset`, `distOffs`, `glowAlpha`, `maskColor` |
 | `am_energy_beam` | `energybeam` | 18 | 0 | `alpha`, `blur`, `clip`, `color1`, `color2`, `color3`, `evolution`, `freq` |
 | `am_fade` | `fade` | 2 | 0 | `inTime`, `outTime` |
 | `am_fill_behind` | `fillbehind` | 15 | 0 | `alpha`, `bgScale`, `brightness`, `edgeColor`, `edgeStrength`, `feather`, `fgAlpha`, `fgScale` |
@@ -356,9 +361,13 @@
 | `am_replace_color` | `replacecolor` | 5 | 0 | `alpha`, `feather`, `newcolor`, `oldcolor`, `threshold` |
 | `am_rgb_gamma` | `rgb-gamma` | 3 | 0 | `blueGamma`, `greenGamma`, `redGamma` |
 | `am_rgb_mixer` | `rgb-mixer` | 5 | 2 | `bmix`, `gmix`, `rmix` |
+| `am_ridges_2` | `ridges2` | 8 | 5 | `color1`, `color2` |
 | `am_rotate_tile` | `tilerotate2` | 6 | 1 | `amount`, `offset`, `rotation`, `seed`, `strength` |
 | `am_sat_vib` | `satvib` | 5 | 1 | `brightness`, `contrast`, `hue`, `vib` |
 | `am_scale_assist` | `scaleassist` | 2 | 0 | `damp`, `scale` |
+| `am_shape_field` | `shapefield` | 15 | 7 | `angleVariance`, `color1`, `color2`, `color3`, `layerCount`, `shapeAngle`, `shapeSize`, `sizeVariance` |
+| `am_simplestars_2` | `simplestars2` | 7 | 3 | `color`, `starCount`, `starFeather`, `starSize` |
+| `am_smooth_bevel` | `smoothbevel` | 10 | 8 | `color_d`, `color_s` |
 | `am_soft_glow` | `softglow` | 8 | 6 | `color`, `outsideAlpha` |
 | `am_solid_matte` | `solidmatte` | 2 | 0 | `alpha`, `color` |
 | `am_spectral_map` | `spectralmap` | 8 | 5 | `blueColor`, `greenColor`, `redColor` |
@@ -370,19 +379,21 @@
 | `am_stroke_taper` | `stroketaper` | 3 | 0 | `end`, `squeeze`, `start` |
 | `am_swing` | `swing` | 4 | 1 | `a1`, `a2`, `freq` |
 | `am_tile` | `tile` | 3 | 1 | `angle`, `phase` |
+| `am_volumetric_clouds` | `volumetricclouds` | 6 | 3 | `densityParam`, `lightColor`, `shadowColor` |
+| `am_voronoi_2` | `voronoi2` | 8 | 4 | `color`, `color2`, `lineColor`, `lineWidth` |
 | `am_vortex_blur` | `vortexblur` | 2 | 0 | `radius`, `strength` |
 | `am_wave_warp` | `wavewarp` | 5 | 1 | `xamp`, `xspace`, `yamp`, `yspace` |
 | `am_zoom_blur` | `zoomblur2` | 4 | 1 | `cx`, `cy`, `radius` |
 
 ## 3. 缺失效果分类
 
-### 3.1 deprecated 旧版本（不补）（71 条）
+### 3.1 deprecated 旧版本（不补）（70 条）
 
-`outlinebad`、`outlinebasic`、`shadow`、`test`、`test2`、`test3`、`testblur`、`cube`、`flip`、`flip2`、`heart`、`spherize`、`triprism`、`boxblur`、`boxblur2`、`fastboxblur`、`lensblur`、`motionblur`、`motionblur3`、`zoomblur`、`brightcont`、`bumpmap`、`colorhot2`、`colortint`、`colortune`、`gradientoverlay`、`layernormtest`、`longshadow`、`circularripple`、`displacemap`、`displacemap2`、`fractalwarp`、`fractalwarp2`、`fractalwarp3`、`glass`、`pixelate`、`swirl2`、`swirl3`、`tilerotate`、`tileshift`、`turbulentdisplace`、`turbulentdisplace2`、`differencematte`、`lumakey`、`lumakey2`、`wipe`、`blink`、`checkerdissolve`、`flicker`、`pulseopacity`、`blocknoise`、`checker`、`clouds`、`clouds2`、`dots`、`irridescence`、`noise`、`noise2`、`ridges`、`simplestars`、`starfield2`、`turbulence`、`voronoi`、`facemotion`、`movealongpath`、`movealongpath2`、`oscillate`、`oscillate2`、`perlindisplace`、`shake`、`stretch`
+`outlinebad`、`outlinebasic`、`shadow`、`test`、`test2`、`test3`、`testblur`、`cube`、`flip`、`flip2`、`heart`、`spherize`、`triprism`、`boxblur`、`boxblur2`、`fastboxblur`、`lensblur`、`motionblur`、`motionblur3`、`zoomblur`、`brightcont`、`bumpmap`、`colorhot2`、`colortint`、`colortune`、`gradientoverlay`、`layernormtest`、`longshadow`、`circularripple`、`displacemap`、`displacemap2`、`fractalwarp`、`fractalwarp2`、`fractalwarp3`、`glass`、`pixelate`、`swirl2`、`swirl3`、`tilerotate`、`tileshift`、`turbulentdisplace`、`turbulentdisplace2`、`differencematte`、`lumakey`、`lumakey2`、`wipe`、`blink`、`checkerdissolve`、`flicker`、`pulseopacity`、`checker`、`clouds`、`clouds2`、`dots`、`irridescence`、`noise`、`noise2`、`ridges`、`simplestars`、`starfield2`、`turbulence`、`voronoi`、`facemotion`、`movealongpath`、`movealongpath2`、`oscillate`、`oscillate2`、`perlindisplace`、`shake`、`stretch`
 
-### 3.2 同族旧版本（已有新版本，不补）（7 条）
+### 3.2 同族旧版本（已有新版本，不补）（8 条）
 
-`motionblur4`、`spinblur2`、`zoomblur3`、`radialshadow2`、`spotcolor2`、`wavewarp2`、`starfield3`
+`motionblur4`、`spinblur2`、`zoomblur3`、`radialshadow2`、`spotcolor2`、`wavewarp2`、`blocknoise2`、`starfield3`
 
 ### 3.3 非 shader 效果（AM 用图层属性/复制器实现）（20 条）
 
@@ -392,7 +403,7 @@
 
 `box`、`cube2`、`cylinder`、`ellipsoid`、`extrude`、`heart2`、`hexprism`、`hollowbox`、`octahedron`、`pagecurl`、`plus`、`pyramid`、`ring`、`spherize2`、`starpoly`、`starprism`、`torus`、`triprism2`、`tunnel`
 
-### 3.5 可执行 shader 效果：真正缺失（候选批次）（48 条）
+### 3.5 可执行 shader 效果：真正缺失（候选批次）（37 条）
 
 | AM id | 类别 | 参数数 | 备注 |
 | --- | --- | --- | --- |
@@ -403,7 +414,6 @@
 | `bumpmap2` | color | 24 | 高优先级 |
 | `rays` | color | 10 | 高优先级 |
 | `exposure` | color | 5 | 高优先级 |
-| `rgbsep` | color | 5 | 高优先级 |
 | `threshold` | color | 4 | 高优先级 |
 | `brightcont2` | color | 3 | 高优先级 |
 | `posterize` | color | 3 | 高优先级 |
@@ -412,7 +422,6 @@
 | `vrcombined` | distort | 4 | 高优先级 |
 | `vrplayer` | distort | 4 | 高优先级 |
 | `360-reorient-sphere` | distort | 1 | 高优先级 |
-| `shapefield` | repeat | 18 | 高优先级 |
 | `dissolve` | opacity | 3 |  |
 | `transform` | transform | 7 |  |
 | `offset` | transform | 4 |  |
@@ -423,30 +432,21 @@
 | `spill-cleanup` | matte | 5 |  |
 | `wipe2` | matte | 5 |  |
 | `mattechoke` | matte | 4 |  |
-| `electricedges` | drawing | 27 |  |
-| `roughenedges` | drawing | 12 |  |
-| `smoothbevel` | drawing | 12 |  |
 | `halftonedotscmyk` | drawing | 6 |  |
 | `findedges` | drawing | 3 |  |
 | `grunge` | procedural | 135 |  |
 | `lightning` | procedural | 16 |  |
 | `ominodiff` | procedural | 15 |  |
 | `turbulence2` | procedural | 15 |  |
-| `ridges2` | procedural | 12 |  |
 | `ribbon` | procedural | 11 |  |
-| `simplestars2` | procedural | 9 |  |
 | `star` | procedural | 9 |  |
-| `voronoi2` | procedural | 9 |  |
-| `volumetricclouds` | procedural | 8 |  |
-| `blocknoise2` | procedural | 7 |  |
 | `checker2` | procedural | 7 |  |
 | `irridescence2` | procedural | 7 |  |
-| `noise3` | procedural | 4 |  |
 | `magnifybg` | other | 4 |  |
 | `lift` | - | 3 |  |
 
-## 4. 本项目有、AM 中未找到同名定义（33 条）
+## 4. 本项目有、AM 中未找到同名定义（34 条）
 
 这些条目多为本项目自研/EffectCraft 参考实现，或历史别名尚未登记：
 
-`am_bevel`、`am_block_dissolve`、`am_bokeh`、`am_border`、`am_chromatic_aberration`、`am_chromatic_blur`、`am_color_bands`、`am_color_separate`、`am_desaturate`、`am_duotone`、`am_edge_light`、`am_gloss`、`am_gradient_mask`、`am_heat_map`、`am_inner_shadow`、`am_light_leak`、`am_light_wrap`、`am_liquify`、`am_monochrome`、`am_oil_paint`、`am_pixel_dissolve`、`am_radial_gradient`、`am_reflection`、`am_ripple_pulse`、`am_sepia`、`am_sketch`、`am_skew`、`am_slice_glitch`、`am_speed_lines`、`am_split_tone`、`am_star_shape`、`am_stretch_axis`、`am_tilt_shift`
+`am_bevel`、`am_block_dissolve`、`am_bokeh`、`am_border`、`am_chromatic_aberration`、`am_chromatic_blur`、`am_color_bands`、`am_color_separate`、`am_desaturate`、`am_duotone`、`am_edge_light`、`am_gloss`、`am_gradient_mask`、`am_halftone_cmyk`、`am_heat_map`、`am_inner_shadow`、`am_light_leak`、`am_light_wrap`、`am_liquify`、`am_monochrome`、`am_oil_paint`、`am_pixel_dissolve`、`am_radial_gradient`、`am_reflection`、`am_ripple_pulse`、`am_sepia`、`am_sketch`、`am_skew`、`am_slice_glitch`、`am_speed_lines`、`am_split_tone`、`am_star_shape`、`am_stretch_axis`、`am_tilt_shift`

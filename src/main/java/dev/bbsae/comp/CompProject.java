@@ -34,6 +34,11 @@ public class CompProject
      */
     public boolean needsBbsWorldRender()
     {
+        if (this.comps == null)
+        {
+            return false;
+        }
+
         for (CompDocument comp : this.comps)
         {
             if (comp == null || comp.layers == null)
@@ -51,6 +56,12 @@ public class CompProject
         }
 
         return false;
+    }
+
+    /** True when the file was written by a newer build, so saving it would silently downgrade it. */
+    public boolean isFutureVersion()
+    {
+        return this.version > VERSION;
     }
 
     public static final String ENCODER_BBS = "bbs";
@@ -83,14 +94,27 @@ public class CompProject
 
     public CompDocument getComp(String compId)
     {
+        if (this.comps == null)
+        {
+            return null;
+        }
+
         if (compId == null || compId.isEmpty())
         {
-            return this.comps.isEmpty() ? null : this.comps.get(0);
+            for (CompDocument comp : this.comps)
+            {
+                if (comp != null)
+                {
+                    return comp;
+                }
+            }
+
+            return null;
         }
 
         for (CompDocument comp : this.comps)
         {
-            if (compId.equals(comp.id))
+            if (comp != null && compId.equals(comp.id))
             {
                 return comp;
             }
@@ -103,12 +127,17 @@ public class CompProject
     {
         CompDocument comp = this.getComp(compId);
 
-        return comp != null ? comp : (this.comps.isEmpty() ? null : this.comps.get(0));
+        return comp != null ? comp : this.getComp(null);
     }
 
     public CompDocument addComp(String baseName, int width, int height, float fps, float duration)
     {
-        String id = CompStore.uniqueId(baseName, this.comps, (comp) -> comp.id);
+        if (this.comps == null)
+        {
+            this.comps = new ArrayList<>();
+        }
+
+        String id = CompStore.uniqueId(baseName, this.comps, (comp) -> comp == null ? "" : comp.id);
         CompDocument comp = new CompDocument();
 
         comp.id = id;
@@ -124,9 +153,14 @@ public class CompProject
 
     public CompOutputPreset getPreset(String presetId)
     {
+        if (this.outputPresets == null)
+        {
+            return null;
+        }
+
         for (CompOutputPreset preset : this.outputPresets)
         {
-            if (preset.id.equals(presetId))
+            if (preset != null && preset.id.equals(presetId))
             {
                 return preset;
             }
@@ -139,7 +173,20 @@ public class CompProject
     {
         CompOutputPreset preset = this.getPreset(presetId);
 
-        return preset != null ? preset : (this.outputPresets.isEmpty() ? null : this.outputPresets.get(0));
+        if (preset != null || this.outputPresets == null || this.outputPresets.isEmpty())
+        {
+            return preset;
+        }
+
+        for (CompOutputPreset candidate : this.outputPresets)
+        {
+            if (candidate != null)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     public static final class CompSettings
@@ -319,5 +366,24 @@ public class CompProject
 
         /** True when the dock is unlocked (panels can be dragged). BBS ships locked by default. */
         public boolean dockUnlocked = false;
+
+        /* ------------------------------------------------------------ editor view state */
+
+        /**
+         * Per-project editor view state (not composition content, not part of undo): the drawer,
+         * the selection, the inspector page and the timeline's zoom/scroll. Restoring it on open
+         * makes "reopen the project and continue where I was" work like the rest of the BBS
+         * editors instead of always resetting the timeline to the full composition.
+         */
+        public boolean keyframeDrawerOpen = false;
+        /** Comma-separated layer ids of the current selection (empty = none). */
+        public String selectedLayerIds = "";
+        public String selectedAudioId = "";
+        public int inspectorPage = 0;
+        public int leftPage = 0;
+        /** 0 = never touched (fit to the composition); otherwise the Scale's zoom/shift. */
+        public double timelineZoom = 0D;
+        public double timelineShift = 0D;
+        public int timelineScrollY = 0;
     }
 }

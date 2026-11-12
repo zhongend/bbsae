@@ -22,8 +22,10 @@ import net.minecraft.client.util.math.MatrixStack;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * BBS-style settings surface for the compositor.
@@ -50,7 +52,13 @@ public class UICompSettings extends UIElement
     };
 
     private final UICompositorPanel panel;
+    /** Card/open clock: only the overlay's own entrance and the category sweep flash. */
     private final UiMotion motion = new UiMotion();
+    /** Page clock: rows, category buttons, section headers and the footer. Replayed on every
+     * page/filter change without re-running the card entrance. */
+    private final UiMotion pageMotion = new UiMotion();
+    /** Category-switch transition: the settings column slides 6 px and its veil fades out. */
+    private final UiPageTransition transition = new UiPageTransition(0.18F, 6F);
     private final UIElement card;
     private final UILabel title;
     private final UILabel subtitle;
@@ -58,9 +66,65 @@ public class UICompSettings extends UIElement
     private final UITextbox search;
     private final UIScrollView scroll;
     private final List<UICompButton> navs = new ArrayList<>();
+    /** Pre-built selected-amount channel per category button (never concatenated in render). */
+    private final String[] navKeys = new String[CATEGORIES.length];
+    /** Section headers that the user collapsed, keyed by category + label; session-only UI state. */
+    private final Set<String> collapsedSections = new HashSet<>();
+    /** Section currently collecting rows while a page is built; null before the first section. */
+    private SectionHeader currentSection;
+    private int staggerIndex;
     private String category = "motion";
     private String filter = "";
     private boolean laidOut;
+
+    /** Gap between settings rows on a page entrance; capped so a long page never lags. */
+    static final float STAGGER_PER_ROW = 0.015F;
+    static final float STAGGER_MAX_DELAY = 0.2F;
+    /** Row entrance offset in pixels (scaled by the motion-intensity setting). */
+    static final float STAGGER_DISTANCE = 4F;
+
+    /** Entrance delay of row {@code index}; pure so the ordering/cap can be pinned headlessly. */
+    static float staggerDelay(int index)
+    {
+        return Math.min(STAGGER_MAX_DELAY, Math.max(0, index) * STAGGER_PER_ROW);
+    }
+
+    /** Row/section entrance offset in pixels for a stagger progress and intensity. */
+    static int staggerOffset(float progress, float intensity)
+    {
+        return UiStagger.offsetPx(progress, Math.round(STAGGER_DISTANCE * UiMotion.clamp01(intensity)));
+    }
+
+    /** Sliding underline inset of a category button (10 px → 0 as it becomes active). */
+    static int navUnderlineInset(float active, float intensity)
+    {
+        return Math.round((1F - UiMotion.clamp01(active)) * 10F * UiMotion.clamp01(intensity));
+    }
+
+    /** Chevron x offset of a section header: -2 px open, +2 px folded. */
+    static int sectionChevronOffset(float fold)
+    {
+        return Math.round((-1F + 2F * UiMotion.clamp01(fold)) * 2F);
+    }
+
+    /** Footer line alpha for an entrance progress (it is the last thing to arrive). */
+    static float footerAlpha(float intro)
+    {
+        return 0.3F + 0.7F * UiMotion.clamp01(intro);
+    }
+
+    /**
+     * Display index of the three-state per-pixel-depth mode.
+     *
+     * <p>0.94 stored a boolean; a settings file from before the three-state switch must still show
+     * what is really in effect (ON) until the user picks a state explicitly.</p>
+     */
+    static int depthModeIndex(int mode, boolean legacyOn)
+    {
+        int resolved = mode == 0 && legacyOn ? 1 : mode;
+
+        return Math.max(0, Math.min(2, resolved));
+    }
 
     public UICompSettings(UICompositorPanel panel)
     {
@@ -105,11 +169,13 @@ public class UICompSettings extends UIElement
         this.search = new UITextbox(96, (text) ->
         {
             this.filter = text == null ? "" : text.toLowerCase(Locale.ROOT).trim();
+            this.transition.begin("filter:" + this.filter);
+            this.pageMotion.replay();
             this.rebuild();
         });
         this.search.placeholder(IKey.constant("搜索设置…"));
 
-        this.scroll = new UIScrollView(ScrollDirection.VERTICAL);
+        this.scroll = new MotionScroll();
         this.scroll.column(3).vertical().stretch().scroll().padding(10);
         this.scroll.scroll.scrollSpeed = 50;
 
@@ -121,6 +187,7 @@ public class UICompSettings extends UIElement
             final int index = i;
             UICompButton nav = new UICompButton(IKey.constant(CATEGORIES[i]), (button) -> this.select(id));
 
+            this.navKeys[i] = "nav:" + i;
             nav.symbol(switch (i)
             {
                 case 1 -> Icons.LAYOUT;
@@ -166,6 +233,8 @@ public class UICompSettings extends UIElement
         this.search.setText("");
         this.setVisible(true);
         this.motion.replay();
+        this.pageMotion.replay();
+        this.transition.begin(this.category);
         this.layout();
         this.rebuild();
 
@@ -203,12 +272,20 @@ public class UICompSettings extends UIElement
 
     private void select(String id)
     {
+        boolean changed = !id.equals(this.category);
+
         this.category = id;
         this.rebuild();
 
         if (this.scroll != null)
         {
             this.scroll.scroll.setScroll(0);
+        }
+
+        if (changed)
+        {
+            this.pageMotion.replay();
+            this.transition.begin(id);
         }
 
         this.motion.flash("category");
@@ -261,8 +338,16 @@ public class UICompSettings extends UIElement
     {
         this.motion.tickFrame();
         this.motion.markShown();
+        this.pageMotion.tickFrame();
+        this.pageMotion.markShown();
+        this.transition.update();
 
         float p = this.motion.intro(0F);
+        float footerFade = this.pageMotion.intro(0.1F);
+
+        /* The version/file line is the last thing to arrive: it should not compete with the rows
+         * while they stagger in. */
+        this.footer.color(UiMotion.alpha(0xFF687386, footerAlpha(footerFade)), false);
 
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
             UiGfx.alpha(0xFF070A10, 0.78F * UiMotion.easeOut(p)));
@@ -282,6 +367,8 @@ public class UICompSettings extends UIElement
         {
             super.render(context);
 
+            this.renderNavSelection(context);
+
             float categorySweep = this.motion.flash("category", 0.22F);
 
             if (categorySweep < 1F && this.scroll != null)
@@ -296,6 +383,41 @@ public class UICompSettings extends UIElement
         finally
         {
             stack.pop();
+        }
+    }
+
+    /**
+     * Category selection is drawn here instead of swapping {@link UICompButton} styles: the wash,
+     * the accent rail and the sliding underline all interpolate from one animated amount, so a
+     * category click cross-fades instead of popping. The buttons themselves stay FLAT, which keeps
+     * the shared button hover/press feedback untouched.
+     */
+    private void renderNavSelection(UIContext context)
+    {
+        int accent = BBSSettings.primaryColor() | 0xFF000000;
+        float intensity = UiMotion.clamp01(this.pageMotion.intensity());
+
+        for (int i = 0; i < this.navs.size(); i++)
+        {
+            UICompButton nav = this.navs.get(i);
+            float act = this.pageMotion.anim(this.navKeys[i],
+                CATEGORY_IDS[i].equals(this.category) ? 1F : 0F, 22F);
+
+            if (act <= 0.01F)
+            {
+                continue;
+            }
+
+            context.batcher.box(nav.area.x, nav.area.y, nav.area.ex(), nav.area.ey(),
+                UiGfx.mulA(accent, 0.14F * act));
+            context.batcher.box(nav.area.x, nav.area.y + 2, nav.area.x + 2, nav.area.ey() - 2,
+                UiGfx.mulA(accent, 0.9F * act));
+
+            int inset = navUnderlineInset(act, intensity);
+            float underlineY = nav.area.ey() - 2;
+
+            context.batcher.box(nav.area.x + inset, underlineY, nav.area.ex() - inset, underlineY + 1,
+                UiGfx.mulA(accent, 0.85F * act));
         }
     }
 
@@ -346,10 +468,14 @@ public class UICompSettings extends UIElement
 
         this.scroll.removeAll();
 
+        this.currentSection = null;
+        this.staggerIndex = 0;
+
         for (int i = 0; i < this.navs.size(); i++)
         {
-            this.navs.get(i).style(CATEGORY_IDS[i].equals(this.category)
-                ? UICompButton.Style.SELECTED : UICompButton.Style.FLAT);
+            /* Category state is drawn as an interpolated overlay (renderNavSelection), so the
+             * buttons stay FLAT and never snap between two skins. */
+            this.navs.get(i).style(UICompButton.Style.FLAT);
         }
 
         switch (this.category)
@@ -380,22 +506,125 @@ public class UICompSettings extends UIElement
             return null;
         }
 
-        UIElement section = new UIElement()
-        {
-            @Override
-            public void render(UIContext context)
-            {
-                int y = this.area.ey() - 1;
-
-                context.batcher.textShadow(label, this.area.x + 2, this.area.y + 2, 0xFFA9B7C9);
-                context.batcher.box(this.area.x, y, this.area.ex(), y + 1, 0x22FFFFFF);
-                super.render(context);
-            }
-        };
+        SectionHeader section = new SectionHeader(this.category + "|" + label, label);
 
         section.w(1F).h(22);
 
         return section;
+    }
+
+    /**
+     * A collapsible settings group header.
+     *
+     * <p>Settings pages are long; collapsing a group hides its rows. BBS's column resizer skips
+     * invisible children, so the layout closes up instead of leaving a hole. The header's own
+     * state is interpolated — hover wash, chevron slide and the collapse spring all come from the
+     * page clock — so expanding a group folds open rather than snapping.</p>
+     */
+    private final class SectionHeader extends UIElement
+    {
+        private final String id;
+        private final String label;
+        private final String[] keys;
+        private final List<UIElement> rows = new ArrayList<>();
+        private boolean collapsed;
+        private int stagger;
+
+        SectionHeader(String id, String label)
+        {
+            this.id = id;
+            this.label = label;
+            /* Built once per rebuild; channel names are never concatenated in render(). */
+            this.keys = new String[] {"sec:" + id + ":h", "sec:" + id + ":c"};
+            this.collapsed = UICompSettings.this.collapsedSections.contains(id);
+        }
+
+        void stagger(int index)
+        {
+            this.stagger = index;
+        }
+
+        @Override
+        public void render(UIContext context)
+        {
+            UiMotion motion = UICompSettings.this.pageMotion;
+            float hov = motion.anim(this.keys[0], this.area.isInside(context) ? 1F : 0F, 24F);
+            float fold = motion.spring(this.keys[1], this.collapsed ? 1F : 0F, 420F, 26F);
+            float intro = motion.intro(staggerDelay(this.stagger));
+            float appear = UiStagger.alpha(intro);
+            int shift = staggerOffset(intro, motion.intensity());
+            int accent = BBSSettings.primaryColor() | 0xFF000000;
+            int top = this.area.y + shift;
+
+            if (hov > 0.01F)
+            {
+                context.batcher.box(this.area.x, top, this.area.ex(), top + this.area.h,
+                    UiGfx.mulA(0xFFFFFFFF, 0.035F * hov * appear));
+            }
+
+            context.batcher.textShadow(this.label, this.area.x + 14, top + 2,
+                UiMotion.alpha(UiMotion.lerpColor(0xFFA9B7C9, 0xFFFFFFFF, hov), appear));
+            context.batcher.box(this.area.x, top + this.area.h - 1, this.area.ex(), top + this.area.h,
+                UiMotion.alpha(0x22FFFFFF, appear));
+
+            /* Chevron: slides right as the group folds and brightens under the pointer. */
+            int chevronX = this.area.x + 3 + sectionChevronOffset(fold);
+            int chevronColor = UiMotion.alpha(UiMotion.lerpColor(0xFF7C8798, accent, hov), appear);
+
+            context.batcher.box(chevronX, top + 8, chevronX + 3, top + 13, chevronColor);
+
+            if (fold < 0.99F)
+            {
+                UiGfx.accentRail(context.batcher, this.area.x, top + 3,
+                    this.area.h - 6, (1F - fold) * appear, accent);
+            }
+
+            super.render(context);
+        }
+
+        @Override
+        protected boolean subMouseClicked(UIContext context)
+        {
+            if (context.mouseButton == 0 && this.area.isInside(context))
+            {
+                this.setCollapsed(!this.collapsed);
+
+                return true;
+            }
+
+            return super.subMouseClicked(context);
+        }
+
+        void setCollapsed(boolean collapsed)
+        {
+            this.collapsed = collapsed;
+
+            if (collapsed)
+            {
+                UICompSettings.this.collapsedSections.add(this.id);
+            }
+            else
+            {
+                UICompSettings.this.collapsedSections.remove(this.id);
+            }
+
+            for (UIElement row : this.rows)
+            {
+                row.setVisible(!collapsed);
+            }
+
+            UICompSettings.this.scroll.resize();
+        }
+
+        void addRow(UIElement row)
+        {
+            this.rows.add(row);
+
+            if (this.collapsed)
+            {
+                row.setVisible(false);
+            }
+        }
     }
 
     private UIElement row(String label, UIElement control, int controlWidth, String hint)
@@ -423,27 +652,110 @@ public class UICompSettings extends UIElement
         return row;
     }
 
-    /** A settings row that lights up non-linearly under the pointer. */
+    /** A settings row that lights up non-linearly under the pointer and staggers in with its page. */
     private final class Row extends UIElement
     {
         private final UiMotion motion = new UiMotion();
+        private int stagger;
+
+        void stagger(int index)
+        {
+            this.stagger = index;
+        }
 
         @Override
         public void render(UIContext context)
         {
             this.motion.tickFrame();
 
+            UiMotion page = UICompSettings.this.pageMotion;
+            float intro = page.intro(staggerDelay(this.stagger));
+            float appear = UiStagger.alpha(intro);
+            int shift = staggerOffset(intro, page.intensity());
             float hover = this.motion.anim("hover", this.area.isInside(context) ? 1F : 0F, 20F);
 
             if (hover > 0.01F)
             {
-                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
-                    UiGfx.mulA(0xFFFFFFFF, 0.045F * hover));
-                context.batcher.box(this.area.x, this.area.y + 2, this.area.x + 2, this.area.ey() - 2,
-                    UiGfx.mulA(BBSSettings.primaryColor() | 0xFF000000, 0.75F * hover));
+                context.batcher.box(this.area.x, this.area.y + shift, this.area.ex(),
+                    this.area.ey() + shift, UiGfx.mulA(0xFFFFFFFF, 0.045F * hover * appear));
+                context.batcher.box(this.area.x, this.area.y + shift + 2, this.area.x + 2,
+                    this.area.ey() + shift - 2,
+                    UiGfx.mulA(BBSSettings.primaryColor() | 0xFF000000, 0.75F * hover * appear));
             }
 
-            super.render(context);
+            if (shift > 0)
+            {
+                /* Paint-only shift: the row's labels/controls keep their hit rectangles, so the
+                 * entrance cannot make a toggle unclickable. */
+                MatrixStack stack = context.batcher.getContext().getMatrices();
+
+                stack.push();
+                stack.translate(0F, shift, 0F);
+
+                try
+                {
+                    super.render(context);
+                }
+                finally
+                {
+                    stack.pop();
+                }
+            }
+            else
+            {
+                super.render(context);
+            }
+        }
+    }
+
+    /**
+     * The settings column with the category-switch transition.
+     *
+     * <p>It slides a few pixels and a veil fades out over it when a page is chosen. Only painting
+     * moves: the scroll offset and every row's hit rectangle stay at their final place, so a fast
+     * click during the 180 ms transition still lands on the row it looks like.</p>
+     */
+    private final class MotionScroll extends UIScrollView
+    {
+        MotionScroll()
+        {
+            super(ScrollDirection.VERTICAL);
+        }
+
+        @Override
+        public void render(UIContext context)
+        {
+            UiPageTransition page = UICompSettings.this.transition;
+            UiMotion motion = UICompSettings.this.pageMotion;
+            float slide = page.slideY() * UiMotion.clamp01(motion.intensity());
+            float veil = page.veilAlpha();
+
+            if (slide > 0.01F)
+            {
+                MatrixStack stack = context.batcher.getContext().getMatrices();
+
+                stack.push();
+                stack.translate(0F, slide, 0F);
+
+                try
+                {
+                    super.render(context);
+                }
+                finally
+                {
+                    stack.pop();
+                }
+            }
+            else
+            {
+                super.render(context);
+            }
+
+            if (veil > 0.001F)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
+                    UiMotion.alpha(0xFF070A10, veil * 0.8F));
+            }
         }
     }
 
@@ -501,10 +813,30 @@ public class UICompSettings extends UIElement
 
     private void add(UIElement element)
     {
-        if (element != null)
+        if (element == null)
         {
-            this.scroll.add(element);
+            return;
         }
+
+        if (element instanceof SectionHeader section)
+        {
+            section.stagger(this.staggerIndex++);
+            this.currentSection = section;
+        }
+        else
+        {
+            if (element instanceof Row row)
+            {
+                row.stagger(this.staggerIndex++);
+            }
+
+            if (this.currentSection != null)
+            {
+                this.currentSection.addRow(element);
+            }
+        }
+
+        this.scroll.add(element);
     }
 
     /* ----------------------------------------------------------------- motion */
@@ -607,6 +939,9 @@ public class UICompSettings extends UIElement
 
         CompPrefs.save();
         this.motion.replay();
+        /* Rows/nav/footer are on the page clock: replay it too so a preset change re-staggers the
+         * page instead of only re-running the card entrance. */
+        this.pageMotion.replay();
     }
 
     /* ----------------------------------------------------------------- layout */
@@ -999,18 +1334,49 @@ public class UICompSettings extends UIElement
             + "布局锁与重置在合成器顶栏的「布局」按钮。切换后需重开合成器面板生效"));
 
         this.add(this.section("渲染"));
-        this.add(this.row("逐像素深度（主合成）", this.toggle("", CompPrefs.get().perPixelDepth, (value) ->
+
+        /* Three-state mode (0 off / 1 on / 2 auto, auto is the 0.96 default); the legacy boolean
+         * only affects the display index here — the callback keeps it in sync for older code. */
+        int depthMode = depthModeIndex(CompPrefs.get().perPixelDepthMode, CompPrefs.get().perPixelDepth);
+        UIElement depth = this.segmented(new String[] {"关闭", "开启", "自动（推荐）"},
+            depthMode, (mode) ->
         {
-            CompPrefs.get().perPixelDepth = value;
+            CompPrefs.Data prefs = CompPrefs.get();
+
+            prefs.perPixelDepthMode = Math.max(0, Math.min(2, mode));
+            /* Legacy mirror only: the boolean is not the primary switch any more. Old projects
+             * keep working because mode==0 && boolean==true is still read as ON. */
+            prefs.perPixelDepth = prefs.perPixelDepthMode == 1;
             CompPrefs.save();
-            /* The flag is part of the render-cache signature; drop the green frames so the next
-             * preview frame actually goes through the newly selected path. */
-            dev.bbsae.client.render.CompPrecache.markDirty();
+            /* Clear the render cache, frame server and pre-cache so the next preview frame really
+             * goes through the newly selected depth path. */
+            dev.bbsae.client.render.CompRenderer.invalidateDepthModeCaches();
+            this.panel.setStatus(switch (prefs.perPixelDepthMode)
+            {
+                case 1 -> "已开启逐像素深度：相交/穿插的 3D 图层按真实像素遮挡（每层多 3 个全屏 pass，低配机可能掉帧）";
+                case 2 -> "逐像素深度：自动（推荐）——只有相交的透视 3D 平面才逐像素比较深度，平行平面/单 3D 层/纯 2D 速度不变";
+                default -> "已关闭逐像素深度：回到图层级排序（兼容性最好）";
+            });
+            /* Segmented buttons choose their style at build time; rebuild so the new state is
+             * shown without leaving/reopening the page. */
+            this.rebuild();
+        });
+
+        this.add(this.row("逐像素深度（主合成）", depth, 250,
+            "自动（推荐）：只有两个相交的透视 3D 平面才逐像素比较深度；平行平面/单 3D 层/纯 2D 仍走整层排序，速度不变。"
+                + "开启：所有 3D 层都走逐像素深度，每个 3D 层多 3 个全屏 pass，低配机可能掉帧。"
+                + "关闭：回到整层排序。旧工程里 0.94 的布尔开关仍按「开启」读取"));
+
+        this.add(this.section("钢笔工具"));
+        this.add(this.row("钢笔保持顶点数（AE）", this.toggle("", CompPrefs.get().penKeepVertexCount, (value) ->
+        {
+            CompPrefs.get().penKeepVertexCount = value;
+            CompPrefs.save();
             this.panel.setStatus(value
-                ? "已开启逐像素深度：相交/穿插的 3D 图层按真实像素遮挡（每层多 3 个全屏 pass，低配机可能掉帧）"
-                : "已关闭逐像素深度：回到图层级排序（默认，兼容性最好）");
-        }), 170, "0.93 修复了逐像素深度的重影 bug；开启后相交的 3D 图层按像素深度正确遮挡，"
-            + "代价是每个 3D 层多 3 个全屏 pass。对性能敏感或旧显卡工程建议保持关闭"));
+                ? "钢笔：插入/删除锚点保持顶点数（AE 默认，已有动画路径不重排）"
+                : "钢笔：插入/删除锚点会移动顶点索引（旧版行为，动画路径可能整体重排）");
+        }), 170, "AE 的「保持顶点数」：在路径上插入/删除锚点时保持顶点总数不变，靠重映射其余点完成，"
+            + "已有动画路径不会整体重排；关闭后回到旧版「新增/移除即改索引」的行为"));
 
         if (settings == null)
         {

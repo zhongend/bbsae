@@ -87,10 +87,19 @@ public final class CompDockSource implements ILayoutSource
         if (!this.rootLoaded)
         {
             this.rootLoaded = true;
-            this.cachedRoot = parse(settings == null ? "" : settings.dockLayout);
+
+            EditorLayoutNode stored = parse(settings == null ? "" : settings.dockLayout);
+
+            /* Cache the default tree too. BBS's UIDockLayout matches splitters by object identity
+             * when it applies a drag (copyWithSplitterRatios keys a Map<SplitterNode, Float>), so
+             * handing out a fresh defaults.get() on every call made the handle infos point at nodes
+             * that were no longer in the tree: dragging a splitter did nothing (and the layout undo
+             * snapshot pushed an unrelated tree). One cached root keeps every consumer on the same
+             * objects until setRoot/reload replaces it. */
+            this.cachedRoot = stored != null ? stored : (this.defaults == null ? null : this.defaults.get());
         }
 
-        return this.cachedRoot != null ? this.cachedRoot : this.defaults.get();
+        return this.cachedRoot;
     }
 
     @Override

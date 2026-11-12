@@ -102,7 +102,9 @@
 | P4 “整条路径打关键帧”助手 | ✅ | 检查器按钮/右键菜单：对 6N 通道在播放头 `insert`，一步 undo |
 | P4 求值→CountOp→回写全部关键帧的通道重映射 | ✅（Round 2） | 段上加点/末尾加点/删除点（含 Multi-delete）全支持；详见 §9 |
 | 逐点羽化（Mask Feather 工具） | ⏳ 评估完成/未实现 | `CompMask` 只有整条蒙版的 `feather`；无 per-point 字段、渲染器也只做整层 boxBlur。实现需数据+渲染+UI 三处联动（本轮禁止 client/render），见 §12.1 |
-| RotoBezier 自动切线 | ⏳ 评估完成/未实现 | `CompMaskPoint.smooth` 字段无消费者；`convertVertex` 只做一次性 1/6 切线。见 §12.3 |
+| RotoBezier 自动切线 | ✅（Round 5，编辑模式） | 路径级开关 `rotoBezier`（默认 false）；开启后按 1/6 规则派生并写入普通手柄字段，拖点/增删点重派生；动画路径只在播放头派生。见 §13.3 |
+| 保持顶点数模式（AE `penKeepVertexCount`） | ✅（Round 5） | 开：动画路径增删点重映射全部关键帧；关：动画路径拒绝增删点（逐点通道无法表达逐帧顶点数），无动画路径不受影响。见 §13.1 |
+| 动画路径叠加/命中/拖拽求值缓存 | ✅（Round 5） | `UIPenTool.EvaluationCache` 按 (layer, path, frame, revision) 解析一次整条路径；见 §13.2 |
 | Convert To Bezier / Free Transform Points | ❌ | 依赖通道重排，后置 |
 | Set First Vertex | ✅（Round 3） | 闭合路径右键菜单“设为第一顶点”；几何轮转 + 动画通道/loops 轮转，见 §11 |
 | 点通道 KeyframeLoop 保真 | ✅（Round 3） | 索引搬移、新点通道、Set First Vertex 都携带 loops；见 §11 |
@@ -134,7 +136,10 @@
 15. **KeyframeLoop 的语义边界**：loop 是绝对时间块，随通道搬移保留；**新插入点**的 loop 从段起点分量复制（通常同一 block 共享 id）。被删点的 loop 随通道清空；若 loop 只存在于某些分量，新点只继承起点分量那一组。
 16. **dope sheet/曲线通道同步需要 Lead 1 行钩子**（Round 4）：增删点/Set First Vertex 后 session 会发 `structureChanged`，`UIPenTool` 通过反射调用计划中的 `penRefreshSheets()`；面板未加桥时 sheet 行列表要到下一次选择变化才刷新（通道数据已正确）。补丁见 §12.5。
 17. **残留空通道**：点被删除/索引轮转后，旧通道对象仍留在 `CompLayer.scalarChannels`（无删除 API，CompLayer 不在写域），刷新 sheet 后可能出现空行；建议后续加 `removeScalarChannel`.
-18. **逐点羽化 / RotoBezier 仍未实现**（Round 4 评估，见 §12.1/§12.3）：需要数据模型 + client/render 栅格器/自动切线 + 工具 UI，属单独立项。
+18. **逐点羽化仍未实现**（Round 4 评估，见 §12.1）：需要数据模型 + client/render 栅格器 + 工具 UI，属单独立项。**RotoBezier 已在 Round 5 以“编辑模式”实现（§13.3）。**
+19. **RotoBezier 对动画路径只在播放头派生切线**（Round 5）：逐关键帧派生需要重写每个 key 的全部点切线通道，成本/风险高；当前实现不破坏任何数据，但其它帧沿用旧切线。
+20. **求值缓存是单条目**（Round 5）：同一帧内 overlay 按路径顺序绘制，每条路径解析一次后复用；跨路径交替高频访问会 miss。单条目保证内存恒定，如以后需要可升级为小 LRU。
+21. **保持顶点数关闭时动画路径拒绝增删点**（Round 5）：有意的安全降级——逐点标量通道 + 全局顶点数无法表达 AE 的“逐帧不同顶点数”。
 
 ---
 
@@ -167,6 +172,10 @@
 23. **集成：钢笔中删图层 / 进 precomp（Round 4）**：绘制/编辑中删除当前图层或进入 precomp → 钢笔自动退出编辑并提示，不会往已删除对象写数据；在新合成里可直接继续画。
 24. **集成：摄像机工具（Round 4）**：钢笔激活时去点摄像机工具按钮 → 下一次预览帧自动关闭摄像机工具，不会出现“左键同时环绕+画点”。
 25. **集成：动画路径增删点后的 dope sheet（Round 4，需 §12.5 钩子集成后验证）**：加点/删点后检查器/关键帧抽屉应出现/移除对应的 `p/<i>` 行，曲线编辑器同步；未集成钩子时形状正确但行列表可能滞后到下一次选择。
+26. **保持顶点数开关（Round 5）**：设置里关掉 `penKeepVertexCount` 后，给动画路径增删点 → 状态栏提示且点数不变、不产生 undo；无动画路径照常。开回来 → 又能重映射。
+27. **RotoBezier（Round 5）**：右键「开启 RotoBezier」→ 手柄隐藏、曲线自动平滑；拖动锚点释放后切线重算；再右键关闭 → 恢复手动拖手柄。保存重开 rotoBezier 状态保持。
+28. **求值缓存不破坏画面（Round 5）**：动画路径在播放头移动/拖动锚点/加点后叠加层与命中立即更新（缓存 revision 失效）；撤销/重做后不显示旧位置。
+29. **RotoBezier + 动画路径（Round 5 限制）**：在播放头启用 RotoBezier → 当前帧切线平滑；移动播放头到其它关键帧，切线沿用原值（已知限制，见 §5-19）。
 
 ---
 
@@ -179,8 +188,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 test --offline --console=plain
 ```
 
-钢笔相关 12 个测试类（全量 test 会一并跑）：
-`CompPathGeometryTest`、`CompPenSessionTest`、`AnimatedPathRemapTest`、`PathLoopSetFirstVertexTest`、`AnimatedPenHitTest`、`MaskKeyframeResolutionTest`、`PenPathPersistenceTest`、`MaskPathRasterTest`、`MaskGlRenderTest`、`ShapeOpenPathTest`、`PenProjectionTest`、`PenIntegrationRulesTest`。
+钢笔相关 15 个测试类（全量 test 会一并跑）：
+`CompPathGeometryTest`、`CompPenSessionTest`、`AnimatedPathRemapTest`、`PathLoopSetFirstVertexTest`、`AnimatedPenHitTest`、`MaskKeyframeResolutionTest`、`KeepVertexCountTest`、`RotoBezierTest`、`PenPathPersistenceTest`、`MaskPathRasterTest`、`MaskGlRenderTest`、`ShapeOpenPathTest`、`PenProjectionTest`、`PenIntegrationRulesTest`、`PenEvaluationCacheTest`。
 
 结果：
 
@@ -191,6 +200,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 - Round 3 全量 `gradle-run.ps1 test`：**643 tests / 3 failed / 1 skipped**；3 个失败全部在 effects 队友进行中的新增效果（`EffectP1BatchTest` 默认值可见性、`EffectLibraryNamingTest` 唯一名、`EffectThumbnailResourceTest` 预览图缺失），与钢笔无关，已在本轮汇报里标给 Lead。
 - Round 4（2026-11-13 01:0x）新增 `MaskKeyframeResolutionTest`（2：maskAt 对 feather/opacity/expansion 关键帧的 2D/3D 共用解析、逐点羽化缺失守卫）、`PenIntegrationRulesTest`（2：targetExists 失效规则、V/A 切选择工具）；扩充 `CompPenSessionTest`（18→19：`structureChanged` 通知）、`PenProjectionTest`（10→11：3D 透视下手柄拖动投影回光标）。12 类合计 **96 tests / 0 fail**。
 - Round 4 全量 `gradle-run.ps1 test`：**117 suites / 699 tests / 0 failures / 0 errors**（含 effects/replay 队友本轮改动）。
+- Round 5（2026-11-13 01:3x）新增 `KeepVertexCountTest`（3）、`RotoBezierTest`（6）、`PenEvaluationCacheTest`（4），`PenPathPersistenceTest` +1（rotoBezier 往返）；15 类合计 **110 tests / 0 fail**（`compileJava`/`compileTestJava` BUILD SUCCESSFUL）。
+- Round 5 全量 `gradle-run.ps1 test`：**125 suites / 754 tests / 7 failed / 1 skipped**；7 个失败全部在 effects 队友进行中的效果管线（`EffectP1BatchTest` 2、`EffectPipelineTest` 2、`ShaderCompileTest` 1、`EffectLibraryNamingTest` 1、`EffectThumbnailResourceTest` 1），与钢笔无关；钢笔 15 类 0 失败。
 - 受 `MaskCache`/`ShapeRasterizer` 改动影响的既有测试回归：`CompLayerSourceCacheTest`、`MaskCombineTest`、`EntityMaskSizingTest`、`ReplayEntityMaskRequestTest`、`CompScenePlaneDepthTest` 全绿。
 
 ---
@@ -217,6 +228,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 - **Alt+单击锚点**：角点↔平滑点互转（1/6 相邻距离规则）。
 - **右键 → 设为第一顶点**（闭合路径、选中单个非首锚点）：把该锚点变成路径起点，闭合形状不变；已动画路径的关键帧通道/循环一起轮转。
 - 动画路径的锚点/手柄/叠加层始终显示**当前播放头求值后**的位置，命中与拖动与画面一致。
+- **右键 → 开启/关闭 RotoBezier**：开启后手柄隐藏、曲线由相邻锚点自动派生（拖动锚点保持平滑）；关闭后恢复手动拖手柄。动画路径只在当前播放头派生（见 §13.3 限制）。
+- **设置 → 保持顶点数**（`penKeepVertexCount`，默认开）：关闭后已动画路径不能再增删锚点（逐点通道无法安全表达逐帧不同顶点数），无动画路径不受影响。
 
 **2D / 3D**
 - 2D 图层：屏幕↔图层局部走 `view2D·world` 逆矩阵，旋转/非均匀缩放/父级动画下点都跟手。
@@ -368,7 +381,9 @@ this.smallButton("设为第一顶点", () -> this.penTool().setFirstVertex(/* �
 `MaskCache.get` 在解析后把 `feather/expansion` 乘 raster scale（3D 代理分辨率），2D/3D 两条路径行为一致。回归：`MaskKeyframeResolutionTest`（0/12/24 帧的 feather/opacity/expansion 求值 + 不污染原 mask + 关闭状态拷贝）。
 结论：**关键帧化蒙版标量在 2D/3D 都生效，无 bug**。`mask.enabled/mode/inverted` 不是动画通道（有意设计）。
 
-### 12.3 RotoBezier / 3D 透视下手柄切线 —— 拖拽投影正确；RotoBezier 本身未实现
+### 12.3 RotoBezier / 3D 透视下手柄切线 —— 拖拽投影正确（Round 5 已补 RotoBezier 实现）
+
+> **Round 5 更新**：RotoBezier 已以“编辑模式”实现（路径级 `rotoBezier` 开关、1/6 规则派生、拖点/增删点重派生、右键菜单开关），见 §13.3。本节保留 Round 4 的评估过程。
 
 - **屏幕拖动 → 局部切线**：3D 透视下把鼠标映射回图层平面一次（`screenToLocal`），手柄向量按局部空间存；因此把手柄端点再投影回屏幕必须正好落在鼠标下。新增 `PenProjectionTest.handleDragOnATiltedCardProjectsBackUnderTheCursor`：yaw 30° 卡片，投影误差 < 0.05px；镜像手柄在局部空间严格相反，屏幕方向点积 < 0（透视会让两侧长度看起来不同，符合 AE 的局部空间语义）。
 - **平滑点切线规则**：`convertVertex`/`smoothTangents` 用 1/6 相邻距离（effectcraft 同规则）；Round 3 已按帧求值，动画路径下切线基于当前帧邻居。
@@ -407,8 +422,67 @@ this.smallButton("设为第一顶点", () -> this.penTool().setFirstVertex(/* �
 | 项 | 原因 |
 |---|---|
 | 逐点羽化（数据 + 渲染 + UI） | 需要 client/render 的栅格器大改 + 数据模型迁移 + 检查器/工具 UI；本轮禁止改 client/render，且是三处联动的新功能，已出评估（§12.1） |
-| RotoBezier 自动切线 | 需要 UI 开关 + 每帧切线重算 + 动画写入交互；`smooth` 字段是雏形但无消费者，属新功能（§12.3） |
+| RotoBezier 自动切线 | Round 4 未做；**Round 5 已以“编辑模式”实现**（路径级 `rotoBezier` 开关，手柄派生写回普通字段；动画路径只在播放头派生），见 §13.3 |
 | 空通道清理（删除点后残留的 `scalarChannels` 空条目） | `CompLayer` 无 remove 通道 API，且 CompLayer 不在写域；建议后续加 `removeScalarChannel(path)` 并在 remap/rotate 后调用 |
 | F 键冲突处理 | 当前 F 不会造成双触发（见 §12.4-6）；若用户反馈再消费 |
 | 3D 工作区内的 precomp/摄像机混合场景 | 依赖 #3/#5 的同一套校验；无独立代码路径 |
 
+
+---
+
+## 13. Round 5：保持顶点数模式 + 路径求值缓存 + RotoBezier
+
+### 13.1 保持顶点数模式（AE `penKeepVertexCount`）
+
+**接口**
+- `CompPrefs.penKeepVertexCount`（Lead 已加，默认 true）是唯一事实源；`UIPenTool` 构造时读取，并在每次 `onPress/onKey/onDrag` 前 `syncKeepVertexCount()` 重新同步（设置页改完立即生效）。另提供 `UIPenTool.setKeepVertexCount(boolean)` / `keepVertexCount()` 供面板初始化或测试注入，以及 `CompPenSession.setKeepVertexCount(boolean)` 纯逻辑入口。
+
+**语义（与 AE 对齐的现实现边界）**
+| 模式 | 无动画路径 | 已动画路径 |
+|---|---|---|
+| 开（默认） | 增删点照常 | 增删点按 §9 重映射到**所有关键帧**（段上加点用点击 t、其它键 0.5；删点整体下移；末尾加点其它键取最后段中点） |
+| 关 | 增删点照常 | **拒绝**增删点并提示“已关闭「保持顶点数」：动画路径不能安全增删点…”。原因：本项目是逐点标量通道 + **全局**顶点数，无法表达 AE 的“每个关键帧可有不同顶点数”；强行只改当前帧会让通道索引与模型错位 |
+
+Set First Vertex 不改变顶点数，两种模式下都可用。测试：`KeepVertexCountTest`（3 例：默认重映射、关闭后拒绝且不产生 undo、无动画路径不受影响）。
+
+### 13.2 路径求值缓存（动画路径叠加/命中/拖拽）
+
+**问题**：`MaskTarget/ShapeTarget` 每个分量都走 `layer.scalarAt`，而一帧内 overlay 绘制（每条路径 2 次：路径+锚点）、命中测试（每条路径 24×段采样 × projector → 适配器读点）、拖拽快照都要同一批值，动画路径上会重复插值几十上百次。**Round 4 的按帧求值修复把这个成本放大了。**
+
+**实现**：`UIPenTool.EvaluationCache`（public static，可无 panel 单测）——单条目 memo，key = `(layer 身份, path 身份, frame, revision, 数组长度)`。
+- 适配器新增 `values()`：一次解析该路径 `6N` 个分量（`scalarAt`），随后所有 `x/y/inX/...` 都是数组读；
+- `evaluationRevision` 在 `changed()/structureChanged()/closedChanged()/forget()/activate()` 时自增（钢笔自身每次编辑都会经 `changed()`），frame 变化天然 miss；
+- layer/path 用对象身份比较，undo/redo 换对象图时自然 miss，不会读到旧图。
+
+**收益/取舍**：单条目缓存意味着 overlay 逐路径绘制时每条路径每帧重算一次（之后该路径的锚点/命中复用）；不会跨路径保留，内存恒定 6N floats。测试：`PenEvaluationCacheTest`（4 例：命中同一数组、frame/revision/layer/path/长度分别失效、invalidate、单条目淘汰）。
+
+### 13.3 RotoBezier（AE 自动切线）—— 已实现（编辑模式）
+
+`CompMaskPoint.smooth` 字段没有独立 RotoBezier 语义，因此新增了**路径级**开关：
+- 数据：`CompMask.rotoBezier` / `CompShape.rotoBezier`（**JSON 字段 `"rotoBezier"`，默认 false**，`copy()` 携带；`maskAt/shapeAt` 的解析拷贝也保留）。旧工程不受影响。
+- 语义（编辑模式，非渲染特性）：开启时按邻点 1/6 规则派生每个点的入/出切线，并写入**普通 in/out 字段**——渲染器、缓存签名、文件格式无需任何特判；开启后拖动锚点、加点、删点、闭合/断开、Set First Vertex 都会重新派生；手柄拖动被忽略（RotoBezier 下手柄不可编辑），overlay 不画手柄、命中测试不把柄当命中目标。
+- UI：钢笔右键菜单「开启/关闭 RotoBezier（自动切线）」；`UIPenTool.setRotoBezier(boolean)` / `rotoBezier()`。
+- 动画路径限制：派生切线只写入**播放头**（其它关键帧的逐点切线需要整通道重映射，成本高、易错）；这样至少在编辑帧上曲线是平滑的，其余帧沿用原切线。
+- 测试：`RotoBezierTest`（6 例：开启派生、拖点后释放重派生、手柄拖动被忽略、增删点重新派生、关闭后保留派生值并恢复手动编辑、开放路径端点单邻点切线）；`PenPathPersistenceTest` 增加 rotoBezier JSON 往返（含 maskAt/shapeAt 拷贝）。
+
+### 13.4 剩余审查
+
+| 项 | 结论 |
+|---|---|
+| 预合成内/外切换后的 session 重建 | Round 4 的 `ensureSessionValid()`（doc 内 layer + 槽位校验）覆盖；进/出 precomp 后第一次 overlay/press 即失效旧 target 并提示，可在新合成继续画。`PenIntegrationRulesTest` 覆盖换 doc 场景。 |
+| Set First Vertex 与 undo/redo 后选中索引 | Set First Vertex 后 `selection={0}`、overlay/菜单/删除都按 0 号点（Round 3 测试）。undo/redo 恢复 JSON 会替换对象图：`ensureSessionValid` 的对象身份校验使下一次输入前就 `forget()`（清空选择/目标），不存在“旧索引指向新图”的问题；无需额外代码。 |
+| 逐点羽化 | 仍为评估（§12.1），本轮未动（写域仍禁止 client/render）。 |
+
+### 13.5 新增持久化字段（供 Lead 收尾时知晓）
+
+`CompMask.rotoBezier`、`CompShape.rotoBezier` —— JSON key `"rotoBezier"`，默认 `false`。渲染只看 in/out 手柄（已在现有指纹里），所以**不需要**把它们加进 `CompRenderCache`/`CompLayerSourceCache` 的 signature；旧工程反序列化默认 false，画面不变。
+
+### 13.6 本轮测试
+
+新增 3 个测试类 13 个用例：`KeepVertexCountTest`（3）、`RotoBezierTest`（6）、`PenEvaluationCacheTest`（4），另 `PenPathPersistenceTest` +1（rotoBezier 往返）。钢笔相关 13 类合计 **110 tests / 0 fail**；全量结果见本轮汇报。
+
+### 13.7 未做及原因
+
+- **逐点羽化**：需 client/render 栅格器大改 + 数据迁移 + UI（§12.1），仍未做。
+- **RotoBezier 对动画路径逐关键帧派生**：需逐 key 重算全部点切线并回写通道，成本/风险高；当前播放头派生属于“能用且不破坏数据”的最小实现。
+- **求值缓存多条目化**：单条目已覆盖 overlay/hit 的同路径复用；若以后同帧要在多条路径间交替高频访问，可升级为按 layer+path 的小 LRU（接口已隔离，改 `EvaluationCache` 内部即可）。

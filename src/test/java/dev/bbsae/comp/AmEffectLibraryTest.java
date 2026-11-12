@@ -224,6 +224,18 @@ public class AmEffectLibraryTest
         assertNeutral("am_tileshift_2", "strength", 0F);
         assertNeutral("am_stretch_segment", "stretch", 0F);
         assertNeutral("am_omino_glass", "strength", 0F);
+        assertNeutral("am_shape_field", "alpha", 0F);
+        assertNeutral("am_electric_edges", "alpha", 0F);
+        assertNeutral("am_roughen_edges", "strength", 0F);
+        assertNeutral("am_smooth_bevel", "radius", 0F);
+        assertNeutral("am_voronoi_2", "alpha", 0F);
+        assertNeutral("am_ridges_2", "alpha", 0F);
+        assertNeutral("am_noise_3", "amount", 0F);
+        assertNeutral("am_block_noise", "amount", 0F);
+        assertNeutral("am_halftone_cmyk", "strength", 0F);
+        assertNeutral("am_rgb_sep", "strength", 0F);
+        assertNeutral("am_simplestars_2", "alpha", 0F);
+        assertNeutral("am_volumetric_clouds", "amount", 0F);
 
         /* Hex rotate's identity is "no rotation at all", i.e. a combination of six zero values. */
         CompEffect hex = CompEffectRegistry.create("am_hex_rotate", 1);

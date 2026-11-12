@@ -302,6 +302,14 @@ public class UICompositorPanel extends UIDashboardPanel
     private UIIcon previewCollapse;
     private int leftPage;
     private boolean keyframeOpen;
+    /**
+     * User's intent for the drawer, independent of whether the current layout has room to show
+     * it. layoutKeyframeDrawer() force-closes the presented drawer on a short timeline; persisting
+     * that forced value made "open drawer, open project" silently forget the drawer.
+     */
+    private boolean keyframeOpenRequested;
+    /** doc.id + primary layer id of the sheets currently in the drawer (selection carry gate). */
+    private String lastSheetsIdentity = "";
     private boolean keyframeViewNeedsFit = true;
     private float playRate;
     private String statusMessage = "";
@@ -523,19 +531,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.leftTabs.addTab("效果库");
         this.leftTabs.addTab("素材");
         this.leftTabs.addTab("预设");
-        this.leftTabs.onSelect((index) ->
-        {
-            this.leftPage = index;
-            this.effectLibrary.setVisible(index == 0);
-            this.assetPanel.setVisible(index == 1);
-            this.presetBrowser.setVisible(index == 2);
-            this.beginPageMotion(this.leftPageMotion, "left:" + index);
-
-            if (index == 2)
-            {
-                this.presetBrowser.refresh();
-            }
-        });
+        this.leftTabs.onSelect((index) -> this.applyLeftPage(index, true));
         this.leftTabs.active(() -> this.leftPage);
 
         this.effectColumn.w(190).h(1F);
@@ -5224,6 +5220,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.inspectorPage = index;
             this.beginPageMotion(this.inspectorPageMotion, "inspector:" + index);
             this.refreshInspector();
+            this.markViewStateDirty();
         });
         this.inspectorTabs.active(() -> this.inspectorPage);
 
@@ -5388,7 +5385,7 @@ public class UICompositorPanel extends UIDashboardPanel
          * audio" and "export with alpha" looked identical. The choice button lists every module by
          * its display name, video modules first, audio modules last. */
         this.queuePreset = new mchorse.bbs_mod.ui.framework.elements.buttons.UIChoiceButton<>(
-            java.util.List.of("review_h264", "master_prores", "alpha_prores", "png_sequence", "audio_wav", "audio_m4a"),
+            java.util.List.of("review_h264", "master_prores", "alpha_prores4444", "png_sequence", "audio_wav", "audio_m4a"),
             (id) -> this.presetKind(id).startsWith("音频") ? Icons.SOUND : Icons.FILM,
             (id) -> IKey.constant(this.presetLabel(id))
         );
@@ -5426,21 +5423,19 @@ public class UICompositorPanel extends UIDashboardPanel
         this.queueAdd.w(68);
         this.queueStartButton = new UICompButton(IKey.constant("开始"), (button) ->
         {
-            if (this.project != null && this.selectedJob != null)
-            {
-                CompExportManager.start(this.project, this.selectedJob);
-            }
+            this.startSelectedRenderJob();
         });
         this.queueStartButton.w(56);
         this.queueStartAll = new UICompButton(IKey.constant("全部开始"), (button) ->
         {
-            if (this.project != null)
-            {
-                CompExportManager.startQueue(this.project);
-            }
+            this.startRenderQueue();
         });
         this.queueStartAll.w(68);
-        this.queueCancel = new UICompButton(IKey.constant("取消"), (button) -> CompExportManager.cancel());
+        this.queueCancel = new UICompButton(IKey.constant("取消"), (button) ->
+        {
+            CompExportManager.cancel();
+            this.setStatus("已取消导出（队列中剩余任务也一并取消）");
+        });
         this.queueCancel.w(58);
         this.queueOpen = new UICompButton(IKey.constant("打开文件夹"), (button) -> this.openExportFolder());
         this.queueOpen.w(56);
@@ -5451,6 +5446,14 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             if (this.project != null && this.selectedJob != null)
             {
+                if (this.selectedJob.status == CompRenderJob.RENDERING
+                    || this.selectedJob.status == CompRenderJob.ENCODING)
+                {
+                    this.setStatus("该任务正在导出：先点「取消」再移除");
+
+                    return;
+                }
+
                 this.project.renderQueue.remove(this.selectedJob);
                 this.selectedJob = null;
                 this.refreshQueue();
@@ -5769,6 +5772,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.restoreFocusBeforePersist();
+            this.savePanelLayout();
             this.flushSave();
             CompPrefs.flush();
 
@@ -5784,6 +5788,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.restoreFocusBeforePersist();
+            this.savePanelLayout();
             this.flushSave();
             CompPrefs.flush();
 
@@ -6142,14 +6147,15 @@ public class UICompositorPanel extends UIDashboardPanel
         this.startScreenOpen = false;
         this.startScreen.setVisible(false);
 
-        CompProject project = CompStore.load(info.id);
+        CompProject project = CompStore.loadOrNull(info.id, true);
 
         if (project == null)
         {
-            /* Do not leave the user on an editor with no project behind it. */
+            /* Do not leave the user on an editor with no project behind it. The damaged file has
+             * been quarantined as .corrupt-*, so the original data is still recoverable. */
             this.startScreenOpen = true;
             this.startScreen.setVisible(true);
-            this.setStatus("工程加载失败：" + info.id);
+            this.setStatus("工程加载失败：" + info.id + "（文件可能损坏，已隔离为 .corrupt-* 备份）");
 
             return;
         }
@@ -6307,7 +6313,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.film = film;
         this.replay = null;
 
-        CompProject requested = projectId == null || projectId.isBlank() ? null : CompStore.load(projectId);
+        CompProject requested = projectId == null || projectId.isBlank() ? null : CompStore.loadOrNull(projectId, true);
 
         /* A missing comp must not silently swap the whole project: the clip may point at a
          * project that exists but whose comp was renamed/deleted. Fall back inside that project. */
@@ -8631,6 +8637,9 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* The selection / drawer / timeline view are workspace state; without this they were
+         * lost when switching projects (only panel close saved them). */
+        this.savePanelLayout();
         this.save();
         this.flushSave();
     }
@@ -8650,9 +8659,60 @@ public class UICompositorPanel extends UIDashboardPanel
             this.dockSource.flush();
         }
 
-        if (this.project != null)
+        /* Content and view state live in the same file: refresh the view fields whenever the file
+         * is about to hit disk, otherwise a crash/undo after a selection change wrote the old
+         * selection back (the fields were only filled by savePanelLayout on close). */
+        this.writeEditorViewState();
+
+        if (this.project != null && !CompStore.saveChecked(this.project))
         {
-            CompStore.save(this.project);
+            /* Writing the file can fail (disk full, read-only, locked). "Saved" was previously
+             * printed unconditionally, so the user kept editing into a file that never changed. */
+            String error = CompStore.lastSaveError();
+            String message = "保存失败：" + (error == null || error.isBlank() ? "未知原因" : error);
+
+            dev.bbsae.BbsAeAddon.LOGGER.error(message);
+            this.notifyError(message);
+            this.setStatus(message);
+        }
+    }
+
+    /**
+     * Copies the live selection / drawer / page / timeline view into the project settings.
+     * Pure field assignment: callers decide when the project is written.
+     */
+    private void writeEditorViewState()
+    {
+        if (this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        CompProject.CompSettings settings = this.project.settings;
+
+        settings.keyframeDrawerOpen = this.keyframeOpenRequested;
+        settings.selectedLayerIds = String.join(",", this.selectedIds);
+        settings.selectedAudioId = this.selectedAudio != null && this.doc != null && this.doc.audio != null
+            && this.doc.audio.contains(this.selectedAudio) ? this.selectedAudio.id : "";
+        settings.inspectorPage = this.inspectorPage;
+        settings.leftPage = this.leftPage;
+
+        if (this.trackTimeline != null && this.trackTimeline.isViewReady())
+        {
+            double[] view = this.trackTimeline.viewState();
+
+            settings.timelineShift = view[0];
+            settings.timelineZoom = view[1];
+            settings.timelineScrollY = this.trackTimeline.scrollY();
+        }
+    }
+
+    /** Schedules a write when only workspace/view state changed. */
+    private void markViewStateDirty()
+    {
+        if (!this.restoring && this.project != null)
+        {
+            this.saveUiState();
         }
     }
 
@@ -9471,7 +9531,7 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Loads a named project and optionally enters camera preview (verification only). */
     public void debugOpenProject(String projectId, boolean cameraPreview)
     {
-        CompProject project = CompStore.load(projectId);
+        CompProject project = CompStore.loadOrNull(projectId, true);
 
         if (project == null || project.comps == null || project.comps.isEmpty())
         {
@@ -10201,7 +10261,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
-                CompProject debugProject = CompStore.load(projectId);
+                CompProject debugProject = CompStore.loadOrNull(projectId, true);
                 CompDocument debugComp = debugProject == null ? null : debugProject.getComp(compId);
                 float debugSeconds = debugComp == null ? 0F : debugComp.duration;
 
@@ -10510,6 +10570,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.refreshInspector();
         this.refreshSheets();
+        this.markViewStateDirty();
     }
 
     public void clearSelection()
@@ -11356,6 +11417,30 @@ public class UICompositorPanel extends UIDashboardPanel
         this.setKeyframeOpen(true);
     }
 
+    /** Left column page (effects / assets / presets), used by the tabs and view-state restore. */
+    private void applyLeftPage(int index, boolean animate)
+    {
+        this.leftPage = Math.max(0, Math.min(2, index));
+        this.effectLibrary.setVisible(this.leftPage == 0);
+        this.assetPanel.setVisible(this.leftPage == 1);
+        this.presetBrowser.setVisible(this.leftPage == 2);
+
+        if (animate)
+        {
+            this.beginPageMotion(this.leftPageMotion, "left:" + this.leftPage);
+        }
+
+        if (this.leftPage == 2)
+        {
+            this.presetBrowser.refresh();
+        }
+
+        if (animate)
+        {
+            this.markViewStateDirty();
+        }
+    }
+
     public void toggleKeyframes()
     {
         this.setKeyframeOpen(!this.keyframeOpen);
@@ -11370,6 +11455,7 @@ public class UICompositorPanel extends UIDashboardPanel
         boolean wasOpen = this.keyframeOpen;
 
         this.keyframeOpen = open;
+        this.keyframeOpenRequested = open;
         this.keyframeSlideNanos = System.nanoTime();
 
         /* Only the closed→open transition replays the slide. selectKeyframe()/navigateKeyframe()
@@ -11393,6 +11479,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.layoutKeyframeDrawer();
+        this.markViewStateDirty();
 
         if (open)
         {
@@ -11478,6 +11565,8 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             if (this.keyframeOpen)
             {
+                /* Only the presented state is hidden; keyframeOpenRequested keeps the user's
+                 * intent so a later save/layout does not forget that they wanted it open. */
                 this.keyframeOpen = false;
                 this.setStatus("时间轴太矮，关键帧抽屉已收起；拖高时间轴或退出聚焦后再打开");
             }
@@ -12488,16 +12577,30 @@ public class UICompositorPanel extends UIDashboardPanel
 
         try
         {
+            CompProject.CompSettings settings = this.dockSettings();
+            String layoutBefore = settings == null ? null : settings.dockLayout;
+            String hiddenBefore = settings == null ? null : settings.dockHiddenPanels;
+
             this.dockSource.flush();
 
-            CompProject.CompSettings settings = this.dockSettings();
+            settings = this.dockSettings();
 
             if (settings != null)
             {
                 settings.dockUnlocked = this.dock != null && !this.dock.isLocked();
             }
 
-            this.saveUiState();
+            /* Window resize re-runs setupFlex constantly; flushing unconditionally scheduled a
+             * full project serialisation (all keyframes) every throttle window even when the
+             * encoded layout was byte-identical. Only a real layout change is worth a write. */
+            boolean changed = settings != null
+                && (!java.util.Objects.equals(layoutBefore, settings.dockLayout)
+                    || !java.util.Objects.equals(hiddenBefore, settings.dockHiddenPanels));
+
+            if (changed)
+            {
+                this.saveUiState();
+            }
         }
         finally
         {
@@ -12848,6 +12951,10 @@ public class UICompositorPanel extends UIDashboardPanel
         this.project.settings.keyframeDrawerHeight = this.keyframeDrawerHeight;
         this.project.settings.cameraPreviewMode = this.cameraPreviewMode;
         this.project.settings.timelinePage = this.timelinePage;
+        /* Editor view state: reopening the project resumes the selection, drawer and timeline
+         * view instead of resetting the timeline to the full composition. */
+        this.writeEditorViewState();
+
         this.saveViewportPose();
 
         if (this.dockSource != null)
@@ -12940,6 +13047,90 @@ public class UICompositorPanel extends UIDashboardPanel
         this.inspector.column(CompUi.gap()).padding(CompUi.gap());
         this.applyLayout();
         this.applyTimelinePage();
+        this.restoreEditorViewState();
+    }
+
+    /**
+     * Restores the per-project editor view state written by {@link #savePanelLayout()}: layer /
+     * audio selection, inspector and left-column page, keyframe drawer, timeline zoom and scroll.
+     * Everything is resolved by id against the freshly bound document, so stale ids from a
+     * different project simply drop out.
+     */
+    private void restoreEditorViewState()
+    {
+        CompProject.CompSettings settings = this.project == null ? null : this.project.settings;
+
+        if (settings == null || this.doc == null)
+        {
+            return;
+        }
+
+        CompLayer primary = null;
+
+        if (settings.selectedLayerIds != null && !settings.selectedLayerIds.isBlank())
+        {
+            java.util.List<String> ids = new ArrayList<>();
+
+            for (String part : settings.selectedLayerIds.split(","))
+            {
+                CompLayer layer = this.doc.getLayer(part.trim());
+
+                if (layer != null)
+                {
+                    ids.add(layer.id);
+
+                    if (primary == null)
+                    {
+                        primary = layer;
+                    }
+                }
+            }
+
+            if (primary != null)
+            {
+                this.selectedIds.clear();
+                this.selectedIds.addAll(ids);
+                this.applySelection(primary);
+            }
+        }
+
+        this.selectedAudio = null;
+
+        if (this.doc.audio != null && settings.selectedAudioId != null && !settings.selectedAudioId.isBlank())
+        {
+            for (dev.bbsae.comp.CompAudio clip : this.doc.audio)
+            {
+                if (clip != null && settings.selectedAudioId.equals(clip.id))
+                {
+                    this.selectedAudio = clip;
+
+                    break;
+                }
+            }
+        }
+
+        this.setInspectorPage(Math.max(PAGE_EFFECTS, Math.min(PAGE_OUTPUT, settings.inspectorPage)));
+        this.leftTabs.select(Math.max(0, Math.min(2, settings.leftPage)));
+        this.applyLeftPage(settings.leftPage, false);
+
+        this.keyframeOpen = settings.keyframeDrawerOpen;
+        this.keyframeOpenRequested = settings.keyframeDrawerOpen;
+        this.keyframeDrawerSlide = this.keyframeOpen ? 1F : 0F;
+        this.keyframeSlideNanos = System.nanoTime();
+
+        if (this.trackTimeline != null)
+        {
+            if (settings.timelineZoom > 0D)
+            {
+                this.trackTimeline.restoreView(settings.timelineShift, settings.timelineZoom);
+            }
+
+            this.trackTimeline.restoreScrollY(settings.timelineScrollY);
+        }
+
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
     }
 
     /** A 4px splitter. Drag updates one of the three layout sizes and persists on release. */
@@ -17681,12 +17872,21 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void refreshSheets()
     {
+        /* BBS applies a cached KeyframeState by SHEET INDEX, so replaying it onto a different
+         * layer/comp would highlight (and let Delete remove) unrelated keys at the same indices.
+         * Only carry the selection when the sheet target itself did not change. */
+        String identity = (this.doc == null ? "" : this.doc.id) + "|"
+            + (this.selectedLayer == null ? "" : this.selectedLayer.id);
+        boolean sameTarget = identity.equals(this.lastSheetsIdentity);
+
+        this.lastSheetsIdentity = identity;
+
         /* The sheet list is rebuilt from scratch here, and BBS stores each sheet's selection on
          * the sheet object — a refresh therefore used to clear the dope-sheet multi-selection.
          * BBS offers cacheState()/applyState() for exactly this; selections are re-applied by
          * sheet id afterwards (channels that disappeared simply drop out). */
         mchorse.bbs_mod.ui.framework.elements.input.keyframes.KeyframeState selection =
-            this.keyframeEditor == null ? null : this.keyframeEditor.view.cacheState();
+            sameTarget && this.keyframeEditor != null ? this.keyframeEditor.view.cacheState() : null;
 
         this.keyframeEditor.view.removeAllSheets();
 
@@ -18385,6 +18585,112 @@ public class UICompositorPanel extends UIDashboardPanel
         this.queue.setList(this.project.renderQueue);
     }
 
+    /* ------------------------------------------------------------ render queue */
+
+    /**
+     * The queue renders AE/Ffmpeg frames, so it must obey the same encoder and world-layer rules
+     * as the export button. Without this, a BBS-mode project could be started from the queue and
+     * silently lose its live world (the exact "preview != export" trap the export page warns
+     * about) — and the risk acknowledgement was never asked.
+     */
+    private boolean canRunAeQueue()
+    {
+        if (this.project == null)
+        {
+            return false;
+        }
+
+        if (!this.usesAeEncoder())
+        {
+            this.setStatus("当前工程使用 BBS 原生编码器：渲染队列只服务 AE/Ffmpeg；请先在「输出」页切换编码器，或用 BBS 录像器（F6）导出");
+
+            return false;
+        }
+
+        if (this.project.needsBbsWorldRender())
+        {
+            this.setStatus("工程含 BBS 世界/回放实体层，AE 队列取不到实时世界：请用 BBS 录像器导出");
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private void startSelectedRenderJob()
+    {
+        if (this.project == null || this.selectedJob == null)
+        {
+            this.setStatus("先在列表里选一个任务");
+
+            return;
+        }
+
+        if (!this.canRunAeQueue())
+        {
+            return;
+        }
+
+        if (CompExportManager.isBusy())
+        {
+            this.setStatus("已有导出在运行：等它结束或先取消");
+
+            return;
+        }
+
+        CompRenderJob job = this.selectedJob;
+
+        if (job.status == CompRenderJob.RENDERING || job.status == CompRenderJob.ENCODING)
+        {
+            this.setStatus("该任务正在导出");
+
+            return;
+        }
+
+        if (!CompExportManager.start(this.project, job))
+        {
+            this.setStatus("无法开始导出：" + (job.message == null || job.message.isBlank()
+                ? "未知原因" : job.message));
+        }
+    }
+
+    private void startRenderQueue()
+    {
+        if (this.project == null || !this.canRunAeQueue())
+        {
+            return;
+        }
+
+        if (CompExportManager.isBusy())
+        {
+            this.setStatus("已有导出在运行：等它结束或先取消");
+
+            return;
+        }
+
+        boolean anyQueued = false;
+
+        for (CompRenderJob job : this.project.renderQueue)
+        {
+            if (job != null && job.status == CompRenderJob.QUEUED)
+            {
+                anyQueued = true;
+
+                break;
+            }
+        }
+
+        if (!anyQueued)
+        {
+            this.setStatus("队列里没有待渲染任务（先「添加任务」）");
+
+            return;
+        }
+
+        CompExportManager.startQueue(this.project);
+        this.setStatus("渲染队列已开始（串行执行）");
+    }
+
     private void addRenderJob()
     {
         if (this.project == null || this.doc == null)
@@ -18399,16 +18705,45 @@ public class UICompositorPanel extends UIDashboardPanel
             presetId = "review_h264";
         }
 
+        if (this.project.getPreset(presetId) == null)
+        {
+            this.setStatus("输出模块不存在：" + presetId + "（可能已被删除，请重新选择）");
+
+            return;
+        }
+
         CompRenderJob job = new CompRenderJob(
-            "job_" + (this.project.renderQueue.size() + 1),
+            this.nextRenderJobId(),
             this.project.id,
             this.doc.id,
             presetId
         );
 
         job.outputName = this.queueName.getText().isBlank() ? this.doc.id : this.queueName.getText();
-        job.rangeStart = (float) this.queueStart.getValue();
-        job.rangeEnd = (float) this.queueEnd.getValue();
+
+        float start = (float) this.queueStart.getValue();
+        float end = (float) this.queueEnd.getValue();
+
+        /* "结束 = -1" means the whole composition. Guard reversed/out-of-range values here:
+         * start > duration used to repeat the last frame and start >= end produced one frame,
+         * both silently. */
+        if (end <= 0F || end > this.doc.duration)
+        {
+            end = this.doc.duration;
+        }
+
+        start = Math.max(0F, Math.min(start, this.doc.duration));
+
+        if (end - start < 0.001F)
+        {
+            this.setStatus("开始/结束时间无效：结束需大于开始（结束 = -1 表示全片）");
+
+            return;
+        }
+
+        job.rangeStart = start;
+        job.rangeEnd = end;
+
         this.project.renderQueue.add(job);
         this.selectedJob = job;
         this.refreshQueue();
@@ -18417,6 +18752,30 @@ public class UICompositorPanel extends UIDashboardPanel
         CompOutputPreset preset = this.project.getPreset(presetId);
 
         this.setStatus("已添加任务：" + job.outputName + " · " + (preset == null ? presetId : preset.name));
+    }
+
+    /** Unique job id: "job_" + size+1 collided after removing a middle job, and UI motion channels
+     *  are keyed by id, so two live jobs shared hover/flash state. */
+    private String nextRenderJobId()
+    {
+        java.util.Set<String> used = new java.util.HashSet<>();
+
+        for (CompRenderJob existing : this.project.renderQueue)
+        {
+            if (existing != null && existing.id != null)
+            {
+                used.add(existing.id);
+            }
+        }
+
+        int candidate = used.size() + 1;
+
+        while (used.contains("job_" + candidate))
+        {
+            candidate += 1;
+        }
+
+        return "job_" + candidate;
     }
 
     /* Output-module naming, shared by the chooser, the queue rows and the buttons. */
@@ -18616,6 +18975,16 @@ public class UICompositorPanel extends UIDashboardPanel
         boolean ortho = settings.viewportOrtho;
         boolean collapse = settings.previewControlsCollapsed;
         boolean filterExpanded = settings.previewFilterExpanded;
+        /* Editor view state is workspace, not content: it must not leak into undo snapshots or
+         * undo would also restore "the selection I had back then". */
+        boolean drawerOpen = settings.keyframeDrawerOpen;
+        String selectedIds = settings.selectedLayerIds;
+        String selectedAudio = settings.selectedAudioId;
+        int inspectorPage = settings.inspectorPage;
+        int leftPage = settings.leftPage;
+        double timelineZoom = settings.timelineZoom;
+        double timelineShift = settings.timelineShift;
+        int timelineScroll = settings.timelineScrollY;
 
         try
         {
@@ -18641,6 +19010,14 @@ public class UICompositorPanel extends UIDashboardPanel
             settings.viewportOrtho = false;
             settings.previewControlsCollapsed = false;
             settings.previewFilterExpanded = false;
+            settings.keyframeDrawerOpen = false;
+            settings.selectedLayerIds = "";
+            settings.selectedAudioId = "";
+            settings.inspectorPage = 0;
+            settings.leftPage = 0;
+            settings.timelineZoom = 0D;
+            settings.timelineShift = 0D;
+            settings.timelineScrollY = 0;
 
             return CompStore.snapshot(project);
         }
@@ -18668,6 +19045,14 @@ public class UICompositorPanel extends UIDashboardPanel
             settings.viewportOrtho = ortho;
             settings.previewControlsCollapsed = collapse;
             settings.previewFilterExpanded = filterExpanded;
+            settings.keyframeDrawerOpen = drawerOpen;
+            settings.selectedLayerIds = selectedIds;
+            settings.selectedAudioId = selectedAudio;
+            settings.inspectorPage = inspectorPage;
+            settings.leftPage = leftPage;
+            settings.timelineZoom = timelineZoom;
+            settings.timelineShift = timelineShift;
+            settings.timelineScrollY = timelineScroll;
         }
     }
 
@@ -18701,6 +19086,14 @@ public class UICompositorPanel extends UIDashboardPanel
         to.viewportOrtho = from.viewportOrtho;
         to.previewControlsCollapsed = from.previewControlsCollapsed;
         to.previewFilterExpanded = from.previewFilterExpanded;
+        to.keyframeDrawerOpen = from.keyframeDrawerOpen;
+        to.selectedLayerIds = from.selectedLayerIds;
+        to.selectedAudioId = from.selectedAudioId;
+        to.inspectorPage = from.inspectorPage;
+        to.leftPage = from.leftPage;
+        to.timelineZoom = from.timelineZoom;
+        to.timelineShift = from.timelineShift;
+        to.timelineScrollY = from.timelineScrollY;
     }
 
     private void captureSnapshot()
@@ -18779,8 +19172,33 @@ public class UICompositorPanel extends UIDashboardPanel
         this.redoStack.clear();
     }
 
+    /**
+     * Undo/redo replaces the whole project object graph. Doing that while a drag is still
+     * mutating the old graph left the drag writing into orphan objects ("the drag did nothing" /
+     * values snapping back), so gestures win and the shortcut is ignored until the mouse is up.
+     */
+    private boolean gestureBlocksHistory()
+    {
+        boolean active = mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0)
+            || (this.trackTimeline != null && this.trackTimeline.isInteracting())
+            || (this.curveEditor != null && this.curveEditor.isInteracting())
+            || this.isPanelResizing();
+
+        if (active)
+        {
+            this.setStatus("正在拖动：先松开鼠标再撤销/重做");
+        }
+
+        return active;
+    }
+
     public void undo()
     {
+        if (this.gestureBlocksHistory())
+        {
+            return;
+        }
+
         if (this.undoStack.isEmpty())
         {
             this.setStatus("没有可撤销的操作");
@@ -18798,6 +19216,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void redo()
     {
+        if (this.gestureBlocksHistory())
+        {
+            return;
+        }
+
         if (this.redoStack.isEmpty())
         {
             this.setStatus("没有可重做的操作");
@@ -18831,6 +19254,9 @@ public class UICompositorPanel extends UIDashboardPanel
         String restoreAudioId = this.selectedAudio == null ? null : this.selectedAudio.id;
         mchorse.bbs_mod.ui.framework.elements.input.keyframes.KeyframeState restoreDrawer =
             this.keyframeEditor == null ? null : this.keyframeEditor.view.cacheState();
+        /* Ancestor breadcrumb before the object graph is replaced; entries are re-resolved on the
+         * restored graph below so undo inside a precomp does not trap the user in it. */
+        java.util.List<PrecompReturn> restorePrecompPath = new ArrayList<>(this.precompStack);
 
         this.restoring = true;
 
@@ -18921,14 +19347,27 @@ public class UICompositorPanel extends UIDashboardPanel
             this.primedHeight = this.keyframeEditor == null ? -1 : this.keyframeEditor.area.h;
             this.resetTimelineView = false;
 
-            /* The restored project is a new object graph. The old precomp stack pointed at
-             * documents that no longer belong to it, so restoring while inside a nested comp
-             * would edit orphan objects. Keep the current comp, drop the stale breadcrumb. */
+            /* The restored project is a new object graph. Rebuild the precomp breadcrumb by id
+             * instead of clearing it: clearing while `doc` is the nested comp left the user
+             * inside a precomp with no return button, and Esc has nothing to pop — Ctrl+Z trapped
+             * the user there until the panel was closed. */
             this.precompStack.clear();
+
+            for (int i = restorePrecompPath.size() - 1; i >= 0; i--)
+            {
+                PrecompReturn state = restorePrecompPath.get(i);
+                CompDocument ancestor = restored.getComp(state.doc.id);
+
+                if (ancestor != null)
+                {
+                    this.precompStack.push(new PrecompReturn(ancestor, state.layerId, state.time,
+                        state.viewShift, state.viewZoom));
+                }
+            }
 
             if (this.precompBack != null)
             {
-                this.precompBack.setVisible(false);
+                this.precompBack.setVisible(!this.precompStack.isEmpty());
             }
 
             if (this.keyframeEditor != null)

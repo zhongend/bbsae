@@ -94,6 +94,11 @@ public class UICompTrackTimeline extends UIElement
     private int dragStartY;
     private int dragReorderTarget = -1;
     private boolean dragCheckpoint;
+    /** Snap targets are collected once per gesture, not once per drag frame. */
+    private List<Float> dragSnapPoints;
+    /** Multi-selection MOVE drag: every selected, unlocked layer travels by one delta. */
+    private final List<CompLayer> dragLayers = new ArrayList<>();
+    private final Map<String, float[]> dragGroup = new HashMap<>();
     private float dragIn;
     private float dragOut;
     private float dragOrigStartTime;
@@ -415,6 +420,30 @@ public class UICompTrackTimeline extends UIElement
         this.fitMode = false;
         this.viewReady = true;
         this.xAxis.set(shift, zoom);
+    }
+
+    public int scrollY()
+    {
+        return this.scrollY;
+    }
+
+    /** False until the lane has been laid out at least once (view/scroll would be defaults). */
+    public boolean isViewReady()
+    {
+        return this.viewReady && this.laneArea.w > 0;
+    }
+
+    /** Restores the vertical track scroll (paired with {@link #restoreView(double, double)}). */
+    public void restoreScrollY(int scrollY)
+    {
+        this.scrollY = Math.max(0, scrollY);
+
+        /* At load time the lane has no height yet; clamping here would silently zero the saved
+         * scroll. It is clamped by the next layout/deadline pass instead. */
+        if (this.laneArea.h > 0)
+        {
+            this.clampScroll();
+        }
     }
 
     private void ensureView()
@@ -1649,7 +1678,17 @@ public class UICompTrackTimeline extends UIElement
 
         CompLayer layer = rows.get(row);
 
-        this.selectWithModifiers(layer);
+        /* Clicking a member of a multi-selection must not collapse it before a drag starts;
+         * otherwise "select three layers, drag one" only moves the primary (the child windows
+         * around the primary were being discarded by the plain click). */
+        if (this.panel.isLayerSelected(layer) && this.panel.getSelectionCount() > 1)
+        {
+            this.panel.setPrimarySelection(layer);
+        }
+        else
+        {
+            this.selectWithModifiers(layer);
+        }
 
         int start = this.toX(layer.in);
         int finish = this.toX(layer.out);
@@ -1709,6 +1748,30 @@ public class UICompTrackTimeline extends UIElement
         this.dragOrigStartTime = layer.startTime;
         this.dragOrigFrame = this.panel.getFrame();
         this.dragCheckpoint = false;
+        this.dragSnapPoints = null;
+
+        /* Snapshot every selected, unlocked layer: a MOVE drag applies the same delta to all of
+         * them, bounded so none leaves the composition. */
+        this.dragLayers.clear();
+        this.dragGroup.clear();
+
+        if (this.panel.isLayerSelected(layer) && this.panel.getSelectionCount() > 1)
+        {
+            for (CompLayer selected : this.panel.getSelectedLayers())
+            {
+                if (selected != null && !selected.locked)
+                {
+                    this.dragLayers.add(selected);
+                    this.dragGroup.put(selected.id, new float[] {selected.in, selected.out, selected.startTime});
+                }
+            }
+        }
+
+        if (this.dragLayers.isEmpty())
+        {
+            this.dragLayers.add(layer);
+            this.dragGroup.put(layer.id, new float[] {layer.in, layer.out, layer.startTime});
+        }
 
         if (context.mouseX - start <= EDGE)
         {
@@ -1757,6 +1820,7 @@ public class UICompTrackTimeline extends UIElement
         this.dragAudioRawDuration = clip.duration;
         this.dragOrigFrame = this.panel.getFrame();
         this.dragCheckpoint = false;
+        this.dragSnapPoints = null;
 
         if (context.mouseX - start <= EDGE)
         {
@@ -1827,6 +1891,7 @@ public class UICompTrackTimeline extends UIElement
 
         this.dragOrigFrame = this.panel.getFrame();
         this.dragCheckpoint = false;
+        this.dragSnapPoints = null;
 
         if (doc != null && (doc.workAreaIn > 0.0001F || doc.workAreaOut < doc.duration - 0.0001F))
         {
@@ -1949,7 +2014,15 @@ public class UICompTrackTimeline extends UIElement
         float fps = this.fps();
         float duration = this.duration();
         float frame = 1F / fps;
-        List<Float> snapPoints = this.snapPoints(layer);
+
+        /* Collecting snap targets copies every layer every frame while dragging; the target set
+         * cannot change during a gesture, so it is collected once on the first drag frame. */
+        if (this.dragSnapPoints == null)
+        {
+            this.dragSnapPoints = this.snapPoints(layer);
+        }
+
+        List<Float> snapPoints = this.dragSnapPoints;
         float threshold = 8F / (float) Math.max(0.0001D, this.xAxis.getZoom());
         boolean snap = this.snapping && !Window.isShiftPressed();
 
@@ -1978,7 +2051,64 @@ public class UICompTrackTimeline extends UIElement
             }
 
             newIn = this.clamp(newIn, 0F, Math.max(0F, duration - length));
-            layer.moveTo(newIn, fps, duration);
+
+            if (this.dragLayers.size() > 1)
+            {
+                /* Group move: one delta for the whole selection, clamped so every member stays
+                 * inside [0, duration] (the tightest member wins). Snapping nudges the group so
+                 * the primary bar's edge lands on the guide. */
+                float minDelta = -Float.MAX_VALUE;
+                float maxDelta = Float.MAX_VALUE;
+
+                for (CompLayer moving : this.dragLayers)
+                {
+                    float[] origin = this.dragGroup.get(moving.id);
+
+                    if (origin == null)
+                    {
+                        continue;
+                    }
+
+                    float memberLength = Math.max(frame, origin[1] - origin[0]);
+
+                    minDelta = Math.max(minDelta, -origin[0]);
+                    maxDelta = Math.min(maxDelta, duration - memberLength - origin[0]);
+                }
+
+                float groupDelta = this.clamp(this.quantize(delta), minDelta, maxDelta);
+
+                if (snap && !this.dragLayers.isEmpty())
+                {
+                    float[] primaryOrigin = this.dragGroup.get(this.dragLayers.get(0).id);
+
+                    if (primaryOrigin != null)
+                    {
+                        float candidate = primaryOrigin[0] + groupDelta;
+                        float snapped = this.snapValue(candidate, snapPoints, threshold);
+                        float adjust = snapped - candidate;
+
+                        if (Math.abs(adjust) > 0.0001F)
+                        {
+                            groupDelta = this.clamp(this.quantize(groupDelta + adjust), minDelta, maxDelta);
+                            this.snapGuide = primaryOrigin[0] + groupDelta;
+                        }
+                    }
+                }
+
+                for (CompLayer moving : this.dragLayers)
+                {
+                    float[] origin = this.dragGroup.get(moving.id);
+
+                    if (origin != null)
+                    {
+                        moving.moveTo(origin[0] + groupDelta, fps, duration);
+                    }
+                }
+            }
+            else
+            {
+                layer.moveTo(newIn, fps, duration);
+            }
         }
         else if (this.dragMode == MODE_TRIM_IN)
         {
@@ -2039,6 +2169,9 @@ public class UICompTrackTimeline extends UIElement
         this.dragAudio = null;
         this.dragReorderTarget = -1;
         this.dragCheckpoint = false;
+        this.dragSnapPoints = null;
+        this.dragLayers.clear();
+        this.dragGroup.clear();
         this.snapGuide = Float.NaN;
 
         if (edited)
@@ -2085,24 +2218,29 @@ public class UICompTrackTimeline extends UIElement
 
         if (layerDrag)
         {
-            CompLayer layer = this.findLayer(this.dragId);
-
-            if (layer != null)
+            /* moveTo() shifted keyframes and markers by the cumulative in-point delta; undoing
+             * only in/out would leave the animation at the dragged position (silently saved on
+             * the next edit). Shift them back by exactly the distance each bar travelled. */
+            for (CompLayer moving : this.dragLayers)
             {
-                /* moveTo() shifted keyframes and markers by the cumulative in-point delta; undoing
-                 * only in/out would leave the animation at the dragged position (silently saved on
-                 * the next edit). Shift them back by exactly the distance the bar travelled. */
-                float moved = layer.in - this.dragIn;
+                float[] origin = this.dragGroup.get(moving.id);
+
+                if (origin == null)
+                {
+                    continue;
+                }
+
+                float moved = moving.in - origin[0];
 
                 if (Math.abs(moved) > 0.00001F)
                 {
-                    layer.shiftKeyframes(moved * this.fps());
-                    layer.shiftMarkers(moved);
+                    moving.shiftKeyframes(moved * this.fps());
+                    moving.shiftMarkers(moved);
                 }
 
-                layer.in = this.dragIn;
-                layer.out = this.dragOut;
-                layer.startTime = this.dragOrigStartTime;
+                moving.in = origin[0];
+                moving.out = origin[1];
+                moving.startTime = origin[2];
             }
         }
 
@@ -2133,6 +2271,9 @@ public class UICompTrackTimeline extends UIElement
         this.dragAudio = null;
         this.dragReorderTarget = -1;
         this.dragCheckpoint = false;
+        this.dragSnapPoints = null;
+        this.dragLayers.clear();
+        this.dragGroup.clear();
         this.snapGuide = Float.NaN;
         this.lastClickRow = -1;
         this.lastLaneRow = -1;

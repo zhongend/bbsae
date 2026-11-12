@@ -1266,7 +1266,10 @@ public final class EffectRenderer
      */
     public static boolean isCompositionSpace(String type)
     {
-        return isReplication(type);
+        /* A shape field draws shapes across the whole composition (the reference entry is in the
+         * repeat category): it must write outside the layer rectangle, so it runs composition-space
+         * like the replicators even though it is not intercepted by {@link #replicate}. */
+        return isReplication(type) || "am_shape_field".equals(type);
     }
 
     /**

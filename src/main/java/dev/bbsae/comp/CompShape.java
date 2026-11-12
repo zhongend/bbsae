@@ -93,6 +93,13 @@ public class CompShape
      */
     public boolean closed = true;
 
+    /**
+     * AE's RotoBezier editing mode: see {@link CompMask#rotoBezier}. The editor derives the tangents
+     * from the neighbours and stores them in the normal in/out fields, so rendering (and every
+     * existing cache signature) is unaffected. Defaults to false for old projects.
+     */
+    public boolean rotoBezier = false;
+
     public CompShape()
     {}
 
@@ -238,6 +245,7 @@ public class CompShape
         copy.repeaterRotation = this.repeaterRotation;
         copy.repeaterOpacity = this.repeaterOpacity;
         copy.closed = this.closed;
+        copy.rotoBezier = this.rotoBezier;
         copy.points = new ArrayList<>();
         copy.corners = this.corners == null ? new ArrayList<>() : new ArrayList<>(this.corners);
 

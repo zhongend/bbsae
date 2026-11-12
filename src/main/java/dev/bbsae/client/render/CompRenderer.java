@@ -497,6 +497,18 @@ public final class CompRenderer
         depthDegradedLogged = false;
     }
 
+    /**
+     * Drops every frame cached under the old per-pixel-depth mode. The render gate reads the mode
+     * every frame, but a cache hit never reaches the gate — without this, flipping the setting
+     * while the playhead is parked kept showing the previous mode's frame.
+     */
+    public static void invalidateDepthModeCaches()
+    {
+        CompRenderCache.clear();
+        CompFrameServer.invalidate();
+        CompPrecache.clearAll();
+    }
+
     private static void noteDepthAvailable()
     {
         depthDegraded = false;
@@ -741,6 +753,29 @@ public final class CompRenderer
         return exportDepth > 0;
     }
 
+    /* --- per-pixel depth switch: OFF / ON / AUTO -------------------------
+     * CompPrefs.perPixelDepthMode is the authoritative switch:
+     *   0 = off, 1 = on, 2 = auto.
+     * The legacy perPixelDepth boolean stays readable as a migration path: with mode 0 a true
+     * boolean means ON, so preference files written before the tri-state existed keep working.
+     *
+     * AUTO only enables the path when whole-layer painter order cannot represent the frame: at
+     * least two perspective layers whose projected bounds overlap and whose planes are not
+     * parallel. Parallel planes (the common AE 3D frame, including the ____bug project) are
+     * already exact with painter order, so AUTO keeps them on the cheap path instead of paying
+     * three extra full-screen passes per 3D layer for no visible change.
+     *
+     * -Dbbsae.debugForceDepthPlane still forces the path ON for any mode; -Dbbsae.debugNoDepthPlane
+     * remains the per-layer kill switch.
+     */
+    static final int DEPTH_MODE_OFF = 0;
+    static final int DEPTH_MODE_ON = 1;
+    static final int DEPTH_MODE_AUTO = 2;
+
+    /** Last switch state seen from the preference store, for cache invalidation on a UI toggle. */
+    private static int lastDepthMode = Integer.MIN_VALUE;
+    private static boolean lastDepthLegacy;
+
     /**
      * Per-pixel depth gate, shared by the preview and the export path.
      *
@@ -752,30 +787,218 @@ public final class CompRenderer
      */
     static boolean perPixelDepthFrame(CompRenderContext context)
     {
-        return CompScene.spatial(context) && perPixelDepthRequested();
+        return CompScene.spatial(context) && perPixelDepthRequested(context);
+    }
+
+    /** Testable frame gate: explicit mode + legacy boolean, no preference store involved. */
+    static boolean perPixelDepthFrame(CompRenderContext context, int mode, boolean legacyBoolean)
+    {
+        return CompScene.spatial(context) && perPixelDepthRequested(context, mode, legacyBoolean);
+    }
+
+    /** Production gate: reads the preference (headless-safe) and applies the developer override. */
+    static boolean perPixelDepthRequested(CompRenderContext context)
+    {
+        int mode;
+        boolean legacy;
+
+        try
+        {
+            CompPrefs.Data prefs = CompPrefs.get();
+
+            mode = prefs.perPixelDepthMode;
+            legacy = prefs.perPixelDepth;
+        }
+        catch (RuntimeException | LinkageError ignored)
+        {
+            /* Headless unit test / early init: the preference store needs FabricLoader. */
+            mode = DEPTH_MODE_OFF;
+            legacy = false;
+        }
+
+        if (mode != lastDepthMode || legacy != lastDepthLegacy)
+        {
+            boolean known = lastDepthMode != Integer.MIN_VALUE;
+
+            lastDepthMode = mode;
+            lastDepthLegacy = legacy;
+
+            if (known)
+            {
+                /* The depth switch is a display preference, not document content, so it is not in
+                 * CompRenderCache's document fingerprint. A parked playhead could keep serving the
+                 * frame rendered with the old mode after the user toggles it; drop the frame caches
+                 * so the next render uses the new gate. (The cache-hit path returns before this
+                 * runs; see the route note in docs/DEPTH-GHOST-FIX.zh.md — the UI should also mix
+                 * the mode into the signature via the documented patch, or call
+                 * CompRenderCache.clear() itself when it writes the preference.) */
+                CompRenderCache.clear();
+                CompFrameServer.invalidate();
+                /* Pre-render textures may be queued for this frame's UI blit; clearing them here
+                 * can delete a texture the batcher still references. The UI code that writes the
+                 * preference is the safe point for CompPrecache.clearAll() — documented as the
+                 * hook in docs/DEPTH-GHOST-FIX.zh.md. */
+            }
+        }
+
+        return perPixelDepthRequested(context, mode, legacy);
     }
 
     /**
-     * The preference plus its developer override. Kept independent of preview/scale/stage so the
-     * preview and the export agree, and tolerant of the headless test environment where the
-     * FabricLoader-backed preference store is unreachable.
+     * The tri-state decision without touching the preference store.
+     *
+     * <p>This is the whole switch: the editor, the AE frame server and the encoder all call it, so
+     * the three states cannot disagree between preview and export. Headless tests call this
+     * variant directly because the preference store needs FabricLoader.</p>
      */
-    static boolean perPixelDepthRequested()
+    static boolean perPixelDepthRequested(CompRenderContext context, int mode, boolean legacyBoolean)
     {
         if (Boolean.getBoolean("bbsae.debugForceDepthPlane"))
         {
             return true;
         }
 
-        try
+        if (mode == DEPTH_MODE_AUTO)
         {
-            return CompPrefs.get().perPixelDepth;
+            return needsPerPixelDepthAuto(context);
         }
-        catch (RuntimeException | LinkageError ignored)
+
+        if (mode == DEPTH_MODE_ON)
         {
-            /* Headless unit test / early init: the preference store needs FabricLoader. */
+            return true;
+        }
+
+        /* Mode 0 (or an unknown value, treated as off). A legacy "true" boolean is the migration
+         * path of preference files written before the tri-state existed. */
+        return mode == DEPTH_MODE_OFF && legacyBoolean;
+    }
+
+    /**
+     * AUTO predicate: does this frame actually need per-pixel depth?
+     *
+     * <p>Whole-layer painter order sorts by plane depth, which is exact for parallel planes. It
+     * fails only where two non-parallel layers overlap on screen, so that is the only case AUTO
+     * enables the depth path. The decision uses the same functions the renderer uses for the real
+     * routing ({@link CompScene#usePerspective}, {@link CompScene#world},
+     * {@link CompCamera#project}), so editor/export geometry cannot disagree; the preview/scale
+     * flags never enter it.</p>
+     */
+    static boolean needsPerPixelDepthAuto(CompRenderContext context)
+    {
+        if (context == null || context.comp == null || context.comp.layers == null)
+        {
             return false;
         }
+
+        CompCamera camera = CompScene.camera(context);
+        List<CompLayer> perspective = new ArrayList<>();
+
+        for (CompLayer layer : context.comp.layers)
+        {
+            if (layer == null || !layer.visible || !layer.activeAt(context.time)
+                || context.comp.isSoloedOut(layer) || !CompScene.usePerspective(context, layer))
+            {
+                continue;
+            }
+
+            /* Only layers with pixels matter (cameras/adjustment layers never project). */
+            if ("camera".equals(layer.type) || "adjustment".equals(layer.type))
+            {
+                continue;
+            }
+
+            perspective.add(layer);
+        }
+
+        if (perspective.size() < 2)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < perspective.size(); i++)
+        {
+            for (int j = i + 1; j < perspective.size(); j++)
+            {
+                if (!planesAreParallel(context, perspective.get(i), perspective.get(j))
+                    && projectedBoundsOverlap(context, camera, perspective.get(i), perspective.get(j)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /** Parallel (or anti-parallel) planes can be ordered exactly as whole layers. */
+    private static boolean planesAreParallel(CompRenderContext context, CompLayer a, CompLayer b)
+    {
+        Vector3f normalA = planeNormal(context, a);
+        Vector3f normalB = planeNormal(context, b);
+
+        return Math.abs(normalA.dot(normalB)) >= 1F - 0.0005F;
+    }
+
+    private static Vector3f planeNormal(CompRenderContext context, CompLayer layer)
+    {
+        Vector3f normal = new Vector3f(0F, 0F, 1F);
+
+        CompScene.world(context, layer).transformDirection(normal);
+
+        return normal.normalize();
+    }
+
+    private static boolean projectedBoundsOverlap(CompRenderContext context, CompCamera camera,
+                                                  CompLayer a, CompLayer b)
+    {
+        float[] boundsA = projectedBounds(context, camera, a);
+        float[] boundsB = projectedBounds(context, camera, b);
+
+        if (boundsA == null || boundsB == null)
+        {
+            return false;
+        }
+
+        return boundsA[0] <= boundsB[2] && boundsB[0] <= boundsA[2]
+            && boundsA[1] <= boundsB[3] && boundsB[1] <= boundsA[3];
+    }
+
+    /** Projected screen AABB {minX, minY, maxX, maxY} of the layer's content rectangle, or null. */
+    private static float[] projectedBounds(CompRenderContext context, CompCamera camera, CompLayer layer)
+    {
+        float width = Math.max(1F, layer.width);
+        float height = Math.max(1F, layer.height);
+        float x = -width * layer.anchorX;
+        float y = -height * layer.anchorY;
+        Matrix4f world = CompScene.world(context, layer);
+        float minX = Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE;
+        float maxY = -Float.MAX_VALUE;
+
+        for (int corner = 0; corner < 4; corner++)
+        {
+            Vector3f point = new Vector3f(
+                (corner == 0 || corner == 3) ? x : x + width,
+                (corner == 0 || corner == 1) ? y : y + height,
+                0F);
+
+            world.transformPosition(point);
+
+            Vector2f projected = camera.project(point, context.width, context.height);
+
+            if (projected == null)
+            {
+                return null;
+            }
+
+            minX = Math.min(minX, projected.x);
+            minY = Math.min(minY, projected.y);
+            maxX = Math.max(maxX, projected.x);
+            maxY = Math.max(maxY, projected.y);
+        }
+
+        return new float[] {minX, minY, maxX, maxY};
     }
 
     /**
@@ -1961,6 +2184,9 @@ public final class CompRenderer
     {
         LayerContentRenderer.clearFonts();
         FontCoverage.clear();
+        /* Frame-server FBOs/textures belong to the caches being dropped; leaving them alive kept
+         * dangling GL objects after a resource reload or shutdown. */
+        CompFrameServer.invalidate();
         /* The viewport's source textures own FBOs from the pool; return them before the pool is
          * wiped, otherwise a later acquire can hand out a deleted texture. */
         CompLayerSourceCache.clear();

@@ -141,6 +141,10 @@ public final class CompRenderCache
         h = mix(h, frameWidth);
         h = mix(h, frameHeight);
         h = mix(h, cameraOverlays ? 5 : 6);
+        /* The per-pixel-depth gate changes the frame independently of the layer data. Without
+         * this, toggling depth while the playhead is parked kept serving the old cached frame. */
+        h = mix(h, dev.bbsae.client.ui.CompPrefs.get().perPixelDepthMode);
+        h = mix(h, dev.bbsae.client.ui.CompPrefs.get().perPixelDepth ? 1 : 0);
         h = mix(h, doc.activeCameraId == null ? 0 : doc.activeCameraId.hashCode());
 
         if (project != null && project.settings != null)

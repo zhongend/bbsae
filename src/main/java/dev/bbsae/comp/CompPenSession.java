@@ -53,6 +53,16 @@ public final class CompPenSession
             return false;
         }
 
+        /** RotoBezier editing mode: handles are derived from neighbours instead of authored. */
+        default boolean rotoBezier()
+        {
+            return false;
+        }
+
+        default void setRotoBezier(boolean rotoBezier)
+        {
+        }
+
         /**
          * True when any point channel of this path already has keyframes. Such a path needs a
          * vertex-count remap before a point can be added or removed: every key of the six
@@ -258,6 +268,95 @@ public final class CompPenSession
     public float tick()
     {
         return this.tick;
+    }
+
+    /**
+     * AE's "Preserve Constant Vertex and Feather Point Count" preference. When off, a vertex-count
+     * change cannot be remapped to every keyframe (the per-channel model has one global vertex
+     * count), so structural edits on an <b>animated</b> path are refused instead of silently
+     * corrupting the other keys. Unanimated paths are unaffected either way.
+     */
+    private boolean keepVertexCount = true;
+
+    public void setKeepVertexCount(boolean keep)
+    {
+        this.keepVertexCount = keep;
+    }
+
+    public boolean keepVertexCount()
+    {
+        return this.keepVertexCount;
+    }
+
+    /** Gate for add/remove-point commands; returns false (and explains why) when unsafe. */
+    private boolean canChangeVertexCount()
+    {
+        if (this.target == null || !this.target.animated() || this.keepVertexCount)
+        {
+            return true;
+        }
+
+        this.listener.status("已关闭「保持顶点数」：动画路径不能安全增删点；请在设置中开启，或先删除关键帧");
+
+        return false;
+    }
+
+    /** True when the edited path is in AE's RotoBezier mode (handles derived from neighbours). */
+    public boolean rotoBezier()
+    {
+        return this.target != null && this.target.rotoBezier();
+    }
+
+    /**
+     * Turns AE's RotoBezier editing mode on/off.
+     *
+     * <p>RotoBezier is implemented as an <b>editing</b> behavior, not a renderer feature: enabling
+     * it derives every point's in/out handles from its neighbours (the 1/6 rule used by Convert
+     * Vertex) and keeps re-deriving them after vertex moves, inserts and deletes. The derived
+     * tangents are written into the normal handle fields, so the rasterizers, cache signatures and
+     * project format keep working unchanged. On an animated path the derived handles are written at
+     * the playhead (per-key auto-tangents would need a full channel remap — documented limitation).</p>
+     */
+    public boolean setRotoBezier(boolean rotoBezier)
+    {
+        if (this.target == null || this.target.rotoBezier() == rotoBezier)
+        {
+            return false;
+        }
+
+        this.listener.beginAction(rotoBezier ? "钢笔：开启 RotoBezier" : "钢笔：关闭 RotoBezier");
+        this.target.setRotoBezier(rotoBezier);
+
+        if (rotoBezier)
+        {
+            this.recomputeRotoTangents();
+        }
+
+        this.listener.changed();
+        this.listener.status(rotoBezier
+            ? "RotoBezier：切线由相邻锚点自动派生（拖动锚点保持平滑）"
+            : "RotoBezier 已关闭：切线恢复手动控制");
+
+        return true;
+    }
+
+    /** Derives every handle from the neighbours (1/6 rule); no-op when RotoBezier is off. */
+    private void recomputeRotoTangents()
+    {
+        if (this.target == null || !this.target.rotoBezier())
+        {
+            return;
+        }
+
+        int count = this.target.count();
+
+        for (int i = 0; i < count; i++)
+        {
+            float[] tangents = CompPathGeometry.smoothTangents(this.target, i);
+
+            this.target.setHandle(i, false, tangents[0], tangents[1]);
+            this.target.setHandle(i, true, tangents[2], tangents[3]);
+        }
     }
 
     /* ------------------------------------------------------------------ state queries */
@@ -758,6 +857,11 @@ public final class CompPenSession
             y = constrained[1];
         }
 
+        if (!this.canChangeVertexCount())
+        {
+            return PRESS_CONSUMED;
+        }
+
         if (this.target.animated())
         {
             /* A path with keyframed point channels gets a de Casteljau vertex inserted into every
@@ -780,6 +884,7 @@ public final class CompPenSession
             this.target.insert(count, x, y, 0F, 0F, 0F, 0F);
         }
 
+        this.recomputeRotoTangents();
         this.selection.clear();
         this.selection.add(count);
         this.drag = Drag.NEW_TANGENT;
@@ -931,8 +1036,21 @@ public final class CompPenSession
 
         int count = this.target.count();
 
+        /* RotoBezier owns the handles: dragging one would be overwritten on the next vertex edit,
+         * so the gesture is swallowed instead of writing a tangent that immediately disappears. */
+        if (this.target.rotoBezier() && (this.drag == Drag.IN_HANDLE || this.drag == Drag.OUT_HANDLE))
+        {
+            return true;
+        }
+
         if (this.drag == Drag.NEW_TANGENT)
         {
+            if (this.target.rotoBezier())
+            {
+                /* The new point's handles come from the neighbours; the tangent drag is ignored. */
+                return true;
+            }
+
             if (this.dragPoint < 0 || this.dragPoint >= count || !this.dragMoved)
             {
                 return true;
@@ -1076,11 +1194,25 @@ public final class CompPenSession
             return false;
         }
 
+        Drag released = this.drag;
+
         this.drag = Drag.NONE;
         this.dragPoint = -1;
         this.dragMoved = false;
         this.dragIndices = new int[0];
         this.dragSnapshot = new float[0];
+
+        /* RotoBezier derives handles from the final vertex positions; doing it on release (instead
+         * of every drag event) keeps a drag from writing a keyframe for every handle component on
+         * every mouse move. */
+        if (released == Drag.VERTEX || released == Drag.NEW_TANGENT)
+        {
+            if (this.target != null && this.target.rotoBezier())
+            {
+                this.recomputeRotoTangents();
+                this.listener.changed();
+            }
+        }
 
         return true;
     }
@@ -1097,6 +1229,7 @@ public final class CompPenSession
 
         this.listener.beginAction("钢笔：闭合路径");
         this.target.setClosed(true);
+        this.recomputeRotoTangents();
         this.listener.closedChanged();
         this.listener.changed();
 
@@ -1122,6 +1255,7 @@ public final class CompPenSession
 
         this.listener.beginAction("钢笔：断开路径");
         this.target.setClosed(false);
+        this.recomputeRotoTangents();
         this.listener.closedChanged();
         this.listener.changed();
         this.listener.status("路径已断开（开放路径不参与蒙版遮罩）");
@@ -1190,6 +1324,7 @@ public final class CompPenSession
         }
 
         this.target.rotatePoints(index);
+        this.recomputeRotoTangents();
 
         this.selection.clear();
         this.selection.add(0);
@@ -1211,6 +1346,11 @@ public final class CompPenSession
             return false;
         }
 
+        if (!this.canChangeVertexCount())
+        {
+            return false;
+        }
+
         if (this.target.animated())
         {
             Animation animation = this.target.animation();
@@ -1222,7 +1362,14 @@ public final class CompPenSession
                 return false;
             }
 
-            return this.remapInsertOnSegment(animation, segment, t);
+            if (!this.remapInsertOnSegment(animation, segment, t))
+            {
+                return false;
+            }
+
+            this.recomputeRotoTangents();
+
+            return true;
         }
 
         int oldCount = this.target.count();
@@ -1240,6 +1387,7 @@ public final class CompPenSession
         int end = segment + 1 >= oldCount ? 0 : segment + 2;
 
         this.target.setHandle(end, false, split[8], split[9]);
+        this.recomputeRotoTangents();
         this.selection.clear();
         this.selection.add(segment + 1);
         this.anchorPoint = this.target.count() - 1;
@@ -1260,6 +1408,11 @@ public final class CompPenSession
     public boolean appendPoint(float localX, float localY)
     {
         if (this.target == null)
+        {
+            return false;
+        }
+
+        if (!this.canChangeVertexCount())
         {
             return false;
         }
@@ -1286,6 +1439,7 @@ public final class CompPenSession
             this.target.insert(index, localX, localY, 0F, 0F, 0F, 0F);
         }
 
+        this.recomputeRotoTangents();
         this.selection.clear();
         this.selection.add(index);
         this.anchorPoint = this.target.count() - 1;
@@ -1345,6 +1499,7 @@ public final class CompPenSession
 
         this.selection.clear();
         this.selection.add(index);
+        this.recomputeRotoTangents();
         this.listener.changed();
         this.listener.status(smooth ? "已转为平滑点" : "已转为角点");
 
@@ -1355,6 +1510,11 @@ public final class CompPenSession
     public boolean deleteSelection()
     {
         if (this.target == null || this.selection.isEmpty())
+        {
+            return false;
+        }
+
+        if (!this.canChangeVertexCount())
         {
             return false;
         }
@@ -1388,7 +1548,14 @@ public final class CompPenSession
                 return false;
             }
 
-            return this.remapDelete(animation, indices, slot);
+            if (!this.remapDelete(animation, indices, slot))
+            {
+                return false;
+            }
+
+            this.recomputeRotoTangents();
+
+            return true;
         }
 
         this.listener.beginAction("钢笔：删除点");
@@ -1406,6 +1573,7 @@ public final class CompPenSession
             this.listener.closedChanged();
         }
 
+        this.recomputeRotoTangents();
         this.anchorPoint = this.target.count() - 1;
         this.drag = Drag.NONE;
         this.dragPoint = -1;

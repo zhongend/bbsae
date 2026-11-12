@@ -294,6 +294,7 @@ public class BbsAeClient implements BBSAddonMod
         ClientLifecycleEvents.CLIENT_STOPPING.register((client) ->
         {
             BbsPreviewBridge.detach();
+            dev.bbsae.client.export.CompExportManager.shutdown();
             CompRenderer.clearCaches();
             dev.bbsae.client.replay.ReplayModelPass.release();
         });

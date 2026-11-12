@@ -18,13 +18,13 @@
 | --- | --- |
 | AM 非 internal 定义（去重 token） | 277 |
 | 其中有可执行 shader | 180 |
-| 本项目 AM 定义 | 146（0.93 +5、0.94 +13、0.95 +6） |
-| 自动匹配（同名/历史别名） | 113 |
-| 未匹配：deprecated 旧版本 | 71 |
+| 本项目 AM 定义 | 158（0.93 +5、0.94 +13、0.95 +6、0.96 +12） |
+| 自动匹配（同名/历史别名） | 124 |
+| 未匹配：deprecated 旧版本 | 70 |
 | 未匹配：非 shader（图层属性 / 复制器） | 20 |
 | 未匹配：3D 图元（本项目 `s3d_*` + MeshRenderer） | 19 |
-| 未匹配：同族旧版本（boxblur→boxblur3 等） | 7 |
-| 未匹配：可执行 shader、真正缺失 | 48 |
+| 未匹配：同族旧版本（boxblur→boxblur3 等） | 8 |
+| 未匹配：可执行 shader、真正缺失 | 37 |
 
 自动匹配覆盖了大部分"效果语义"，没有覆盖的 66 条多数是成员限定/冷门 procedural（grunge、ominodiff、
 voronoi、turbulence、ribbons 等）与 drawing 家族（electricedges、roughenedges、smoothbevel）。
@@ -97,15 +97,16 @@ generated 文件第 2 节按"AM 直接参数 vs 本项目同名键"列出。缺�
 | --- | --- | --- | --- | --- |
 | **P1（变形）✅ 0.95** | `pinchbulgeinside` / `ominoglass` / `wavewarp2` / `turbulentdisplace3` / `tileshift2` / `stretchsegment` | distort | 4–22 | 已补 6 个数据驱动 body（见 3.4） |
 | **文字语义判定** | `texttransform` / `textspacing` / `textprogress` / `textrand` / `timecode` / `counter` | text | 0–16 | **判定：不做**。AM 里这些是非 shader 的"文字图层属性/逐字符动画预设"，不是像素效果；本项目已用文字内容模式（timecode/counter/random/reveal）与文字动画器实现同等能力，硬塞进效果库只会得到重复入口且需要 UI 写域。详见第 3.5 节。 |
-| **剩余 P1（未完成）** | `texttransform` / `textspacing` 等 6 个文字效果 | text | 0–16 | 非 shader，需要 UI 写域接入图层属性，本轮不做 |
 | **P0（重复）✅ 0.93** | `repeat` / `radial` / `scatter` | repeat | 6/21/19 | 非 shader；已用 REPLICATE 机制补齐为 `am_repeat` / `am_repeat_radial` / `am_repeat_scatter`（见第 3 节） |
 | **P0（重复）** | `path` | repeat | 19 | **判定：不做**。AM 的 repeat.path 是"沿图层自身路径复制"，需要路径几何 + UI 上给效果指定路径的入口；本项目效果参数域只有 float/color，UI 没有路径选择器，用"第一个 PATH 形状/蒙版"当路径是隐式约定（对 99% 图层静默无效、还会和蒙版语义冲突）。详见第 3.5 节。 |
-| P0（重复） | `shapefield` | repeat | 18 | shader 版重复，可随后 |
+| P0（重复） | `shapefield` ✅ 0.96 | repeat | 18 | 已补 `am_shape_field`（合成空间形状场，可越过图层矩形；见 3.6） |
 | P1（模糊） | `unsharpmask` ✅ / `lensblur2` ✅ / `spinblur2` ✅ / `streakstrips` ✅ / `warpblur` ✅ / `chromaticzoomblur` ✅ | blur | 3/5/5/5/11/2 | 0.94 已补（数据驱动 body，单 pass tap 循环近似参考实现的 buffer 模糊输入） |
-| P1（调色） | `rgb-mixer` ✅ / `solidcolor` ✅ / `spectralmap` ✅ / `softglow` ✅ / `darkglow` ✅ / `lightglow` ✅ / `colorhot` ✅ | color | 6/4/8/8/6/8/2 | rgb-mixer、solidcolor 0.93 已补；其余 0.94 已补（glow 家族单 pass 环采样，参考实现的多段 buffer 模糊未复刻） |
+| P1（调色） | `rgb-mixer` ✅ / `solidcolor` ✅ / `spectralmap` ✅ / `softglow` ✅ / `darkglow` ✅ / `lightglow` ✅ / `colorhot` ✅ / `rgbsep` ✅ | color | 6/4/8/8/6/8/2/4 | 0.93–0.96 已补；`rgbsep`=0.96 的 `am_rgb_sep` |
 | P1（变形） | `pinchbulge2` ✅ / `swirl4` ✅ / `hexrotate` ✅ | distort | 4/4/10 | 0.94 已补；pinchbulge2 复刻参考公式（收敛/膨胀两段），hexrotate 用六边形网格逐格旋转近似 |
-| P1（文字） | `texttransform` / `textspacing` / `textprogress` / `textrand` / `timecode` / `counter` | text | 16/2/3/6/0/2 | **非 shader**；本项目 4.34 已用"文字内容/文字动画器"实现同等能力，但不在效果库里。补进效果库需要 UI 写域（`UICompositorPanel`），本轮不做 |
-| P2 | drawing 家族 `electricedges/roughenedges/smoothbevel/findedges`、procedural `voronoi2/ridges2/turbulence2/noise3/lightning/ribbon/volumetricclouds` 等 | drawing/procedural | 3–27 | 冷门/高性能开销，后续按需 |
+| P2（drawing）| `electricedges` ✅ / `roughenedges` ✅ / `smoothbevel` ✅（0.96）| drawing | 22/12/10 | 已补 3 个；参考依赖 blur/mask buffer，这里用自采样环近似（见 3.6） |
+| P2（procedural）| `voronoi2` ✅ / `ridges2` ✅ / `noise3` ✅ / `blocknoise2` ✅ / `simplestars2` ✅ / `volumetricclouds` ✅ / `halftonedotscmyk` ✅（0.96）| procedural/drawing | 4–12 | 已补 7 个（见 3.6） |
+| — | `grunge`(135 参数) / `ominodiff`(15) / `lightning`(16) / `ribbon`(11) / `turbulence2`(15) / `bumpmap2`(24) / `chromakey-adv`(21) | procedural/matte/color | 11–135 | **不做**：单帧可做但要么参数表极大（grunge 135 个滑杆，UI 爆炸）要么依赖真实多 pass 光照/抠像流程，性价比低于收益；已在剩余缺口里注明 |
+| P2 | `findedges` / `invert` / `posterize` / `threshold` / `dissolve` / `transform` / `offset` / `mosaic` / `sharpen` / `brightcont2` 等 | 多类 | 1–7 | 本项目已有等价经典条目（不同参数命名），不重复入库 |
 
 ## 3. 本轮已修复（参数/语义）
 
@@ -180,8 +181,27 @@ generated 文件第 2 节按"AM 直接参数 vs 本项目同名键"列出。缺�
 测试：`EffectP1BatchTest` 的 `DISTORT_BATCH` 复用同一套"默认可见 + 中性双路径恒等"断言；
 `AmEffectLibraryTest.p1BatchDeclaresItsZeroValues` 增加 6 条；缩略图 6 张入库。
 
-### 3.5 重复 `repeat.path` 与文字 6 项的可行性判定（不做，原因如下）
+### 3.4b 0.96（AM 剩余可执行 shader 批：12 个）
 
+全部数据驱动（无新增 shader 家族），每个都有显式恒等分支 + 零点契约；`EffectP1BatchTest` 的
+`SHADER_BATCH` 复用"默认可见 + 中性双路径逐像素恒等"断言；`EffectLibraryNamingTest` 已核对名称唯一。
+
+| 分类 | id | 名称 | 零点契约 | 与 AM 的差异 |
+| --- | --- | --- | --- | --- |
+| 重复 | `am_shape_field` | 形状场 | alpha=0 | AM repeat 家族；本项目在**合成空间**执行（`isCompositionSpace`），形状场可越过图层矩形；参考的 blendMode/coloring 下拉未暴露 |
+| 绘制 | `am_electric_edges` | 电弧边缘 | alpha=0 | 参考读 comp/buffer；这里用自采样环边缘 + fbm 电弧；`distance/thickness/complexity/segments/distOffs/disort` 全部参与计算 |
+| 绘制 | `am_roughen_edges` | 粗糙边缘 | strength=0 | 参考的 buffer 边缘改成本层自采样 alpha 梯度 + fbm 位移；4 向 selector 保留为数值参数 |
+| 绘制 | `am_smooth_bevel` | 平滑斜面 2 | radius=0 | 参考用 blur buffer 做高度图；这里用 8 tap 环自采样；光照方向 = 角度 + elevation 组成的 3D 光向量，diffuse/spec 各一路 |
+| 生成 | `am_voronoi_2` | Voronoi 2 | alpha=0 | 3×3 F1/F2 voronoi；`lineWidth/density/seed/phase` 全部参与；额外加 `alpha` 参数以获得零点 |
+| 生成 | `am_ridges_2` | 山脊 2 | alpha=0 | ridged fbm（1-|2n-1|）；stretch/position 参与采样空间；额外加 `alpha` |
+| 生成 | `am_noise_3` | 噪声 3 | amount=0 | AM amount 本身就是混合量，天然零点 |
+| 生成 | `am_block_noise` | 块状噪波 | amount=0 | 格子 hash 噪声；stretch/position/size/seed 参与 |
+| 绘制 | `am_halftone_cmyk` | CMYK 半调 | strength=0 | 简化版 CMYK 网点（黑版权重可调）；参考的多通道半调简化为单通道网点 |
+| 调色 | `am_rgb_sep` | RGB 分离 2 | strength=0 | 3 种分离模式 + 中心通道选择（数值 selector）；与经典 `rgb_split` 并存（后者是像素通道偏移，本条目是 AM 的分离语义） |
+| 生成 | `am_simplestars_2` | 简易星点 2 | alpha=0 | 每格概率星点 + 柔边；starCount 作为出现概率、starSize 控制格子与星点尺寸 |
+| 生成 | `am_volumetric_clouds` | 体积云 | amount=0 | fbm 云密度阈值 + 双色；额外加 `amount` 参数以获得零点（AM 无此参数） |
+
+### 3.5 重复 `repeat.path` 与文字 6 项的可行性判定（不做，原因如下）
 **`repeat.path`（沿路径复制）——不做。**
 1. AM 的定义是"把图层沿一条路径重复摆放"，参数只有 count/offset/scale/alpha 外加路径相位；路径本身不是效果参数，
    而是 AM 图层"路径图层"（shape/path layer）的数据来源（repeat.path 的 19 个参数里没有路径点列表）。

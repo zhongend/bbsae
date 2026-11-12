@@ -365,3 +365,22 @@ RGB 分离图并断言同一相对位置采样一致。
 - 验证：全量 **117 suites / 699 tests / 0 failures / 1 skipped**；`EffectP1BatchTest` 的
   `DISTORT_BATCH` 复用"默认可见 + 中性双路径恒等"断言，`AmEffectLibraryTest` 增加 6 条零点断言。
   未开客户端、未 git commit。
+
+## Round 5（0.96）AM 剩余可执行 shader 批
+
+- **新增 12 个效果**（数据驱动 body，全部有零点契约 + 缩略图 + 中性/像素测试）：
+  - 重复/形状：`am_shape_field`（形状场，合成空间执行，可越过图层矩形）。
+  - 绘制：`am_electric_edges`（电弧边缘）、`am_roughen_edges`（粗糙边缘）、`am_smooth_bevel`
+    （平滑斜面 2）、`am_halftone_cmyk`（CMYK 半调）。
+  - 生成：`am_voronoi_2`、`am_ridges_2`、`am_noise_3`、`am_block_noise`、`am_simplestars_2`、
+    `am_volumetric_clouds`。
+  - 调色：`am_rgb_sep`（RGB 分离 2，AM 分离语义）。
+- 参考实现依赖 blur/mask buffer 的 drawing 家族改为**自采样环 + fbm** 近似；生成类在 AM 无
+  alpha/amount 控制的条目加了额外 `alpha`/`amount` 参数以获得真实零点（文档标注）。
+- 名称唯一性：`am_smooth_bevel` 与既有 `am_bevel` 重名，改用"平滑斜面 2"。
+- 剩余不可做项：`grunge`(135 参数) / `bumpmap2`(24) / `chromakey-adv`(21) / `lightning`(16) /
+  `ribbon`(11) / `turbulence2`(15) / `ominodiff`(15) 等——参数表极大或依赖真实多 pass 光照/抠像流程，
+  性价比低；`findedges/invert/posterize/threshold/dissolve/transform/offset/mosaic/sharpen` 等已有
+  等价经典条目，不重复入库。重复 `repeat.path` 与文字 6 项维持 0.95 的判定（不做 + 原因见 gap 文档 3.5）。
+- 验证：全量 **125 suites / 754 tests / 0 failures / 1 skipped**；`EffectP1BatchTest.SHADER_BATCH`
+  （12 个）+ `AmEffectLibraryTest` 12 条零点断言；缩略图 12 张入库。未开客户端、未 git commit。

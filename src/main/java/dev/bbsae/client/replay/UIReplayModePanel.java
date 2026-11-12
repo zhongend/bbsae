@@ -1002,6 +1002,41 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.debugAfterExternalEdit(selected);
 
+        /* BBS' applyUndoData() path is allowed to restructure the film panel's own UI (showPanel,
+         * dock refresh, createEntities). On the real machine the whole dashboard sometimes lost
+         * its panel visibility during undo, leaving only the world (the page's getRoot() becomes
+         * null while the client screen is still open). Re-open the dashboard so the user is not
+         * stranded on an invisible editor; the log line makes the underlying bug visible. */
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        BbsAeAddon.LOGGER.info("Replay history after {}: root={} screen={} pageVisible={} panelVisible={} panelArea={}x{} currentPanel={}",
+            redo ? "redo" : "undo", this.getRoot() != null, client == null ? null : client.currentScreen,
+            this.isVisible(), panel.isVisible(), this.area.w, this.area.h,
+            this.dashboard == null || this.dashboard.getPanels() == null || this.dashboard.getPanels().panel == null
+                ? "null" : this.dashboard.getPanels().panel.getClass().getSimpleName());
+
+        if (client != null && this.getRoot() == null)
+        {
+            BbsAeAddon.LOGGER.warn("Replay history: page detached from the UI root; reopening the dashboard");
+
+            try
+            {
+                mchorse.bbs_mod.ui.framework.UIScreen.open(this.dashboard);
+            }
+            catch (RuntimeException e)
+            {
+                BbsAeAddon.LOGGER.error("Could not reopen the dashboard after replay undo/redo", e);
+            }
+        }
+        else if (this.dashboard != null && this.dashboard.getPanels() != null
+            && this.dashboard.getPanels().panel != this)
+        {
+            /* BBS' film-panel undo path (applyUndoData -> showPanel/createEntities) can re-select a
+             * dashboard panel as a side effect. The page then stays "visible" but is no longer the
+             * one being rendered — the user saw only the world and the gizmo after Ctrl+Z. */
+            BbsAeAddon.LOGGER.warn("Replay history: dashboard panel switched away; restoring the replay page");
+            this.dashboard.setPanel(this);
+        }
+
         return true;
     }
 

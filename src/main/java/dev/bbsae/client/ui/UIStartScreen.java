@@ -1,6 +1,7 @@
 package dev.bbsae.client.ui;
 
 import dev.bbsae.comp.CompStore;
+import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
@@ -18,8 +19,10 @@ import mchorse.bbs_mod.utils.colors.Colors;
 import net.minecraft.client.util.math.MatrixStack;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
@@ -514,29 +517,70 @@ public class UIStartScreen extends UIElement
 
     private final class ProjectList extends UIList<CompStore.ProjectInfo>
     {
+        /** Per-project {hover, select} channels; project ids are stable across rebuilds. */
+        private final Map<String, String[]> rowKeys = new HashMap<>();
+
         ProjectList(Consumer<List<CompStore.ProjectInfo>> callback)
         {
             super(callback);
         }
 
+        private String[] rowKeys(CompStore.ProjectInfo element)
+        {
+            String id = element == null || element.id == null ? "" : element.id;
+            String[] keys = this.rowKeys.get(id);
+
+            if (keys == null)
+            {
+                /* The project folder is small; the cap only guards a pathological pile of files. */
+                if (this.rowKeys.size() > 512)
+                {
+                    this.rowKeys.clear();
+                }
+
+                keys = new String[] {"start-row:" + id + ":h", "start-row:" + id + ":s"};
+                this.rowKeys.put(id, keys);
+            }
+
+            return keys;
+        }
+
         /**
-         * Rows arrive a few milliseconds apart on the landing screen's entrance clock, the same
-         * staggered-list language as the other libraries. Only the paint moves: selection and
-         * double-click keep using the list's own rectangles.
+         * Rows light up and stay selected through interpolated channels, and arrive a few
+         * milliseconds apart on the landing screen's entrance clock. Only the paint moves:
+         * selection and double-click keep using the list's own rectangles.
          */
         @Override
-        protected void renderElementPart(UIContext context, CompStore.ProjectInfo element, int i, int x, int y,
-                                         boolean hover, boolean selected)
+        public void renderListElement(UIContext context, CompStore.ProjectInfo element, int index, int x, int y,
+                                      boolean hover, boolean selected)
         {
             UIStartScreen screen = UIStartScreen.this;
+            String[] keys = this.rowKeys(element);
+            float hov = screen.motion.anim(keys[0], hover ? 1F : 0F, 24F);
+            float sel = screen.motion.anim(keys[1], selected ? 1F : 0F, 22F);
+            float lit = Math.max(hov, sel);
             int height = this.rowHeight();
-            float intro = UiStagger.progress(screen.motion, i, 0.018F, 0.2F);
+            int accent = BBSSettings.primaryColor() & 0xFFFFFF;
+
+            if (lit > 0.004F)
+            {
+                context.batcher.gradientHBox(x, y, x + this.area.w, y + height,
+                    UiMotion.alpha(accent, Math.max(hov * 0.20F, sel * 0.45F)),
+                    UiMotion.alpha(accent, Math.max(hov * 0.03F, sel * 0.08F)));
+            }
+
+            if (sel > 0.01F)
+            {
+                context.batcher.box(x, y, x + 2, y + height, UiMotion.alpha(accent, sel));
+            }
+
+            float intro = UiStagger.progress(screen.motion, index, 0.018F, 0.2F);
             float appear = UiStagger.alpha(intro);
             int shift = UiStagger.offsetPx(intro, Math.round(2F * screen.motion.intensity()));
-            int color = UiMotion.alpha(RowStyle.textColor(hover || selected), appear);
+            int color = UiMotion.alpha(RowStyle.textColor(lit > 0.5F), appear);
             FontRenderer font = context.batcher.getFont();
 
-            context.batcher.textShadow(this.elementToString(context, i, element),
+            context.batcher.textShadow(this.elementToString(context, index, element),
                 x + this.rowContentX(element), y + (height - font.getHeight()) / 2 + shift, color);
         }
 

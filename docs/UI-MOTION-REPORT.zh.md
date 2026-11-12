@@ -299,3 +299,67 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 4. **拖动 HUD 只在 DRAG_KEY/DRAG_HANDLE**：平移/框选没有 HUD（框选本身有淡入），与 AE 行为一致。
 5. **真机验收点**：切换通道时旧曲线淡出/新曲线淡入；关键帧 hover 环 + 选中渐白；拖动键/手柄时指针旁 HUD 6px 上浮；播放头缓慢呼吸（关 glow 后静止）；曲线页与关键帧抽屉两条光标光晕节奏一致；关动效后所有反馈一帧到位。
 
+---
+
+## 10. Round 5（0.96）：设置页 / 开始页 / 引导页补完
+
+> 0.95 还剩下设置页（分类切换、长列表、页脚）和开始页工程行是瞬时的；本轮补完，
+> 并按 Lead 要求在设置页接入两个新偏好：三态逐像素深度、钢笔保持顶点数。
+> **没有新增 CompPrefs 字段**（两个字段由 Lead 加好，本任务只读/写值）；没有开客户端。
+
+### 10.1 改动文件
+
+| 文件 | Round 5 改动 |
+| --- | --- |
+| `UICompSettings.java` | ① 分类切换过渡：`MotionScroll extends UIScrollView` 用 `UiPageTransition(0.18s, 6px)` 做内容下滑 + veil 淡出（滚动偏移/命中矩形不动，过渡中快速点击仍落在看到的行上）；② 分类按钮：改回全部 `FLAT`，选中态由宿主自绘插值覆盖（wash 0.14、2px accent rail、下划线从 10px 收缩到 0，通道 `nav:<i>`），不再瞬切 `SELECTED` 皮肤；③ 设置行错峰：`Row`/`SectionHeader` 按加入顺序 15ms/行、封顶 200ms、4px × intensity 的绘制位移 + 淡入（矩阵只包绘制，控件命中矩形不变）；④ 分组折叠/展开：`SectionHeader` 可点击折叠，行用 `setVisible(false)` 隐藏（BBS `ColumnResizer` 本来就跳过不可见子元素，布局会合拢而不是留洞），chevron/rail/下划线用 spring(420/26) 过渡，折叠状态按 `category|label` 会话内保留；⑤ 页脚版本号 alpha 0.3→1 最后淡入。每帧宿主 tick 一次、`transition.update()` 一次；key 预生成（nav 数组、section rebuild 时、行无 key） |
+| 设置页新增两个 Lead 需要的行 | 见 10.2 |
+| `UIStartScreen.java` | 工程列表行改自绘：hover wash / 选中 accent 条的插值（每工程 id 缓存通道），文字错峰保留；菜单/表单按钮本来就是 `UICompButton`（按下/悬停已有反馈）；表单滑入是 Round 3 的 `FormPanel` |
+| `UIOnboarding.java` | 补了步骤圆点的 hover 插值（宽度 +2px、颜色提亮，独立通道，扫过一排点读作一条轨迹）；卡片/箭头/大按钮的插值已在 Round 3 完成 |
+| `UiMotion.java` / `UiPageTransition.java` / `UiStagger.java` | 本轮无需改动 |
+| `src/test/java/dev/bbsae/client/ui/UiSettingsMotionTest.java` | 新增 7 个纯逻辑测试（见 10.3） |
+
+### 10.2 Lead 要求的两个设置行（位置与行为）
+
+1. **逐像素深度（主合成）** — 位置：设置 →「开发者」→「渲染」分组（原 0.94 的布尔 `UIToggle` **已被替换**，页面只保留这一个深度开关）。
+   - 控件：`segmented(new String[]{"关闭","开启","自动（推荐）"})`，索引 0/1/2 绑定 `CompPrefs.get().perPixelDepthMode`（0.96 默认 **2 = AUTO**）。
+   - 回写：`prefs.perPixelDepthMode = mode;`（布尔只作旧逻辑镜像 `perPixelDepth = (mode == 1)`）→ `CompPrefs.save()` → `CompRenderer.invalidateDepthModeCaches()`（清 RenderCache + FrameServer + Precache 一次）→ `panel.setStatus(...)` → `rebuild()` 让分段按钮显示新选中。
+   - 显示兼容：读取时用 `depthModeIndex(mode, legacyOn)` —— `mode==0 && perPixelDepth==true`（0.94 旧设置文件）显示为「开启」；field 缺失的新旧 prefs 走默认 2 显示「自动（推荐）」；用户显式点一次后才写入新字段。
+   - 工具提示：「自动（推荐）：只有两个相交的透视 3D 平面才逐像素比较深度；平行平面/单 3D 层/纯 2D 仍走整层排序，速度不变。开启：所有 3D 层都走逐像素深度，每个 3D 层多 3 个全屏 pass，低配机可能掉帧。关闭：回到整层排序。旧工程里 0.94 的布尔开关仍按「开启」读取」。
+2. **钢笔保持顶点数（AE）** — 位置：设置 →「开发者」→ 新增「钢笔工具」分组（放在 `settings == null` 早退之前，所以没有打开工程也能改；这是全局 `CompPrefs` 偏好）。
+   - 控件：`toggle("", CompPrefs.get().penKeepVertexCount, cb)`，回写 `prefs.penKeepVertexCount = value; CompPrefs.save();` 并 `panel.setStatus(...)` 说明 AE 语义。
+   - 工具提示：插入/删除锚点保持顶点总数不变、靠重映射其余点完成，已有动画路径不整体重排；关闭回退旧版「新增/移除即改索引」行为。`UIPenTool` 在下一次输入时自行读取该字段，不需要宿主初始化调用。
+
+### 10.3 新增纯逻辑测试（`UiSettingsMotionTest`，7 个）
+
+| 测试 | 断言 |
+| --- | --- |
+| `rowStaggerDelayIsMonotonicAndCapped` | 行延迟 15ms/行、首行 0、负索引 0、单调、封顶 200ms |
+| `staggerOffsetScalesWithProgressAndIntensity` | 行入场位移 4px×intensity、随进度单调收缩、负进度按 0% 处理 |
+| `navUnderlineSlidesToZeroWhenActive` | 下划线 inset 10→0、intensity 0 时不动、越界 clamp |
+| `sectionChevronMovesTwoPixelsBetweenStates` | 折叠 chevron −2→+2px、clamp |
+| `footerAlphaFadesInLast` | 页脚 alpha 0.3→1、单调、clamp |
+| `depthModeIndexKeepsLegacyBooleanWorking` | 三态显示索引：旧布尔 true→显示“开启”、AUTO 优先、越界 clamp |
+| `animationsOffSnapsEverySettingsChannel` | 关动效时行/导航/折叠 spring 第一帧即目标 → 位移 0、下划线到位、页脚全亮 |
+
+动效纯逻辑测试累计：7（本轮）+6（曲线）+8（全局 prune）+10（反馈）+9（spring）= **40 个**。
+
+### 10.4 回归结果
+
+- 串行包装器全量（含所有并行任务测试，最终）：**127 suites / 780 tests / 0 failed / 0 errors / 1 skipped，BUILD SUCCESSFUL**。
+  其中 `UiSettingsMotionTest` 7/7、动效相关 5 个测试类共 40 个全绿。
+- 执行期间并行任务（AM 新效果、深度 AUTO、钢笔、render-cache 审计）曾出现临时红/临时编译错误；
+  均来自其他协作者进行中的改动，其收尾后复跑全量已全绿。
+- 本任务未改 `client/render/**`、`comp/**`、`client/replay/**`、`CompPrefs`；只读 `CompPrefs` 新字段并调用
+  深度队友新增的 `CompRenderer.invalidateDepthModeCaches()`。
+
+### 10.5 Round 5 风险
+
+1. **分组折叠是真实布局变化**（不是纯绘制）：折叠行用 `setVisible(false)` 隐藏并 `scroll.resize()`，BBS `ColumnResizer` 跳过不可见子元素所以不会留洞；但这是本轮唯一会改变布局的操作（用户主动折叠时），动画只加在标题 chevron/rail（spring）上，行的出现/消失本身仍是瞬时。
+2. **设置行错峰只统计 `Row` 与 `SectionHeader`**：`UI.label(...)` 与整行按钮不占延迟索引，因此实际延迟比 `index×15ms` 略小（仍在 12–18ms/行语义内）。
+3. **分类切换过渡只动绘制**：180ms 内内容整体偏移最多 6px，命中矩形在最终位置；快速点击可能比画面早 ≤6px 命中（与此前入场的同类取舍一致）。
+4. **分类按钮选中态从 BBS `SELECTED` 皮肤改为自绘覆盖**：视觉从“整块 accent 填充”变为“淡 wash + 左 rail + 滑动下划线”，仍保持同一 UICompButton 的 hover/press 反馈；真机若觉得选中不够明显可调 `renderNavSelection` 的 alpha。
+5. **旧 `perPixelDepth` 布尔不会被自动迁移**：设置页只在用户点一次三态后写 `perPixelDepthMode`；
+   读取时兼容 `mode==0 && boolean==true → ON`（0.94 旧文件），字段缺失的新旧 prefs 走默认 **AUTO（2）**。
+   渲染侧 gate 需继续兼容布尔 true=ON（已由 depth 队友实现并通过测试）。
+6. **真机验收点**：切分类内容 6px 上滑 + veil 淡出、分类下划线滑动、设置行 12–18ms 错峰、点分组标题折叠/展开 spring、页脚最后淡入；开发者页三态深度显示旧布尔为“开启”且切换后预览缓存刷新；钢笔行开关状态保存；开始页工程行 hover/选中 wash；引导页圆点扫过有过渡；关动效后全部一帧到位。
+

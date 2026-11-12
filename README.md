@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.95.jar`](https://github.com/zhongend/bbsae/releases/download/v0.95/bbsae-0.95.jar)
-   from the **v0.95** release (the asset is updated with each source push).
+1. Download [`bbsae-0.96.jar`](https://github.com/zhongend/bbsae/releases/download/v0.96/bbsae-0.96.jar)
+   from the **v0.96** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.95.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.96.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.95.jar` SHA-256: `7816DC949656A50DF1A59F9DF5D47D42A8D7D24805022AA61CC02CF3F9F135B2` (3,571,438 bytes).
+`bbsae-0.96.jar` SHA-256: `93331DDDDFED5A43B70663FE693C85531BD14354379539ADD5100B0DF18CBC27` (3,743,118 bytes).
 
 ## Gallery
 
@@ -2088,3 +2088,4 @@ MIT.
 - **Round 48 (BBS dockable panels / per-pixel-depth ghost root fix / AM repeat family / animated pen paths / replay verification / UI motion, v0.93):** [`docs/ROUND48-DOCK-DEPTH.zh.md`](docs/ROUND48-DOCK-DEPTH.zh.md)
 - **Round 49 (exhaustive bug audit: effect data layer P1s, compositor interaction P1s, per-pixel-depth cleanup, replay/pen/motion polish, AM P1 batch, v0.94):** [`docs/ROUND49-AUDIT-FIXES.zh.md`](docs/ROUND49-AUDIT-FIXES.zh.md)
 - **Round 50 (second audit wave: timeline/undo/selection + 3D camera/render-cache pipeline, replay interaction real-machine verification, AM deform batch, v0.95):** [`docs/ROUND50-AUDIT-FIXES.zh.md`](docs/ROUND50-AUDIT-FIXES.zh.md)
+- **Round 51 (third audit wave: persistence/save isolation + export pipeline deadlock/queue guards, depth AUTO default, pen keep-count/RotoBezier, AM final batch, settings motion, v0.96):** [`docs/ROUND51-AUDIT-FIXES.zh.md`](docs/ROUND51-AUDIT-FIXES.zh.md)

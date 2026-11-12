@@ -149,4 +149,47 @@ public class PenPathPersistenceTest
 
         assertTrue(layer.maskAt(mask, 0F).closed);
     }
+
+    @Test
+    public void rotoBezierFlagSurvivesAJsonRoundTrip()
+    {
+        CompMask mask = new CompMask("mask_1");
+        CompShape shape = new CompShape("path_1", CompShape.PATH);
+
+        assertFalse(mask.rotoBezier, "old projects default to manual handles");
+        assertFalse(shape.rotoBezier);
+
+        mask.rotoBezier = true;
+        shape.rotoBezier = true;
+
+        CompLayer layer = new CompLayer("layer_1", "Layer", "solid");
+
+        mask.rectangle(0F, 0F, 10F, 10F);
+        shape.add(0F, 0F);
+        shape.add(10F, 0F);
+        shape.add(10F, 10F);
+        layer.masks.add(mask);
+        layer.shapes.add(shape);
+
+        CompDocument doc = new CompDocument();
+        CompProject project = new CompProject();
+
+        doc.layers.add(layer);
+        project.comps.add(doc);
+
+        Gson gson = new Gson();
+        String json = gson.toJson(project);
+
+        assertTrue(json.contains("\"rotoBezier\":true"), "field name is part of the file format");
+
+        CompProject loaded = gson.fromJson(json, CompProject.class);
+        CompLayer loadedLayer = loaded.comps.get(0).layers.get(0);
+
+        assertTrue(loadedLayer.masks.get(0).rotoBezier);
+        assertTrue(loadedLayer.shapes.get(0).rotoBezier);
+
+        /* The resolved copies (used by the renderers) must keep the mode too. */
+        assertTrue(loadedLayer.maskAt(loadedLayer.masks.get(0), 0F).rotoBezier);
+        assertTrue(loadedLayer.shapeAt(loadedLayer.shapes.get(0), 0F).rotoBezier);
+    }
 }

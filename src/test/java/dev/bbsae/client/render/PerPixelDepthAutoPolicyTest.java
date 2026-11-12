@@ -4,8 +4,6 @@ import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompProject;
 import org.joml.Matrix4f;
-import org.joml.Vector2f;
-import org.joml.Vector3f;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -50,119 +48,13 @@ public class PerPixelDepthAutoPolicyTest
     }
 
     /**
-     * Prototype of the AUTO decision: does any pair of perspective layers overlap on screen with
-     * non-parallel planes? Pure math over {@link CompScene} + {@link CompCamera}, no GL needed for
-     * the decision itself.
+     * The production AUTO decision. The predicate lives in {@link CompRenderer#needsPerPixelDepthAuto}
+     * so the editor, the AE frame server and the encoder share one rule; this class keeps the
+     * pixel evidence for it.
      */
     static boolean autoNeedsPerPixelDepth(CompRenderContext context)
     {
-        List<CompLayer> perspective = new ArrayList<>();
-
-        for (CompLayer layer : DepthPlanePixelHarness.layersOf(context.comp))
-        {
-            if (layer.visible && CompScene.usePerspective(context, layer))
-            {
-                perspective.add(layer);
-            }
-        }
-
-        if (perspective.size() < 2)
-        {
-            return false;
-        }
-
-        CompCamera camera = CompScene.camera(context);
-
-        for (int i = 0; i < perspective.size(); i++)
-        {
-            for (int j = i + 1; j < perspective.size(); j++)
-            {
-                CompLayer a = perspective.get(i);
-                CompLayer b = perspective.get(j);
-
-                if (planesAreParallel(context, a, b))
-                {
-                    continue;
-                }
-
-                if (projectedBoundsOverlap(context, camera, a, b))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private static boolean planesAreParallel(CompRenderContext context, CompLayer a, CompLayer b)
-    {
-        Vector3f normalA = planeNormal(context, a);
-        Vector3f normalB = planeNormal(context, b);
-
-        return Math.abs(normalA.dot(normalB)) >= 1F - NORMAL_EPSILON;
-    }
-
-    private static Vector3f planeNormal(CompRenderContext context, CompLayer layer)
-    {
-        Vector3f normal = new Vector3f(0F, 0F, 1F);
-
-        CompScene.world(context, layer).transformDirection(normal);
-
-        return normal.normalize();
-    }
-
-    private static boolean projectedBoundsOverlap(CompRenderContext context, CompCamera camera,
-                                                  CompLayer a, CompLayer b)
-    {
-        float[] boundsA = projectedBounds(context, camera, a);
-        float[] boundsB = projectedBounds(context, camera, b);
-
-        if (boundsA == null || boundsB == null)
-        {
-            return false;
-        }
-
-        return boundsA[0] <= boundsB[2] && boundsB[0] <= boundsA[2]
-            && boundsA[1] <= boundsB[3] && boundsB[1] <= boundsA[3];
-    }
-
-    /** Projected screen AABB {minX, minY, maxX, maxY} of the layer's content rectangle, or null. */
-    private static float[] projectedBounds(CompRenderContext context, CompCamera camera, CompLayer layer)
-    {
-        float width = Math.max(1F, layer.width);
-        float height = Math.max(1F, layer.height);
-        float x = -width * layer.anchorX;
-        float y = -height * layer.anchorY;
-        Matrix4f world = CompScene.world(context, layer);
-        float minX = Float.MAX_VALUE;
-        float minY = Float.MAX_VALUE;
-        float maxX = -Float.MAX_VALUE;
-        float maxY = -Float.MAX_VALUE;
-
-        for (int corner = 0; corner < 4; corner++)
-        {
-            Vector3f point = new Vector3f(
-                (corner == 0 || corner == 3) ? x : x + width,
-                (corner == 0 || corner == 1) ? y : y + height,
-                0F);
-
-            world.transformPosition(point);
-
-            Vector2f projected = camera.project(point, context.width, context.height);
-
-            if (projected == null)
-            {
-                return null;
-            }
-
-            minX = Math.min(minX, projected.x);
-            minY = Math.min(minY, projected.y);
-            maxX = Math.max(maxX, projected.x);
-            maxY = Math.max(maxY, projected.y);
-        }
-
-        return new float[] {minX, minY, maxX, maxY};
+        return CompRenderer.needsPerPixelDepthAuto(context);
     }
 
     /* ---------------------------------------------------------------- scenes */
@@ -172,7 +64,7 @@ public class PerPixelDepthAutoPolicyTest
      * planes cross inside the visible frame. Painter order cannot represent the crossing; the
      * per-pixel depth path is exactly for this.
      */
-    private static CompDocument crossingScene()
+    static CompDocument crossingScene()
     {
         CompDocument comp = DepthPlanePixelHarness.bugScene();
 

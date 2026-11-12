@@ -38,6 +38,15 @@ public class CompMask
      */
     public boolean closed = true;
 
+    /**
+     * AE's RotoBezier: when true the point handles are <b>derived</b> from the neighbouring vertices
+     * (the 1/6 rule) instead of being authored, so moving a vertex keeps the curve smooth. This is
+     * an editing mode, not a renderer feature: the editor writes the derived tangents back into the
+     * regular in/out fields, so the rasterizers and every existing signature keep working
+     * unchanged. Defaults to false — old projects keep their authored handles.
+     */
+    public boolean rotoBezier = false;
+
     public CompMask()
     {}
 
@@ -97,6 +106,7 @@ public class CompMask
         copy.feather = this.feather;
         copy.expansion = this.expansion;
         copy.closed = this.closed;
+        copy.rotoBezier = this.rotoBezier;
         copy.points = new ArrayList<>();
 
         if (this.points == null)

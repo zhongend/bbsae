@@ -156,22 +156,30 @@ public class PerPixelDepthExportConsistencyTest
         exporter.preview = false;
         exporter.scale = 1F;
 
-        /* Headless: the preference store is unreachable, so the switch reads as off; the debug
-         * override is the only way to request the path here — and it must behave identically for
-         * both contexts. */
-        assertFalse(CompRenderer.perPixelDepthRequested(),
+        /* Headless: exercise the explicit tri-state gate (the preference store is unreachable in
+         * tests, the renderer reads the same helper from the preference). OFF and ON must behave
+         * identically for both preview and export contexts. */
+        assertFalse(CompRenderer.perPixelDepthRequested(preview, CompRenderer.DEPTH_MODE_OFF, false),
             "without the preference (or the debug override) the path stays off");
-        assertEquals(CompRenderer.perPixelDepthFrame(preview), CompRenderer.perPixelDepthFrame(exporter),
+        assertTrue(CompRenderer.perPixelDepthRequested(preview, CompRenderer.DEPTH_MODE_ON, false),
+            "explicit ON must request the depth path");
+        assertEquals(CompRenderer.perPixelDepthFrame(preview, CompRenderer.DEPTH_MODE_ON, false),
+            CompRenderer.perPixelDepthFrame(exporter, CompRenderer.DEPTH_MODE_ON, false),
             "the frame gate must ignore preview/scale");
+        assertEquals(CompRenderer.perPixelDepthFrame(preview, CompRenderer.DEPTH_MODE_AUTO, false),
+            CompRenderer.perPixelDepthFrame(exporter, CompRenderer.DEPTH_MODE_AUTO, false),
+            "the AUTO gate must ignore preview/scale");
 
         try
         {
             System.setProperty("bbsae.debugForceDepthPlane", "true");
 
-            assertTrue(CompRenderer.perPixelDepthRequested(), "debug force must request the path");
-            assertTrue(CompRenderer.perPixelDepthFrame(preview), "spatial frame with the switch on");
-            assertTrue(CompRenderer.perPixelDepthFrame(exporter), "export sees the same gate");
-            assertEquals(CompRenderer.perPixelDepthFrame(preview), CompRenderer.perPixelDepthFrame(exporter),
+            assertTrue(CompRenderer.perPixelDepthRequested(preview, CompRenderer.DEPTH_MODE_OFF, false),
+                "debug force must request the path even with the preference off");
+            assertTrue(CompRenderer.perPixelDepthFrame(preview, CompRenderer.DEPTH_MODE_OFF, false),
+                "spatial frame with the debug override on");
+            assertEquals(CompRenderer.perPixelDepthFrame(preview, CompRenderer.DEPTH_MODE_OFF, false),
+                CompRenderer.perPixelDepthFrame(exporter, CompRenderer.DEPTH_MODE_OFF, false),
                 "the frame gate must ignore preview/scale");
         }
         finally

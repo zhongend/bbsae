@@ -53,6 +53,7 @@ public class UIOnboarding extends UIElement
      * app lifetime, so building "layout:" + i inside a render pass would allocate forever.
      */
     private static final String[] DOT_KEYS = {"dot:0", "dot:1", "dot:2", "dot:3", "dot:4"};
+    private static final String[] DOT_HOVER_KEYS = {"dot-hover:0", "dot-hover:1", "dot-hover:2", "dot-hover:3", "dot-hover:4"};
     private static final String[] ARROW_KEYS = {"arrow:prev", "arrow:next"};
     private static final String[] LAYOUT_HOVER_KEYS = {"layout:0:h", "layout:1:h", "layout:2:h", "layout:3:h"};
     private static final String[] LAYOUT_SELECT_KEYS = {"layout:0:s", "layout:1:s", "layout:2:s", "layout:3:s"};
@@ -476,11 +477,17 @@ public class UIOnboarding extends UIElement
         for (int i = 0; i < dots; i++)
         {
             boolean active = i == this.page;
-            /* The active dot grows instead of jumping: width and colour ride the same channel. */
+            /* The active dot grows instead of jumping: width and colour ride the same channel.
+             * Hover is a separate, softer channel so sweeping the row of dots reads as a trail. */
             float dot = this.motion.anim(DOT_KEYS[i], active ? 1F : 0F, 24F);
-            int color = UiMotion.lerpColor(0x66758595, BBSSettings.primaryColor() | 0xFF000000, dot);
             int width = 6 + Math.round(8F * dot);
             int dotX = dx + i * (6 + gap);
+            boolean hover = this.hovered(dotX - 3, dy - 5, Math.max(12, width), 16);
+            float hov = this.motion.anim(DOT_HOVER_KEYS[i], hover ? 1F : 0F, 26F);
+            int color = UiMotion.lerpColor(0x66758595, BBSSettings.primaryColor() | 0xFF000000, dot);
+
+            color = UiMotion.lerpColor(color, 0xFFFFFFFF, hov * 0.5F);
+            width += Math.round(2F * hov * this.motion.intensity());
 
             context.batcher.box(dotX, dy, dotX + width, dy + 6, color);
 

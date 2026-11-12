@@ -102,6 +102,11 @@ public final class UIPenTool implements CompPenSession.Listener
     private boolean active;
     private boolean dirty;
     private boolean structureDirty;
+    /** AE "preserve constant vertex count" preference, mirrored into the session. */
+    private boolean keepVertexCount = true;
+    /** Frame-scoped memo of evaluated path components; bumped on every pen edit. */
+    private final EvaluationCache evaluations = new EvaluationCache();
+    private long evaluationRevision;
 
     private CompLayer sessionLayer;
     private int targetKind = KIND_NONE;
@@ -123,9 +128,91 @@ public final class UIPenTool implements CompPenSession.Listener
     public UIPenTool(UICompositorPanel panel)
     {
         this.panel = panel;
+        this.keepVertexCount = CompPrefs.get().penKeepVertexCount;
+        this.session.setKeepVertexCount(this.keepVertexCount);
     }
 
     /* ------------------------------------------------------------------ tool state */
+
+    /**
+     * AE's "Preserve Constant Vertex and Feather Point Count". With it off, structural edits on
+     * animated paths are refused by the session (the per-channel model cannot encode per-keyframe
+     * vertex counts); unanimated paths behave the same either way.
+     */
+    public void setKeepVertexCount(boolean keep)
+    {
+        this.keepVertexCount = keep;
+        this.session.setKeepVertexCount(keep);
+    }
+
+    public boolean keepVertexCount()
+    {
+        return this.keepVertexCount;
+    }
+
+    /** Pulls the preference from {@link CompPrefs}; the settings UI changes it there. */
+    private void syncKeepVertexCount()
+    {
+        boolean keep = CompPrefs.get().penKeepVertexCount;
+
+        if (keep != this.keepVertexCount)
+        {
+            this.setKeepVertexCount(keep);
+        }
+    }
+
+    /**
+     * One-entry memo for a whole path's evaluated point components.
+     *
+     * <p>Why: with animation the pen re-reads {@code layer.scalarAt} for every component of every
+     * point, and the overlay/hit test/drag snapshot all need the same values several times per
+     * frame (each accessor used to interpolate a channel again). The cache resolves a path once per
+     * (layer identity, path identity, frame, revision) and the accessors become array reads. It is
+     * static and dependency free so the hit/miss rules can be unit tested without a panel.</p>
+     */
+    public static final class EvaluationCache
+    {
+        private Object layer;
+        private Object path;
+        private float frame;
+        private long revision;
+        private float[] values;
+
+        /**
+         * @return the cached component array, or {@code null} when this (layer, path, frame,
+         *         revision, length) combination is not the one in the slot.
+         */
+        public float[] fetch(Object layer, Object path, float frame, long revision, int length)
+        {
+            if (this.values != null
+                && this.layer == layer
+                && this.path == path
+                && Float.compare(this.frame, frame) == 0
+                && this.revision == revision
+                && this.values.length == length)
+            {
+                return this.values;
+            }
+
+            return null;
+        }
+
+        public void store(Object layer, Object path, float frame, long revision, float[] values)
+        {
+            this.layer = layer;
+            this.path = path;
+            this.frame = frame;
+            this.revision = revision;
+            this.values = values;
+        }
+
+        public void invalidate()
+        {
+            this.values = null;
+            this.layer = null;
+            this.path = null;
+        }
+    }
 
     public boolean isActive()
     {
@@ -183,6 +270,14 @@ public final class UIPenTool implements CompPenSession.Listener
         this.targetShape = -1;
         this.dirty = false;
         this.structureDirty = false;
+        this.invalidateEvaluations();
+    }
+
+    /** Drops the frame-scoped evaluation memo; every pen edit/state change bumps the revision. */
+    private void invalidateEvaluations()
+    {
+        this.evaluationRevision += 1;
+        this.evaluations.invalidate();
     }
 
     /**
@@ -322,6 +417,7 @@ public final class UIPenTool implements CompPenSession.Listener
             return false;
         }
 
+        this.syncKeepVertexCount();
         this.enforceToolExclusivity();
 
         if (!this.ensureSessionValid())
@@ -486,6 +582,7 @@ public final class UIPenTool implements CompPenSession.Listener
             return false;
         }
 
+        this.syncKeepVertexCount();
         this.enforceToolExclusivity();
 
         if (!this.ensureSessionValid())
@@ -597,6 +694,7 @@ public final class UIPenTool implements CompPenSession.Listener
             return false;
         }
 
+        this.syncKeepVertexCount();
         this.enforceToolExclusivity();
 
         if (!this.ensureSessionValid())
@@ -934,6 +1032,14 @@ public final class UIPenTool implements CompPenSession.Listener
                 manager.action(Icons.LINE, IKey.constant("断开路径（开放）"), () -> this.openTargetPath());
             }
 
+            if (hasTarget)
+            {
+                boolean roto = this.targetAdapter.rotoBezier();
+
+                manager.action(Icons.ARC, IKey.constant(roto ? "关闭 RotoBezier" : "开启 RotoBezier（自动切线）"),
+                    () -> this.setRotoBezier(!roto));
+            }
+
             if (hasTarget && !selection)
             {
                 manager.action(Icons.ARC, IKey.constant("整条路径打关键帧"), this::keyWholePath);
@@ -947,6 +1053,28 @@ public final class UIPenTool implements CompPenSession.Listener
     {
         this.session.endPath();
         this.flush();
+    }
+
+    /**
+     * Toggles AE's RotoBezier editing mode on the edited path: handles are derived from the
+     * neighbours instead of being authored, and re-derived after vertex edits/deletes.
+     */
+    public boolean setRotoBezier(boolean rotoBezier)
+    {
+        boolean changed = this.session.setRotoBezier(rotoBezier);
+
+        if (changed)
+        {
+            this.invalidateEvaluations();
+            this.flush();
+        }
+
+        return changed;
+    }
+
+    public boolean rotoBezier()
+    {
+        return this.session.rotoBezier();
     }
 
     /* ------------------------------------------------------------------ overlay */
@@ -1143,6 +1271,13 @@ public final class UIPenTool implements CompPenSession.Listener
         Set<Integer> selection = this.session.selection();
         CompPathGeometry.PathView path = this.targetAdapter;
 
+        /* RotoBezier derives the tangents; they are not editable, so showing handles would invite
+         * a drag that cannot do anything. */
+        if (path == null || this.targetAdapter.rotoBezier())
+        {
+            return;
+        }
+
         for (Integer index : selection)
         {
             if (index == null || index < 0 || index >= path.count())
@@ -1332,7 +1467,7 @@ public final class UIPenTool implements CompPenSession.Listener
 
             boolean current = this.sessionLayer == layer && this.targetKind == KIND_MASK && this.targetMask == i;
             MaskTarget adapter = new MaskTarget(layer, mask,
-                current ? this.session.selection() : null);
+                current && !mask.rotoBezier ? this.session.selection() : null);
             CompPenSession.Hit hit = CompPenSession.hitTest(adapter, this.projector(layer, view),
                 screenX, screenY, VERTEX_RADIUS, HANDLE_RADIUS, SEGMENT_RADIUS, adapter.handles);
 
@@ -1366,7 +1501,7 @@ public final class UIPenTool implements CompPenSession.Listener
 
             boolean current = this.sessionLayer == layer && this.targetKind == KIND_SHAPE && this.targetShape == i;
             ShapeTarget adapter = new ShapeTarget(layer, shape,
-                current ? this.session.selection() : null);
+                current && !shape.rotoBezier ? this.session.selection() : null);
             CompPenSession.Hit hit = CompPenSession.hitTest(adapter, this.projector(layer, view),
                 screenX, screenY, VERTEX_RADIUS, HANDLE_RADIUS, SEGMENT_RADIUS, adapter.handles);
 
@@ -1754,6 +1889,7 @@ public final class UIPenTool implements CompPenSession.Listener
         }
 
         this.session.setTick(this.panel.getFrame());
+        this.invalidateEvaluations();
     }
 
     private CompPenSession.Target makeTarget(CompLayer layer, int kind, int index)
@@ -1927,6 +2063,7 @@ public final class UIPenTool implements CompPenSession.Listener
     public void changed()
     {
         this.dirty = true;
+        this.invalidateEvaluations();
         this.panel.penSave();
     }
 
@@ -1942,6 +2079,7 @@ public final class UIPenTool implements CompPenSession.Listener
         /* `closed` is not part of the parked-frame / layer-bake fingerprints (those files are owned
          * by other work streams right now), so toggling it has to drop the caches explicitly. This
          * is the documented stop-gap until the field is added to the signatures. */
+        this.invalidateEvaluations();
         CompFrameServer.invalidate();
         CompRenderCache.clear();
         CompLayerSourceCache.clear();
@@ -1955,6 +2093,7 @@ public final class UIPenTool implements CompPenSession.Listener
         /* Point count/order changed: the dope sheet rows are keyed by p/<i> paths, so the host has
          * to rebuild them (deferred to flush() for the common case, immediate for one-shot edits). */
         this.structureDirty = true;
+        this.invalidateEvaluations();
         this.refreshKeyframeSheets();
     }
 
@@ -2301,12 +2440,13 @@ public final class UIPenTool implements CompPenSession.Listener
         public float outY(int index) { return evaluated(index, CompPenSession.COMPONENT_OUT_Y); }
 
         /**
-         * Value of one component at the current playhead.
+         * Value of one component at the current playhead, through the shared frame cache.
          *
          * <p>The overlay, the hit test and the drag snapshots all have to see the path <b>as
          * rendered</b>: for an animated path the authored base values are the state at t=0, not
-         * what is on screen now. Reading through {@code scalarAt} makes the target animation-aware;
-         * for an unanimated path it returns the base value unchanged.</p>
+         * what is on screen now. {@link EvaluationCache} resolves all six components of every point
+         * once per (layer, path, frame, revision), so a frame that draws and hit-tests the same
+         * path does not re-interpolate its channels dozens of times.</p>
          */
         private float evaluated(int index, int component)
         {
@@ -2317,19 +2457,49 @@ public final class UIPenTool implements CompPenSession.Listener
                 return 0F;
             }
 
-            CompMask.CompMaskPoint point = this.mask.points.get(index);
-            float fallback = switch (component)
-            {
-                case CompPenSession.COMPONENT_X -> point.x;
-                case CompPenSession.COMPONENT_Y -> point.y;
-                case CompPenSession.COMPONENT_IN_X -> point.inX;
-                case CompPenSession.COMPONENT_IN_Y -> point.inY;
-                case CompPenSession.COMPONENT_OUT_X -> point.outX;
-                default -> point.outY;
-            };
-            String path = "mask/" + this.mask.id + "/p/" + index + "/" + COMPONENT_NAMES[component];
+            float[] values = this.values();
+            int at = index * CompPenSession.COMPONENT_COUNT + component;
 
-            return this.layer.scalarAt(path, fallback, UIPenTool.this.panel.getFrame());
+            return at < values.length ? values[at] : 0F;
+        }
+
+        private float[] values()
+        {
+            int count = this.mask.points.size();
+            int length = count * CompPenSession.COMPONENT_COUNT;
+            float frame = UIPenTool.this.panel.getFrame();
+            float[] cached = UIPenTool.this.evaluations.fetch(
+                this.layer, this.mask, frame, UIPenTool.this.evaluationRevision, length);
+
+            if (cached != null)
+            {
+                return cached;
+            }
+
+            float[] values = new float[length];
+
+            for (int i = 0; i < count; i++)
+            {
+                CompMask.CompMaskPoint point = this.mask.points.get(i);
+                String base = "mask/" + this.mask.id + "/p/" + i + "/";
+
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_X] =
+                    this.layer.scalarAt(base + "x", point.x, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_Y] =
+                    this.layer.scalarAt(base + "y", point.y, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_IN_X] =
+                    this.layer.scalarAt(base + "inX", point.inX, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_IN_Y] =
+                    this.layer.scalarAt(base + "inY", point.inY, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_OUT_X] =
+                    this.layer.scalarAt(base + "outX", point.outX, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_OUT_Y] =
+                    this.layer.scalarAt(base + "outY", point.outY, frame);
+            }
+
+            UIPenTool.this.evaluations.store(this.layer, this.mask, frame, UIPenTool.this.evaluationRevision, values);
+
+            return values;
         }
 
         private CompMask.CompMaskPoint point(int index)
@@ -2349,6 +2519,18 @@ public final class UIPenTool implements CompPenSession.Listener
         public boolean canRotatePoints()
         {
             return true;
+        }
+
+        @Override
+        public boolean rotoBezier()
+        {
+            return this.mask.rotoBezier;
+        }
+
+        @Override
+        public void setRotoBezier(boolean rotoBezier)
+        {
+            this.mask.rotoBezier = rotoBezier;
         }
 
         @Override
@@ -2518,19 +2700,49 @@ public final class UIPenTool implements CompPenSession.Listener
                 return 0F;
             }
 
-            CompShape.Point point = this.shape.points.get(index);
-            float fallback = switch (component)
-            {
-                case CompPenSession.COMPONENT_X -> point.x;
-                case CompPenSession.COMPONENT_Y -> point.y;
-                case CompPenSession.COMPONENT_IN_X -> point.inX;
-                case CompPenSession.COMPONENT_IN_Y -> point.inY;
-                case CompPenSession.COMPONENT_OUT_X -> point.outX;
-                default -> point.outY;
-            };
-            String path = "shape/" + this.shape.id + "/p/" + index + "/" + COMPONENT_NAMES[component];
+            float[] values = this.values();
+            int at = index * CompPenSession.COMPONENT_COUNT + component;
 
-            return this.layer.scalarAt(path, fallback, UIPenTool.this.panel.getFrame());
+            return at < values.length ? values[at] : 0F;
+        }
+
+        private float[] values()
+        {
+            int count = this.shape.points.size();
+            int length = count * CompPenSession.COMPONENT_COUNT;
+            float frame = UIPenTool.this.panel.getFrame();
+            float[] cached = UIPenTool.this.evaluations.fetch(
+                this.layer, this.shape, frame, UIPenTool.this.evaluationRevision, length);
+
+            if (cached != null)
+            {
+                return cached;
+            }
+
+            float[] values = new float[length];
+
+            for (int i = 0; i < count; i++)
+            {
+                CompShape.Point point = this.shape.points.get(i);
+                String base = "shape/" + this.shape.id + "/p/" + i + "/";
+
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_X] =
+                    this.layer.scalarAt(base + "x", point.x, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_Y] =
+                    this.layer.scalarAt(base + "y", point.y, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_IN_X] =
+                    this.layer.scalarAt(base + "inX", point.inX, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_IN_Y] =
+                    this.layer.scalarAt(base + "inY", point.inY, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_OUT_X] =
+                    this.layer.scalarAt(base + "outX", point.outX, frame);
+                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_OUT_Y] =
+                    this.layer.scalarAt(base + "outY", point.outY, frame);
+            }
+
+            UIPenTool.this.evaluations.store(this.layer, this.shape, frame, UIPenTool.this.evaluationRevision, values);
+
+            return values;
         }
 
         private CompShape.Point point(int index)
@@ -2551,6 +2763,18 @@ public final class UIPenTool implements CompPenSession.Listener
         public boolean canRotatePoints()
         {
             return true;
+        }
+
+        @Override
+        public boolean rotoBezier()
+        {
+            return this.shape.rotoBezier;
+        }
+
+        @Override
+        public void setRotoBezier(boolean rotoBezier)
+        {
+            this.shape.rotoBezier = rotoBezier;
         }
 
         @Override

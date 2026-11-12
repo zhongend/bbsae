@@ -4,13 +4,18 @@ import dev.bbsae.comp.CompProject;
 import mchorse.bbs_mod.settings.values.ui.EditorLayoutNode;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -222,5 +227,77 @@ class CompDockSourceTest
 
         assertTrue(row.getFirst() instanceof EditorLayoutNode.PanelNode);
         assertEquals(CompDockSource.PANEL_PREVIEW, ((EditorLayoutNode.PanelNode) row.getFirst()).getPanelId());
+    }
+
+    /**
+     * Reproduces the splitter-drag failure: with an empty stored layout, getRoot() used to return a
+     * fresh default tree on every call. BBS keys its ratio map by SplitterNode identity, so the
+     * handle node and the root node never matched and dragging did nothing.
+     */
+    @Test
+    void emptyLayoutCachesOneDefaultTreeSoSplitterIdentityMatches()
+    {
+        CompProject.CompSettings settings = settings();
+        CompDockSource source = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
+
+        EditorLayoutNode first = source.getRoot();
+        EditorLayoutNode second = source.getRoot();
+
+        assertSame(first, second, "an empty layout must hand out the same default tree");
+        assertFalse(source.isDirty(), "caching the default must not mark the project dirty");
+        assertTrue(settings.dockLayout.isBlank(), "caching the default must not write it into the project");
+
+        /* This is exactly what UIDockLayout.applySplitterDrag builds from its handle infos. */
+        Map<EditorLayoutNode.SplitterNode, Float> ratios = new HashMap<>();
+
+        ratios.put((EditorLayoutNode.SplitterNode) second, 0.61F);
+
+        EditorLayoutNode next = EditorLayoutNode.copyWithSplitterRatios(second, ratios);
+
+        assertNotSame(second, next, "a ratio for the cached node must actually rebuild the tree");
+        assertEquals(0.61F, ((EditorLayoutNode.SplitterNode) next).getRatio(), 0.0001F);
+    }
+
+    @Test
+    void splitterDragOnAnEmptyLayoutIsPersistedAndReopened()
+    {
+        CompProject.CompSettings settings = settings();
+        CompDockSource source = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
+        Map<EditorLayoutNode.SplitterNode, Float> ratios = new HashMap<>();
+
+        ratios.put((EditorLayoutNode.SplitterNode) source.getRoot(), 0.58F);
+
+        source.setRoot(EditorLayoutNode.copyWithSplitterRatios(source.getRoot(), ratios));
+        source.flush();
+
+        assertFalse(settings.dockLayout.isBlank(), "the dragged ratio must reach the project");
+
+        CompDockSource reopened = new CompDockSource(() -> settings, CompDockSource::defaultLayout, null);
+        EditorLayoutNode root = reopened.getRoot();
+
+        assertSame(root, reopened.getRoot());
+        assertEquals(0.58F, ((EditorLayoutNode.SplitterNode) root).getRatio(), 0.0001F);
+    }
+
+    @Test
+    void theDefaultSupplierIsOnlyCalledOnceForAnEmptyLayout()
+    {
+        CompProject.CompSettings settings = settings();
+        AtomicInteger calls = new AtomicInteger();
+        CompDockSource source = new CompDockSource(() -> settings, () ->
+        {
+            calls.incrementAndGet();
+
+            return CompDockSource.defaultLayout();
+        }, null);
+
+        EditorLayoutNode first = source.getRoot();
+
+        for (int i = 0; i < 20; i++)
+        {
+            assertSame(first, source.getRoot(), "repeated dock layouts must reuse the cached root");
+        }
+
+        assertEquals(1, calls.get(), "the default tree must not be rebuilt on every query");
     }
 }

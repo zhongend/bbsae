@@ -2,11 +2,15 @@ package dev.bbsae.client.ui;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import dev.bbsae.BbsAeAddon;
 import net.fabricmc.loader.api.FabricLoader;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -32,6 +36,8 @@ public final class CompPrefs
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static Data data;
     private static boolean dirty;
+    /** Redirects {@link #path()} in tests (Fabric's config dir does not exist headless). */
+    private static volatile Path pathOverride;
 
     private CompPrefs()
     {}
@@ -88,6 +94,21 @@ public final class CompPrefs
         public boolean perPixelDepth = false;
 
         /**
+         * Per-pixel depth mode: 0 = off, 1 = on, 2 = auto (only when depth actually matters:
+         * ≥2 perspective 3D layers whose projected bounds overlap and whose planes are not
+         * parallel). Auto is the default: it is pixel-identical to off for the common cases
+         * (parallel planes / single 3D layer / 2D comps) and fixes the ghosting only when the
+         * painter sort is provably wrong.
+         */
+        public int perPixelDepthMode = 2;
+
+        /**
+         * Pen tool "keep vertex count" (AE option): inserting/deleting an anchor keeps the same
+         * number of vertices by remapping the other points instead of adding a new one.
+         */
+        public boolean penKeepVertexCount = true;
+
+        /**
          * BBS-native dockable panel layout in the compositor (splitter drag, drag-to-dock, tab
          * stacks). Read when the compositor panel is constructed: toggling it takes effect the next
          * time the panel is created. Off falls back to the fixed three-column splitter layout.
@@ -117,7 +138,54 @@ public final class CompPrefs
 
     public static Path path()
     {
-        return FabricLoader.getInstance().getConfigDir().resolve("bbsae").resolve("prefs.json");
+        Path override = pathOverride;
+
+        if (override != null)
+        {
+            return override;
+        }
+
+        try
+        {
+            Path config = FabricLoader.getInstance().getConfigDir();
+
+            if (config != null)
+            {
+                return config.resolve("bbsae").resolve("prefs.json");
+            }
+        }
+        catch (Throwable ignored)
+        {
+            /* Headless unit tests (and the very first moments before the game directory exists)
+             * have no Fabric config directory; the loader can even throw while probing it. Falling
+             * back to the OS temp directory keeps "preferences never block the editor" true. */
+        }
+
+        return Path.of(System.getProperty("java.io.tmpdir", "."), "bbsae-headless",
+            Long.toHexString(ProcessHandle.current().pid()), "prefs.json");
+    }
+
+    /**
+     * Test seam: redirects the preferences file to a temporary path. Package-private because the
+     * game must always use Fabric's config directory.
+     */
+    static void usePathForTests(Path path)
+    {
+        pathOverride = path;
+        resetForTests();
+    }
+
+    static void clearPathForTests()
+    {
+        pathOverride = null;
+        resetForTests();
+    }
+
+    /** Forgets the in-memory copy and dirty flag so the next {@link #get()} re-reads the file. */
+    static synchronized void resetForTests()
+    {
+        data = null;
+        dirty = false;
     }
 
     public static synchronized Data get()
@@ -133,32 +201,66 @@ public final class CompPrefs
     private static Data load()
     {
         Path path = path();
+        Data loaded = read(path);
+
+        if (loaded == null)
+        {
+            Path backup = backup(path);
+
+            loaded = read(backup);
+
+            if (loaded != null)
+            {
+                BbsAeAddon.LOGGER.warn("Recovered compositor preferences from backup {}", backup);
+
+                /* Rewrite the main file on the next flush so a one-off corrupt read does not keep
+                 * forcing the slower backup path. */
+                dirty = true;
+            }
+        }
+
+        if (loaded == null)
+        {
+            return new Data();
+        }
+
+        if (loaded.keybinds == null)
+        {
+            loaded.keybinds = new LinkedHashMap<>();
+        }
+
+        return loaded;
+    }
+
+    private static Data read(Path path)
+    {
+        if (path == null || !Files.isRegularFile(path))
+        {
+            return null;
+        }
 
         try
         {
-            if (Files.isRegularFile(path))
-            {
-                Data loaded = GSON.fromJson(Files.readString(path, StandardCharsets.UTF_8), Data.class);
-
-                if (loaded != null)
-                {
-                    if (loaded.keybinds == null)
-                    {
-                        loaded.keybinds = new LinkedHashMap<>();
-                    }
-
-                    return loaded;
-                }
-            }
+            return GSON.fromJson(Files.readString(path, StandardCharsets.UTF_8), Data.class);
         }
         catch (Exception e)
         {
-            dev.bbsae.BbsAeAddon.LOGGER.warn("Could not load compositor preferences {}", path, e);
-        }
+            BbsAeAddon.LOGGER.warn("Could not load compositor preferences {}", path, e);
 
-        return new Data();
+            return null;
+        }
     }
 
+    private static Path backup(Path path)
+    {
+        return path.resolveSibling(path.getFileName() + ".bak");
+    }
+
+    /**
+     * Saves preferences through {@code .tmp} + atomic move, then rotates the previous bytes into
+     * {@code .bak}. The backup is written only after the main file was replaced; a backup failure
+     * must not cost the user the settings that were just saved.
+     */
     public static synchronized void save()
     {
         if (data == null)
@@ -168,16 +270,67 @@ public final class CompPrefs
 
         dirty = false;
 
+        Path path = path();
+        Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
+
         try
         {
-            Path path = path();
-
             Files.createDirectories(path.getParent());
-            Files.writeString(path, GSON.toJson(data), StandardCharsets.UTF_8);
+
+            byte[] previous = null;
+
+            if (Files.isRegularFile(path))
+            {
+                try
+                {
+                    String oldJson = Files.readString(path, StandardCharsets.UTF_8);
+
+                    /* Only rotate a readable revision into .bak. After recovering from .bak, the
+                     * main file is the corrupt one; rotating it would overwrite the good backup. */
+                    if (GSON.fromJson(oldJson, Data.class) != null)
+                    {
+                        previous = oldJson.getBytes(StandardCharsets.UTF_8);
+                    }
+                }
+                catch (Exception e)
+                {
+                    BbsAeAddon.LOGGER.warn("Could not read previous compositor preferences for backup {}", path, e);
+                }
+            }
+
+            Files.writeString(temporary, GSON.toJson(data), StandardCharsets.UTF_8);
+
+            try
+            {
+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            }
+            catch (AtomicMoveNotSupportedException e)
+            {
+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            if (previous != null && previous.length > 0)
+            {
+                try
+                {
+                    Files.write(backup(path), previous);
+                }
+                catch (IOException e)
+                {
+                    BbsAeAddon.LOGGER.warn("Could not update compositor preferences backup {}", backup(path), e);
+                }
+            }
         }
         catch (Exception e)
         {
-            dev.bbsae.BbsAeAddon.LOGGER.warn("Could not save compositor preferences {}", path(), e);
+            try
+            {
+                Files.deleteIfExists(temporary);
+            }
+            catch (IOException ignored)
+            {}
+
+            BbsAeAddon.LOGGER.warn("Could not save compositor preferences {}", path, e);
         }
     }
 

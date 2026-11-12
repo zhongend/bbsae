@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
@@ -41,6 +42,10 @@ public final class CompStore
     private static final Map<String, CachedDocument> DOCUMENT_CACHE = new ConcurrentHashMap<>();
 
     private static volatile int revision;
+    /** Redirects {@link #root()} in tests (Fabric's config dir does not exist headless). */
+    private static volatile Path rootOverride;
+    /** Last failure text from {@link #saveChecked(CompProject)}; null after a successful save. */
+    private static volatile String lastSaveError;
 
     private CompStore()
     {}
@@ -52,7 +57,36 @@ public final class CompStore
 
     public static Path root()
     {
-        return FabricLoader.getInstance().getConfigDir().resolve("bbsae").resolve("projects");
+        Path override = rootOverride;
+
+        return override != null ? override : FabricLoader.getInstance().getConfigDir().resolve("bbsae").resolve("projects");
+    }
+
+    /**
+     * Test seam: redirects storage to a temporary directory. Package-private because the game must
+     * always use Fabric's config directory; only the persistence tests need a writable root.
+     */
+    static void useRootForTests(Path root)
+    {
+        rootOverride = root;
+        lastSaveError = null;
+        reload();
+    }
+
+    static void clearRootForTests()
+    {
+        rootOverride = null;
+        lastSaveError = null;
+        reload();
+    }
+
+    /**
+     * Human-readable reason for the last failed {@link #saveChecked(CompProject)}, or {@code null}
+     * when the last save succeeded (or no save has run yet).
+     */
+    public static String lastSaveError()
+    {
+        return lastSaveError;
     }
 
     public static Path file(String projectId)
@@ -127,22 +161,53 @@ public final class CompStore
         return document;
     }
 
+    /**
+     * Historical load contract: the caller always receives a project.
+     *
+     * <p>A missing file is created as the demo. A file that exists but cannot be read is
+     * <b>quarantined</b> (copied to {@code <file>.corrupt-<timestamp>}) and the demo is returned
+     * <b>without</b> overwriting the original. Render/overlay paths that must not create files and
+     * editors that want to show "could not open this project" should call
+     * {@link #loadOrNull(String, boolean)} instead.</p>
+     */
     public static synchronized CompProject load(String projectId)
+    {
+        CompProject project = loadOrNull(projectId, true);
+
+        return project != null ? project : demo(safe(projectId));
+    }
+
+    /**
+     * Strict load used by the editor and the frame renderer.
+     *
+     * <p>Missing file: {@code null} unless {@code createIfMissing}, in which case the demo project
+     * is created and saved. Existing but unreadable file: copied to
+     * {@code <file>.corrupt-<timestamp>}, logged, and {@code null} is returned — the user's file is
+     * never silently replaced with demo data. A file written by a newer bbsae is also left
+     * untouched and returns {@code null} (the write-side guard in {@code saveChecked} prevents a
+     * downgrade from overwriting it later).</p>
+     */
+    public static synchronized CompProject loadOrNull(String projectId, boolean createIfMissing)
     {
         String id = safe(projectId);
         Path path = file(id);
 
-        try
+        if (!Files.isRegularFile(path))
         {
-            if (!Files.isRegularFile(path))
+            if (!createIfMissing)
             {
-                CompProject project = demo(id);
-
-                save(project);
-
-                return project;
+                return null;
             }
 
+            CompProject project = demo(id);
+
+            save(project);
+
+            return project;
+        }
+
+        try
+        {
             long modified = Files.getLastModifiedTime(path).toMillis();
             CachedProject cached = CACHE.get(id);
 
@@ -154,24 +219,28 @@ public final class CompStore
             String json = Files.readString(path, StandardCharsets.UTF_8);
             CompProject project = GSON.fromJson(json, CompProject.class);
 
+            if (project == null)
+            {
+                return quarantine(path, "JSON is empty or not an object", null);
+            }
+
+            if (project.isFutureVersion())
+            {
+                BbsAeAddon.LOGGER.error("Composition project {} was written by a newer bbsae (file version {} > supported {}), leaving it untouched",
+                    path, project.version, CompProject.VERSION);
+
+                return null;
+            }
+
             if (!isValid(project))
             {
-                BbsAeAddon.LOGGER.warn("Invalid composition project {}, using demo data", path);
-
-                return demo(id);
+                return quarantine(path, "JSON did not pass project validation", null);
             }
 
+            sanitize(project);
             project.id = id;
             migrate(project);
-
-            for (CompDocument comp : project.comps)
-            {
-                for (CompLayer layer : comp.layers)
-                {
-                    layer.ensureInitialized();
-                    layer.loadTracks();
-                }
-            }
+            hydrate(project);
 
             CACHE.put(id, new CachedProject(modified, project));
 
@@ -179,9 +248,7 @@ public final class CompStore
         }
         catch (Exception e)
         {
-            BbsAeAddon.LOGGER.error("Could not load composition project {}", path, e);
-
-            return demo(id);
+            return quarantine(path, "read/parse failed", e);
         }
     }
 
@@ -234,21 +301,20 @@ public final class CompStore
         {
             CompProject project = GSON.fromJson(json, CompProject.class);
 
-            if (project == null || project.comps == null || project.comps.isEmpty())
+            if (project == null || project.version > CompProject.VERSION)
+            {
+                return null;
+            }
+
+            sanitize(project);
+
+            if (project.comps.isEmpty())
             {
                 return null;
             }
 
             migrate(project);
-
-            for (CompDocument comp : project.comps)
-            {
-                for (CompLayer layer : comp.layers)
-                {
-                    layer.ensureInitialized();
-                    layer.loadTracks();
-                }
-            }
+            hydrate(project);
 
             return project;
         }
@@ -260,80 +326,78 @@ public final class CompStore
         }
     }
 
+    /**
+     * Best-effort save kept for the many existing callers. Use {@link #saveChecked(CompProject)} in
+     * flush paths that must tell the user when the file could not be written.
+     */
     public static synchronized void save(CompProject project)
     {
+        saveChecked(project);
+    }
+
+    /**
+     * Saves a project atomically and reports whether the main file was replaced.
+     *
+     * <p>Ordering matters and is the fix for the old data-loss path:</p>
+     * <ol>
+     *   <li>the project is normalized and the new JSON is parsed back before any file is
+     *       touched;</li>
+     *   <li>the previous file bytes are read into memory (not copied to {@code .bak} yet);</li>
+     *   <li>the JSON is written to {@code .tmp} and atomically moved over the project;</li>
+     *   <li>only after that move succeeds is the previous content written to {@code .bak}.</li>
+     * </ol>
+     *
+     * <p>A {@code .bak} failure is logged but never turns a successful main write into a failure,
+     * and a failed save never rotates the backup. A file whose on-disk version is newer than
+     * {@link CompProject#VERSION} is never overwritten (no silent downgrade).</p>
+     *
+     * @return true when the project file was written; false leaves {@link #lastSaveError()} set
+     */
+    public static synchronized boolean saveChecked(CompProject project)
+    {
+        lastSaveError = null;
+
         if (project == null)
         {
-            return;
+            return saveFailure("合成工程为空，未写入");
+        }
+
+        if (project.isFutureVersion())
+        {
+            return saveFailure("工程版本 " + project.version + " 高于当前支持的 " + CompProject.VERSION + "，拒绝降级写回");
         }
 
         String id = safe(project.id);
-        project.id = id;
-        project.format = CompProject.FORMAT;
-        project.version = CompProject.VERSION;
-
-        if (project.comps == null || project.comps.isEmpty())
-        {
-            project.comps = new java.util.ArrayList<>();
-            project.comps.add(defaultComp("Main"));
-        }
-
-        if (project.outputPresets == null || project.outputPresets.isEmpty())
-        {
-            project.outputPresets = defaultPresets();
-        }
-
-        if (project.animationPresets == null)
-        {
-            project.animationPresets = new java.util.ArrayList<>();
-        }
-
-        if (project.presets == null)
-        {
-            project.presets = new java.util.ArrayList<>();
-        }
-
-        if (project.renderQueue == null)
-        {
-            project.renderQueue = new java.util.ArrayList<>();
-        }
-
-        if (project.settings == null)
-        {
-            project.settings = new CompProject.CompSettings();
-        }
-
-        for (CompDocument comp : project.comps)
-        {
-            if (comp.layers == null) comp.layers = new java.util.ArrayList<>();
-            if (comp.markers == null) comp.markers = new java.util.ArrayList<>();
-            if (comp.parameters == null) comp.parameters = new java.util.ArrayList<>();
-            if (comp.audio == null) comp.audio = new java.util.ArrayList<>();
-
-            for (CompLayer layer : comp.layers)
-            {
-                layer.ensureInitialized();
-                layer.saveTracks();
-            }
-        }
+        Path path = file(id);
+        Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
 
         try
         {
-            Path path = file(id);
-            Path parent = path.getParent();
-
-            Files.createDirectories(parent);
-
-            if (Files.isRegularFile(path))
+            /* A project loaded by an older build would otherwise overwrite a newer file and lose
+             * every field this build does not know about. */
+            if (existingVersion(path) > CompProject.VERSION)
             {
-                Files.copy(path, path.resolveSibling(path.getFileName() + ".bak"), StandardCopyOption.REPLACE_EXISTING);
+                return saveFailure("磁盘上的 " + path.getFileName() + " 由更新版本的 bbsae 写入，拒绝覆盖");
             }
+
+            project.id = id;
+            prepareForSave(project);
+
+            String json = GSON.toJson(project);
+            CompProject parsed = GSON.fromJson(json, CompProject.class);
+
+            if (!isValid(parsed))
+            {
+                return saveFailure("序列化结果未通过校验，未写入");
+            }
+
+            Files.createDirectories(path.getParent());
+
+            byte[] previous = readPrevious(path);
 
             /* Write through a temporary file and move it into place: a crash or a full disk in
              * the middle of a save must not truncate the only copy of the project. */
-            Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
-
-            Files.writeString(temporary, GSON.toJson(project), StandardCharsets.UTF_8);
+            Files.writeString(temporary, json, StandardCharsets.UTF_8);
 
             try
             {
@@ -344,14 +408,273 @@ public final class CompStore
                 Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            CACHE.put(id, new CachedProject(Files.getLastModifiedTime(path).toMillis(), project));
+            rotateBackup(path, previous);
+
+            long modified = 0L;
+
+            try
+            {
+                modified = Files.getLastModifiedTime(path).toMillis();
+            }
+            catch (IOException ignored)
+            {
+                /* The bytes are on disk; a stat failure must not report the save as failed. */
+            }
+
+            CACHE.put(id, new CachedProject(modified, project));
             DOCUMENT_CACHE.clear();
             revision += 1;
+
+            return true;
+        }
+        catch (Exception e)
+        {
+            try
+            {
+                Files.deleteIfExists(temporary);
+            }
+            catch (IOException ignored)
+            {}
+
+            BbsAeAddon.LOGGER.error("Could not save composition project {}", id, e);
+
+            lastSaveError = "写入 " + path.getFileName() + " 失败：" + describe(e);
+
+            return false;
+        }
+    }
+
+    private static boolean saveFailure(String message)
+    {
+        BbsAeAddon.LOGGER.error("Could not save composition project: {}", message);
+
+        lastSaveError = message;
+
+        return false;
+    }
+
+    private static String describe(Exception e)
+    {
+        String detail = e.getMessage();
+
+        return detail == null || detail.isBlank() ? e.getClass().getSimpleName() : e.getClass().getSimpleName() + ": " + detail;
+    }
+
+    /** Normalizes everything the serializer touches; never throws on null elements. */
+    private static void prepareForSave(CompProject project)
+    {
+        project.format = CompProject.FORMAT;
+        project.version = CompProject.VERSION;
+
+        sanitize(project);
+
+        if (project.comps.isEmpty())
+        {
+            project.comps.add(defaultComp("Main"));
+        }
+
+        if (project.outputPresets == null || project.outputPresets.isEmpty())
+        {
+            project.outputPresets = defaultPresets();
+        }
+
+        if (project.animationPresets == null)
+        {
+            project.animationPresets = new ArrayList<>();
+        }
+
+        if (project.presets == null)
+        {
+            project.presets = new ArrayList<>();
+        }
+
+        if (project.renderQueue == null)
+        {
+            project.renderQueue = new ArrayList<>();
+        }
+
+        if (project.settings == null)
+        {
+            project.settings = new CompProject.CompSettings();
+        }
+
+        for (CompDocument comp : project.comps)
+        {
+            if (comp.layers == null) comp.layers = new ArrayList<>();
+            if (comp.markers == null) comp.markers = new ArrayList<>();
+            if (comp.parameters == null) comp.parameters = new ArrayList<>();
+            if (comp.audio == null) comp.audio = new ArrayList<>();
+
+            for (CompLayer layer : comp.layers)
+            {
+                if (layer == null)
+                {
+                    continue;
+                }
+
+                layer.ensureInitialized();
+                layer.saveTracks();
+            }
+        }
+    }
+
+    private static int existingVersion(Path path)
+    {
+        if (!Files.isRegularFile(path))
+        {
+            return -1;
+        }
+
+        try
+        {
+            CompProject existing = GSON.fromJson(Files.readString(path, StandardCharsets.UTF_8), CompProject.class);
+
+            return existing == null ? -1 : existing.version;
+        }
+        catch (Exception e)
+        {
+            /* Unreadable old file: the load path already quarantined it, and a successful save is
+             * the only way the user gets a working project again. */
+            return -1;
+        }
+    }
+
+    private static byte[] readPrevious(Path path)
+    {
+        if (!Files.isRegularFile(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            byte[] bytes = Files.readAllBytes(path);
+
+            /* Only rotate a readable revision into .bak. When the main file was quarantined as
+             * corrupt, overwriting the last good backup with garbage would destroy the only good
+             * copy; keeping the old .bak is strictly better. */
+            CompProject readable = GSON.fromJson(new String(bytes, StandardCharsets.UTF_8), CompProject.class);
+
+            return readable == null ? null : bytes;
+        }
+        catch (Exception e)
+        {
+            BbsAeAddon.LOGGER.warn("Could not read previous composition project for backup {}", path, e);
+
+            return null;
+        }
+    }
+
+    private static void rotateBackup(Path path, byte[] previous)
+    {
+        if (previous == null || previous.length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            Files.write(path.resolveSibling(path.getFileName() + ".bak"), previous);
         }
         catch (IOException e)
         {
-            BbsAeAddon.LOGGER.error("Could not save composition project {}", id, e);
+            BbsAeAddon.LOGGER.warn("Could not update composition project backup {}", path, e);
         }
+    }
+
+    /** Drops null comps/layers and makes every required list non-null. */
+    private static void sanitize(CompProject project)
+    {
+        if (project.comps == null)
+        {
+            project.comps = new ArrayList<>();
+        }
+
+        project.comps.removeIf(Objects::isNull);
+
+        for (CompDocument comp : project.comps)
+        {
+            if (comp.layers == null) comp.layers = new ArrayList<>();
+            if (comp.markers == null) comp.markers = new ArrayList<>();
+            if (comp.parameters == null) comp.parameters = new ArrayList<>();
+            if (comp.audio == null) comp.audio = new ArrayList<>();
+
+            comp.layers.removeIf(Objects::isNull);
+        }
+    }
+
+    /** Runtime channels are transient: hydrate them after every load/restore. */
+    private static void hydrate(CompProject project)
+    {
+        for (CompDocument comp : project.comps)
+        {
+            if (comp == null || comp.layers == null)
+            {
+                continue;
+            }
+
+            for (CompLayer layer : comp.layers)
+            {
+                if (layer == null)
+                {
+                    continue;
+                }
+
+                layer.ensureInitialized();
+                layer.loadTracks();
+            }
+        }
+    }
+
+    /**
+     * Keeps an unreadable project file for inspection instead of overwriting it, then returns null
+     * so the caller can show a load failure. A copy failure is reported but must not hide the
+     * original error.
+     */
+    private static CompProject quarantine(Path path, String reason, Throwable cause)
+    {
+        if (cause == null)
+        {
+            BbsAeAddon.LOGGER.error("Composition project {} is unusable ({}); keeping the original file", path, reason);
+        }
+        else
+        {
+            BbsAeAddon.LOGGER.error("Composition project {} is unusable ({}); keeping the original file", path, reason, cause);
+        }
+
+        try
+        {
+            if (!Files.isRegularFile(path))
+            {
+                return null;
+            }
+
+            Path target = quarantinePath(path);
+
+            Files.copy(path, target);
+            BbsAeAddon.LOGGER.warn("Quarantined unreadable composition project as {}", target);
+        }
+        catch (Exception copyError)
+        {
+            BbsAeAddon.LOGGER.error("Could not quarantine composition project {}", path, copyError);
+        }
+
+        return null;
+    }
+
+    private static Path quarantinePath(Path path)
+    {
+        String base = path.getFileName() + ".corrupt-" + System.currentTimeMillis();
+        Path target = path.resolveSibling(base);
+        int suffix = 2;
+
+        while (Files.exists(target))
+        {
+            target = path.resolveSibling(base + "-" + suffix);
+            suffix += 1;
+        }
+
+        return target;
     }
 
     public static synchronized void reload()
@@ -456,12 +779,18 @@ public final class CompStore
                         String json = Files.readString(path, StandardCharsets.UTF_8);
                         CompProject project = GSON.fromJson(json, CompProject.class);
 
-                        if (!isValid(project) || project.comps.isEmpty())
+                        if (!isValid(project))
                         {
                             return;
                         }
 
-                        CompDocument comp = project.comps.get(0);
+                        CompDocument comp = firstComp(project);
+
+                        if (comp == null)
+                        {
+                            return;
+                        }
+
                         String id = path.getFileName().toString();
 
                         id = id.substring(0, id.length() - EXTENSION.length());
@@ -489,7 +818,11 @@ public final class CompStore
         return Files.isRegularFile(file(projectId));
     }
 
-    /** Deletes a project and its asset folder; only used from the start screen's context menu. */
+    /**
+     * Deletes a project, its backups/temporary/quarantined copies and its asset folder; only used
+     * from the start screen's context menu. A failed auxiliary deletion is logged but does not hide
+     * the result for the main file.
+     */
     public static synchronized boolean deleteProject(String projectId)
     {
         String id = safe(projectId);
@@ -499,21 +832,80 @@ public final class CompStore
             return false;
         }
 
+        Path path = file(id);
+        boolean removed;
+
         try
         {
-            boolean removed = Files.deleteIfExists(file(id));
-
-            CACHE.remove(id);
-            DOCUMENT_CACHE.clear();
-            revision += 1;
-
-            return removed;
+            removed = Files.deleteIfExists(path);
         }
         catch (IOException e)
         {
             BbsAeAddon.LOGGER.warn("Could not delete composition project {}", id, e);
 
-            return false;
+            removed = false;
+        }
+
+        deleteFile(path.resolveSibling(path.getFileName() + ".bak"));
+        deleteFile(path.resolveSibling(path.getFileName() + ".tmp"));
+        deleteQuarantinedCopies(path);
+        deleteDirectory(assetRoot(id));
+
+        CACHE.remove(id);
+        DOCUMENT_CACHE.clear();
+        revision += 1;
+
+        return removed;
+    }
+
+    private static void deleteFile(Path path)
+    {
+        try
+        {
+            Files.deleteIfExists(path);
+        }
+        catch (IOException e)
+        {
+            BbsAeAddon.LOGGER.warn("Could not delete composition project auxiliary file {}", path, e);
+        }
+    }
+
+    private static void deleteQuarantinedCopies(Path path)
+    {
+        Path parent = path.getParent();
+
+        if (parent == null || !Files.isDirectory(parent))
+        {
+            return;
+        }
+
+        String prefix = path.getFileName() + ".corrupt-";
+
+        try (java.util.stream.Stream<Path> stream = Files.list(parent))
+        {
+            stream.filter((candidate) -> candidate.getFileName().toString().startsWith(prefix))
+                .forEach(CompStore::deleteFile);
+        }
+        catch (IOException e)
+        {
+            BbsAeAddon.LOGGER.warn("Could not clean quarantined composition projects next to {}", path, e);
+        }
+    }
+
+    private static void deleteDirectory(Path directory)
+    {
+        if (directory == null || !Files.isDirectory(directory))
+        {
+            return;
+        }
+
+        try (java.util.stream.Stream<Path> stream = Files.walk(directory))
+        {
+            stream.sorted(java.util.Comparator.reverseOrder()).forEach(CompStore::deleteFile);
+        }
+        catch (IOException e)
+        {
+            BbsAeAddon.LOGGER.warn("Could not delete composition project directory {}", directory, e);
         }
     }
 
@@ -794,10 +1186,15 @@ public final class CompStore
 
         for (CompDocument comp : project.comps)
         {
-            if (comp.layers == null) comp.layers = new java.util.ArrayList<>();
-            if (comp.markers == null) comp.markers = new java.util.ArrayList<>();
-            if (comp.parameters == null) comp.parameters = new java.util.ArrayList<>();
-            if (comp.audio == null) comp.audio = new java.util.ArrayList<>();
+            if (comp == null)
+            {
+                continue;
+            }
+
+            if (comp.layers == null) comp.layers = new ArrayList<>();
+            if (comp.markers == null) comp.markers = new ArrayList<>();
+            if (comp.parameters == null) comp.parameters = new ArrayList<>();
+            if (comp.audio == null) comp.audio = new ArrayList<>();
             if (comp.workAreaOut <= 0F) comp.workAreaOut = comp.duration;
 
             /* v4: the stage stopped being transparent. Only files written before v4 are touched;
@@ -809,7 +1206,10 @@ public final class CompStore
 
             for (CompLayer layer : comp.layers)
             {
-                layer.ensureInitialized();
+                if (layer != null)
+                {
+                    layer.ensureInitialized();
+                }
             }
         }
     }
@@ -820,8 +1220,20 @@ public final class CompStore
             && (CompProject.FORMAT.equals(project.format) || project.version >= 1)
             && project.version >= 1
             && project.comps != null
-            && !project.comps.isEmpty()
-            && project.comps.get(0).layers != null;
+            && firstComp(project) != null;
+    }
+
+    private static CompDocument firstComp(CompProject project)
+    {
+        for (CompDocument comp : project.comps)
+        {
+            if (comp != null)
+            {
+                return comp;
+            }
+        }
+
+        return null;
     }
 
     private static Transform transform(float x, float y)

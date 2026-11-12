@@ -50,11 +50,20 @@ public class EffectP1BatchTest
         "am_tileshift_2", "am_stretch_segment", "am_omino_glass",
     };
 
+    /** 0.96: remaining executable-shader family (drawing / procedural / separation). */
+    private static final String[] SHADER_BATCH =
+    {
+        "am_shape_field", "am_electric_edges", "am_roughen_edges", "am_smooth_bevel",
+        "am_voronoi_2", "am_ridges_2", "am_noise_3", "am_block_noise",
+        "am_halftone_cmyk", "am_rgb_sep", "am_simplestars_2", "am_volumetric_clouds",
+    };
+
     private static java.util.List<String> allBatch()
     {
         java.util.List<String> types = new ArrayList<>(java.util.Arrays.asList(BATCH));
 
         types.addAll(java.util.Arrays.asList(DISTORT_BATCH));
+        types.addAll(java.util.Arrays.asList(SHADER_BATCH));
 
         return types;
     }
@@ -160,8 +169,9 @@ public class EffectP1BatchTest
                 boolean darkSide = x < SIZE / 2;
                 boolean checker = ((x / 6) + (y / 6)) % 2 == 0;
                 float shade = (darkSide ? 0.18F : 1F) * (checker ? 1F : 0.7F);
+                int alpha = Math.round(120F + 135F * u);
 
-                pixels[y * SIZE + x] = 0xFF000000
+                pixels[y * SIZE + x] = (alpha << 24)
                     | (Math.round(r * shade) << 16)
                     | (Math.round(g * shade) << 8)
                     | Math.round(b * shade);
