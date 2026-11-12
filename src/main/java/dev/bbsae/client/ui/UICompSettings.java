@@ -998,6 +998,20 @@ public class UICompSettings extends UIElement
         }), 170, "启用后复用 BBS 原版 UIDockLayout：拖动面板标题条/标签即可拆分或堆叠；"
             + "布局锁与重置在合成器顶栏的「布局」按钮。切换后需重开合成器面板生效"));
 
+        this.add(this.section("渲染"));
+        this.add(this.row("逐像素深度（主合成）", this.toggle("", CompPrefs.get().perPixelDepth, (value) ->
+        {
+            CompPrefs.get().perPixelDepth = value;
+            CompPrefs.save();
+            /* The flag is part of the render-cache signature; drop the green frames so the next
+             * preview frame actually goes through the newly selected path. */
+            dev.bbsae.client.render.CompPrecache.markDirty();
+            this.panel.setStatus(value
+                ? "已开启逐像素深度：相交/穿插的 3D 图层按真实像素遮挡（每层多 3 个全屏 pass，低配机可能掉帧）"
+                : "已关闭逐像素深度：回到图层级排序（默认，兼容性最好）");
+        }), 170, "0.93 修复了逐像素深度的重影 bug；开启后相交的 3D 图层按像素深度正确遮挡，"
+            + "代价是每个 3D 层多 3 个全屏 pass。对性能敏感或旧显卡工程建议保持关闭"));
+
         if (settings == null)
         {
             this.add(this.section("当前没有打开工程"));

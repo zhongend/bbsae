@@ -655,11 +655,54 @@ public final class CompStore
         return false;
     }
 
+    /**
+     * True when the layer still owns animation channels for that effect id.
+     *
+     * <p>Deleting an effect intentionally keeps its {@code fx/<id>/...} channels, because level
+     * undo or an accidental delete must not silently destroy an animation. The id is therefore
+     * still "in use" even with no effect instance, and the allocator below must not hand it out
+     * again — a reused id would adopt the old curves, i.e. a new effect would start out animated
+     * with the deleted one's keys.</p>
+     */
+    public static boolean hasEffectChannels(CompLayer layer, String effectId)
+    {
+        if (layer == null || effectId == null || effectId.isEmpty())
+        {
+            return false;
+        }
+
+        String prefix = CompLayer.effectPath(effectId, "");
+
+        /* The live channels are the normal case; the serialized map is checked too because a
+         * layer that was just deserialized (or whose tracks were not loaded yet) only has the
+         * map, and allocating an id it still uses would be the very bug this guard prevents. */
+        for (String path : layer.animatedPaths())
+        {
+            if (path != null && path.startsWith(prefix))
+            {
+                return true;
+            }
+        }
+
+        if (layer.channels != null)
+        {
+            for (String path : layer.channels.keySet())
+            {
+                if (path != null && path.startsWith(prefix))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     public static String uniqueEffectId(CompLayer layer)
     {
         int serial = 1;
 
-        while (layer.getEffect("fx" + serial) != null)
+        while (layer.getEffect("fx" + serial) != null || hasEffectChannels(layer, "fx" + serial))
         {
             serial += 1;
         }

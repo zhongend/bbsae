@@ -93,9 +93,10 @@ public class UIReplayModePanel extends UIDashboardPanel
     private boolean lastPlaying;
     /** Re-entrancy guard for {@link #applySelection(Replay, boolean)}; see the method's comment. */
     private boolean selectingReplay;
+    /** The replay list as it looked last frame, for identity-preserving selection across edits. */
+    private final java.util.List<Replay> knownOrder = new java.util.ArrayList<>();
     private String selectedPart = "";
     private String cachedStatus = "";
-    private int knownReplayCount = -1;
 
     /* Verification setup requested by ReplayDebugHook; applied once the viewport has framed. */
     private boolean debugCameraPending;
@@ -246,8 +247,18 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.session.ensureEntities();
         this.session.resetFraming();
         this.replaysList.replays.refreshReplayList();
-        this.selectReplay(replay != null ? replay : this.firstReplay(film));
-        this.knownReplayCount = film.replays.getList().size();
+
+        /* A replay handed in by the film editor may belong to the previous film (the original
+         * replay editor keeps its selection when a new film is filled). Only trust it when it is
+         * in this film by identity. */
+        Replay initial = ReplayListOps.containsIdentical(film.replays.getList(), replay)
+            ? replay
+            : this.firstReplay(film);
+
+        this.selectReplay(initial);
+
+        this.knownOrder.clear();
+        this.knownOrder.addAll(film.replays.getList());
     }
 
     private void build(UIFilmPanel panel)
@@ -362,10 +373,11 @@ public class UIReplayModePanel extends UIDashboardPanel
     private void selectReplayFromIndex(int index)
     {
         List<Replay> replays = this.film == null ? List.of() : this.film.replays.getList();
+        Replay picked = ReplayListOps.elementAt(replays, index);
 
-        if (index >= 0 && index < replays.size())
+        if (picked != null)
         {
-            this.selectReplay(replays.get(index));
+            this.selectReplay(picked);
         }
     }
 
@@ -405,25 +417,37 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         try
         {
-            this.replay = replay;
+            /* A replay object can be stale: an undo restores the film's ValueGroup children as new
+             * objects, and a film switch hands in the previous film's selection. A foreign object
+             * must not become the selected replay — every gizmo/auto-key write would land on a
+             * detached record that is no longer part of the film. */
+            Replay effective = replay;
+
+            if (effective != null && this.film != null
+                && !ReplayListOps.containsIdentical(this.film.replays.getList(), effective))
+            {
+                effective = null;
+            }
+
+            this.replay = effective;
 
             if (this.session != null)
             {
-                this.session.setReplay(replay);
+                this.session.setReplay(effective);
             }
 
             if (this.replayProperties != null)
             {
-                this.replayProperties.setReplay(replay);
+                this.replayProperties.setReplay(effective);
             }
 
-            if (this.replaysList != null && replay != null)
+            if (this.replaysList != null && effective != null)
             {
-                this.selectedPart = this.replaysList.setBodyPartsReplay(replay, this.selectedPart);
+                this.selectedPart = this.replaysList.setBodyPartsReplay(effective, this.selectedPart);
 
-                if (scrollList && this.film != null && this.film.replays.getList().contains(replay))
+                if (scrollList)
                 {
-                    this.replaysList.replays.scrollToReplay(replay);
+                    this.replaysList.replays.scrollToReplay(effective);
                 }
             }
             else if (this.replaysList != null)
@@ -440,7 +464,7 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         if (this.viewport != null)
         {
-            this.viewport.setStatus(replay == null ? "未选择回放" : "已选择 " + replay.getName());
+            this.viewport.setStatus(this.replay == null ? "未选择回放" : "已选择 " + this.replay.getName());
         }
     }
 
@@ -542,6 +566,14 @@ public class UIReplayModePanel extends UIDashboardPanel
         super.render(context);
     }
 
+    /**
+     * Detects any replay-list mutation (add/remove/reorder) and keeps the selection coherent.
+     *
+     * <p>Identity comparison, not {@code List.equals}: a removed replay must be detected even when
+     * an equal-valued replay took its place, and a reorder must not look like "nothing changed".
+     * When the selected replay is gone, {@link ReplayListOps#selectionAfterChange} lands on the
+     * nearest index instead of jumping to the first replay.</p>
+     */
     private void checkReplayListChanged()
     {
         if (this.film == null)
@@ -549,24 +581,31 @@ public class UIReplayModePanel extends UIDashboardPanel
             return;
         }
 
-        int count = this.film.replays.getList().size();
+        List<Replay> current = this.film.replays.getList();
 
-        if (count != this.knownReplayCount)
+        if (ReplayListOps.sameOrder(this.knownOrder, current))
         {
-            this.knownReplayCount = count;
-
-            if (this.replay == null || !this.film.replays.getList().contains(this.replay))
-            {
-                this.selectReplay(this.firstReplay(this.film));
-            }
-
-            if (this.session != null)
-            {
-                this.session.recreateEntities();
-            }
-
-            this.tracksDirty = true;
+            return;
         }
+
+        Replay resolved = this.replay == null
+            ? this.firstReplay(this.film)
+            : ReplayListOps.selectionAfterChange(this.knownOrder, current, this.replay);
+
+        this.knownOrder.clear();
+        this.knownOrder.addAll(current);
+
+        if (resolved != this.replay)
+        {
+            this.selectReplay(resolved);
+        }
+
+        if (this.session != null)
+        {
+            this.session.recreateEntities();
+        }
+
+        this.tracksDirty = true;
     }
 
     private void refreshStatus()
@@ -604,7 +643,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         }
 
         int count = this.film.replays.getList().size();
-        int index = this.replay == null ? -1 : this.film.replays.getList().indexOf(this.replay);
+        int index = ReplayListOps.indexOfIdentical(this.film.replays.getList(), this.replay);
         int tick = this.session == null ? 0 : this.session.tick();
         int duration = this.session == null ? 0 : this.session.durationTicks();
         String base = "影片 " + this.film.getId()
@@ -868,16 +907,13 @@ public class UIReplayModePanel extends UIDashboardPanel
         float tick = this.session.keyframeTick();
         double yaw = entity.getYaw();
 
-        ReplayWriteback.position(
+        ReplayWriteback.placement(
             tick, entity.getX(), entity.getY(), entity.getZ(),
+            entity.getPitch(), yaw,
+            entity.getHeadYaw() - yaw, entity.getBodyYaw() - yaw,
             (t, v) -> target.keyframes.x.insert(t, v),
             (t, v) -> target.keyframes.y.insert(t, v),
-            (t, v) -> target.keyframes.z.insert(t, v)
-        );
-
-        ReplayWriteback.rotation(
-            tick, entity.getPitch(), yaw,
-            entity.getHeadYaw() - yaw, entity.getBodyYaw() - yaw,
+            (t, v) -> target.keyframes.z.insert(t, v),
             (t, v) -> target.keyframes.yaw.insert(t, v),
             (t, v) -> target.keyframes.headYaw.insert(t, v),
             (t, v) -> target.keyframes.bodyYaw.insert(t, v),

@@ -66,6 +66,13 @@ public class UIImportBrowser extends UIElement
     /** One clock for the overlay; the row list reads its channels and never ticks its own. */
     private final UiMotion motion = new UiMotion();
     private int motionFrames;
+    /**
+     * Close transition. The host removes the browser from the tree, so it must wait for this fade:
+     * {@link #beginClose(Runnable)} stores the callback, {@link #render(UIContext)} drives it and
+     * queues the callback after the frame (see {@link #finishClose(UIContext)}).
+     */
+    private final UiPageTransition.CloseFade closeFade = new UiPageTransition.CloseFade();
+    private Runnable onClosed;
 
     public UIImportBrowser(String title, String[] extensions, Consumer<File> onPick, Runnable onClose)
     {
@@ -272,15 +279,20 @@ public class UIImportBrowser extends UIElement
             this.motion.prune(UICompButton.PRUNE_IDLE);
         }
 
+        boolean finished = this.closeFade.tick(System.nanoTime());
+        float close = this.closeFade.progress();
+
         /* Opening the browser is a mode switch: the dim backdrop fades in and the dialog box
-         * slides up 8 px instead of appearing complete in one frame. */
-        float fade = this.motion.anim("fade", 1F, 8F);
-        float slide = (1F - fade) * 8F * this.motion.intensity();
+         * slides up 8 px instead of appearing complete in one frame. Closing runs the same
+         * transition backwards (the backdrop fades out and the box drops away). */
+        float open = this.motion.anim("fade", 1F, 8F);
+        float veil = open * (1F - close);
+        float slide = (1F - open) * 8F * this.motion.intensity() + close * 10F;
         MatrixStack stack = slide > 0.01F ? context.batcher.getContext().getMatrices() : null;
 
         InterfaceBlur.applyUnder();
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
-            UiGfx.mulA(0x66000000, fade));
+            UiGfx.mulA(0x66000000, veil));
 
         if (stack != null)
         {
@@ -299,6 +311,89 @@ public class UIImportBrowser extends UIElement
                 stack.pop();
             }
         }
+
+        if (finished)
+        {
+            this.finishClose(context);
+        }
+    }
+
+    /**
+     * Fades the browser out and then hands it back to its owner.
+     *
+     * <p>The callback runs once, after the next frame's render pass (queued on the rendering
+     * context), which is the only safe moment to remove an element: the parent's child list must
+     * not mutate while it is being iterated for rendering. Repeated calls are ignored, so Esc and
+     * a click in the same frame cannot remove twice. When motion is off the callback is queued on
+     * the first render instead of after the fade.</p>
+     */
+    public void beginClose(Runnable onDone)
+    {
+        if (this.closeFade.isClosing())
+        {
+            return;
+        }
+
+        this.onClosed = onDone;
+        this.closeFade.begin();
+
+        /* Freeze the widgets: a click during the fade must not import a file or navigate. */
+        if (this.box != null)
+        {
+            this.box.setEnabled(false);
+        }
+    }
+
+    public boolean isClosing()
+    {
+        return this.closeFade.isClosing();
+    }
+
+    /** Queues the owner's removal callback after the frame; safe for child-list mutation. */
+    private void finishClose(UIContext context)
+    {
+        Runnable done = this.onClosed;
+
+        this.onClosed = null;
+
+        if (done == null)
+        {
+            return;
+        }
+
+        if (context != null && context.render != null)
+        {
+            context.render.postRunnable(done);
+        }
+        else
+        {
+            done.run();
+        }
+    }
+
+    @Override
+    protected boolean subMouseClicked(UIContext context)
+    {
+        /* Modal while fading: the disabled box no longer consumes, so the overlay must. */
+        return this.isClosing() || super.subMouseClicked(context);
+    }
+
+    @Override
+    protected boolean subMouseReleased(UIContext context)
+    {
+        return this.isClosing() || super.subMouseReleased(context);
+    }
+
+    @Override
+    protected boolean subMouseScrolled(UIContext context)
+    {
+        return this.isClosing() || super.subMouseScrolled(context);
+    }
+
+    @Override
+    protected boolean subKeyPressed(UIContext context)
+    {
+        return this.isClosing() || super.subKeyPressed(context);
     }
 
     /** Row index under the cursor; pure so the scroll arithmetic can be pinned headlessly. */

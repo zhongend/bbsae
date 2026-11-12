@@ -58,8 +58,46 @@ public final class ReplayTime
     /** The fractional phase inside the current tick, from a float cursor. */
     public static float phase(float tickCursor)
     {
+        if (!Float.isFinite(tickCursor))
+        {
+            return 0F;
+        }
+
         float whole = (float) Math.floor(tickCursor);
 
         return tickCursor - whole;
+    }
+
+    /**
+     * Clamps a float tick cursor to {@code [0, durationTicks]} and replaces non-finite values with
+     * 0.
+     *
+     * <p>The film panel's cursor feeds straight into the runner and the interpolation channels;
+     * a NaN from a corrupt value or a divide-by-zero would turn every sampled pose into NaN and
+     * the viewport would go blank with no error. Clamping here is the single choke point.</p>
+     *
+     * @param durationTicks film length in ticks; values below 1 are treated as 1
+     */
+    public static float clampTick(float tick, int durationTicks)
+    {
+        int duration = Math.max(1, durationTicks);
+
+        if (Float.isNaN(tick) || tick == Float.NEGATIVE_INFINITY)
+        {
+            return 0F;
+        }
+
+        if (tick == Float.POSITIVE_INFINITY)
+        {
+            return duration;
+        }
+
+        return Math.max(0F, Math.min(duration, tick));
+    }
+
+    /** True when a tick cursor is finite and inside {@code [0, durationTicks]}. */
+    public static boolean isValidTick(float tick, int durationTicks)
+    {
+        return Float.isFinite(tick) && tick >= 0F && tick <= Math.max(1, durationTicks);
     }
 }

@@ -85,7 +85,7 @@ public final class CompEffectRegistry
      */
     private static final java.util.Set<String> LIBRARY_HIDDEN = java.util.Set.of(
         "blur", "box_blur", "radial_blur", "polar_coordinates", "displacement",
-        "kaleidoscope", "mirror", "grid", "colorama", "stroke"
+        "kaleidoscope", "mirror", "grid", "colorama", "stroke", "unsharp_mask"
     );
 
     public static boolean isLibraryHidden(String id)

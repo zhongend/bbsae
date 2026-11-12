@@ -46,7 +46,7 @@ import java.util.Map;
 public final class ReplayPickPass
 {
     /** Where replay ids begin, past the ids the gizmo's own handles claim. */
-    public static final int REPLAY_STENCIL_OFFSET = Gizmo.STENCIL_MAX + 1;
+    public static final int REPLAY_STENCIL_OFFSET = ReplayPickIds.offsetFor(Gizmo.STENCIL_MAX);
 
     /** Gizmo handle hover tolerance in UI pixels (BBS exposes a setting for this; the viewport is small). */
     private static final int HANDLE_PICK_RADIUS = 7;
@@ -113,7 +113,23 @@ public final class ReplayPickPass
             return;
         }
 
-        this.ensureStencil(area);
+        try
+        {
+            this.ensureStencil(area);
+        }
+        catch (RuntimeException e)
+        {
+            /* The pick framebuffer is optional: without it the viewport still renders, only the
+             * click-to-select/gizmo pick is unavailable. A missing pack texture must not crash the
+             * whole dashboard panel. */
+            if (this.failures.allow(System.currentTimeMillis()))
+            {
+                BbsAeAddon.LOGGER.warn("Replay mode could not create its pick framebuffer{}",
+                    this.failures.describeSuppressed(), e);
+            }
+
+            return;
+        }
 
         if (this.stencil.getFramebuffer() == null)
         {
@@ -173,7 +189,7 @@ public final class ReplayPickPass
                 {
                     session.applyPose(entity, replay);
 
-                    this.stencilMap.objectIndex = REPLAY_STENCIL_OFFSET + i;
+                    this.stencilMap.objectIndex = ReplayPickIds.idFor(i, Gizmo.STENCIL_MAX);
                     this.stencilMap.setIncrement(false);
 
                     FilmEntityRenderer.renderEntity(FilmControllerContext.instance
@@ -209,14 +225,8 @@ public final class ReplayPickPass
 
             this.stencil.unbind(this.stencilMap);
 
-            this.gizmoHandlePicked = picked >= Gizmo.STENCIL_X && picked <= Gizmo.STENCIL_MAX;
-
-            if (picked >= REPLAY_STENCIL_OFFSET)
-            {
-                int index = picked - REPLAY_STENCIL_OFFSET;
-
-                this.pickedReplay = index < replays.size() ? index : -1;
-            }
+            this.gizmoHandlePicked = ReplayPickIds.isGizmoHandle(picked, Gizmo.STENCIL_X, Gizmo.STENCIL_MAX);
+            this.pickedReplay = ReplayPickIds.indexFor(picked, Gizmo.STENCIL_MAX, replays.size());
         }
         catch (RuntimeException e)
         {

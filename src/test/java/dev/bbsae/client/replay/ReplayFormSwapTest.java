@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
@@ -64,6 +65,42 @@ public class ReplayFormSwapTest
         boolean[] called = {false};
 
         assertNull(ReplayFormSwap.apply(new Form("x"), (form) -> null, (form) -> called[0] = true));
+        assertEquals(false, called[0]);
+    }
+
+    @Test
+    public void theLiveFormIsNeverStoredOnlyACopy()
+    {
+        Form live = new Form("live");
+        Form[] stored = new Form[1];
+
+        ReplayFormSwap.apply(live, (form) -> new Form(form.model), (form) -> stored[0] = form);
+
+        assertNotSame(live, stored[0], "the library's live form must not be stored");
+        assertEquals("live", stored[0].model);
+    }
+
+    @Test
+    public void pickingAgainReplacesThePreviousCopy()
+    {
+        Form first = new Form("first");
+        Form second = new Form("second");
+        Form[] stored = new Form[1];
+
+        ReplayFormSwap.apply(first, (form) -> new Form(form.model), (form) -> stored[0] = form);
+        ReplayFormSwap.apply(second, (form) -> new Form(form.model), (form) -> stored[0] = form);
+
+        assertEquals("second", stored[0].model);
+    }
+
+    @Test
+    public void aNullCopyOrSlotIsRefusedInsteadOfThrowing()
+    {
+        Form picked = new Form("x");
+        boolean[] called = {false};
+
+        assertNull(ReplayFormSwap.apply(picked, null, (form) -> called[0] = true));
+        assertNull(ReplayFormSwap.apply(picked, (form) -> form, null));
         assertEquals(false, called[0]);
     }
 }

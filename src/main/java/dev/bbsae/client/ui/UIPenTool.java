@@ -22,6 +22,7 @@ import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.keys.KeyAction;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
 import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
+import mchorse.bbs_mod.utils.keyframes.KeyframeLoop;
 import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
@@ -349,29 +350,30 @@ public final class UIPenTool implements CompPenSession.Listener
         }
 
         boolean shift = CompInput.shiftDown();
+        boolean constrained = false;
 
         /* Shift constrains the new point to 45 degrees measured on screen (which is what the user
-         * sees); the local fallback in CompPenSession covers callers without a projector. */
+         * sees). The constrained screen point is converted to local exactly once: passing Shift on
+         * to the session would constrain the already-constrained local vector a second time, which
+         * bends the line on rotated or non-uniformly scaled layers. */
         if (shift && this.session.isDrawing() && hit.kind == CompPenSession.HIT_NONE
             && this.session.anchorPoint() >= 0)
         {
             int anchor = this.session.anchorPoint();
-            float[] anchorScreen = this.localToScreen(layer, view, targetAdapterX(this.targetAdapter, anchor), targetAdapterY(this.targetAdapter, anchor));
+            float[] constrainedLocal = constrainTo45OnScreen(layer, view,
+                targetAdapterX(this.targetAdapter, anchor), targetAdapterY(this.targetAdapter, anchor),
+                context.mouseX, context.mouseY);
 
-            if (anchorScreen != null)
+            if (constrainedLocal != null)
             {
-                float[] constrained = CompPathGeometry.constrain45(
-                    anchorScreen[0], anchorScreen[1], context.mouseX, context.mouseY);
-                float[] constrainedLocal = this.screenToLocal(layer, view, constrained[0], constrained[1]);
-
-                if (constrainedLocal != null)
-                {
-                    local = constrainedLocal;
-                }
+                local = constrainedLocal;
+                constrained = true;
             }
         }
 
-        if (hit.kind == CompPenSession.HIT_NONE)
+        /* A shift-constrained point must not also be snapped to a vertex/grid; the constraint the
+         * user asked for wins. */
+        if (hit.kind == CompPenSession.HIT_NONE && !constrained)
         {
             local = this.snapLocal(layer, view, context.mouseX, context.mouseY, local);
         }
@@ -382,7 +384,7 @@ public final class UIPenTool implements CompPenSession.Listener
         this.dragOriginLocalY = local[1];
 
         int result = this.session.press(local[0], local[1], context.mouseX, context.mouseY,
-            shift, CompInput.altDown(), CompPenSession.CLOSE_RADIUS_PX, hit);
+            constrained ? false : shift, CompInput.altDown(), CompPenSession.CLOSE_RADIUS_PX, hit);
 
         if (result == CompPenSession.PRESS_REQUEST_NEW_PATH)
         {
@@ -446,26 +448,24 @@ public final class UIPenTool implements CompPenSession.Listener
 
         boolean shift = CompInput.shiftDown();
         boolean alt = CompInput.altDown();
+        boolean constrained = false;
 
-        /* Shift constrains vertex moves to 45 degrees on screen. The constraint is applied to the
-         * screen delta and converted back, so it stays correct on rotated/perspective layers. */
-        if (shift && this.session.isDragging() && !this.session.isCreatingTangent())
+        /* Shift constrains vertex moves to 45 degrees on screen (a handle drag stays free — that is
+         * what Alt is for). Converting the constrained screen point back once keeps the direction
+         * correct on rotated/perspective layers; the session then must not constrain again. */
+        if (shift && this.session.isDraggingVertices())
         {
-            float[] start = this.localToScreen(layer, view, this.dragOriginLocalX, this.dragOriginLocalY);
+            float[] constrainedLocal = constrainTo45OnScreen(layer, view,
+                this.dragOriginLocalX, this.dragOriginLocalY, context.mouseX, context.mouseY);
 
-            if (start != null)
+            if (constrainedLocal != null)
             {
-                float[] constrained = CompPathGeometry.constrain45(start[0], start[1], context.mouseX, context.mouseY);
-                float[] constrainedLocal = this.screenToLocal(layer, view, constrained[0], constrained[1]);
-
-                if (constrainedLocal != null)
-                {
-                    local = constrainedLocal;
-                }
+                local = constrainedLocal;
+                constrained = true;
             }
         }
 
-        if (this.session.drag(local[0], local[1], context.mouseX, context.mouseY, shift, alt))
+        if (this.session.drag(local[0], local[1], context.mouseX, context.mouseY, shift && !constrained, alt))
         {
             this.dirty = true;
         }
@@ -589,6 +589,24 @@ public final class UIPenTool implements CompPenSession.Listener
     public boolean deleteSelection()
     {
         boolean changed = this.session.deleteSelection();
+
+        if (changed)
+        {
+            this.structureDirty = true;
+            this.flush();
+        }
+
+        return changed;
+    }
+
+    /**
+     * AE's "Set First Vertex": rotates a closed path so the given anchor becomes vertex 0. The
+     * closed shape is unchanged; animated channels rotate with the vertices, so every keyframe
+     * keeps its geometry.
+     */
+    public boolean setFirstVertex(int index)
+    {
+        boolean changed = this.session.setFirstVertex(index);
 
         if (changed)
         {
@@ -791,6 +809,12 @@ public final class UIPenTool implements CompPenSession.Listener
             {
                 manager.action(Icons.EDIT, IKey.constant("转为角点"), () -> this.convertSelection(false));
                 manager.action(Icons.ARC, IKey.constant("转为平滑点"), () -> this.convertSelection(true));
+
+                if (closed && count >= 3 && primary > 0)
+                {
+                    manager.action(Icons.CHECKMARK, IKey.constant("设为第一顶点"), () -> this.setFirstVertex(primary));
+                }
+
                 manager.action(Icons.ARC, IKey.constant("整条路径打关键帧"), this::keyWholePath);
                 manager.action(Icons.TRASH, IKey.constant("删除所选顶点（Delete）"), () -> this.deleteSelection());
             }
@@ -1327,6 +1351,32 @@ public final class UIPenTool implements CompPenSession.Listener
         };
     }
 
+    /**
+     * Applies the pen's Shift constraint: the displacement from the anchor to the cursor is snapped
+     * to 45° multiples <b>in screen space</b> and converted back to layer-local coordinates.
+     *
+     * <p>Doing it once, on screen, is the whole point: 45° means a direction the user can see, and
+     * the local direction under rotation/non-uniform scale/perspective is not the same angle. Static
+     * so it can be unit-tested against the real projection without a panel.</p>
+     *
+     * @return constrained local point, or {@code null} when either point cannot be mapped.
+     */
+    public static float[] constrainTo45OnScreen(CompLayer layer, View view,
+                                                float anchorLocalX, float anchorLocalY,
+                                                float mouseX, float mouseY)
+    {
+        float[] anchor = localToScreen(layer, view, anchorLocalX, anchorLocalY);
+
+        if (anchor == null)
+        {
+            return null;
+        }
+
+        float[] constrained = CompPathGeometry.constrain45(anchor[0], anchor[1], mouseX, mouseY);
+
+        return screenToLocal(layer, view, constrained[0], constrained[1]);
+    }
+
     /** Preview pixel → layer-local point; exact inverse of {@link #localToScreen} (static, testable). */
     public static float[] screenToLocal(CompLayer layer, View view, float screenX, float screenY)
     {
@@ -1490,9 +1540,13 @@ public final class UIPenTool implements CompPenSession.Listener
                 continue;
             }
 
-            for (CompMask.CompMaskPoint point : mask.points)
+            /* Anchors are read through the target, i.e. evaluated at the playhead for an animated
+             * path — snapping to the authored base position would miss what is on screen. */
+            CompPenSession.Target adapter = new MaskTarget(layer, mask);
+
+            for (int point = 0; point < adapter.count(); point++)
             {
-                float[] screen = this.localToScreen(layer, view, point.x, point.y);
+                float[] screen = this.localToScreen(layer, view, adapter.x(point), adapter.y(point));
 
                 if (screen == null)
                 {
@@ -1523,9 +1577,11 @@ public final class UIPenTool implements CompPenSession.Listener
                 continue;
             }
 
-            for (CompShape.Point point : shape.points)
+            CompPenSession.Target adapter = new ShapeTarget(layer, shape);
+
+            for (int point = 0; point < adapter.count(); point++)
             {
-                float[] screen = this.localToScreen(layer, view, point.x, point.y);
+                float[] screen = this.localToScreen(layer, view, adapter.x(point), adapter.y(point));
 
                 if (screen == null)
                 {
@@ -1885,10 +1941,119 @@ public final class UIPenTool implements CompPenSession.Listener
             this.channelLayer().scalarChannel(this.channelPath(point, component)).insertInheriting(tick, value);
         }
 
+        @Override
+        public void copyLoops(int fromPoint, int fromComponent, int toPoint, int toComponent)
+        {
+            CompLayer layer = this.channelLayer();
+            String fromPath = this.channelPath(fromPoint, fromComponent);
+
+            if (!layer.hasScalarChannel(fromPath))
+            {
+                return;
+            }
+
+            java.util.List<KeyframeLoop> loops = new java.util.ArrayList<>(layer.scalarChannel(fromPath).getLoops());
+
+            if (loops.isEmpty())
+            {
+                return;
+            }
+
+            KeyframeChannel<Float> destination = layer.scalarChannel(this.channelPath(toPoint, toComponent));
+
+            for (KeyframeLoop loop : loops)
+            {
+                destination.putLoop(loop);
+            }
+        }
+
         /**
-         * Moves one channel, preserving ticks, values, interpolation, handles, style and duration.
-         * Used for index shifts during a vertex-count change; the destination is cleared first so
-         * a half-written channel can never mix two vertices' keys.
+         * Rotates the per-point channel groups for Set First Vertex. Every touched channel is
+         * snapshotted (keys + repeat loops), cleared, and written back at the rotated index so the
+         * geometry of every keyframe is unchanged.
+         */
+        @Override
+        public void rotateChannels(int count, int shift)
+        {
+            int n = count;
+            int rotated = ((shift % n) + n) % n;
+
+            if (n <= 0 || rotated == 0)
+            {
+                return;
+            }
+
+            CompLayer layer = this.channelLayer();
+
+            for (int component = 0; component < CompPenSession.COMPONENT_COUNT; component++)
+            {
+                java.util.List<java.util.List<Keyframe<Float>>> keys = new java.util.ArrayList<>(n);
+                java.util.List<java.util.List<KeyframeLoop>> loops = new java.util.ArrayList<>(n);
+
+                for (int point = 0; point < n; point++)
+                {
+                    String path = this.channelPath(point, component);
+
+                    if (layer.hasScalarChannel(path))
+                    {
+                        KeyframeChannel<Float> channel = layer.scalarChannel(path);
+
+                        keys.add(new java.util.ArrayList<>(channel.getKeyframes()));
+                        loops.add(new java.util.ArrayList<>(channel.getLoops()));
+                    }
+                    else
+                    {
+                        keys.add(new java.util.ArrayList<>());
+                        loops.add(new java.util.ArrayList<>());
+                    }
+                }
+
+                for (int point = 0; point < n; point++)
+                {
+                    String path = this.channelPath(point, component);
+
+                    if (layer.hasScalarChannel(path))
+                    {
+                        layer.scalarChannel(path).removeAll();
+                    }
+                }
+
+                for (int point = 0; point < n; point++)
+                {
+                    int source = (point + rotated) % n;
+                    java.util.List<Keyframe<Float>> sourceKeys = keys.get(source);
+                    java.util.List<KeyframeLoop> sourceLoops = loops.get(source);
+
+                    if (sourceKeys.isEmpty() && sourceLoops.isEmpty())
+                    {
+                        continue;
+                    }
+
+                    KeyframeChannel<Float> destination = layer.scalarChannel(this.channelPath(point, component));
+
+                    for (Keyframe<Float> key : sourceKeys)
+                    {
+                        int index = destination.insert(key.getTick(), key.getValue());
+                        Keyframe<Float> copy = destination.get(index);
+
+                        if (copy != null && copy != key)
+                        {
+                            copy.copyOverExtra(key);
+                        }
+                    }
+
+                    for (KeyframeLoop loop : sourceLoops)
+                    {
+                        destination.putLoop(loop);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Moves one channel, preserving ticks, values, interpolation, handles, style, duration
+         * <b>and its repeat loops</b>. Used for index shifts during a vertex-count change; the
+         * destination is cleared first so a half-written channel can never mix two vertices' keys.
          */
         private void moveChannel(String fromPath, String toPath)
         {
@@ -1906,6 +2071,9 @@ public final class UIPenTool implements CompPenSession.Listener
 
             KeyframeChannel<Float> source = layer.scalarChannel(fromPath);
             java.util.List<Keyframe<Float>> keys = new java.util.ArrayList<>(source.getKeyframes());
+            /* Loops are absolute-time repeat blocks; they belong to the channel and have to follow
+             * it. removeAll() below clears the destination's loops, so snapshot them first. */
+            java.util.List<KeyframeLoop> loops = new java.util.ArrayList<>(source.getLoops());
             KeyframeChannel<Float> destination = layer.scalarChannel(toPath);
 
             destination.removeAll();
@@ -1919,6 +2087,11 @@ public final class UIPenTool implements CompPenSession.Listener
                 {
                     copy.copyOverExtra(key);
                 }
+            }
+
+            for (KeyframeLoop loop : loops)
+            {
+                destination.putLoop(loop);
             }
 
             source.removeAll();
@@ -1952,26 +2125,72 @@ public final class UIPenTool implements CompPenSession.Listener
         }
 
         @Override
-        public float x(int index) { return point(index).x; }
+        public float x(int index) { return evaluated(index, CompPenSession.COMPONENT_X); }
 
         @Override
-        public float y(int index) { return point(index).y; }
+        public float y(int index) { return evaluated(index, CompPenSession.COMPONENT_Y); }
 
         @Override
-        public float inX(int index) { return point(index).inX; }
+        public float inX(int index) { return evaluated(index, CompPenSession.COMPONENT_IN_X); }
 
         @Override
-        public float inY(int index) { return point(index).inY; }
+        public float inY(int index) { return evaluated(index, CompPenSession.COMPONENT_IN_Y); }
 
         @Override
-        public float outX(int index) { return point(index).outX; }
+        public float outX(int index) { return evaluated(index, CompPenSession.COMPONENT_OUT_X); }
 
         @Override
-        public float outY(int index) { return point(index).outY; }
+        public float outY(int index) { return evaluated(index, CompPenSession.COMPONENT_OUT_Y); }
+
+        /**
+         * Value of one component at the current playhead.
+         *
+         * <p>The overlay, the hit test and the drag snapshots all have to see the path <b>as
+         * rendered</b>: for an animated path the authored base values are the state at t=0, not
+         * what is on screen now. Reading through {@code scalarAt} makes the target animation-aware;
+         * for an unanimated path it returns the base value unchanged.</p>
+         */
+        private float evaluated(int index, int component)
+        {
+            int count = this.mask.points.size();
+
+            if (count == 0 || index < 0 || index >= count)
+            {
+                return 0F;
+            }
+
+            CompMask.CompMaskPoint point = this.mask.points.get(index);
+            float fallback = switch (component)
+            {
+                case CompPenSession.COMPONENT_X -> point.x;
+                case CompPenSession.COMPONENT_Y -> point.y;
+                case CompPenSession.COMPONENT_IN_X -> point.inX;
+                case CompPenSession.COMPONENT_IN_Y -> point.inY;
+                case CompPenSession.COMPONENT_OUT_X -> point.outX;
+                default -> point.outY;
+            };
+            String path = "mask/" + this.mask.id + "/p/" + index + "/" + COMPONENT_NAMES[component];
+
+            return this.layer.scalarAt(path, fallback, UIPenTool.this.panel.getFrame());
+        }
 
         private CompMask.CompMaskPoint point(int index)
         {
             return this.mask.points.get(Math.max(0, Math.min(this.mask.points.size() - 1, index)));
+        }
+
+        @Override
+        public boolean rotatePoints(int shift)
+        {
+            java.util.Collections.rotate(this.mask.points, shift);
+
+            return true;
+        }
+
+        @Override
+        public boolean canRotatePoints()
+        {
+            return true;
         }
 
         @Override
@@ -2114,26 +2333,66 @@ public final class UIPenTool implements CompPenSession.Listener
         }
 
         @Override
-        public float x(int index) { return point(index).x; }
+        public float x(int index) { return evaluated(index, CompPenSession.COMPONENT_X); }
 
         @Override
-        public float y(int index) { return point(index).y; }
+        public float y(int index) { return evaluated(index, CompPenSession.COMPONENT_Y); }
 
         @Override
-        public float inX(int index) { return point(index).inX; }
+        public float inX(int index) { return evaluated(index, CompPenSession.COMPONENT_IN_X); }
 
         @Override
-        public float inY(int index) { return point(index).inY; }
+        public float inY(int index) { return evaluated(index, CompPenSession.COMPONENT_IN_Y); }
 
         @Override
-        public float outX(int index) { return point(index).outX; }
+        public float outX(int index) { return evaluated(index, CompPenSession.COMPONENT_OUT_X); }
 
         @Override
-        public float outY(int index) { return point(index).outY; }
+        public float outY(int index) { return evaluated(index, CompPenSession.COMPONENT_OUT_Y); }
+
+        /** See {@code MaskTarget#evaluated}: show/hit/drag the path as rendered at the playhead. */
+        private float evaluated(int index, int component)
+        {
+            int count = this.shape.points.size();
+
+            if (count == 0 || index < 0 || index >= count)
+            {
+                return 0F;
+            }
+
+            CompShape.Point point = this.shape.points.get(index);
+            float fallback = switch (component)
+            {
+                case CompPenSession.COMPONENT_X -> point.x;
+                case CompPenSession.COMPONENT_Y -> point.y;
+                case CompPenSession.COMPONENT_IN_X -> point.inX;
+                case CompPenSession.COMPONENT_IN_Y -> point.inY;
+                case CompPenSession.COMPONENT_OUT_X -> point.outX;
+                default -> point.outY;
+            };
+            String path = "shape/" + this.shape.id + "/p/" + index + "/" + COMPONENT_NAMES[component];
+
+            return this.layer.scalarAt(path, fallback, UIPenTool.this.panel.getFrame());
+        }
 
         private CompShape.Point point(int index)
         {
             return this.shape.points.get(Math.max(0, Math.min(this.shape.points.size() - 1, index)));
+        }
+
+        @Override
+        public boolean rotatePoints(int shift)
+        {
+            java.util.Collections.rotate(this.shape.points, shift);
+            this.shape.ensureCorners();
+
+            return true;
+        }
+
+        @Override
+        public boolean canRotatePoints()
+        {
+            return true;
         }
 
         @Override

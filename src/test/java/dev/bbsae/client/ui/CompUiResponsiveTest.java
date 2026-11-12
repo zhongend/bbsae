@@ -98,7 +98,9 @@ public class CompUiResponsiveTest
                     {layout.layoutX, 48, 1},
                     {layout.renderX, 54, layout.showRender ? 1 : 0},
                     {layout.exportX, 54, layout.showExport ? 1 : 0},
-                    {layout.saveX, 48, layout.showSave ? 1 : 0}
+                    {layout.saveX, 48, layout.showSave ? 1 : 0},
+                    {layout.projectsX, CompUi.PROJECTS_W, layout.showProjects ? 1 : 0},
+                    {layout.libraryX, CompUi.LIBRARY_W, layout.showLibrary ? 1 : 0}
                 };
 
                 int previousEnd = -1;
@@ -196,5 +198,56 @@ public class CompUiResponsiveTest
         assertTrue(!CompUi.previewBarLayout(64, 18, false, true).filterMenuVisible, "no menu in a 64px preview");
         assertTrue(CompUi.previewBarLayout(300, 18, true, true).barCollapsed, "collapsed bar keeps only the arrow");
         assertTrue(!CompUi.previewBarLayout(300, 18, true, true).showFilter, "collapsed bar hides the filter");
+    }
+
+    /**
+     * Regression: the preview's camera/pen/replay icon rail was pinned to {@code 1F - 28 - 22n}
+     * and the floating preview bar to the same 20 px row. In a narrower preview the icons were
+     * painted (and clicked) on top of the bar's filter chip, so "线性：自动" opened the camera
+     * settings. The rail must degrade from the left and never intersect the bar.
+     */
+    @Test
+    public void previewRailNeverCoversThePreviewBar()
+    {
+        int[] widths = {40, 64, 80, 100, 120, 160, 200, 240, 280, 304, 320, 400, 458, 480, 640, 900};
+
+        for (int width : widths)
+        {
+            CompUi.PreviewRailLayout rail = CompUi.previewRailLayout(width);
+            CompUi.PreviewBarLayout bar = CompUi.previewBarLayout(rail.barWidth, 18, false, true);
+            int barRight = 6 + bar.width;
+            int leftmost = Integer.MAX_VALUE;
+
+            /* Icons are ordered right to left: each one must end before the previous one starts. */
+            int previousStart = Integer.MAX_VALUE;
+
+            for (int index = 0; index < rail.shown.length; index++)
+            {
+                if (!rail.shown[index])
+                {
+                    assertEquals(-1, rail.xs[index], "hidden rail icon must have no position at " + width + "px");
+
+                    continue;
+                }
+
+                assertTrue(rail.xs[index] >= 0, "rail icon off-screen at " + width + "px");
+                assertTrue(rail.xs[index] + 20 <= width, "rail icon past the preview at " + width + "px");
+                assertTrue(rail.xs[index] + 20 <= previousStart, "rail icons overlap at " + width + "px");
+
+                previousStart = rail.xs[index];
+                leftmost = Math.min(leftmost, rail.xs[index]);
+            }
+
+            if (leftmost != Integer.MAX_VALUE)
+            {
+                assertTrue(barRight + 2 <= leftmost,
+                    "preview bar overlaps the rail at " + width + "px (bar ends " + barRight
+                        + ", rail starts " + leftmost + ")");
+            }
+        }
+
+        /* Narrow previews hide the rail from the left, but never the camera view first. */
+        assertTrue(CompUi.previewRailLayout(640).shown[0], "camera view must stay visible when it fits");
+        assertTrue(!CompUi.previewRailLayout(120).shown[0], "nothing fits in a 120px preview");
     }
 }

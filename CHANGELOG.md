@@ -1,5 +1,109 @@
 # BBS AE 更新日记
 
+## 0.94 — 2026-11-13
+
+这一轮是「按假设所有功能都有 bug」的系统性审计与修复：13 个 AM P1 效果补齐、图层效果数据层的
+4 个 P1 清零、逐像素深度收尾、主界面交互层 4 个 P1 修复，以及回放/钢笔/动效的收尾批次。
+所有改动都以无头像素测试或纯逻辑测试钉住，并额外跑了一次窄窗口真机截图验证响应式修复。
+
+**测试**：110 个测试套件 / 669 项测试全绿（0.93 基线 96 / 565，1 skipped）。
+
+### 图层效果（需求 2-d 续 + 数据层 P1）
+
+- **AM P1 批次 13 个新效果**（全数据驱动，每个都有零点契约和像素测试）：
+  - 模糊：`am_unsharp_mask`、`am_lens_blur_2`、`am_streak_strips`、`am_warp_blur`、
+    `am_chromatic_zoom_blur`；既有 `am_spin_blur` 角度范围/步进对齐 AM `spinblur2`；
+  - 调色：`am_spectral_map`、`am_soft_glow`、`am_dark_glow`、`am_light_glow`、`am_color_hot`；
+  - 变形：`am_pinch_bulge_2`、`am_swirl_4`、`am_hex_rotate`。
+  - AM gap 审计更新：AM 127 定义 / 匹配 107 / 真正缺失降至 54。
+- **REPLICATE 直通 alpha 修复**：复制器家族此前把直通 alpha 当预乘使用，不透明度 0.5 会让复制体
+  发黑、文字/发光软边重复后出现黑边（预览与导出同时错）。改为预乘空间累加 + 输出统一
+  un-premultiply，像素测试覆盖 α=128 与 opacity=0.5。
+- **预览 proxy 像素单位修复**（"预览=导出"硬承诺）：RGB 分离的 Texel、投影/内阴影偏移
+  （`PassRenderer` 新增按参考尺寸归一化重载）、图层样式 `inner()` 的距离/模糊半径统一按合成
+  像素换算；1:1 与 0.5 代理档渲染采样一致。
+- **抖动/震屏参数失效修复**：`CompScene.shakeOf()` 此前只读关键帧通道、完全忽略滑块基值 →
+  `CompLayer.effectValue(...)` 统一「基值 + 通道覆盖」，旧 `effectParam` 标 `@Deprecated` 委托。
+- **动画预设不再清空/注入内容通道**：`CompAnimationPreset` 采集/应用改为白名单（排除
+  `fx/ mask/ shape/ text/`），目标图层的蒙版/形状/效果动画不再被一键清掉，源层 fx 通道也不
+  再注入目标。
+- **曲线编辑器改 fx 关键帧写回**：`CompCurveChannel.insert/setKeyValue` 对 `fx/<id>/<param>` 镜像
+  回 `CompEffect.params`；另外补齐 `shape/<id>/fillGradientAngle` 的写/读路径。
+- **删除效果清理通道 + id 不再复用孤儿 id**：删除效果时清除 `fx/<id>/...` 关键帧，避免
+  "幽灵轨道"与 3D 每帧重烘焙；`CompStore.uniqueEffectId` 跳过仍有通道的 id，新效果不会继承旧动画。
+- 顺带：启用/禁用效果、移除调色、移除输出预设补 undo/落盘；缩略图生成器拒绝退化空白图。
+
+### 逐像素深度（需求 3 收尾）
+
+- 删除 `DEPTH_PLANE` 的 `if (source.a < 0.004) discard;`（会丢 alpha=1/255 抗锯齿边），
+  `DepthPlaneGhostRegressionTest` 容差从 1 收紧到 **0** 仍通过。
+- `DepthPlaneCompositor` 所有 GL 状态改走 `GlStateManager`（消除"实际状态变、缓存没变"的同类
+  根因）；异常路径 finally 恢复深度/混合/颜色掩码并绑回调用者 framebuffer+viewport；池化
+  target 增加 `pooled/deleted` 守卫防 double release / stale release。
+- 新增 17 个开关路径测试（`PerPixelDepthSwitchTest` 7 + `PerPixelDepthRoutingTest` 6 +
+  `DepthPlaneStateRobustnessTest` 4）：off/on/painter 三路径 0 像素差、AE 混合 2D+3D、legacy3D、
+  池化跨 composition、半透明层只合成一次、强制开关行为不变。
+- **设置 → 开发者新增「逐像素深度（主合成）」开关**：默认仍关闭（性能优先），打开后相交 3D 图层
+  按真实像素深度遮挡；切换即时生效并清预渲染缓存。报告 `docs/DEPTH-GHOST-FIX.zh.md`。
+
+### 主界面交互层审计修复（需求 4/7/8，4 个 P1）
+
+审计基准 `UICompositorPanel`（约 2 万行）+ `CompUi`/`CompDockSource`/`UICompTrackTimeline`，逐条
+给出代码证据后修复：
+
+- **P1 焦点模式布局被写进工程**：进入焦点（F）会把临时树写入 `dockLayout/dockHiddenPanels` 并落盘，
+  重开工程只剩预览+时间轴（"面板消失"）。修复：焦点模式期间 `CompDockSource.suspendPersist(true)`，
+  退出/关面板/切工程/应用预设时恢复；undo 快照也剥离工作区字段，Ctrl+Z 不再跳布局。
+- **P1 预览右上角图标列压住预览条**：图标与浮动条共用 20px 行且无碰撞处理，preview <458px 时点
+  "线性：自动"会打开摄像机设置。新增 `CompUi.previewRailLayout`：图标从左侧降级、预留预览条最小
+  宽度，隐藏图标不占命中；窄窗口不再误触（真机截图 `docs/verify/round49-narrow.png`）。
+- **P1 关键帧抽屉把轨道区挤成负高度**：焦点/矮时间轴下轨道直接消失、抽屉盖住工具条。抽屉高度上限
+  改为 `时间轴高 - 26(标题) - 56(最小轨道) - 5(手柄)`，放不下时自动收起并提示。
+- **P1 Esc 优先级错误**：飞行/摄像机工具拖动/轨道拖拽中按 Esc 不取消，反而关抽屉/清选择/退预合成。
+  改为显式优先级链：钢笔 → 飞行 → 摄像机工具拖动 → 轨道拖拽（新增 `cancelDrag()` 恢复原值）→
+  摄像机工具关闭 → 弹层 → 抽屉 → 预合成 → 选择。
+- P2 修复：切换工程前 `flushSave()`（600ms 防抖窗口内的编辑不再串写/丢失）；撤销快照保留当前
+  工作区；`applyLayoutPreset` 复位焦点状态；legacy 渲染队列页高度补满；`UICompTabBar` 增加父区域
+  命中守卫（窄面板溢出的 tab 不再抢邻居点击）；`UiPageTransition` 首帧不再闪黑纱；
+  快捷面板宽度/时间轴页签变为持久化；顶栏「效果库/工程」按钮纳入响应式布局（窄窗不再压住播放键，
+  并新增 `CompUi` 单测锁住）。
+- dock 交互补齐 BBS 原版快捷键：Ctrl+Tab / Ctrl+Shift+Tab 循环堆叠标签，布局菜单同步提示。
+
+### 实体回放（需求 5 收尾）
+
+- 数据层修复 10 项：内容等值选错回放（`ValueGroup.equals` 陷阱 → 身份比较）、undo/换影片后的陈旧
+  replay 对象写回脱管记录、等长列表变更检测不到、NaN/Inf tick 污染 runner、NaN framing 黑屏、
+  坏相机矩阵导致全裁剪、pick FBO 创建失败从 UI render 抛异常、pick id 公式重复、自动关键帧错 tick、
+  空状态 warn 噪音。
+- 新增 `ReplayListOps`/`ReplayFraming`/`ReplayPickIds` 纯函数与 33 个测试（replay 包 71 tests）。
+- 仍待真机（交互类）：真实 gizmo 拖动写回 + 原版 undo、模型库换模型、列表增删/重排 UI、
+  播放头边界 seek；见 `docs/REPLAY-MODE-REPORT.zh.md` §7.1。
+
+### 钢笔（需求 6 收尾）
+
+- KeyframeLoop 保真：通道搬移/新增点/Set First Vertex 轮转时保留 loops。
+- Set First Vertex（AE 语义）：闭合路径几何轮转 + 已动画路径 6N 通道轮转，关键帧处几何不变，1 步 undo。
+- 修复 2 个真机前 bug：动画路径的叠加/命中/拖拽读 base 而非当前帧求值；Shift 45° 被屏幕+局部
+  两次约束（旋转/非均匀缩放/透视图层方向偏）。
+- 钢笔相关 10 个测试类 90 tests。
+
+### 非线性动效（需求 8-C 收尾）
+
+- `UiMotion.tickFrame()` 全局每 60 帧 prune（含闲置 tween/flash），关闭动效/强度 0 立即归位。
+- 补齐资源浏览器、图层库、开始页、引导页、效果浮层/导入浏览器的入场与关闭过渡
+  （`beginClose` 淡出后再移除，回调只在渲染结束后执行）。
+- 动效类纯逻辑测试合计 27 个。
+
+### 其它
+
+- 新增验证钩子 `-PbbsaeDebugDock`（dock 布局日志）、`-PbbsaeForceDepthPlane`（逐像素深度 A/B）、
+  `-PbbsaeWindow=<WxH>`（精确窗口尺寸，响应式截图用）；正常游戏不生效。
+- 真机截图：`docs/verify/round49-narrow.png`（窄窗口顶栏/图标列/停靠布局降级）、
+  `round48-dock-layout.png`、`round48-dock-stack.png`、`round48-depth-on.png`、`round48-replay-models.png`。
+- 报告：`docs/ROUND49-AUDIT-FIXES.zh.md`、`docs/EFFECTS-FIX-REPORT.zh.md`、`docs/DEPTH-GHOST-FIX.zh.md`、
+  `docs/UI-MOTION-REPORT.zh.md`、`docs/PEN-TOOL-REPORT.zh.md`、`docs/REPLAY-MODE-REPORT.zh.md`、
+  `docs/EFFECTS-AM-GAP.zh.md`。
+
 ## 0.93 — 2026-11-13
 
 这一轮把用户八条需求里剩下的硬骨头做完了：**面板像 BBS 原版一样可停靠/组合**（需求 8-B，

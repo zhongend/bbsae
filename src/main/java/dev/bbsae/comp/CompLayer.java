@@ -688,6 +688,10 @@ public class CompLayer
                     case "repeaterScale": shape.repeaterScale = value; return true;
                     case "repeaterRotation": shape.repeaterRotation = value; return true;
                     case "repeaterOpacity": shape.repeaterOpacity = clamp01(value); return true;
+                    /* Read by shapeAt(); without the write/read pair a keyframe on it was visible
+                     * in the curve editor but silently ignored by the renderer and the fallback 0
+                     * was always used. */
+                    case "fillGradientAngle": shape.fillGradientAngle = value; return true;
                     default: return true;
                 }
             }
@@ -863,6 +867,7 @@ public class CompLayer
                     case "repeaterScale": return shape.repeaterScale;
                     case "repeaterRotation": return shape.repeaterRotation;
                     case "repeaterOpacity": return shape.repeaterOpacity;
+                    case "fillGradientAngle": return shape.fillGradientAngle;
                     default: return fallback;
                 }
             }
@@ -1382,9 +1387,40 @@ public class CompLayer
         return null;
     }
 
+    /**
+     * Value of one effect parameter at a frame: the effect's stored value, overridden by a
+     * {@code fx/<id>/<param>} channel when one exists.
+     *
+     * <p>This is the only correct read for effect parameters. A slider edit writes
+     * {@link CompEffect#params}, not a channel, so a channel-only read silently ignored every
+     * un-keyframed value: the shake strength/amplitude sliders did nothing and only a keyframe
+     * had any effect. Resolving the effect first makes the parameter map the base value and the
+     * channel the override, which is exactly the render precedence.</p>
+     *
+     * @param effect the live effect (usually from {@link #effects}); null yields the fallback
+     */
+    public float effectValue(CompEffect effect, String key, float fallback, float frame)
+    {
+        if (effect == null)
+        {
+            return fallback;
+        }
+
+        CompEffect resolved = this.resolveEffect(effect, frame);
+
+        return resolved == null ? fallback : resolved.valueF(key, fallback);
+    }
+
+    /**
+     * @deprecated Channel-only read: it never looked at {@link CompEffect#params}, so an
+     *     un-keyframed slider value was invisible and the renderer used the fallback instead.
+     *     Use {@link #effectValue(CompEffect, String, float, float)}; this delegate exists only
+     *     so old call sites behave correctly.
+     */
+    @Deprecated
     public float effectParam(String effectId, String parameter, float fallback, float frame)
     {
-        return this.scalarAt(effectPath(effectId, parameter), fallback, frame);
+        return this.effectValue(this.getEffect(effectId), parameter, fallback, frame);
     }
 
     /** Resolves animated effect parameters into a temporary effect for this frame. */

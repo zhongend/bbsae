@@ -29,6 +29,9 @@ public final class UiPageTransition
     {
         this.duration = Math.max(0.01F, durationSeconds);
         this.slidePx = slidePx;
+        /* Start settled: a freshly constructed panel must not paint the veil on its first frame
+         * (isActive() would be true until the first update() advanced the clock). */
+        this.elapsed = this.duration;
     }
 
     /** Advances the clock. Call once per frame, before reading {@link #progress()}. */
@@ -95,5 +98,105 @@ public final class UiPageTransition
 
         context.batcher.box(area.x, area.y, area.ex(), area.ey(),
             UiMotion.alpha(0xFF06080C, alpha));
+    }
+
+    /**
+     * A short close animation for modal overlays whose owner removes them from the tree.
+     *
+     * <p>BBS has no "about to be removed" render pass: an overlay is visible until its owner calls
+     * {@code removeFromParent()}, at which point it vanishes in one frame. This helper owns the
+     * wait instead. The overlay calls {@link #begin()} when the user asks to close it, keeps being
+     * rendered, calls {@link #tick(long)} once per frame, and the single call that returns
+     * {@code true} is the moment the owner may run its removal callback. Because it is driven by
+     * that one boolean, the callback can only fire once even when Esc and a button land together —
+     * a host no longer needs its own "already removed" flag.</p>
+     */
+    public static final class CloseFade
+    {
+        /** 120–160 ms reads as a transition and is short enough not to feel like lag. */
+        public static final float DURATION = 0.14F;
+        private static final String KEY = "close-fade";
+
+        private final UiMotion motion;
+        private final float duration;
+        private boolean closing;
+        private boolean finished;
+        private float progress;
+
+        public CloseFade()
+        {
+            this(new UiMotion(), DURATION);
+        }
+
+        /** Injected clock/motion so the transition can be pinned headlessly. */
+        public CloseFade(UiMotion motion, float durationSeconds)
+        {
+            this.motion = motion == null ? new UiMotion() : motion;
+            this.duration = Math.max(0.01F, durationSeconds);
+        }
+
+        public void begin()
+        {
+            this.begin(System.nanoTime());
+        }
+
+        /** Starts the fade. Repeated calls (Esc + click) are ignored so the owner is asked once. */
+        public void begin(long nowNanos)
+        {
+            if (this.closing)
+            {
+                return;
+            }
+
+            this.closing = true;
+            this.finished = false;
+            this.progress = 0F;
+            this.motion.tickFrame(nowNanos);
+            /* Prime the channel at 0: an absent channel would otherwise make the tween start at
+             * its target and finish instantly. */
+            this.motion.anim(KEY, 0F, 1F);
+        }
+
+        public boolean isClosing()
+        {
+            return this.closing;
+        }
+
+        /** 0 before the fade starts, 1 when the content is fully faded. */
+        public float progress()
+        {
+            return this.progress;
+        }
+
+        /** Remaining visibility factor (1 → 0) for surfaces that are blended by hand. */
+        public float remaining()
+        {
+            return 1F - this.progress;
+        }
+
+        /**
+         * Advances the fade. Returns {@code true} exactly once — on the frame the fade finished —
+         * so the host can run its removal callback without a second latch.
+         */
+        public boolean tick(long nowNanos)
+        {
+            if (!this.closing || this.finished)
+            {
+                return false;
+            }
+
+            this.motion.tickFrame(nowNanos);
+            this.progress = this.motion.tween(KEY, 1F, this.duration, UiMotion.Easing.EASE_OUT);
+
+            if (this.progress >= 1F)
+            {
+                this.progress = 1F;
+                this.finished = true;
+
+                return true;
+            }
+
+            return false;
+        }
     }
 }

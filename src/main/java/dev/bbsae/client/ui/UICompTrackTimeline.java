@@ -87,6 +87,8 @@ public class UICompTrackTimeline extends UIElement
     private float dragAudioStart;
     private float dragAudioOffset;
     private float dragAudioLength;
+    private float dragWorkIn;
+    private float dragWorkOut;
     private String dragId;
     private int dragStartX;
     private int dragStartY;
@@ -1804,6 +1806,8 @@ public class UICompTrackTimeline extends UIElement
             if (Math.abs(mouseX - this.toX(doc.workAreaIn)) <= 6)
             {
                 this.dragMode = MODE_WORK_IN;
+                this.dragWorkIn = doc.workAreaIn;
+                this.dragWorkOut = doc.workAreaOut;
 
                 return;
             }
@@ -1811,6 +1815,8 @@ public class UICompTrackTimeline extends UIElement
             if (Math.abs(mouseX - this.toX(doc.workAreaOut)) <= 6)
             {
                 this.dragMode = MODE_WORK_OUT;
+                this.dragWorkIn = doc.workAreaIn;
+                this.dragWorkOut = doc.workAreaOut;
 
                 return;
             }
@@ -2007,6 +2013,61 @@ public class UICompTrackTimeline extends UIElement
         {
             this.panel.onTrackEdited();
         }
+    }
+
+    /**
+     * Esc during a clip / audio / work-area drag: restore the values captured on press and cancel
+     * the gesture instead of committing a half-finished edit. Returns false when nothing is being
+     * dragged, so the host can continue its own Esc ladder.
+     */
+    public boolean cancelDrag()
+    {
+        boolean layerDrag = this.dragMode == MODE_MOVE || this.dragMode == MODE_TRIM_IN
+            || this.dragMode == MODE_TRIM_OUT;
+        boolean audioDrag = this.dragMode == MODE_AUDIO_MOVE || this.dragMode == MODE_AUDIO_TRIM_IN
+            || this.dragMode == MODE_AUDIO_TRIM_OUT;
+        boolean workDrag = this.dragMode == MODE_WORK_IN || this.dragMode == MODE_WORK_OUT;
+        boolean reorder = this.dragMode == MODE_REORDER;
+
+        if (!layerDrag && !audioDrag && !workDrag && !reorder)
+        {
+            return false;
+        }
+
+        if (layerDrag)
+        {
+            CompLayer layer = this.findLayer(this.dragId);
+
+            if (layer != null)
+            {
+                layer.in = this.dragIn;
+                layer.out = this.dragOut;
+            }
+        }
+
+        if (audioDrag && this.dragAudio != null)
+        {
+            this.dragAudio.start = this.dragAudioStart;
+            this.dragAudio.offset = this.dragAudioOffset;
+            this.dragAudio.duration = this.dragAudioLength;
+        }
+
+        CompDocument doc = this.doc();
+
+        if (workDrag && doc != null)
+        {
+            doc.workAreaIn = this.dragWorkIn;
+            doc.workAreaOut = this.dragWorkOut;
+        }
+
+        this.dragMode = MODE_NONE;
+        this.dragId = null;
+        this.dragAudio = null;
+        this.dragReorderTarget = -1;
+        this.snapGuide = Float.NaN;
+        this.panel.onTrackDragCancelled();
+
+        return true;
     }
 
     private float clamp(float value, float min, float max)

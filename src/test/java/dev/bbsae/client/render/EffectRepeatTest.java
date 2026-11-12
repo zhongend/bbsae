@@ -443,6 +443,71 @@ public class EffectRepeatTest
         }
     }
 
+    /**
+     * The pass must composite straight-alpha layers without darkening them.
+     *
+     * <p>Layer pixels are straight alpha: an α=128 red pixel is (255,0,0,128), not (128,0,0,128).
+     * The old accumulation wrote premultiplied RGB into a straight-alpha target, so any translucent
+     * copy (and every antialiased/glow edge) came out dark — the same bug showed as "opacity 0.5
+     * makes copies black".</p>
+     */
+    @Test
+    public void translucentCopiesKeepTheirColour()
+    {
+        CompEffect effect = effect("am_repeat");
+
+        /* One copy, but not the neutral configuration (alpha 0.999) so the pass really runs. */
+        effect.put("count", 1D);
+        effect.put("offset_x", 0D);
+        effect.put("offset_y", 0D);
+        effect.put("angle", 0D);
+        effect.put("scale", 1D);
+        effect.put("alpha", 0.999D);
+
+        int[] source = solid(0x80FF0000);
+        int[] pixels = applyProjected(effect, source);
+        int center = pixels[32 * SIZE + 32];
+
+        assertTrue(red(center) > 245, "a translucent copy must keep its colour, got " + Integer.toHexString(center));
+        assertTrue(alphaAt(pixels, 32, 32) >= 124 && alphaAt(pixels, 32, 32) <= 130,
+            "a translucent copy must keep its alpha, got " + alphaAt(pixels, 32, 32));
+    }
+
+    /** Same contract for the per-copy opacity: colour stays, only alpha is scaled. */
+    @Test
+    public void halfOpacityKeepsTheCopyColour()
+    {
+        CompEffect effect = effect("am_repeat");
+
+        effect.put("count", 1D);
+        effect.put("offset_x", 0D);
+        effect.put("offset_y", 0D);
+        effect.put("angle", 0D);
+        effect.put("scale", 1D);
+        effect.put("alpha", 0.5D);
+
+        int[] pixels = applyProjected(effect, solid(0xFFFF0000));
+        int center = pixels[32 * SIZE + 32];
+
+        assertTrue(red(center) > 245, "opacity 0.5 must not darken the copy, got " + Integer.toHexString(center));
+        assertTrue(alphaAt(pixels, 32, 32) >= 120 && alphaAt(pixels, 32, 32) <= 136,
+            "opacity 0.5 must halve the alpha, got " + alphaAt(pixels, 32, 32));
+    }
+
+    private static int[] solid(int argb)
+    {
+        int[] pixels = new int[SIZE * SIZE];
+
+        java.util.Arrays.fill(pixels, argb);
+
+        return pixels;
+    }
+
+    private static int red(int argb)
+    {
+        return (argb >> 16) & 0xFF;
+    }
+
     @Test
     public void repeatEffectsNeverRunInsideTheLayerBake()
     {

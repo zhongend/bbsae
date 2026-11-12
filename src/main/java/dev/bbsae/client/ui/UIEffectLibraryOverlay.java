@@ -13,6 +13,7 @@ import mchorse.bbs_mod.ui.utils.InterfaceBlur;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.keys.KeyAction;
+import net.minecraft.client.util.math.MatrixStack;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -52,6 +53,12 @@ public class UIEffectLibraryOverlay extends UIElement
 
     private final UiMotion motion = new UiMotion();
     private int motionFrames;
+    /**
+     * Close transition: the host removes the overlay, so it asks for the fade through
+     * {@link #beginClose(Runnable)} and removes the element from the callback.
+     */
+    private final UiPageTransition.CloseFade closeFade = new UiPageTransition.CloseFade();
+    private Runnable onClosed;
 
     private final List<CompEffectRegistry.Definition> all = new ArrayList<>();
     private final List<CompEffectRegistry.Definition> filtered = new ArrayList<>();
@@ -254,12 +261,108 @@ public class UIEffectLibraryOverlay extends UIElement
             this.motion.prune(UICompButton.PRUNE_IDLE);
         }
 
-        float veil = this.motion.anim("veil", 1F, 8F);
+        boolean finished = this.closeFade.tick(System.nanoTime());
+        float close = this.closeFade.progress();
+        float veil = this.motion.anim("veil", 1F, 8F) * (1F - close);
+        int slide = Math.round(close * 10F);
 
         InterfaceBlur.applyUnder();
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
             UiGfx.mulA(0x66000000, veil));
-        super.render(context);
+
+        if (slide > 0)
+        {
+            MatrixStack stack = context.batcher.getContext().getMatrices();
+
+            stack.push();
+            stack.translate(0F, slide, 0F);
+
+            try
+            {
+                super.render(context);
+            }
+            finally
+            {
+                stack.pop();
+            }
+        }
+        else
+        {
+            super.render(context);
+        }
+
+        if (finished)
+        {
+            this.finishClose(context);
+        }
+    }
+
+    /**
+     * Fades the overlay out and then hands it back to its owner.
+     *
+     * <p>Same contract as {@link UIImportBrowser#beginClose(Runnable)}: the callback runs once,
+     * after the next frame's render pass, because that is the safe moment to remove an element
+     * from its parent. Repeated calls are ignored; with motion off the callback is queued on the
+     * first render.</p>
+     */
+    public void beginClose(Runnable onDone)
+    {
+        if (this.closeFade.isClosing())
+        {
+            return;
+        }
+
+        this.onClosed = onDone;
+        this.closeFade.begin();
+
+        if (this.box != null)
+        {
+            this.box.setEnabled(false);
+        }
+    }
+
+    public boolean isClosing()
+    {
+        return this.closeFade.isClosing();
+    }
+
+    private void finishClose(UIContext context)
+    {
+        Runnable done = this.onClosed;
+
+        this.onClosed = null;
+
+        if (done == null)
+        {
+            return;
+        }
+
+        if (context != null && context.render != null)
+        {
+            context.render.postRunnable(done);
+        }
+        else
+        {
+            done.run();
+        }
+    }
+
+    @Override
+    protected boolean subMouseClicked(UIContext context)
+    {
+        return this.isClosing() || super.subMouseClicked(context);
+    }
+
+    @Override
+    protected boolean subMouseReleased(UIContext context)
+    {
+        return this.isClosing() || super.subMouseReleased(context);
+    }
+
+    @Override
+    protected boolean subMouseScrolled(UIContext context)
+    {
+        return this.isClosing() || super.subMouseScrolled(context);
     }
 
     private void layout()
@@ -299,6 +402,13 @@ public class UIEffectLibraryOverlay extends UIElement
     @Override
     protected boolean subKeyPressed(UIContext context)
     {
+        /* Once the fade starts, Esc must not queue a second close (and the host's onClose would
+         * start another fade on a half-removed overlay). */
+        if (this.isClosing())
+        {
+            return true;
+        }
+
         if (context.getKeyAction() == KeyAction.PRESSED && context.getKeyCode() == GLFW.GLFW_KEY_ESCAPE)
         {
             this.onClose.run();

@@ -201,6 +201,40 @@ public class AmEffectLibraryTest
         assertEquals(1D, effect.value(CompEffect.STRENGTH, -1D), 0.0001D);
     }
 
+    /** The P1 blur/colour/distort batch: every entry has a real neutral value. */
+    @Test
+    public void p1BatchDeclaresItsZeroValues()
+    {
+        assertNeutral("am_unsharp_mask", "amount", 0F);
+        assertNeutral("am_lens_blur_2", "strength", 0F);
+        assertNeutral("am_spin_blur", "angle", 0F);
+        assertNeutral("am_streak_strips", "alpha", 0F);
+        assertNeutral("am_warp_blur", "intensity", 0F);
+        assertNeutral("am_chromatic_zoom_blur", "strength", 0F);
+        assertNeutral("am_spectral_map", "alpha", 0F);
+        assertNeutral("am_soft_glow", "strength", 0F);
+        assertNeutral("am_dark_glow", "strength", 0F);
+        assertNeutral("am_light_glow", "strength", 0F);
+        assertNeutral("am_color_hot", "intensity", 0F);
+        assertNeutral("am_pinch_bulge_2", "strength", 0F);
+        assertNeutral("am_swirl_4", "strength", 0F);
+
+        /* Hex rotate's identity is "no rotation at all", i.e. a combination of six zero values. */
+        CompEffect hex = CompEffectRegistry.create("am_hex_rotate", 1);
+
+        for (String key : new String[] {"rotate", "warp_angle", "angle", "twirl", "position_x", "position_y"})
+        {
+            hex.put(key, 0D);
+        }
+
+        assertTrue(AmEffectLibrary.isNeutral(hex), "am_hex_rotate with no rotation is the identity");
+
+        CompEffect rotated = CompEffectRegistry.create("am_hex_rotate", 1);
+
+        rotated.put("rotate", 45D);
+        assertFalse(AmEffectLibrary.isNeutral(rotated), "a rotated hex grid is not the identity");
+    }
+
     /**
      * Ranges/steps that mean the same thing on the same scale as the reference schema were aligned
      * with it (docs/EFFECTS-AM-GAP.zh.md). Defaults deliberately stay non-neutral for the library
@@ -318,7 +352,8 @@ public class AmEffectLibraryTest
      * the library previews require a thumbnail for each of them.
      */
     @Test
-    public void repeatFamilyIsPartOfTheCatalogue()    {
+    public void repeatFamilyIsPartOfTheCatalogue()
+    {
         for (String id : new String[] {"am_repeat", "am_repeat_radial", "am_repeat_scatter"})
         {
             AmEffectDef definition = AmEffectLibrary.get(id);

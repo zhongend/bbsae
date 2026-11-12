@@ -288,6 +288,26 @@ public class AnimatedPathRemapTest
             list.add(new float[] {tick, value});
             list.sort((a, b) -> Float.compare(a[0], b[0]));
         }
+
+        @Override
+        public void copyLoops(int fromPoint, int fromComponent, int toPoint, int toComponent)
+        {
+            /* Loops are covered by PathLoopSetFirstVertexTest; this fake keeps no loop state. */
+        }
+
+        @Override
+        public void rotateChannels(int count, int shift)
+        {
+            /* Channels rotation is covered by PathLoopSetFirstVertexTest. */
+        }
+
+        @Override
+        public boolean rotatePoints(int shift)
+        {
+            java.util.Collections.rotate(this.points, shift);
+
+            return true;
+        }
     }
 
     private static final class Recorder implements CompPenSession.Listener

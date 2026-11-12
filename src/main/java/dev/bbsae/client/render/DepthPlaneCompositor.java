@@ -26,6 +26,11 @@ final class DepthPlaneCompositor
     private final GlFramebuffer target;
     private final int width;
     private final int height;
+    /** True while this instance sits in {@link #POOL}. Guards a double release from putting the
+     * same target in the free list twice (two later consumers would render into one texture). */
+    private boolean pooled;
+    /** True once the GL target has been deleted; a stale reference must never re-enter the pool. */
+    private boolean deleted;
 
     DepthPlaneCompositor(int width, int height)
     {
@@ -99,6 +104,11 @@ final class DepthPlaneCompositor
         int previousDepthFunc = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_DEPTH_FUNC);
         boolean previousDepthMask = org.lwjgl.opengl.GL11.glGetBoolean(org.lwjgl.opengl.GL11.GL_DEPTH_WRITEMASK);
         boolean previousBlend = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_BLEND);
+        int previousFramebuffer = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
+        int[] previousViewport = new int[4];
+        boolean completed = false;
+
+        org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, previousViewport);
 
         try
         {
@@ -108,51 +118,74 @@ final class DepthPlaneCompositor
             com.mojang.blaze3d.platform.GlStateManager._disableBlend();
 
             /* 1) Depth-only pass for the opaque part: a translucent layer must not occlude what is
-             * behind it, so only alpha >= 0.5 writes depth. */
-            org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
-            org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_LESS);
-            org.lwjgl.opengl.GL11.glDepthMask(true);
+             * behind it, so only alpha >= 0.5 writes depth. All state goes through GlStateManager
+             * (not raw GL): the cached state is what the rest of the render graph trusts, and a
+             * raw write here used to leave the cache claiming the opposite. */
+            com.mojang.blaze3d.platform.GlStateManager._enableDepthTest();
+            com.mojang.blaze3d.platform.GlStateManager._depthFunc(org.lwjgl.opengl.GL11.GL_LESS);
+            com.mojang.blaze3d.platform.GlStateManager._depthMask(true);
             com.mojang.blaze3d.platform.GlStateManager._colorMask(false, false, false, false);
             program.set("Mode", 0);
             program.drawFullscreen();
 
             /* 2) Opaque colour at equality: only the fragments the depth pass accepted survive. */
             com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
-            org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_EQUAL);
-            org.lwjgl.opengl.GL11.glDepthMask(false);
+            com.mojang.blaze3d.platform.GlStateManager._depthFunc(org.lwjgl.opengl.GL11.GL_EQUAL);
+            com.mojang.blaze3d.platform.GlStateManager._depthMask(false);
             program.set("Mode", 1);
             program.drawFullscreen();
 
             /* 3) Translucent colour, less-or-equal against the depth of the layers behind it and no
              * depth writes: a semitransparent layer blends over nearer opaque pixels only when it is
              * actually in front of them. */
-            org.lwjgl.opengl.GL11.glDepthFunc(org.lwjgl.opengl.GL11.GL_LEQUAL);
-            org.lwjgl.opengl.GL11.glDepthMask(false);
+            com.mojang.blaze3d.platform.GlStateManager._depthFunc(org.lwjgl.opengl.GL11.GL_LEQUAL);
+            com.mojang.blaze3d.platform.GlStateManager._depthMask(false);
             program.set("Mode", 2);
             program.drawFullscreen();
+
+            /* Debug-only failure injection used by the state-restoration regression test:
+             * a driver exception inside a pass must still restore every piece of GL state and
+             * rebind the caller's framebuffer. Never set outside tests. */
+            if (Boolean.getBoolean("bbsae.debugDepthPlaneThrow"))
+            {
+                throw new IllegalStateException("bbsae.debugDepthPlaneThrow");
+            }
+
+            completed = true;
         }
         finally
         {
             com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
-            org.lwjgl.opengl.GL11.glDepthMask(previousDepthMask);
-            org.lwjgl.opengl.GL11.glDepthFunc(previousDepthFunc);
+            com.mojang.blaze3d.platform.GlStateManager._depthMask(previousDepthMask);
+            com.mojang.blaze3d.platform.GlStateManager._depthFunc(previousDepthFunc);
 
             if (previousDepthTest)
             {
-                org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+                com.mojang.blaze3d.platform.GlStateManager._enableDepthTest();
             }
             else
             {
-                org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+                com.mojang.blaze3d.platform.GlStateManager._disableDepthTest();
             }
 
             if (previousBlend)
             {
-                org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_BLEND);
+                com.mojang.blaze3d.platform.GlStateManager._enableBlend();
             }
             else
             {
-                org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_BLEND);
+                com.mojang.blaze3d.platform.GlStateManager._disableBlend();
+            }
+
+            /* A pass that threw must not leave the private target bound with its viewport: the
+             * exception unwinds to code that knows nothing about this framebuffer. A normal return
+             * deliberately leaves the new accumulation bound (the caller consumes it). */
+            if (!completed)
+            {
+                com.mojang.blaze3d.platform.GlStateManager._glBindFramebuffer(
+                    org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, previousFramebuffer);
+                com.mojang.blaze3d.platform.GlStateManager._viewport(
+                    previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
             }
         }
 
@@ -161,6 +194,7 @@ final class DepthPlaneCompositor
 
     void delete()
     {
+        this.deleted = true;
         this.target.delete();
     }
 
@@ -190,12 +224,17 @@ final class DepthPlaneCompositor
             compositor.target.clearColorOnly(0);
         }
 
+        compositor.pooled = false;
+
         return compositor;
     }
 
     static synchronized void release(DepthPlaneCompositor compositor)
     {
-        if (compositor == null)
+        /* A double release used to put the same target in the free list twice, and a stale
+         * reference to an already deleted target could re-enter the pool — both hand one texture
+         * to two concurrent consumers. Ignore both instead of corrupting a later frame. */
+        if (compositor == null || compositor.pooled || compositor.deleted)
         {
             return;
         }
@@ -213,6 +252,7 @@ final class DepthPlaneCompositor
 
         compositor.clearDepth();
         compositor.target.clearColorOnly(0);
+        compositor.pooled = true;
         free.addFirst(compositor);
     }
 

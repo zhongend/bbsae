@@ -293,6 +293,82 @@ public final class CompUi
 
     /* --------------------------------------------------------- toolbar geometry */
 
+    /** Width of the two optional header actions (效果库 / 工程), in UI pixels. */
+    public static final int LIBRARY_W = 54;
+    public static final int PROJECTS_W = 54;
+
+    /**
+     * Layout of the preview's right-hand icon rail (camera view, 3D space, camera tool, new camera,
+     * camera settings, pen, entity replay).
+     *
+     * <p>The rail and the floating preview bar used to share the same 20 px row with no collision
+     * handling: any preview narrower than ~458 px had icons drawn on top of the bar's filter chip,
+     * so clicking "线性：自动" opened the camera settings instead. The rail now degrades from the
+     * left (replay → pen → settings → new camera → camera tool → 3D → camera view) and reserves a
+     * usable bar width; the arithmetic lives here so a unit test can lock it.</p>
+     */
+    public static PreviewRailLayout previewRailLayout(int previewWidth)
+    {
+        int w = Math.max(0, previewWidth);
+        int icons = 7;
+        int count = 0;
+
+        /* Keep at least MIN_BAR_WIDTH for the preview bar's own controls; drop rail icons from the
+         * left until that fits. */
+        for (int index = 0; index < icons; index++)
+        {
+            int left = w - 28 - 22 * index;
+
+            if (left - 12 >= MIN_BAR_WIDTH)
+            {
+                count = index + 1;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        int[] xs = new int[icons];
+        boolean[] shown = new boolean[icons];
+        int railLeft = w - 8;
+
+        for (int index = 0; index < icons; index++)
+        {
+            shown[index] = index < count;
+            xs[index] = shown[index] ? w - 28 - 22 * index : -1;
+
+            if (shown[index])
+            {
+                railLeft = Math.min(railLeft, xs[index]);
+            }
+        }
+
+        int available = count > 0 ? railLeft - 12 : w - 12;
+
+        return new PreviewRailLayout(Math.max(32, Math.min(PREVIEW_BAR_MAX, available)), xs, shown);
+    }
+
+    /** Minimum width of the floating preview bar when the icon rail competes for the same row. */
+    public static final int MIN_BAR_WIDTH = 150;
+    public static final int PREVIEW_BAR_MAX = 292;
+
+    /** Result of {@link #previewRailLayout(int)}; indices are in visual order right to left. */
+    public static final class PreviewRailLayout
+    {
+        /** Width that can be passed to {@link #previewBarLayout(int, int, boolean, boolean)}. */
+        public final int barWidth;
+        public final int[] xs;
+        public final boolean[] shown;
+
+        PreviewRailLayout(int barWidth, int[] xs, boolean[] shown)
+        {
+            this.barWidth = barWidth;
+            this.xs = xs;
+            this.shown = shown;
+        }
+    }
+
     /**
      * Geometry of the editor's top bar.
      *
@@ -304,8 +380,9 @@ public final class CompUi
      *
      * <p>Priority, left to right: the right cluster is anchored to the right edge and grows
      * leftwards; the left cluster grows rightwards. When they would collide, low-priority actions
-     * disappear (save → export → render → timecode → frame step → replay → title) rather than
-     * overlap. Focus and settings are never hidden.</p>
+     * disappear (save → export → render → timecode → frame step → replay → title → library →
+     * projects → play) rather than overlap. Focus, settings and the layout button are never
+     * hidden.</p>
      */
     public static HeaderLayout headerLayout(int width, int control)
     {
@@ -320,16 +397,44 @@ public final class CompUi
         boolean showExport = w >= 860;
         boolean showSave = w >= 980;
         boolean showPlay = w >= 120;
+        boolean showLibrary = true;
+        boolean showProjects = true;
 
         int[] left;
         int[] right;
+        int libraryX;
+        int projectsX;
 
         while (true)
         {
             left = leftPositions(w, c, showTitle, showReplay, showPlay, showTimecode, showFrames);
             right = rightPositions(w, c, showRender, showExport, showSave);
 
-            if (left[9] + 8 <= right[6] || (!showTitle && !showReplay && !showPlay && !showTimecode && !showFrames))
+            projectsX = right[6] - 8 - PROJECTS_W;
+            libraryX = projectsX - 8 - LIBRARY_W;
+
+            /* Optional action buttons must not start off-screen; hide them before they draw over
+             * the left cluster. */
+            if (showLibrary && libraryX < 8)
+            {
+                showLibrary = false;
+                continue;
+            }
+
+            if (!showLibrary && showProjects && projectsX < 8)
+            {
+                showProjects = false;
+                continue;
+            }
+
+            int clusterStart = showLibrary ? libraryX : (showProjects ? projectsX : right[6]);
+
+            if (left[9] + 8 <= clusterStart)
+            {
+                break;
+            }
+
+            if (!showTitle && !showReplay && !showPlay && !showTimecode && !showFrames)
             {
                 break;
             }
@@ -362,6 +467,14 @@ public final class CompUi
             {
                 showTitle = false;
             }
+            else if (showLibrary)
+            {
+                showLibrary = false;
+            }
+            else if (showProjects)
+            {
+                showProjects = false;
+            }
             else
             {
                 showPlay = false;
@@ -369,7 +482,8 @@ public final class CompUi
         }
 
         return new HeaderLayout(w, c, showTitle, showReplay, showPlay, showTimecode, showFrames,
-            showRender, showExport, showSave, left, right);
+            showRender, showExport, showSave, showLibrary, showProjects,
+            showLibrary ? libraryX : -1, showProjects ? projectsX : -1, left, right);
     }
 
     /** Left cluster: title, replay selector, play, frame step, timecode. */
@@ -482,6 +596,9 @@ public final class CompUi
         public final boolean showRender;
         public final boolean showExport;
         public final boolean showSave;
+        /** Optional action buttons (效果库 / 工程): hidden before they can overlap the left cluster. */
+        public final boolean showLibrary;
+        public final boolean showProjects;
 
         public final int titleX;
         public final int replayX;
@@ -497,12 +614,15 @@ public final class CompUi
         public final int renderX;
         public final int exportX;
         public final int saveX;
+        public final int libraryX;
+        public final int projectsX;
         public final int leftEnd;
         public final int rightStart;
 
         HeaderLayout(int width, int control, boolean showTitle, boolean showReplay, boolean showPlay,
                      boolean showTimecode, boolean showFrames, boolean showRender, boolean showExport,
-                     boolean showSave, int[] left, int[] right)
+                     boolean showSave, boolean showLibrary, boolean showProjects,
+                     int libraryX, int projectsX, int[] left, int[] right)
         {
             this.width = width;
             this.control = control;
@@ -514,6 +634,10 @@ public final class CompUi
             this.showRender = showRender;
             this.showExport = showExport;
             this.showSave = showSave;
+            this.showLibrary = showLibrary;
+            this.showProjects = showProjects;
+            this.libraryX = libraryX;
+            this.projectsX = projectsX;
 
             this.titleX = left[0];
             this.replayX = left[1];

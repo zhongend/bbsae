@@ -2,6 +2,7 @@ package dev.bbsae.client.ui;
 
 import dev.bbsae.comp.CompProject;
 import mchorse.bbs_mod.BBSSettings;
+import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
@@ -12,8 +13,10 @@ import net.minecraft.client.util.math.MatrixStack;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * BBS-style first-run onboarding.
@@ -45,11 +48,26 @@ public class UIOnboarding extends UIElement
     };
 
     private static final int PAGES = 5;
+    /**
+     * Channel names are class constants: every card/dot/arrow of the wizard exists for the whole
+     * app lifetime, so building "layout:" + i inside a render pass would allocate forever.
+     */
+    private static final String[] DOT_KEYS = {"dot:0", "dot:1", "dot:2", "dot:3", "dot:4"};
+    private static final String[] ARROW_KEYS = {"arrow:prev", "arrow:next"};
+    private static final String[] LAYOUT_HOVER_KEYS = {"layout:0:h", "layout:1:h", "layout:2:h", "layout:3:h"};
+    private static final String[] LAYOUT_SELECT_KEYS = {"layout:0:s", "layout:1:s", "layout:2:s", "layout:3:s"};
+    private static final String[] MOTION_HOVER_KEYS = {"motion:0:h", "motion:1:h", "motion:2:h"};
+    private static final String[] MOTION_SELECT_KEYS = {"motion:0:s", "motion:1:s", "motion:2:s"};
+    private static final String[] SCHEME_HOVER_KEYS = {"scheme:0:h", "scheme:1:h"};
+    private static final String[] SCHEME_SELECT_KEYS = {"scheme:0:s", "scheme:1:s"};
 
     private final UICompositorPanel panel;
     private final UiBackdrop backdrop = new UiBackdrop();
     private final UiMotion motion = new UiMotion();
+    /** Stable hover/press channel names per big-button label, built on first sight (few labels). */
+    private final Map<String, String[]> buttonKeys = new HashMap<>();
     private final List<Hit> hits = new ArrayList<>();
+
     private int page;
     private int pageDirection = 1;
     private int selectedLayout;
@@ -140,6 +158,55 @@ public class UIOnboarding extends UIElement
     {
         this.page = Math.max(0, Math.min(PAGES - 1, page));
         this.pageAt = System.nanoTime();
+    }
+
+    /**
+     * Delay of item {@code index} inside a page, in seconds.
+     *
+     * <p>Pure and package-private so the ordering/cap can be pinned headlessly: the wizard's cards
+     * must arrive in reading order and a long page must not keep the last one waiting.</p>
+     */
+    static float pageItemDelay(int index)
+    {
+        return Math.min(0.18F, Math.max(0, index) * 0.022F);
+    }
+
+    /**
+     * Entrance progress (0→1) of item {@code index} on the current page.
+     *
+     * <p>The page slide is 0.26 s; cards follow a few milliseconds apart so the page reads as being
+     * laid out. Replayed by {@link #show(int)} through {@code pageAt}, not by a second clock.</p>
+     */
+    private float pageIntro(int index)
+    {
+        if (!CompPrefs.animating() || CompPrefs.intensity() <= 0.001F)
+        {
+            return 1F;
+        }
+
+        float elapsed = (System.nanoTime() - this.pageAt) / 1.0E9F;
+        float progress = (elapsed * Math.max(0.5F, CompPrefs.speed()) - pageItemDelay(index)) / 0.26F;
+
+        return UiMotion.easeOut(progress);
+    }
+
+    /** Stable {hover, press} channel names for a big button's label; labels are few and unique. */
+    private String[] buttonKeys(String label)
+    {
+        String[] keys = this.buttonKeys.get(label);
+
+        if (keys == null)
+        {
+            if (this.buttonKeys.size() > 64)
+            {
+                this.buttonKeys.clear();
+            }
+
+            keys = new String[] {"button:" + label, "button:" + label + ":p"};
+            this.buttonKeys.put(label, keys);
+        }
+
+        return keys;
     }
 
     @Override
@@ -409,10 +476,13 @@ public class UIOnboarding extends UIElement
         for (int i = 0; i < dots; i++)
         {
             boolean active = i == this.page;
-            int color = active ? (BBSSettings.primaryColor() | 0xFF000000) : 0x66758595;
+            /* The active dot grows instead of jumping: width and colour ride the same channel. */
+            float dot = this.motion.anim(DOT_KEYS[i], active ? 1F : 0F, 24F);
+            int color = UiMotion.lerpColor(0x66758595, BBSSettings.primaryColor() | 0xFF000000, dot);
+            int width = 6 + Math.round(8F * dot);
             int dotX = dx + i * (6 + gap);
 
-            context.batcher.box(dotX, dy, dotX + (active ? 14 : 6), dy + 6, color);
+            context.batcher.box(dotX, dy, dotX + width, dy + 6, color);
 
             final int target = i;
             this.hits.add(new Hit(dotX - 4, dy - 6, 18, 18, () -> this.show(target)));
@@ -436,7 +506,8 @@ public class UIOnboarding extends UIElement
         boolean hover = this.area.isInside(context.mouseX, context.mouseY)
             && context.mouseX >= x && context.mouseX <= x + 40
             && context.mouseY >= y && context.mouseY <= y + 48;
-        int color = hover ? 0xFFFFFFFF : 0x99A9B6C8;
+        float hov = this.motion.anim(ARROW_KEYS[direction > 0 ? 1 : 0], hover ? 1F : 0F, 24F);
+        int color = UiMotion.lerpColor(0x99A9B6C8, 0xFFFFFFFF, hov);
         int iconX = x + 12;
         int iconY = y + 16;
 
@@ -490,9 +561,14 @@ public class UIOnboarding extends UIElement
 
         for (int i = 0; i < lines.length; i++)
         {
-            context.batcher.box(left, y + 174 + i * 30, left + 3, y + 184 + i * 30,
-                BBSSettings.primaryColor() | 0xFF000000);
-            context.batcher.textShadow(lines[i], left + 16, y + 170 + i * 30, 0xFFB7C3D3);
+            float intro = this.pageIntro(i);
+            float appear = UiStagger.alpha(intro);
+            int dy = y + UiStagger.offsetPx(intro, Math.round(3F * this.motion.intensity()));
+
+            context.batcher.box(left, dy + 174 + i * 30, left + 3, dy + 184 + i * 30,
+                UiGfx.mulA(BBSSettings.primaryColor() | 0xFF000000, appear));
+            context.batcher.textShadow(lines[i], left + 16, dy + 170 + i * 30,
+                UiMotion.alpha(0xFFB7C3D3, appear));
         }
 
         /* Three quiet capability cards fill the page without competing with the primary action. */
@@ -508,13 +584,16 @@ public class UIOnboarding extends UIElement
         for (int i = 0; i < features.length; i++)
         {
             int cx = x + 48 + i * (chipW + 12);
+            float intro = this.pageIntro(i + 1);
+            float appear = UiStagger.alpha(intro);
+            int cy = chipY + UiStagger.offsetPx(intro, Math.round(5F * this.motion.intensity()));
 
-            context.batcher.box(cx, chipY, cx + chipW, chipY + 64, 0x33151E28);
-            context.batcher.box(cx, chipY, cx + 2, chipY + 64, 0x884C9AFF);
-            context.batcher.icon(icons[i], 0xFF9FB2C8, cx + 12, chipY + 12);
-            context.batcher.text(features[i], cx + 34, chipY + 12, 0xFFD6DEEB);
+            context.batcher.box(cx, cy, cx + chipW, cy + 64, UiGfx.mulA(0x33151E28, appear));
+            context.batcher.box(cx, cy, cx + 2, cy + 64, UiGfx.mulA(0x884C9AFF, appear));
+            context.batcher.icon(icons[i], UiMotion.alpha(0xFF9FB2C8, appear), cx + 12, cy + 12);
+            context.batcher.text(features[i], cx + 34, cy + 12, UiMotion.alpha(0xFFD6DEEB, appear));
             context.batcher.text(i == 0 ? "贝塞尔与缓动曲线" : (i == 1 ? "透视、Z 深度与旋转" : "录像器直接渲染"),
-                cx + 12, chipY + 38, 0xFF7C8A9E);
+                cx + 12, cy + 38, UiMotion.alpha(0xFF7C8A9E, appear));
         }
 
         this.bigButton(context, x + w / 2 - 96, y + h - 86, 192, 30, "开始设置", true, () -> this.show(1));
@@ -534,23 +613,31 @@ public class UIOnboarding extends UIElement
         for (int i = 0; i < 4; i++)
         {
             int cx = start + i * (cardW + gap);
-            float hover = this.motion.hover("layout:" + i, this.hovered(cx, cardY, cardW, cardH) ? "layout:" + i : null);
-            float sel = this.motion.select("layout:" + i, i == this.selectedLayout);
+            /* Cards arrive in reading order after the page slide; the hit rectangle stays at the
+             * final position so a fast click during the entrance still lands on the card. */
+            float intro = this.pageIntro(i);
+            float appear = UiStagger.alpha(intro);
+            int dy = cardY + UiStagger.offsetPx(intro, Math.round(6F * this.motion.intensity()));
+            float hover = this.motion.anim(LAYOUT_HOVER_KEYS[i],
+                this.hovered(cx, cardY, cardW, cardH) ? 1F : 0F, 24F);
+            float sel = this.motion.anim(LAYOUT_SELECT_KEYS[i], i == this.selectedLayout ? 1F : 0F, 22F);
             int fill = UiMotion.lerpColor(0xFF1A222D, 0xFF243040, hover);
             int outline = UiMotion.lerpColor(0xFF334052, BBSSettings.primaryColor(), sel);
+            int top = dy - Math.round(hover * 2F);
 
             if (sel > 0.01F)
             {
-                UiGfx.shadow(context.batcher, cx, cardY, cardW, cardH, 5F,
-                    UiGfx.alpha(BBSSettings.primaryColor(), 0.12F * sel));
+                UiGfx.shadow(context.batcher, cx, top, cardW, cardH, 5F,
+                    UiGfx.alpha(BBSSettings.primaryColor(), 0.12F * sel * appear));
             }
 
-            context.batcher.box(cx, cardY - Math.round(hover * 2F), cx + cardW, cardY + cardH - Math.round(hover * 2F), fill);
-            context.batcher.outline(cx, cardY, cx + cardW, cardY + cardH, outline);
-            this.layoutDiagram(context, cx + 22, cardY + 24, cardW - 44, 72, i, sel);
-            context.batcher.text(LAYOUT_NAMES[i], cx + 12, cardY + 112, sel > 0.5F ? 0xFFFFFFFF : 0xFFD3DCE8);
-            context.batcher.text(LAYOUT_HINTS[i], cx + 12, cardY + 132, 0xFF8492A6);
-            context.batcher.text("点击应用", cx + 12, cardY + 160, 0xFF66758A);
+            context.batcher.box(cx, top, cx + cardW, top + cardH, UiGfx.mulA(fill, appear));
+            context.batcher.outline(cx, dy, cx + cardW, dy + cardH, UiGfx.mulA(outline, appear));
+            this.layoutDiagram(context, cx + 22, dy + 24, cardW - 44, 72, i, sel);
+            context.batcher.text(LAYOUT_NAMES[i], cx + 12, dy + 112,
+                UiMotion.alpha(sel > 0.5F ? 0xFFFFFFFF : 0xFFD3DCE8, appear));
+            context.batcher.text(LAYOUT_HINTS[i], cx + 12, dy + 132, UiMotion.alpha(0xFF8492A6, appear));
+            context.batcher.text("点击应用", cx + 12, dy + 160, UiMotion.alpha(0xFF66758A, appear));
 
             final int chosen = i;
             this.hits.add(new Hit(cx, cardY, cardW, cardH, () ->
@@ -599,16 +686,21 @@ public class UIOnboarding extends UIElement
         for (int i = 0; i < 3; i++)
         {
             int cx = start + i * (cardW + gap);
-            float hover = this.motion.hover("motion:" + i, this.hovered(cx, cardY, cardW, cardH) ? "motion:" + i : null);
-            float sel = this.motion.select("motion:" + i, i == this.selectedMotion);
+            float intro = this.pageIntro(i);
+            float appear = UiStagger.alpha(intro);
+            int dy = cardY + UiStagger.offsetPx(intro, Math.round(6F * this.motion.intensity()));
+            float hover = this.motion.anim(MOTION_HOVER_KEYS[i],
+                this.hovered(cx, cardY, cardW, cardH) ? 1F : 0F, 24F);
+            float sel = this.motion.anim(MOTION_SELECT_KEYS[i], i == this.selectedMotion ? 1F : 0F, 22F);
             int fill = UiMotion.lerpColor(0xFF1A222D, 0xFF243040, hover);
+            int top = dy - Math.round(hover * 2F);
 
-            context.batcher.box(cx, cardY - Math.round(hover * 2F), cx + cardW, cardY + cardH - Math.round(hover * 2F), fill);
-            context.batcher.outline(cx, cardY, cx + cardW, cardY + cardH,
-                UiMotion.lerpColor(0xFF334052, BBSSettings.primaryColor(), sel));
+            context.batcher.box(cx, top, cx + cardW, top + cardH, UiGfx.mulA(fill, appear));
+            context.batcher.outline(cx, dy, cx + cardW, dy + cardH,
+                UiGfx.mulA(UiMotion.lerpColor(0xFF334052, BBSSettings.primaryColor(), sel), appear));
 
             /* Wave preview: amplitude/colour follows the preset. */
-            int mid = cardY + 54;
+            int mid = dy + 54;
 
             for (int px = 0; px < cardW - 28; px++)
             {
@@ -617,12 +709,14 @@ public class UIOnboarding extends UIElement
                 int py = Math.round(mid + (float) Math.sin(phase + this.motion.time * (i == 2 ? 0.3F : 1.2F)) * amp);
 
                 context.batcher.box(cx + 14 + px, py, cx + 15 + px, py + 1,
-                    i == 2 ? 0x66808A98 : (BBSSettings.primaryColor() | 0xFF000000));
+                    UiGfx.mulA(i == 2 ? 0x66808A98 : (BBSSettings.primaryColor() | 0xFF000000), appear));
             }
 
-            context.batcher.text(MOTION_NAMES[i], cx + 12, cardY + 104, sel > 0.5F ? 0xFFFFFFFF : 0xFFD3DCE8);
-            context.batcher.text(MOTION_HINTS[i], cx + 12, cardY + 126, 0xFF8492A6);
-            context.batcher.text(i == 2 ? "静态界面" : "非线性过渡", cx + 12, cardY + 150, 0xFF66758A);
+            context.batcher.text(MOTION_NAMES[i], cx + 12, dy + 104,
+                UiMotion.alpha(sel > 0.5F ? 0xFFFFFFFF : 0xFFD3DCE8, appear));
+            context.batcher.text(MOTION_HINTS[i], cx + 12, dy + 126, UiMotion.alpha(0xFF8492A6, appear));
+            context.batcher.text(i == 2 ? "静态界面" : "非线性过渡", cx + 12, dy + 150,
+                UiMotion.alpha(0xFF66758A, appear));
 
             final int chosen = i;
             this.hits.add(new Hit(cx, cardY, cardW, cardH, () ->
@@ -647,20 +741,24 @@ public class UIOnboarding extends UIElement
         for (int i = 0; i < 2; i++)
         {
             int cx = start + i * (cardW + gap);
-            float hover = this.motion.hover("scheme:" + i, this.hovered(cx, cardY, cardW, cardH) ? "scheme:" + i : null);
-            float sel = this.motion.select("scheme:" + i, i == this.selectedScheme);
+            float intro = this.pageIntro(i);
+            float appear = UiStagger.alpha(intro);
+            int dy = cardY + UiStagger.offsetPx(intro, Math.round(6F * this.motion.intensity()));
+            float hover = this.motion.anim(SCHEME_HOVER_KEYS[i],
+                this.hovered(cx, cardY, cardW, cardH) ? 1F : 0F, 24F);
+            float sel = this.motion.anim(SCHEME_SELECT_KEYS[i], i == this.selectedScheme ? 1F : 0F, 22F);
             int fill = UiMotion.lerpColor(0xFF1A222D, 0xFF243040, hover);
 
-            context.batcher.box(cx, cardY, cx + cardW, cardY + cardH, fill);
-            context.batcher.outline(cx, cardY, cx + cardW, cardY + cardH,
-                UiMotion.lerpColor(0xFF334052, BBSSettings.primaryColor(), sel));
-            context.batcher.text(i == 0 ? "Premiere Pro" : "BBS 原版", cx + 16, cardY + 18,
-                sel > 0.5F ? 0xFFFFFFFF : 0xFFD3DCE8);
+            context.batcher.box(cx, dy, cx + cardW, dy + cardH, UiGfx.mulA(fill, appear));
+            context.batcher.outline(cx, dy, cx + cardW, dy + cardH,
+                UiGfx.mulA(UiMotion.lerpColor(0xFF334052, BBSSettings.primaryColor(), sel), appear));
+            context.batcher.text(i == 0 ? "Premiere Pro" : "BBS 原版", cx + 16, dy + 18,
+                UiMotion.alpha(sel > 0.5F ? 0xFFFFFFFF : 0xFFD3DCE8, appear));
             context.batcher.text(i == 0 ? "Alt+滚轮缩放 · Ctrl+Shift+D 复制" : "Ctrl+滚轮缩放 · Ctrl+D 复制",
-                cx + 16, cardY + 44, 0xFF8492A6);
+                cx + 16, dy + 44, UiMotion.alpha(0xFF8492A6, appear));
             context.batcher.text(i == 0 ? "空格播放 · J/K/L 倒放/暂停/正放" : "空格播放 · I/O 工作区",
-                cx + 16, cardY + 64, 0xFF8492A6);
-            context.batcher.text("点击选择", cx + 16, cardY + 108, 0xFF66758A);
+                cx + 16, dy + 64, UiMotion.alpha(0xFF8492A6, appear));
+            context.batcher.text("点击选择", cx + 16, dy + 108, UiMotion.alpha(0xFF66758A, appear));
 
             final int chosen = i;
             this.hits.add(new Hit(cx, cardY, cardW, cardH, () ->
@@ -684,18 +782,22 @@ public class UIOnboarding extends UIElement
         int left = x + 72;
         int boxW = w - 144;
         int boxY = y + 146;
+        float intro = this.pageIntro(0);
+        float appear = UiStagger.alpha(intro);
+        int dy = boxY + UiStagger.offsetPx(intro, Math.round(4F * this.motion.intensity()));
 
-        context.batcher.box(left, boxY, left + boxW, boxY + 134, 0xFF161F2A);
-        context.batcher.outline(left, boxY, left + boxW, boxY + 134, 0xFF334052);
+        context.batcher.box(left, dy, left + boxW, dy + 134, UiGfx.mulA(0xFF161F2A, appear));
+        context.batcher.outline(left, dy, left + boxW, dy + 134, UiGfx.mulA(0xFF334052, appear));
 
-        context.batcher.text("工作区", left + 20, boxY + 18, 0xFF8492A6);
+        context.batcher.text("工作区", left + 20, dy + 18, UiMotion.alpha(0xFF8492A6, appear));
         context.batcher.text(LAYOUT_NAMES[this.selectedLayout] + " — " + LAYOUT_HINTS[this.selectedLayout],
-            left + 120, boxY + 18, 0xFFE4EBF5);
-        context.batcher.text("动效", left + 20, boxY + 52, 0xFF8492A6);
+            left + 120, dy + 18, UiMotion.alpha(0xFFE4EBF5, appear));
+        context.batcher.text("动效", left + 20, dy + 52, UiMotion.alpha(0xFF8492A6, appear));
         context.batcher.text(MOTION_NAMES[this.selectedMotion] + " — " + MOTION_HINTS[this.selectedMotion],
-            left + 120, boxY + 52, 0xFFE4EBF5);
-        context.batcher.text("快捷键", left + 20, boxY + 86, 0xFF8492A6);
-        context.batcher.text(CompKeybinds.schemeName(this.selectedScheme), left + 120, boxY + 86, 0xFFE4EBF5);
+            left + 120, dy + 52, UiMotion.alpha(0xFFE4EBF5, appear));
+        context.batcher.text("快捷键", left + 20, dy + 86, UiMotion.alpha(0xFF8492A6, appear));
+        context.batcher.text(CompKeybinds.schemeName(this.selectedScheme), left + 120, dy + 86,
+            UiMotion.alpha(0xFFE4EBF5, appear));
 
         this.bigButton(context, x + w / 2 - 110, y + h - 92, 220, 32, "进入合成器", true, () -> this.close(true));
     }
@@ -711,16 +813,28 @@ public class UIOnboarding extends UIElement
     private void bigButton(UIContext context, int x, int y, int w, int h, String label, boolean primary, Runnable action)
     {
         boolean hover = this.hovered(x, y, w, h);
-        float hv = this.motion.anim("button:" + label, hover ? 1F : 0F, 20F);
+        String[] keys = this.buttonKeys(label);
+        float hv = this.motion.anim(keys[0], hover ? 1F : 0F, 20F);
+        /* A manually drawn button (not a BBS clickable): its pressed pose is "hovering while the
+         * pointer button is down", and the spring supplies the rebound. */
+        boolean pressed = hover && Window.isMouseButtonPressed(0);
+        float pv = this.motion.spring(keys[1], pressed ? 1F : 0F, 520F, 30F);
         int fill = primary
             ? UiMotion.lerpColor(BBSSettings.primaryColor() | 0xFF000000,
                 Colors.mulRGB(BBSSettings.primaryColor() | 0xFF000000, 1.18F), hv)
             : UiMotion.lerpColor(0xFF1B2430, 0xFF263343, hv);
         int border = primary ? Colors.mulRGB(fill, 1.2F) : 0xFF3A4658;
         int text = primary ? 0xFFFFFFFF : 0xFFD3DCE8;
+        int inset = pv >= 0.5F ? 1 : 0;
+        int lift = Math.round(hv * 2F * (1F - pv));
 
-        context.batcher.box(x, y - Math.round(hv * 2F), x + w, y + h - Math.round(hv * 2F), fill);
-        context.batcher.outline(x, y, x + w, y + h, border);
+        if (pv > 0.01F)
+        {
+            fill = UiMotion.lerpColor(fill, Colors.mulRGB(fill, 0.92F), pv);
+        }
+
+        context.batcher.box(x + inset, y - lift + inset, x + w - inset, y + h - lift - inset, fill);
+        context.batcher.outline(x, y - lift, x + w, y + h - lift, border);
 
         FontRenderer font = context.batcher.getFont();
 

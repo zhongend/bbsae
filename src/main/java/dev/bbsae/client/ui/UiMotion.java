@@ -17,10 +17,21 @@ import java.util.Map;
  * <p>The settings page exposes what this class reads: the global on/off, an intensity multiplier,
  * a speed multiplier and the glow/shadow switches. If motion is disabled all channels snap to their
  * target, so the UI remains completely usable for users who prefer static interfaces.</p>
+ *
+ * <p><b>Channel hygiene.</b> Channels are keyed by strings and lists create one per row/asset/tile,
+ * so a long session can otherwise accumulate an entry for everything ever drawn. {@link #tickFrame}
+ * therefore runs {@link #prune(float)} every {@link #PRUNE_EVERY_FRAMES} frames on its own; hosts do
+ * not have to opt in. Idle tweens and one-shot flashes are dropped by the same sweep, which also
+ * keeps {@link #isActive()} honest for hosts that lost a transition. Hosts that want a tighter
+ * cadence may still call {@link #prune(float)} explicitly — it is idempotent.</p>
  */
 public class UiMotion
 {
     public static final float ENTRANCE = 0.30F;
+    /** Frames between automatic prune sweeps (~1 s at 60 fps). */
+    public static final int PRUNE_EVERY_FRAMES = 60;
+    /** Default idle time after which an untouched channel is dropped by {@link #prune(float)}. */
+    public static final float PRUNE_IDLE_SECONDS = 2F;
     private static final float SNAP_EPSILON = 0.001F;
     /** Hard cap for a single frame's delta: an alt-tab pause must not teleport an animation. */
     private static final float MAX_DT = 0.05F;
@@ -93,6 +104,8 @@ public class UiMotion
     private long nowNanos = System.nanoTime();
     private long shownAt;
     private boolean shown;
+    /** Frames since the last automatic prune sweep; see {@link #PRUNE_EVERY_FRAMES}. */
+    private int framesSincePrune;
     private final Map<String, Float> channels = new HashMap<>();
     private final Map<String, Float> targets = new HashMap<>();
     private final Map<String, Float> velocities = new HashMap<>();
@@ -218,6 +231,25 @@ public class UiMotion
         this.dt = Math.max(0F, Math.min(MAX_DT, (nowNanos - previous) / 1.0E9F));
         this.lastFrame = nowNanos;
         this.time += this.dt;
+        this.maybeAutoPrune();
+    }
+
+    /**
+     * Drops idle channels once every {@link #PRUNE_EVERY_FRAMES} frames.
+     *
+     * <p>Doing it here rather than in each host means every element that ticks — including the ones
+     * that predate the per-host prune cadence — gets the same bound on its channel table. The sweep
+     * is O(channels) and runs once a second, which is noise next to the UI's own drawing.</p>
+     */
+    private void maybeAutoPrune()
+    {
+        if (++this.framesSincePrune < PRUNE_EVERY_FRAMES)
+        {
+            return;
+        }
+
+        this.framesSincePrune = 0;
+        this.prune(PRUNE_IDLE_SECONDS);
     }
 
     public void markShown()
@@ -244,6 +276,7 @@ public class UiMotion
         this.lastUsed.clear();
         this.flashes.clear();
         this.lastFrame = 0L;
+        this.framesSincePrune = 0;
         this.time = 0F;
         this.shown = false;
     }
@@ -406,9 +439,14 @@ public class UiMotion
         return easeOutBack((elapsed - delay) / duration);
     }
 
+    /**
+     * Starts a one-shot flash at the current frame clock (not the wall clock, so the envelope
+     * follows the same injected/deterministic time as every other channel and cannot drift when
+     * ticks are skipped).
+     */
     public void flash(String key)
     {
-        this.flashes.put(key, System.nanoTime());
+        this.flashes.put(key, this.nowNanos);
     }
 
     /** One-shot flash progress 0→1; returns 1 when absent/finished. */
@@ -421,7 +459,7 @@ public class UiMotion
             return 1F;
         }
 
-        float t = (System.nanoTime() - at) / (Math.max(0.01F, duration) * 1.0E9F);
+        float t = (this.nowNanos - at) / (Math.max(0.01F, duration) * 1.0E9F);
 
         if (t >= 1F)
         {
@@ -497,10 +535,27 @@ public class UiMotion
         return this.channels.size();
     }
 
+    /** Number of pending one-shot flashes; diagnostics/tests only. */
+    public int flashCount()
+    {
+        return this.flashes.size();
+    }
+
+    /** Number of pending tweens; diagnostics/tests only. */
+    public int tweenCount()
+    {
+        return this.tweens.size();
+    }
+
     /**
-     * Drops channels that have not been touched for {@code idleSeconds}. List rows come and go
-     * (hundreds of effect rows, tracks, assets), so without pruning the channel maps only grow for
-     * a long editing session.
+     * Drops state that has not been touched for {@code idleSeconds}: channels, idle tweens and
+     * one-shot flashes.
+     *
+     * <p>List rows come and go (hundreds of effect rows, tracks, assets, tiles), so without pruning
+     * the channel maps only grow for a long editing session. A tween whose channel is no longer
+     * queried belongs to a transition the host abandoned (element hidden, page switched); dropping
+     * it also clears the stale {@link #isActive()} answer. Called by {@link #maybeAutoPrune()} once
+     * a second, and idempotent, so hosts may also call it explicitly.</p>
      */
     public void prune(float idleSeconds)
     {
@@ -509,7 +564,7 @@ public class UiMotion
 
         for (Map.Entry<String, Long> entry : this.lastUsed.entrySet())
         {
-            if (entry.getValue() < cutoff && !this.tweens.containsKey(entry.getKey()))
+            if (entry.getValue() < cutoff)
             {
                 dead.add(entry.getKey());
             }
@@ -520,7 +575,26 @@ public class UiMotion
             this.channels.remove(key);
             this.targets.remove(key);
             this.velocities.remove(key);
+            this.tweens.remove(key);
             this.lastUsed.remove(key);
+        }
+
+        /* Flashes are one-shot and are normally consumed by the host on the next render. One that
+         * is still here after the idle window was never read (the element was hidden) and would
+         * otherwise sit in the map for the rest of the session. */
+        List<String> staleFlashes = new ArrayList<>();
+
+        for (Map.Entry<String, Long> entry : this.flashes.entrySet())
+        {
+            if (entry.getValue() < cutoff)
+            {
+                staleFlashes.add(entry.getKey());
+            }
+        }
+
+        for (String key : staleFlashes)
+        {
+            this.flashes.remove(key);
         }
     }
 

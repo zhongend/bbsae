@@ -232,6 +232,9 @@ public class UICompositorPanel extends UIDashboardPanel
     private boolean debugProjectLoaded;
     /** BBS-style camera flight: WASD/mouse free look, F enters and exits. */
     private boolean cameraFlying;
+    /** True while the AE camera tool owns a mouse drag (Esc checks it before the generic ladder). */
+    private boolean cameraToolDragging;
+    private boolean cameraToolCancelRequested;
     private CompLayer flightCamera;
     private int flightLastMouseX = Integer.MIN_VALUE;
     private int flightLastMouseY = Integer.MIN_VALUE;
@@ -363,6 +366,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private float keyframeDrawerSlide;
     private long keyframeSlideNanos;
     private static final int KEYFRAME_DRAWER_MIN = 96;
+    /** Two track rows + the strip's 26 px header and 5 px splitter must survive the drawer. */
+    private static final int MIN_TRACKS_HEIGHT = 56;
     private UIStartScreen startScreen;
     private boolean startScreenOpen;
     private int pendingScheme;
@@ -3604,6 +3609,17 @@ public class UICompositorPanel extends UIDashboardPanel
              */
             private void pollCameraToolInput(UIContext context)
             {
+                if (UICompositorPanel.this.cameraToolCancelRequested)
+                {
+                    UICompositorPanel.this.cameraToolCancelRequested = false;
+
+                    if (this.ctMode != CT_NONE)
+                    {
+                        this.endCameraToolDrag();
+                        UICompositorPanel.this.setStatus("已结束摄像机工具拖动（Esc）");
+                    }
+                }
+
                 if (!UICompositorPanel.this.cameraToolActive()
                     || UICompositorPanel.this.is3DSpace()
                     || UICompositorPanel.this.doc == null
@@ -3676,6 +3692,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.ctStartDistance = Math.max(1F, view.distance);
                 this.ctStartRight.set(view.right);
                 this.ctStartUp.set(view.up);
+                UICompositorPanel.this.cameraToolDragging = true;
 
                 if (camera.cameraLookAt)
                 {
@@ -3799,6 +3816,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void endCameraToolDrag()
             {
+                UICompositorPanel.this.cameraToolDragging = false;
+                UICompositorPanel.this.cameraToolCancelRequested = false;
+
                 if (this.ctMode != CT_NONE)
                 {
                     this.ctMode = CT_NONE;
@@ -4994,7 +5014,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 super.render(context);
             }
         };
-        this.encoderBadge.relative(this.preview).x(1F, -126).y(6).w(120).h(24);
+        this.encoderBadge.relative(this.preview).x(1F, -126).y(28).w(120).h(24);
         this.encoderBadge.tooltip(IKey.constant("AE 编码器：预览与导出来自同一个帧服务器（第 N 帧 = N / 帧率）；点“设置”可切回 BBS 原生"));
         this.encoderBadge.setVisible(false);
         this.preview.add(this.encoderBadge);
@@ -5520,6 +5540,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.timelinePage = index;
             this.beginPageMotion(this.timelinePageMotion, "timeline:" + index);
             this.applyTimelinePage(grow);
+
+            if (this.project != null && this.project.settings != null)
+            {
+                this.project.settings.timelinePage = index;
+            }
+
+            this.saveUiState();
         });
         fitTimeline.tooltip(IKey.constant("时间轴适配全长（\\）"));
 
@@ -5696,6 +5723,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
+            this.restoreFocusBeforePersist();
             this.flushSave();
             CompPrefs.flush();
 
@@ -5710,6 +5738,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
+            this.restoreFocusBeforePersist();
             this.flushSave();
             CompPrefs.flush();
 
@@ -6147,7 +6176,10 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Standalone project (no film): editing, grading and the render queue still work. */
     private void bindStandalone(CompProject project, CompDocument comp)
     {
-        this.save();
+        /* Write the OUTGOING project before `this.project` points at the new one: flushSave()
+         * serializes `this.project`, so a debounced edit inside the 600 ms window would otherwise
+         * be written into the newly opened project (or lost). */
+        this.flushProjectBeforeSwitch();
         this.hideStartScreen();
         this.precompStack.clear();
 
@@ -6217,7 +6249,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.save();
+        this.flushProjectBeforeSwitch();
         this.hideStartScreen();
         this.precompStack.clear();
 
@@ -6739,6 +6771,17 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void applyLayoutPreset(int preset)
     {
+        /* Applying a workspace preset is an explicit layout choice: it supersedes any transient
+         * focus view, otherwise the next F press would restore the pre-preset tree over it. */
+        this.focusMode = false;
+        this.focusReturnRoot = null;
+        this.focusReturnHidden = null;
+
+        if (this.dockSource != null)
+        {
+            this.dockSource.suspendPersist(false);
+        }
+
         int density = switch (preset)
         {
             case UIOnboarding.LAYOUT_COMPACT -> CompUi.DENSITY_COMPACT;
@@ -7247,12 +7290,25 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.effectLibraryOverlay = new UIEffectLibraryOverlay(this, () ->
         {
-            if (this.effectLibraryOverlay != null)
+            UIEffectLibraryOverlay overlay = this.effectLibraryOverlay;
+
+            if (overlay == null || overlay.isClosing())
             {
-                this.effectLibraryOverlay.setVisible(false);
-                this.effectLibraryOverlay.removeFromParent();
-                this.effectLibraryOverlay = null;
+                return;
             }
+
+            /* Fade the overlay out first; beginClose runs the removal after this frame's render,
+             * so the parent's child list is not mutated while it is being traversed. */
+            overlay.beginClose(() ->
+            {
+                overlay.setVisible(false);
+                overlay.removeFromParent();
+
+                if (this.effectLibraryOverlay == overlay)
+                {
+                    this.effectLibraryOverlay = null;
+                }
+            });
         });
         this.effectLibraryOverlay.relative(this).x(0).y(0).w(1F).h(1F);
         this.add(this.effectLibraryOverlay);
@@ -7720,11 +7776,25 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void closeImportBrowser()
     {
-        if (this.importBrowser != null)
+        UIImportBrowser browser = this.importBrowser;
+
+        if (browser == null || browser.isClosing())
         {
-            this.importBrowser.removeFromParent();
-            this.importBrowser = null;
+            return;
         }
+
+        /* Same close-fade contract as the effect library: removal happens in the callback after the
+         * frame is rendered. */
+        browser.beginClose(() ->
+        {
+            browser.setVisible(false);
+            browser.removeFromParent();
+
+            if (this.importBrowser == browser)
+            {
+                this.importBrowser = null;
+            }
+        });
     }
 
     /**
@@ -8506,6 +8576,18 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         this.saveRequested = true;
         this.saveRequestedMs = System.currentTimeMillis();
+    }
+
+    /** Writes the current project immediately before switching away from it. */
+    private void flushProjectBeforeSwitch()
+    {
+        if (this.project == null)
+        {
+            return;
+        }
+
+        this.save();
+        this.flushSave();
     }
 
     /** Writes now. Called on panel close, before export, and by the debounce timer. */
@@ -10441,6 +10523,41 @@ public class UICompositorPanel extends UIDashboardPanel
         this.save();
     }
 
+    /** Esc cancelled a timeline drag: values were restored, no edit is committed. */
+    public void onTrackDragCancelled()
+    {
+        this.refreshInspector();
+        this.refreshSheets();
+        this.setStatus("已取消拖动");
+    }
+
+    /**
+     * Deletes every keyframe channel that belongs to an effect (`fx/&lt;id&gt;/...`).
+     *
+     * <p>Effect ids are the smallest free `fxN`, and the channels are namespaced by that id. If the
+     * channels survived the effect, the next effect that got the same id would silently inherit the
+     * old animation (and the orphan track would stay visible in the dope sheet / curve editor).
+     * The channel-to-data table is rebuilt by {@code CompLayer.saveTracks()} on save/snapshot, so
+     * removing it from the runtime map is enough.</p>
+     */
+    private void removeEffectChannels(CompLayer layer, String effectId)
+    {
+        if (layer == null || effectId == null || effectId.isBlank() || layer.animatedPaths() == null)
+        {
+            return;
+        }
+
+        String prefix = CompLayer.effectPath(effectId, "");
+
+        for (String path : new ArrayList<>(layer.animatedPaths()))
+        {
+            if (path != null && path.startsWith(prefix))
+            {
+                layer.removeChannel(path);
+            }
+        }
+    }
+
     public void toggleLayerVisible(CompLayer layer)
     {
         if (layer == null)
@@ -11235,7 +11352,24 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         int timelineHeight = this.dock != null ? Math.max(0, this.timeline.area.h) : this.timelinePanelHeight;
-        int max = Math.max(KEYFRAME_DRAWER_MIN, timelineHeight - 96);
+
+        /* The drawer must leave room for the 26 px strip header, at least two track rows and the
+         * 5 px splitter. The old "timelineHeight - 96" cap ignored the header: in focus mode the
+         * timeline is only ~16 % of the dock, so opening the drawer produced a negative track
+         * height (the tracks vanished and the drawer covered the timeline toolbar). */
+        int max = Math.max(0, timelineHeight - 26 - MIN_TRACKS_HEIGHT - 5);
+
+        if (max < KEYFRAME_DRAWER_MIN)
+        {
+            if (this.keyframeOpen)
+            {
+                this.keyframeOpen = false;
+                this.setStatus("时间轴太矮，关键帧抽屉已收起；拖高时间轴或退出聚焦后再打开");
+            }
+
+            this.keyframeDrawerSlide = 0F;
+            max = 0;
+        }
 
         this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.keyframeDrawerHeight));
 
@@ -11910,6 +12044,12 @@ public class UICompositorPanel extends UIDashboardPanel
             this.focusReturnRoot = this.dock.getLayoutRoot();
             this.focusReturnHidden = this.dockSource.getHiddenPanels();
 
+            /* The focus tree is a session view: suspend persistence before replacing the tree so
+             * the project file can never end up with the side panels hidden. Without this the
+             * debounced flush (dockLayoutDirty → flushDockLayout) wrote the focus tree into
+             * CompSettings.dockLayout/dockHiddenPanels, and reopening the project showed only
+             * preview + timeline ("my panels disappeared"). */
+            this.dockSource.suspendPersist(true);
             this.dockSource.setRoot(CompDockSource.focusLayout());
 
             java.util.Set<String> hidden = this.dockSource.getHiddenPanels();
@@ -11935,10 +12075,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.focusReturnRoot = null;
             this.focusReturnHidden = null;
             this.dock.refresh();
+
+            /* Restored tree equals the persisted one again; resume normal persistence. */
+            this.dockSource.suspendPersist(false);
             this.setStatus("已恢复面板布局");
         }
 
-        this.dockLayoutDirty = true;
+        this.dockLayoutDirty = false;
         this.syncDockDerivedLayout();
     }
 
@@ -12036,7 +12179,8 @@ public class UICompositorPanel extends UIDashboardPanel
             this.quickPanel.relative(this).x(1F, -quickWidth).y(1F, -(this.timelinePanelHeight + 18))
                 .w(quickWidth).h(this.timelinePanelHeight);
         }
-        this.renderPanel.relative(this).x(0).y(24).w(1F).h(bodyHeight);
+        this.renderPanel.relative(this).x(0).y(24).w(1F)
+            .h(this.renderView ? Math.max(1, this.area.h - 42) : bodyHeight);
 
         if (this.leftHandle != null)
         {
@@ -12128,19 +12272,51 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Called by the dock source once per settled layout change; batches the project write. */
     private void onDockLayoutSaved()
     {
+        if (this.dockPersistSuspended())
+        {
+            return;
+        }
+
         this.dockLayoutDirty = true;
     }
 
     /** Called by the dock when visibility / active stack tab changed: keep the chrome in sync. */
     private void onDockLayoutChanged()
     {
+        if (this.dockPersistSuspended())
+        {
+            return;
+        }
+
         this.dockLayoutDirty = true;
+    }
+
+    private boolean dockPersistSuspended()
+    {
+        return this.focusMode || (this.dockSource != null && this.dockSource.isPersistSuspended());
+    }
+
+    /**
+     * Leaving the panel must not persist the transient focus tree. The debounced flush could fire
+     * after the panel was closed, so restore the real layout first (cheap: one dock refresh).
+     */
+    private void restoreFocusBeforePersist()
+    {
+        if (this.focusMode && this.dock != null)
+        {
+            this.focusMode = false;
+            this.applyDockFocusMode();
+        }
     }
 
     private void onDockLayoutSettled()
     {
         this.syncDockDerivedLayout();
-        this.dockLayoutDirty = true;
+
+        if (!this.dockPersistSuspended())
+        {
+            this.dockLayoutDirty = true;
+        }
 
         if (Boolean.getBoolean("bbsae.debugDock") && this.dock != null)
         {
@@ -12163,6 +12339,14 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         if (this.flushingDock)
         {
+            return;
+        }
+
+        /* Focus mode must never be written into the project (see applyDockFocusMode). */
+        if (this.dockPersistSuspended())
+        {
+            this.dockLayoutDirty = false;
+
             return;
         }
 
@@ -12243,6 +12427,8 @@ public class UICompositorPanel extends UIDashboardPanel
         });
         manager.action(Icons.MAXIMIZE, IKey.constant("最大化鼠标下的面板（Ctrl+空格）"),
             () -> this.dock.toggleMaximizeUnderCursor());
+        manager.action(Icons.LIST, IKey.constant("循环堆叠标签（Ctrl+Tab / Ctrl+Shift+Tab）"),
+            () -> this.dock.cycleDockStackTab(1));
 
         /* Hidden panels: hiding happens on the panel's own title-bar context menu while unlocked;
          * every hidden panel gets a "show" entry here so it can always be recovered. */
@@ -12402,6 +12588,24 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.save.relative(this.header).x(layout.saveX).y(inset).w(48).h(control);
         }
+
+        /* Optional actions: the effect library and project switcher sit left of the right cluster
+         * and disappear before they can overlap the left group (they used to be pinned with
+         * x = 1F - 456 / 1F - 396, which overlapped the play controls below ~520 px). */
+        this.effectLibraryButton.setVisible(layout.showLibrary);
+        this.projectsButton.setVisible(layout.showProjects);
+
+        if (layout.showLibrary)
+        {
+            this.effectLibraryButton.relative(this.header).x(layout.libraryX).y(inset)
+                .w(CompUi.LIBRARY_W).h(control);
+        }
+
+        if (layout.showProjects)
+        {
+            this.projectsButton.relative(this.header).x(layout.projectsX).y(inset)
+                .w(CompUi.PROJECTS_W).h(control);
+        }
     }
 
     /** Keeps the floating preview controls inside a very narrow preview. */
@@ -12414,7 +12618,15 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.lastPreviewWidth = Math.max(48, previewWidth);
 
-        CompUi.PreviewBarLayout layout = CompUi.previewBarLayout(this.lastPreviewWidth, CompUi.control(),
+        /* The camera/pen/replay icon rail shares this 20 px row with the floating preview bar.
+         * Size the rail first and feed the leftover width to the bar: before this, a preview
+         * narrower than ~458 px had icons painted over the bar's filter chip (clicking "线性：自动"
+         * opened the camera settings). */
+        CompUi.PreviewRailLayout rail = CompUi.previewRailLayout(this.lastPreviewWidth);
+
+        this.applyPreviewRail(rail);
+
+        CompUi.PreviewBarLayout layout = CompUi.previewBarLayout(rail.barWidth, CompUi.control(),
             this.previewControlsCollapsed, this.previewFilterExpanded);
 
         this.previewBar.relative(this.preview).x(6).y(6).w(layout.width).h(20);
@@ -12460,6 +12672,32 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.previewBar.resize();
+    }
+
+    /** Positions/hides the preview's right-hand icon rail for the current preview width. */
+    private void applyPreviewRail(CompUi.PreviewRailLayout rail)
+    {
+        UIIcon[] icons = {
+            this.cameraViewButton, this.space3DButton, this.cameraToolButton, this.createCameraButton,
+            this.cameraSettingsButton, this.penButton, this.replayModeButton
+        };
+
+        for (int index = 0; index < icons.length; index++)
+        {
+            if (icons[index] == null)
+            {
+                continue;
+            }
+
+            boolean shown = index < rail.shown.length && rail.shown[index];
+
+            icons[index].setVisible(shown);
+
+            if (shown)
+            {
+                icons[index].relative(this.preview).x(rail.xs[index]).y(6).w(20).h(20);
+            }
+        }
     }
 
     private void savePanelLayout()
@@ -12550,8 +12788,17 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.dock.locked(!this.dockUnlocked());
+            /* A project switch cancels any transient focus view: keeping the old flag would leave
+             * the button/state disagreeing with the restored tree on the next F press. */
+            this.focusMode = false;
             this.focusReturnRoot = null;
             this.focusReturnHidden = null;
+
+            if (this.dockSource != null)
+            {
+                this.dockSource.suspendPersist(false);
+            }
+
             this.dock.refresh();
         }
 
@@ -14881,6 +15128,8 @@ public class UICompositorPanel extends UIDashboardPanel
         }));
         section.fields.add(this.smallButton("移除调色", () ->
         {
+            this.beginAction("移除调色");
+            this.removeEffectChannels(layer, grade.id);
             layer.effects.remove(grade);
             this.refreshInspector();
             this.save();
@@ -15008,6 +15257,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         UIToggle enabled = new UIToggle(IKey.constant("启用"), effect.enabled, (toggle) ->
         {
+            this.beginAction("启用/禁用效果");
             effect.enabled = toggle.getValue();
             this.save();
         });
@@ -15016,6 +15266,9 @@ public class UICompositorPanel extends UIDashboardPanel
         UIIcon remove = new UIIcon(Icons.TRASH, (icon) ->
         {
             this.beginAction("删除效果");
+            /* Effect ids are recycled (smallest free fxN); orphan fx/<id>/* channels would be
+             * silently re-attached to the next effect that gets the same id. */
+            this.removeEffectChannels(layer, effect.id);
             layer.effects.remove(effect);
             this.refreshInspector();
             this.save();
@@ -15337,9 +15590,11 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(new UIToggle(IKey.constant("保留帧"), preset.keepFrames, (toggle) -> preset.keepFrames = toggle.getValue()));
             section.fields.add(new UICompButton(IKey.constant("移除预设"), (button) ->
             {
+                this.beginAction("移除输出预设");
                 this.project.outputPresets.remove(preset);
                 this.presetIndex = Math.min(this.presetIndex, Math.max(0, this.project.outputPresets.size() - 1));
                 this.refreshInspector();
+                this.save();
             }));
         }
 
@@ -17613,6 +17868,10 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.project.settings.quickPanelWidth = this.quickPanelWidth;
         }
+
+        /* Drag-release persistence: dock users never hit savePanelLayout(), so this UI state used
+         * to be forgotten after closing the panel. */
+        this.saveUiState();
     }
 
     public void quickSetX(double value) { this.setTransformX(value); }
@@ -18117,7 +18376,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.actionInProgress = true;
 
-        String json = CompStore.snapshot(this.project);
+        String json = this.snapshotForUndo();
 
         if (json.isEmpty())
         {
@@ -18143,10 +18402,137 @@ public class UICompositorPanel extends UIDashboardPanel
 
     /** Periodic snapshot: every mutation ends up in the project JSON, so a 1-second sampler gives
      *  a real undo history without hooking every widget. */
+    /**
+     * Serializes the project for undo with workspace/UI fields blanked.
+     *
+     * <p>Ctrl+Z restores the whole {@link CompProject}, and its settings carry the dock tree, panel
+     * widths, camera-preview mode and 3D viewport pose. Without this mask an undo taken after a
+     * content edit silently reset the user's panel layout (entering/leaving focus mode was enough):
+     * the snapshot contained whatever layout existed when the edit was captured.</p>
+     */
+    private String snapshotForUndo()
+    {
+        CompProject project = this.project;
+
+        if (project == null || project.settings == null)
+        {
+            return project == null ? "" : CompStore.snapshot(project);
+        }
+
+        CompProject.CompSettings settings = project.settings;
+
+        String dockLayout = settings.dockLayout;
+        String dockHidden = settings.dockHiddenPanels;
+        boolean dockUnlocked = settings.dockUnlocked;
+        int leftWidth = settings.leftPanelWidth;
+        int rightWidth = settings.rightPanelWidth;
+        int timelineHeight = settings.timelineHeight;
+        int drawerHeight = settings.keyframeDrawerHeight;
+        int quickWidth = settings.quickPanelWidth;
+        int timelinePage = settings.timelinePage;
+        int density = settings.uiDensity;
+        boolean cameraPreview = settings.cameraPreviewMode;
+        boolean viewport3D = settings.viewport3D;
+        boolean poseValid = settings.viewportPoseValid;
+        float yaw = settings.viewportYaw;
+        float pitch = settings.viewportPitch;
+        float distance = settings.viewportDistance;
+        float targetX = settings.viewportTargetX;
+        float targetY = settings.viewportTargetY;
+        float targetZ = settings.viewportTargetZ;
+        boolean ortho = settings.viewportOrtho;
+        boolean collapse = settings.previewControlsCollapsed;
+        boolean filterExpanded = settings.previewFilterExpanded;
+
+        try
+        {
+            settings.dockLayout = "";
+            settings.dockHiddenPanels = "";
+            settings.dockUnlocked = false;
+            settings.leftPanelWidth = 0;
+            settings.rightPanelWidth = 0;
+            settings.timelineHeight = 0;
+            settings.keyframeDrawerHeight = 0;
+            settings.quickPanelWidth = 0;
+            settings.timelinePage = 0;
+            settings.uiDensity = 0;
+            settings.cameraPreviewMode = false;
+            settings.viewport3D = false;
+            settings.viewportPoseValid = false;
+            settings.viewportYaw = 0F;
+            settings.viewportPitch = 0F;
+            settings.viewportDistance = 0F;
+            settings.viewportTargetX = 0F;
+            settings.viewportTargetY = 0F;
+            settings.viewportTargetZ = 0F;
+            settings.viewportOrtho = false;
+            settings.previewControlsCollapsed = false;
+            settings.previewFilterExpanded = false;
+
+            return CompStore.snapshot(project);
+        }
+        finally
+        {
+            settings.dockLayout = dockLayout;
+            settings.dockHiddenPanels = dockHidden;
+            settings.dockUnlocked = dockUnlocked;
+            settings.leftPanelWidth = leftWidth;
+            settings.rightPanelWidth = rightWidth;
+            settings.timelineHeight = timelineHeight;
+            settings.keyframeDrawerHeight = drawerHeight;
+            settings.quickPanelWidth = quickWidth;
+            settings.timelinePage = timelinePage;
+            settings.uiDensity = density;
+            settings.cameraPreviewMode = cameraPreview;
+            settings.viewport3D = viewport3D;
+            settings.viewportPoseValid = poseValid;
+            settings.viewportYaw = yaw;
+            settings.viewportPitch = pitch;
+            settings.viewportDistance = distance;
+            settings.viewportTargetX = targetX;
+            settings.viewportTargetY = targetY;
+            settings.viewportTargetZ = targetZ;
+            settings.viewportOrtho = ortho;
+            settings.previewControlsCollapsed = collapse;
+            settings.previewFilterExpanded = filterExpanded;
+        }
+    }
+
+    /** Restores the live workspace fields over a project graph rebuilt from an undo snapshot. */
+    private void preserveWorkspaceSettings(CompProject.CompSettings from, CompProject.CompSettings to)
+    {
+        if (from == null || to == null)
+        {
+            return;
+        }
+
+        to.dockLayout = from.dockLayout;
+        to.dockHiddenPanels = from.dockHiddenPanels;
+        to.dockUnlocked = from.dockUnlocked;
+        to.leftPanelWidth = from.leftPanelWidth;
+        to.rightPanelWidth = from.rightPanelWidth;
+        to.timelineHeight = from.timelineHeight;
+        to.keyframeDrawerHeight = from.keyframeDrawerHeight;
+        to.quickPanelWidth = from.quickPanelWidth;
+        to.timelinePage = from.timelinePage;
+        to.uiDensity = from.uiDensity;
+        to.cameraPreviewMode = from.cameraPreviewMode;
+        to.viewport3D = from.viewport3D;
+        to.viewportPoseValid = from.viewportPoseValid;
+        to.viewportYaw = from.viewportYaw;
+        to.viewportPitch = from.viewportPitch;
+        to.viewportDistance = from.viewportDistance;
+        to.viewportTargetX = from.viewportTargetX;
+        to.viewportTargetY = from.viewportTargetY;
+        to.viewportTargetZ = from.viewportTargetZ;
+        to.viewportOrtho = from.viewportOrtho;
+        to.previewControlsCollapsed = from.previewControlsCollapsed;
+        to.previewFilterExpanded = from.previewFilterExpanded;
+    }
+
     private void captureSnapshot()
     {
         long now = System.currentTimeMillis();
-
         /* A discrete command just ran. Record its result as the sampler's new baseline, but do
          * not push it: beginAction already pushed the pre-command state. Without this, a value
          * edit made right after the command would be merged into the next undo step. */
@@ -18156,7 +18542,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
             if (!this.restoring && this.project != null)
             {
-                String json = CompStore.snapshot(this.project);
+                String json = this.snapshotForUndo();
 
                 if (!json.isEmpty())
                 {
@@ -18187,7 +18573,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        String json = CompStore.snapshot(this.project);
+        String json = this.snapshotForUndo();
 
         this.documentDirty = false;
 
@@ -18214,7 +18600,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.pushRedo(CompStore.snapshot(this.project));
+        this.pushRedo(this.snapshotForUndo());
         String json = this.undoStack.pop();
 
         this.undoChars = Math.max(0L, this.undoChars - json.length());
@@ -18231,7 +18617,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.pushUndo(CompStore.snapshot(this.project));
+        this.pushUndo(this.snapshotForUndo());
         String json = this.redoStack.pop();
 
         this.redoChars = Math.max(0L, this.redoChars - json.length());
@@ -18250,12 +18636,16 @@ public class UICompositorPanel extends UIDashboardPanel
 
         String compId = this.doc == null ? null : this.doc.id;
         String layerId = this.selectedLayer == null ? null : this.selectedLayer.id;
+        CompProject.CompSettings liveSettings = this.project == null ? null : this.project.settings;
 
         this.restoring = true;
 
         try
         {
             this.project = restored;
+            /* Undo restores content, not the workspace: keep the live dock tree / panel widths /
+             * camera-preview mode instead of jumping to the layout captured with the edit. */
+            this.preserveWorkspaceSettings(liveSettings, restored.settings);
             this.doc = compId == null ? restored.getCompOrFirst(CompStore.DEFAULT_COMP) : restored.getComp(compId);
 
             if (this.doc == null)
@@ -18307,6 +18697,17 @@ public class UICompositorPanel extends UIDashboardPanel
             /* The bridge caches the document it renders; without this an undo leaves the BBS
              * preview/backdrop pointing at the pre-undo object graph. */
             dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
+
+            /* `restored` is a new object graph; the layout source has to resolve the new settings
+             * instance and the dock must re-layout instead of keeping stale panel rectangles. */
+            if (this.dock != null && this.dockSource != null)
+            {
+                this.dockSource.reload();
+                this.dock.locked(!this.dockUnlocked());
+                this.dock.refresh();
+                this.applyLayout();
+            }
+
             this.save();
         }
         finally
@@ -18410,7 +18811,8 @@ public class UICompositorPanel extends UIDashboardPanel
             return super.subKeyPressed(context);
         }
 
-        /* BBS dock shortcuts (same keys as the film editor): undo layout change / maximize panel. */
+        /* BBS dock shortcuts (same keys as the film editor): undo layout change / maximize panel /
+         * cycle the tabs of a panel stack under the cursor. */
         if (pressed && this.dock != null && !typing)
         {
             if (ctrl && alt && key == GLFW.GLFW_KEY_Z)
@@ -18419,6 +18821,16 @@ public class UICompositorPanel extends UIDashboardPanel
                 {
                     this.dockLayoutDirty = true;
                     this.setStatus("已撤销一次布局改动");
+                }
+
+                return true;
+            }
+
+            if (ctrl && !alt && key == GLFW.GLFW_KEY_TAB)
+            {
+                if (this.dock.cycleDockStackTab(shift ? -1 : 1))
+                {
+                    this.dockLayoutDirty = true;
                 }
 
                 return true;
@@ -18440,6 +18852,40 @@ public class UICompositorPanel extends UIDashboardPanel
         if (!typing && this.penTool != null && this.penTool.onKey(context))
         {
             return true;
+        }
+
+        /* Esc priority: cancel the thing that is actually in progress before the generic ladder
+         * below closes the drawer / exits a precomp / clears the selection. The generic handler
+         * used to run first, so Esc during BBS camera flight deselected the layer instead of
+         * ending the flight (and during a track/audio drag it just closed a drawer). */
+        if (pressed && !typing && key == GLFW.GLFW_KEY_ESCAPE)
+        {
+            if (this.cameraFlying)
+            {
+                this.setCameraFlying(false);
+
+                return true;
+            }
+
+            if (this.cameraToolDragging)
+            {
+                this.cameraToolCancelRequested = true;
+
+                return true;
+            }
+
+            if (this.trackTimeline != null && this.trackTimeline.cancelDrag())
+            {
+                return true;
+            }
+
+            if (this.cameraToolActive())
+            {
+                this.setCameraTool(false);
+                this.setStatus("AE 摄像机工具已关闭（Esc）");
+
+                return true;
+            }
         }
 
         /* G arms/disarms the pen. Deliberately not in CompKeybinds: the keybind table is shared

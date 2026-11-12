@@ -102,7 +102,10 @@
 | P4 “整条路径打关键帧”助手 | ✅ | 检查器按钮/右键菜单：对 6N 通道在播放头 `insert`，一步 undo |
 | P4 求值→CountOp→回写全部关键帧的通道重映射 | ✅（Round 2） | 段上加点/末尾加点/删除点（含 Multi-delete）全支持；详见 §9 |
 | 逐点羽化（Mask Feather 工具） | ❌ | 数据模型缺 `FeatherPoint`，单独立项 |
-| RotoBezier / Convert To Bezier / Set First Vertex / Free Transform Points | ❌ | 依赖通道重排，后置 |
+| RotoBezier / Convert To Bezier / Free Transform Points | ❌ | 依赖通道重排，后置 |
+| Set First Vertex | ✅（Round 3） | 闭合路径右键菜单“设为第一顶点”；几何轮转 + 动画通道/loops 轮转，见 §11 |
+| 点通道 KeyframeLoop 保真 | ✅（Round 3） | 索引搬移、新点通道、Set First Vertex 都携带 loops；见 §11 |
+| 2D/3D 命中与手势 bug 审查 | ✅（Round 3） | 修复“动画路径叠加/命中/拖动用 base 值而非当前帧求值”“Shift 在屏幕+局部被约束两次”；新增命中/边界/段 t 回归；见 §11 |
 | AE Contents 形状组（Group→Path/Fill/Stroke 嵌套） | ❌ | 数据模型是扁平 `shapes`，不做（计划取舍 2-A） |
 | 形状检查器逐点数值行折叠（40 点=240 行） | ❌ | 未折叠；钢笔编辑不依赖它 |
 | 吸附 | ⚠️ | 顶点吸附（仅其它路径顶点）+ 网格吸附（`showGrid` 时，屏幕空间 6px）；**拖拽锚点时暂不吸附** |
@@ -117,14 +120,17 @@
 2. **渲染画面会变（修的是 bug）**：椭圆/圆形蒙版现在渲染完整 1/4 缺失部分；旋转图层蒙版不再镜像；带手柄的闭合形状路径最后一段变成曲线。真机需逐项截图核对（§6 第 10、11 项）。
 3. **3D 工作区钢笔是“新路径”**：`is3DSpace()` 下点击需要先选中图层；平面侧对屏幕/相机后返回 null 并提示，不落点。
 4. **性能**：拖拽时每次 `setScalar` → `save()`（去抖 600ms）+ 每帧重栅格化蒙版（`MaskCache` LRU 24，全分辨率）。本期**未做**拖拽降采样/性能基准；50 路径×40 点的叠加层为 O(路径×段×12) 屏幕投影，未测 <0.3ms 预算。
-5. **动画路径语义（Round 2 起为“重映射”而非“禁止”）**：增删点会按 §9 把 6N 个标量通道重映射到新索引。保证：**每个既有动画关键帧处曲线逐像素不变**；关键帧之间是“重映射后各通道各自插值”的近似（与 AE 的整条 Path 值插值存在理论差异），若相邻通道是贝塞尔插值、误差可能可见但仅存在于两键之间。另：通道上的重复循环（KeyframeLoop）在索引搬移时会丢失（点通道一般不用 loop）。
-6. **撤销粒度**：拖拽一帧一次 `save()`（进度条去抖），一次拖拽=一次 undo（`beginAction` 只在按下时），与现有蒙版拖拽一致；**动画重映射的一次操作 = 一步 undo**（在改通道前只 `beginAction` 一次）。
+5. **动画路径语义（Round 2 起为“重映射”而非“禁止”）**：增删点会按 §9 把 6N 个标量通道重映射到新索引。保证：**每个既有动画关键帧处曲线逐像素不变**；关键帧之间是“重映射后各通道各自插值”的近似（与 AE 的整条 Path 值插值存在理论差异），若相邻通道是贝塞尔插值、误差可能可见但仅存在于两键之间。KeyframeLoop 自 Round 3 起随通道搬移/复制（见 §11）。
+6. **撤销粒度**：拖拽一帧一次 `save()`（进度条去抖），一次拖拽=一次 undo（`beginAction` 只在按下时），与现有蒙版拖拽一致；**动画重映射/设为第一顶点的一次操作 = 一步 undo**（在改通道前只 `beginAction` 一次）。
 7. **框选范围**：只对“当前编辑的那一条路径”框选（AE 是同一图层的所有路径）；跨路径多选未做。
 8. **右键菜单文案**是 effectcraft 已验证命令集的意译，AE 画布右键逐项文本未真机核对。
 9. **`G` 硬编码**：若与其他面板/输入法冲突，可在 dock 重构后迁到 `CompKeybinds`。
 10. **没有持久化调试开关/环境变量**：钢笔状态全部在内存（`CompPenSession`），`forget()/cancel()` 在换层/换合成/进出 3D/关闭工具时调用，无残留。
-11. **检查器“添加/删除点”按钮仍绕过重映射**：`UICompositorPanel.maskSection` / `shapeSection` 的“添加蒙版点/添加路径点/删除最后一点”直接改 `points` 列表（不是走钢笔 session）。本轮禁止改 `UICompositorPanel`，已在 §10 给出 1 行替换补丁；**Lead 未集成前，对已动画路径使用这三个检查器按钮仍会打乱通道**。
+11. ~~检查器“添加/删除点”按钮仍绕过重映射~~ → **Lead 已在 0.93 集成**（`UICompositorPanel` 现在走 `penTool().appendMaskPoint/removeMaskPoint/...`）。
 12. **“Preserve Constant Vertex Count”没有开关**：AE 有设置项可关（关时不重映射其他键）。本项目当前**始终开启**（更安全、符合用户预期）；如果以后要 AE 1:1，可在 `CompPrefs`/`CompProject` 加开关（不在本轮写域）。
+13. **叠加/命中现在按当前帧求值**（Round 3）：`MaskTarget/ShapeTarget` 每次读取都走 `layer.scalarAt`，因此动画路径的锚点/手柄/吸附都跟随播放头。代价是钢笔激活时每帧对可见路径做 O(点数×6) 次 `scalarAt`（小蒙版可忽略；50×40 路径同时可见时是后台开销，未做性能基准）。
+14. **Set First Vertex 只支持闭合路径**（AE 对开放路径也允许“轮转起点”，但开放路径的起点是钢笔续画/闭合手势的语义锚点，轮转容易让用户困惑；当前明确拒绝并提示）。
+15. **KeyframeLoop 的语义边界**：loop 是绝对时间块，随通道搬移保留；**新插入点**的 loop 从段起点分量复制（通常同一 block 共享 id）。被删点的 loop 随通道清空；若 loop 只存在于某些分量，新点只继承起点分量那一组。
 
 ---
 
@@ -148,7 +154,11 @@
 14. **动画路径**：检查器“整条路径打关键帧”→ 0/24/48 帧形状连续；在段上加点 → 三个帧的轮廓不变、撤销一步；删除一个点 → 剩余点位置在所有帧保持、撤销一步。
 15. **splitter 拖动**：拖动分栏时预览内不落点。
 16. **性能**：40 点蒙版拖拽预览不卡顿（>30fps 代理）；退出钢笔后无每帧额外开销。
-17. **动画路径 + 检查器加点（等 §10 补丁集成后）**：对已打关键帧的蒙版点检查器“添加蒙版点/删除最后一点” → 关键帧处轮廓仍连续。
+17. **动画路径 + 检查器加点**：对已打关键帧的蒙版点检查器“添加蒙版点/删除最后一点” → 关键帧处轮廓仍连续（0.93 已集成）。
+18. **动画路径的叠加/命中跟随播放头（Round 3 修复）**：给蒙版点打位置关键帧，把播放头移到 24 帧 → 锚点/手柄/橡皮筋出现在渲染出来的位置；点击该位置能选中锚点（修复前命中仍用 t=0 的 base 位置）。
+19. **Set First Vertex（Round 3）**：闭合蒙版选中第二个锚点 → 右键“设为第一顶点” → 闭合形状不变、起点圆点移动；动画路径在 0/24 帧轮廓不变；撤销一步。
+20. **KeyframeLoop 保真（Round 3）**：给路径点通道设 loop → 在段上加点/删点/Set First Vertex → 跨 loop 区域播放时形状仍重复，新点跟随循环。
+21. **Shift 约束在旋转/透视图层（Round 3 修复）**：旋转 30°、非均匀缩放的图层上 Shift+拖动锚点 → 屏幕上沿 45° 方向（修复前先屏幕约束又在局部约束一次，方向偏）。
 
 ---
 
@@ -158,24 +168,20 @@
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 compileJava --offline --console=plain
-powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 test --offline --console=plain `
-  --tests "dev.bbsae.comp.CompPathGeometryTest" `
-  --tests "dev.bbsae.comp.CompPenSessionTest" `
-  --tests "dev.bbsae.comp.AnimatedPathRemapTest" `
-  --tests "dev.bbsae.comp.PenPathPersistenceTest" `
-  --tests "dev.bbsae.client.render.MaskPathRasterTest" `
-  --tests "dev.bbsae.client.render.MaskGlRenderTest" `
-  --tests "dev.bbsae.client.render.ShapeOpenPathTest" `
-  --tests "dev.bbsae.client.ui.PenProjectionTest"
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 test --offline --console=plain
 ```
+
+钢笔相关 10 个测试类（全量 test 会一并跑）：
+`CompPathGeometryTest`、`CompPenSessionTest`、`AnimatedPathRemapTest`、`PathLoopSetFirstVertexTest`、`AnimatedPenHitTest`、`PenPathPersistenceTest`、`MaskPathRasterTest`、`MaskGlRenderTest`、`ShapeOpenPathTest`、`PenProjectionTest`。
 
 结果：
 
 - Round 1（2026-11-12 23:1x）`compileJava` / `compileTestJava`：BUILD SUCCESSFUL；当时 7 类 **62 tests / 0 fail**。
-- Round 2（2026-11-12 23:4x）新增 `AnimatedPathRemapTest`（12 个用例：段内/闭合末段/播放头非关键帧的保形加点、单/多删点索引重映射、末尾加点、无动画路径行为不变、无通道访问拒绝、关键 tick 不丢失、采样 tick = 键 ∪ 播放头、检查器 API），与既有 7 类合计 **74 tests / 0 fail**（`compileJava`/`compileTestJava` BUILD SUCCESSFUL）。
-- Round 2 全量 `gradle-run.ps1 test`：**97 suites / 565 tests / 0 failures / 0 errors**（含 effects/replay 队友本轮改动；本机串行包装器下）。
+- Round 2（2026-11-12 23:4x）新增 `AnimatedPathRemapTest`（12 个用例），与既有 7 类合计 **74 tests / 0 fail**。
+- Round 2 全量 `gradle-run.ps1 test`：**97 suites / 565 tests / 0 failures / 0 errors**。
+- Round 3（2026-11-13 00:3x）新增 `PathLoopSetFirstVertexTest`（7）、`AnimatedPenHitTest`（2），并扩充 `CompPenSessionTest`（15→18：命中边界、段 t、闭合半径）、`PenProjectionTest`（6→10：旋转/透视命中、屏幕 45° 约束）。10 类合计 **90 tests / 0 fail**（`compileJava`/`compileTestJava` BUILD SUCCESSFUL）。
+- Round 3 全量 `gradle-run.ps1 test`：**643 tests / 3 failed / 1 skipped**；3 个失败全部在 effects 队友进行中的新增效果（`EffectP1BatchTest` 默认值可见性、`EffectLibraryNamingTest` 唯一名、`EffectThumbnailResourceTest` 预览图缺失），与钢笔无关，已在本轮汇报里标给 Lead。
 - 受 `MaskCache`/`ShapeRasterizer` 改动影响的既有测试回归：`CompLayerSourceCacheTest`、`MaskCombineTest`、`EntityMaskSizingTest`、`ReplayEntityMaskRequestTest`、`CompScenePlaneDepthTest` 全绿。
-- Round 1 全量 `gradle-run.ps1 test`：Lead 侧 89 suites / 500 tests，剩余 6 个失败均在 effects 的 REPLICATE/padding 代码（与本任务无关）；钢笔相关无失败。
 
 ---
 
@@ -198,6 +204,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 - 拖动**入/出点手柄**：默认镜像另一端；**Alt** 断开对称只动被拖一侧；镜像长度自动钳制在相邻锚点距离内。
 - **Delete/Backspace**：删除选中锚点（剩余 <3 点时自动断开闭合）。
 - **Alt+单击锚点**：角点↔平滑点互转（1/6 相邻距离规则）。
+- **右键 → 设为第一顶点**（闭合路径、选中单个非首锚点）：把该锚点变成路径起点，闭合形状不变；已动画路径的关键帧通道/循环一起轮转。
+- 动画路径的锚点/手柄/叠加层始终显示**当前播放头求值后**的位置，命中与拖动与画面一致。
 
 **2D / 3D**
 - 2D 图层：屏幕↔图层局部走 `view2D·world` 逆矩阵，旋转/非均匀缩放/父级动画下点都跟手。
@@ -239,36 +247,83 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 
 1. **关键帧之间是近似**（见 §5-5）；键帧处精确。测试用线性插值通道验证：0/6/12/18/24 帧轮廓偏差 < 0.05px。
 2. **总是开启**“保持顶点数”语义（AE 有开关）；当前没有关闭入口。
-3. 点通道上的 **KeyframeLoop 会在索引搬移时丢失**（`KeyframeChannel.removeAll` 会清 loops）；点通道通常不用 loop。
+3. ~~点通道上的 KeyframeLoop 会在索引搬移时丢失~~ → **Round 3 已修**：`moveChannel` 搬移时快照并回写 loops，新插入点通道从段起点复制 loops，Set First Vertex 的通道轮转也携带 loops（见 §11）。
 4. 重映射只采样**受影响段端点的 8 个通道**的关键 tick（加播放头）。其它点的通道不动，因此它们的关键 tick 不需要进入采样集。
 5. 播放头不在任何键上时，新点的通道会多一个“播放头 tick”键；这是有意的（恢复用户点击位置）。
+6. **新插入点的 loops 来源**：从段起点（末尾加点时为最后一个旧点）的对应分量通道复制。点通道的 loop 通常由同一 block 共享同一组 id，因此等价；若用户手工给某些分量设置了不同 loop，新点只继承起点分量那一份。
 
 ---
 
-## 10. 需要 Lead 集成的 UI 钩子（精确补丁）
+## 10. UI 钩子状态
 
-```diff
---- a/src/main/java/dev/bbsae/client/ui/UICompositorPanel.java
-+++ b/src/main/java/dev/bbsae/client/ui/UICompositorPanel.java
-```
+**(A)(B) 检查器“添加/删除点”按钮 —— 已由 Lead 集成（0.93）**
 
-**(A) `maskSection()` 里的“添加蒙版点 / 删除最后一点”（锚点：`this.smallButton("添加蒙版点"`）**
+`UICompositorPanel` 现在通过 `penTool().appendMaskPoint/removeMaskPoint/appendShapePoint/removeShapePoint` 调用（锚点：`this.penTool().appendMaskPoint(` / `this.penTool().appendShapePoint(`），已动画路径自动重映射。无需再做。
 
+**Set First Vertex —— 无需 Lead 钩子**
+
+Round 3 已把入口做进钢笔自己的右键菜单（`UIPenTool.showMenu`：闭合路径 + 选中单个非首锚点时显示“设为第一顶点”）。检查器没有“当前选中锚点”的概念，所以不在面板加按钮；如果以后面板要加，只需 1 行：
 ```java
-                this.smallButton("添加蒙版点", () ->
-                    this.penTool().appendMaskPoint(layer, mask, layer.width / 2F, layer.height / 2F)),
-                this.smallButton("删除最后一点", () ->
-                    this.penTool().removeMaskPoint(layer, mask, mask.points.size() - 1))
+this.smallButton("设为第一顶点", () -> this.penTool().setFirstVertex(/* 选中锚点索引 */))
 ```
+——但面板目前拿不到锚点索引，需要先把 pen 的 selection 暴露给检查器，属于新 UI 功能，不在本轮范围。
 
-**(B) `shapeSection()` PATH 分支的“添加路径点 / 删除最后一点”（锚点：`this.smallButton("添加路径点"`）**
+**其余不需要 UICompositorPanel 改动**：钢笔工具/叠加/输入/快捷键/AE 菜单动作都在 `UIPenTool` 内部完成。
 
-```java
-                    this.smallButton("添加路径点", () ->
-                        this.penTool().appendShapePoint(layer, shape, 0F, 0F)),
-                    this.smallButton("删除最后一点", () ->
-                        this.penTool().removeShapePoint(layer, shape, shape.points.size() - 1))
-```
+---
 
-> 说明：这两个 API 会走 `CompPenSession`，因此已动画路径会自动重映射；未动画路径行为不变。原按钮里的 `beginAction/refreshInspector/save` 由 session 的 listener 负责（一次操作一步 undo），面板侧不需要再调。
-> 未集成前：**钢笔/右键菜单/Delete 的所有增删点都已安全**；只有这三个检查器按钮对“已动画路径”仍不安全（见 §5-11）。
+## 11. Round 3：KeyframeLoop 保真 + Set First Vertex + 2D/3D 命中审查
+
+### 11.1 KeyframeLoop 保真
+
+| 场景 | Round 2 行为 | Round 3 |
+|---|---|---|
+| 增删点导致通道索引搬移 | `moveChannel` 用 `removeAll()` 清空目标再写 keys —— loop 丢失 | 先快照 `channel.getLoops()`，写完 keys 后 `putLoop(...)` 回写；`Keyframe` 额外字段仍走 `copyOverExtra` |
+| 新插入点的全新通道 | 只有 keys，没有 loop | `Animation.copyLoops(from,comp,to,comp)`：从段起点（末尾加点=最后旧点）的对应分量复制 loops；重映射/末尾加点都调用 |
+| 删除点 | 被删点通道清空（loop 应消失）✔；存活通道 loop 原本会丢 | 存活通道走 `moveChannel`，loop 保留；被删点 loop 随通道删除 |
+| Set First Vertex 通道轮转 | 不支持 | `Animation.rotateChannels(count, shift)` 快照 keys+loops，清空后按 `(i+shift)%n` 回写 |
+
+接口变化：`CompPenSession.Animation` 新增 `copyLoops(...)` / `rotateChannels(...)`；`Target` 新增 `rotatePoints(shift)` / `canRotatePoints()`（默认 false，UI 适配器为 true）。
+测试：`PathLoopSetFirstVertexTest` 的 3 个 loop 用例（搬移/新点复制/删除清理）。
+
+### 11.2 Set First Vertex（AE 语义）
+
+- 入口：钢笔右键菜单“设为第一顶点”（闭合路径 + 选中单个非首锚点）。**不需要 Lead 面板钩子**。
+- 语义：闭合路径顶点轮转 `new[i]=old[(i+shift)%n]`；几何不变（闭合路径段集合只是循环移位）；
+- 已动画路径：先 `animation.rotateChannels(count, shift)`（keys/插值/手柄/style/duration/loops 一起轮转），再 `target.rotatePoints(shift)` 轮转模型列表 —— 两处都用旧索引顺序，因此关键帧处几何逐像素不变；
+- 拒绝：开放路径 / <3 点 / index 0（已是第一顶点）/ 目标不支持重排（`canRotatePoints()==false`，在 `beginAction` 之前判断，绝不半改）；
+- 一次操作 = 一步 undo；完成后选中新 index 0。
+- 测试：`setFirstVertexRotatesAnUnanimatedClosedPath` / `setFirstVertexRotatesAnimatedChannelsAndLoops` / `setFirstVertexRefuses*`。
+
+### 11.3 2D/3D 命中与手势审查（按“假设有 bug”逐项）
+
+| 审计项 | 结论 | 处理/测试 |
+|---|---|---|
+| **动画路径的叠加/命中/拖拽读取 base 而非当前帧求值** | **真 bug（通过）**：`MaskTarget/ShapeTarget` 读 `mask.points` base，播放头 ≠ 0 时锚点画在 t=0 位置、命中同错位、拖拽首次增量基于错误起点 | **已修**：适配器所有读取改为 `layer.scalarAt(path, base, panel.getFrame())`（`MaskTarget/ShapeTarget.evaluated`），叠加/命中/吸附/拖拽起点全部按当前帧；测试 `AnimatedPenHitTest`（顶点 + 手柄两类） |
+| **Shift 45° 在屏幕空间 + 局部空间被约束两次** | **真 bug（通过）**：UIPenTool 先按屏幕约束并转局部，再把 `shift=true` 传给 session，session 又按局部约束 → 旋转/非均匀缩放图层上方向偏离 45° | **已修**：新增静态 `UIPenTool.constrainTo45OnScreen(...)`；应用后向 session 传 `shift=false`；拖拽只在 `session.isDraggingVertices()` 时约束（手柄拖动不受 Shift 影响）；被约束点不再吸附（约束优先）。测试：旋转+非均匀缩放的 2D、yaw30 3D 两层，屏幕角误差 < 0.5°/0.8°，屏幕长度保持 |
+| 2D 仿射命中（缩放/旋转/非均匀） | 正确（命中用屏幕投影距离） | `PenProjectionTest.hitTestSelectsWhatIsUnderTheCursorOnARotatedLayer`（顶点 + 段 t） |
+| 3D 透视命中（远近） | 正确（9px 是屏幕半径，不随透视缩放） | `PenProjectionTest.hitTestSelectsWhatIsUnderTheCursorOnATiltedCard`（近边/远边各测一次） |
+| 段上加点 t 精度 | 正确（局部采样 + 屏幕距离二分细化） | `segmentHitParameterIsUsableForSplitting`：t=0.25 命中误差 < 0.03，可直接用于保形分割 |
+| 0/1/2 点 + 闭合开关 | 正确（不抛异常、不返回非法段号；2 点开放=1 段、闭合=2 退化段） | `hitTestHandlesZeroOneAndTwoPointPaths`；`MaskPathRasterTest`/`ShapeOpenPathTest` 覆盖遮罩与栅格退化 |
+| 闭合半径 | 正确（8px；超出半径不闭合、继续画） | `closingRequiresTheCursorToBeWithinTheCloseRadius` |
+| 橡皮筋 | 正确（从 anchor 到鼠标；拖手柄时不画） | 与 `drawRubberBand`/session `anchorPoint` 契约一致，无独立单测（纯 UI 绘制） |
+| Alt 断开手柄 | 正确（Round 1 已测：默认镜像、Alt 只动一侧、镜像邻居钳制） | `CompPenSessionTest.handleDragMirrorsButAltBreaksTheLink` |
+| 3D 图层+正交相机的逆映射 | 正确（Round 1 已修，用 `usePerspective` 而非 `layer.threeD`；正交射线-平面） | `PenProjectionTest.threeDLayerUnderOrthoCameraUsesAffineInverse` |
+
+其余未发现可复现的命中/手势问题；`CompPenSession.remapInsertOnSegment/remapAppend/remapDelete` 的边界（0/1/2 点、播放头非关键帧、闭合 wrap 段）均已被 Round 2/3 测试覆盖。
+
+### 11.4 测试增量
+
+- 新增 `PathLoopSetFirstVertexTest`（7）：loop 搬移/新点复制/删除清理、Set First Vertex 未动画/动画+loop/拒绝（开放、<3 点、index0、不支持重排）。
+- 新增 `AnimatedPenHitTest`（2）：动画路径顶点/手柄命中必须用当前帧求值。
+- `CompPenSessionTest` 15→18：命中边界（0/1/2 点、闭合退化）、段命中 t、闭合半径。
+- `PenProjectionTest` 6→10：旋转 2D 命中、透视 3D 命中、屏幕 45° 约束（2D 旋转 + 3D 透视）。
+- 钢笔相关 10 类合计 **90 tests / 0 fail**；全量 643 tests 中仅 effects 队友进行中的 3 个效果库用例失败（与本任务无关）。
+
+### 11.5 已知取舍（Round 3 新增）
+
+1. Set First Vertex 只支持闭合路径（见 §5-14）。
+2. 动画路径叠加/命中按帧求值带来每帧 `scalarAt` 开销（小路径可忽略；未做性能基准，见 §5-13）。
+3. 新插入点的 loop 从段起点分量继承（同一 block 通常一致，见 §5-15）。
+4. 本轮仍未做：逐点羽化、RotoBezier、Free Transform、Contents 组、跨路径框选、拖拽性能降采样。
+

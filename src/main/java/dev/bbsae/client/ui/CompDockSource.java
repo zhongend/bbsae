@@ -46,6 +46,12 @@ public final class CompDockSource implements ILayoutSource
     private Set<String> cachedHidden;
     private boolean hiddenLoaded;
     private boolean dirty;
+    /**
+     * Focus mode is a session view, not a document edit: while suspended the tree is still cached
+     * in memory (so the dock can be laid out) but {@link #flush()} never writes it into the
+     * project, and dirty flags raised by the temporary tree are dropped.
+     */
+    private boolean persistSuspended;
 
     public CompDockSource(Supplier<CompProject.CompSettings> settingsSupplier,
                           Supplier<EditorLayoutNode> defaults, Runnable onChange)
@@ -162,11 +168,38 @@ public final class CompDockSource implements ILayoutSource
     }
 
     /**
+     * Suspends/resumes writing the cached tree into the project. Used by the transient focus mode:
+     * its tree must never end up in the saved file (the user would reopen the project with the
+     * side panels hidden).
+     */
+    public void suspendPersist(boolean suspended)
+    {
+        this.persistSuspended = suspended;
+
+        if (suspended)
+        {
+            this.dirty = false;
+        }
+    }
+
+    public boolean isPersistSuspended()
+    {
+        return this.persistSuspended;
+    }
+
+    /**
      * Writes the cached tree/hidden set into the project settings (once, not per drag frame) and
      * notifies the host so it can mark the UI state dirty without touching the document undo.
      */
     public void flush()
     {
+        if (this.persistSuspended)
+        {
+            this.dirty = false;
+
+            return;
+        }
+
         CompProject.CompSettings settings = this.settings();
 
         if (!this.dirty || settings == null)

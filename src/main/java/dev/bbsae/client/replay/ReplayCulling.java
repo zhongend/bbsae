@@ -48,19 +48,58 @@ public final class ReplayCulling
             return visible;
         }
 
+        /* A NaN/infinite matrix (corrupt camera or framing) makes every frustum plane NaN, and
+         * then every actor would be culled and the viewport would look empty with no error. In
+         * that case draw everything: a slow frame is recoverable, an invisible scene is not. */
+        if (!isFinite(viewProjection))
+        {
+            return allVisible(count);
+        }
+
         float r = Math.max(0.001F, radius);
         FrustumIntersection frustum = new FrustumIntersection(new Matrix4f(viewProjection));
 
         for (int i = 0; i < count; i++)
         {
             Vector3f position = worldPositions.get(i);
+            boolean selected = i == selectedIndex;
 
-            visible[i] = position == null
-                || frustum.testSphere(position.x, position.y, position.z, r)
-                || i == selectedIndex;
+            if (position == null)
+            {
+                /* No entity is a caller concern (the pass skips it), not a culling decision. */
+                visible[i] = true;
+            }
+            else if (!ReplayFraming.isFinite(position))
+            {
+                /* NaN position: keep the selection visible so the gizmo does not vanish, skip
+                 * the corrupt actor in the pass. */
+                visible[i] = selected;
+            }
+            else
+            {
+                visible[i] = frustum.testSphere(position.x, position.y, position.z, r) || selected;
+            }
         }
 
         return visible;
+    }
+
+    /** True when every matrix element is finite. */
+    public static boolean isFinite(Matrix4f matrix)
+    {
+        if (matrix == null)
+        {
+            return false;
+        }
+
+        return ReplayFraming.isFinite(matrix.m00()) && ReplayFraming.isFinite(matrix.m01())
+            && ReplayFraming.isFinite(matrix.m02()) && ReplayFraming.isFinite(matrix.m03())
+            && ReplayFraming.isFinite(matrix.m10()) && ReplayFraming.isFinite(matrix.m11())
+            && ReplayFraming.isFinite(matrix.m12()) && ReplayFraming.isFinite(matrix.m13())
+            && ReplayFraming.isFinite(matrix.m20()) && ReplayFraming.isFinite(matrix.m21())
+            && ReplayFraming.isFinite(matrix.m22()) && ReplayFraming.isFinite(matrix.m23())
+            && ReplayFraming.isFinite(matrix.m30()) && ReplayFraming.isFinite(matrix.m31())
+            && ReplayFraming.isFinite(matrix.m32()) && ReplayFraming.isFinite(matrix.m33());
     }
 
     public static boolean[] allVisible(int count)

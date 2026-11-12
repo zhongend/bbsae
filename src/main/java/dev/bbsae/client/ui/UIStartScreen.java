@@ -9,10 +9,13 @@ import mchorse.bbs_mod.ui.framework.elements.buttons.UIToggle;
 import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
 import mchorse.bbs_mod.ui.framework.elements.input.list.UIList;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
+import mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer;
+import mchorse.bbs_mod.ui.framework.elements.utils.RowStyle;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.keys.KeyAction;
 import mchorse.bbs_mod.utils.colors.Colors;
+import net.minecraft.client.util.math.MatrixStack;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,7 +58,7 @@ public class UIStartScreen extends UIElement
     private final UIButton scheme;
     private final UIButton back;
 
-    private final UIElement form;
+    private final FormPanel form;
     private final UITextbox name;
     private final UITrackpad width;
     private final UITrackpad height;
@@ -156,7 +159,7 @@ public class UIStartScreen extends UIElement
         this.enter = enter;
 
         /* New-project form (same right-hand area, toggled). */
-        this.form = new UIElement();
+        this.form = new FormPanel();
         this.form.relative(this.card).x(306).y(78).w(1F, -330).h(1F, -100);
         this.form.setVisible(false);
 
@@ -330,6 +333,7 @@ public class UIStartScreen extends UIElement
     {
         this.creating = true;
         this.form.setVisible(true);
+        this.form.replay();
         this.list.setVisible(false);
         this.listTitle.label = IKey.constant("新建工程");
         this.summary.setVisible(false);
@@ -462,11 +466,78 @@ public class UIStartScreen extends UIElement
         return super.subKeyPressed(context);
     }
 
+    /**
+     * The new-project form.
+     *
+     * <p>It replaces the project list in the same column, so it slides in from below on an entrance
+     * clock it owns (the form is hidden most of the time and stops rendering, so a shared "shown"
+     * clock would already be finished by the time it reappears). The matrix is paint-only: the
+     * fields keep their hit rectangles.</p>
+     */
+    private final class FormPanel extends UIElement
+    {
+        private final UiMotion motion = new UiMotion();
+
+        void replay()
+        {
+            this.motion.replay();
+        }
+
+        @Override
+        public void render(UIContext context)
+        {
+            float p = this.motion.intro(0.03F);
+            int shift = Math.round((1F - p) * 8F * this.motion.intensity());
+
+            if (shift <= 0)
+            {
+                super.render(context);
+
+                return;
+            }
+
+            MatrixStack stack = context.batcher.getContext().getMatrices();
+
+            stack.push();
+            stack.translate(0F, shift, 0F);
+
+            try
+            {
+                super.render(context);
+            }
+            finally
+            {
+                stack.pop();
+            }
+        }
+    }
+
     private final class ProjectList extends UIList<CompStore.ProjectInfo>
     {
         ProjectList(Consumer<List<CompStore.ProjectInfo>> callback)
         {
             super(callback);
+        }
+
+        /**
+         * Rows arrive a few milliseconds apart on the landing screen's entrance clock, the same
+         * staggered-list language as the other libraries. Only the paint moves: selection and
+         * double-click keep using the list's own rectangles.
+         */
+        @Override
+        protected void renderElementPart(UIContext context, CompStore.ProjectInfo element, int i, int x, int y,
+                                         boolean hover, boolean selected)
+        {
+            UIStartScreen screen = UIStartScreen.this;
+            int height = this.rowHeight();
+            float intro = UiStagger.progress(screen.motion, i, 0.018F, 0.2F);
+            float appear = UiStagger.alpha(intro);
+            int shift = UiStagger.offsetPx(intro, Math.round(2F * screen.motion.intensity()));
+            int color = UiMotion.alpha(RowStyle.textColor(hover || selected), appear);
+            FontRenderer font = context.batcher.getFont();
+
+            context.batcher.textShadow(this.elementToString(context, i, element),
+                x + this.rowContentX(element), y + (height - font.getHeight()) / 2 + shift, color);
         }
 
         @Override

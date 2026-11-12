@@ -1730,6 +1730,15 @@ public final class AmEffectLibrary
             void main()
             {
                 vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (abs(u_angle) <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
                 vec2 center = vec2(u_center_x, u_center_y);
                 vec2 d = luv - center;
                 float angle = radians(u_angle);
@@ -1747,7 +1756,7 @@ public final class AmEffectLibrary
                 fragColor = sum / 24.0;
             }
             """, 0.5F, "angle")
-            .p("angle", "角度", -180F, 180F, 20F, 0.5F)
+            .p("angle", "角度", 0F, 60F, 5F, 0.1F)
             .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
             .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
 
@@ -2703,6 +2712,555 @@ public final class AmEffectLibrary
             .p("offset_y", "偏移 Y", -1F, 1F, 0F, 0.01F)
             .p("vignette", "暗角", 0F, 1F, 0F, 0.01F)
             .p("saturation", "饱和度", -1F, 1F, 0F, 0.01F));
+
+        /* ---- P1 batch: reference blur / colour / distort entries (0.94) --------------------------
+         * Same data-driven path as every other entry. Bodies are single-pass approximations of the
+         * reference fragment programs: the reference feeds pre-blurred buffers (buffer textures) to
+         * the glow/unsharp families; here the body samples its own source with a small tap loop,
+         * which keeps the effect inside the ordinary AmEffectDef contract. Every body starts with an
+         * explicit identity branch for its declared neutral value so the shader-level identity audit
+         * is exact (not just "close enough"). */
+
+        add(new AmEffectDef("am_unsharp_mask", "USM 锐化", "AM · 模糊", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_amount <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                float radius = max(u_strength, 0.0) * 60.0;
+                vec2 step = radius / max(LayerSize, vec2(1.0));
+                vec4 sum = vec4(0.0);
+                float weight = 0.0;
+
+                for (int i = 0; i < 9; i++)
+                {
+                    float t = float(i) / 8.0 - 0.5;
+                    float w = 1.0 - abs(t) * 2.0;
+
+                    sum += sampleLayer(luv + vec2(t) * step) * w;
+                    weight += w;
+                }
+
+                vec4 blurred = sum / max(weight, 0.0001);
+                float detail = dot(c.rgb - blurred.rgb, vec3(0.3333));
+                float gate = abs(detail) >= u_threshold * 0.02 ? 1.0 : 0.0;
+                vec3 rgb = c.rgb + (c.rgb - blurred.rgb) * u_amount * 2.0 * gate;
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, "amount")
+            .p("strength", "模糊半径", 0F, 2F, 0.02F, 0.01F)
+            .p("amount", "锐化量", 0F, 2F, 0.5F, 0.01F)
+            .p("threshold", "阈值", -0.5F, 1F, 0.5F, 0.001F));
+
+        add(new AmEffectDef("am_lens_blur_2", "镜头模糊 2（对焦）", "AM · 模糊", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_strength <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec2 center = vec2(u_cx, u_cy);
+                vec2 d = luv - center;
+                float dist = length(d);
+                float edge = max(min(1.0, u_radius + 0.25), u_radius + 0.001);
+                float focus = smoothstep(u_radius, edge, dist);
+                float amount = clamp(u_strength, 0.0, 1.0) * focus;
+                vec4 sum = vec4(0.0);
+
+                for (int i = 0; i < 10; i++)
+                {
+                    float t = float(i) / 9.0;
+
+                    sum += sampleLayer(center + d * (1.0 - t * amount));
+                }
+
+                fragColor = sum / 10.0;
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 1F, 0.15F, 0.005F)
+            .p("radius", "对焦半径", 0F, 1F, 0.15F, 0.005F)
+            .p("cx", "中心 X", 0F, 1F, 0.5F, 0.005F)
+            .p("cy", "中心 Y", 0F, 1F, 0.5F, 0.005F));
+
+
+
+        add(new AmEffectDef("am_streak_strips", "条纹拖影", "AM · 模糊", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_alpha <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec2 dir = vec2(cos(radians(u_angle)), sin(radians(u_angle)));
+                vec2 step = dir * (max(u_amount, 0.0) / max(LayerSize, vec2(1.0))) / 20.0;
+                vec4 sum = vec4(0.0);
+                float weight = 0.0;
+
+                for (int i = 0; i < 20; i++)
+                {
+                    float t = float(i) / 19.0 - 0.5;
+                    float fade = 1.0 - abs(t) * 2.0;
+                    float strip = 0.5 + 0.5 * sin(float(i) * max(u_phase, 0.0) * 0.05 + Time * 0.5);
+
+                    sum += sampleLayer(luv + step * t) * fade * mix(1.0, strip, clamp(u_phase * 0.01, 0.0, 1.0));
+                    weight += fade;
+                }
+
+                vec4 streak = sum / max(weight, 0.0001);
+                fragColor = vec4(mix(c.rgb, streak.rgb, u_alpha), c.a);
+            }
+            """, 0F, "alpha")
+            .p("amount", "拖影长度（像素）", 0.5F, 500F, 10F, 0.1F)
+            .p("angle", "角度", 0F, 3600F, 45F, 0.5F)
+            .p("phase", "相位", 0F, 1000F, 0F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F));
+
+        add(new AmEffectDef("am_warp_blur", "湍流模糊", "AM · 模糊", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_intensity <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec2 p = luv * max(u_scale, 0.01) + vec2(u_seed, u_evolution * 0.1);
+                float n = fbm(p * 2.0 + Time * 0.1, 3) - 0.5;
+                vec2 dir;
+
+                if (u_direction < 0.5)
+                {
+                    dir = vec2(1.0, 0.0);
+                }
+                else if (u_direction < 1.5)
+                {
+                    dir = vec2(0.0, 1.0);
+                }
+                else if (u_direction < 2.5)
+                {
+                    dir = normalize(luv - 0.5 + vec2(0.0001));
+                }
+                else
+                {
+                    vec2 d = luv - 0.5;
+
+                    dir = normalize(vec2(-d.y, d.x) + vec2(0.0001));
+                }
+
+                vec2 step = dir * (u_intensity * 40.0) / max(LayerSize, vec2(1.0));
+                step *= vec2(max(u_stretch_x, 0.01), max(u_stretch_y, 0.01));
+                vec4 sum = vec4(0.0);
+
+                for (int i = 0; i < 16; i++)
+                {
+                    float t = float(i) / 15.0 - 0.5;
+
+                    sum += sampleLayer(clamp(luv + step * (t + n * u_offs), 0.0, 1.0));
+                }
+
+                fragColor = sum / 16.0;
+            }
+            """, 0F, "intensity")
+            .p("intensity", "强度", 0F, 2.5F, 0.25F, 0.001F)
+            .p("evolution", "演化", -50F, 50F, 0F, 0.01F)
+            .p("direction", "方向（0 水平/1 垂直/2 径向/3 切向）", 0F, 3F, 0F, 1F)
+            .p("scale", "噪声缩放", 0.01F, 50F, 1F, 0.01F)
+            .p("stretch_x", "拉伸 X", 0.01F, 10F, 1F, 0.01F)
+            .p("stretch_y", "拉伸 Y", 0.01F, 10F, 1F, 0.01F)
+            .p("seed", "随机种子", 0F, 5F, 0F, 0.01F)
+            .p("offs", "偏移强度", -1F, 1F, 0F, 0.001F));
+
+        add(new AmEffectDef("am_chromatic_zoom_blur", "彩色径向模糊", "AM · 模糊", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_strength <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = luv - center;
+                vec2 dir = d / max(length(d), 0.0001);
+                vec2 step = dir * u_strength * 0.05;
+                vec3 sum = vec3(0.0);
+
+                for (int i = 0; i < 12; i++)
+                {
+                    float t = float(i) / 11.0 - 0.5;
+                    vec4 s = sampleLayer(luv - step * t);
+                    vec3 chroma = t < 0.0 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+
+                    sum += mix(s.rgb, s.rgb * (chroma * 2.0 + vec3(0.2)), 0.35);
+                }
+
+                fragColor = vec4(clamp(sum / 12.0, 0.0, 1.0), c.a);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 2F, 0.15F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_spectral_map", "光谱映射", "AM · 调色", """
+            float mapChannel(float p, float f)
+            {
+                float t = mod(p + 10.0, 1.0);
+
+                return clamp(abs(t - 0.5) * 4.0 - f, 0.0, 1.0);
+            }
+
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_alpha <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                float lum = luma(c.rgb);
+                float phase = lum * max(u_repeat, 0.1) + u_phase * 0.01;
+                float squeeze = clamp(u_squeeze, 0.0, 0.99);
+                vec3 spectral = mapChannel(phase, squeeze) * u_redColor.rgb
+                    + mapChannel(phase + 0.333, squeeze) * u_greenColor.rgb
+                    + mapChannel(phase + 0.666, squeeze) * u_blueColor.rgb;
+                vec3 rgb = mix(c.rgb, clamp(spectral, 0.0, 1.0), clamp(u_alpha, 0.0, 1.0));
+                float grey = luma(rgb);
+
+                rgb = mix(vec3(grey), rgb, 1.0 + clamp(u_saturation, -0.99, 1.0));
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, "alpha")
+            .p("phase", "相位", -99F, 99F, 0F, 0.005F)
+            .p("repeat", "重复", 0.1F, 10F, 1F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .p("squeeze", "色带收缩", 0F, 1F, 0F, 0.01F)
+            .p("saturation", "饱和度", -1F, 1F, 0F, 0.005F)
+            .c("redColor", "红映射色", 0xFFFF0000)
+            .c("greenColor", "绿映射色", 0xFF00FF00)
+            .c("blueColor", "蓝映射色", 0xFF0000FF));
+
+        add(new AmEffectDef("am_soft_glow", "柔光", "AM · 调色", """
+            vec4 glowSample(vec2 luv, float radiusPx)
+            {
+                vec2 texel = radiusPx / max(LayerSize, vec2(1.0));
+                vec4 sum = vec4(0.0);
+                float weight = 0.0;
+
+                for (int i = 0; i < 12; i++)
+                {
+                    float a = 6.2831853 * float(i) / 12.0;
+                    float r = 0.5 + 0.5 * mod(float(i), 2.0);
+                    float w = 1.0 - 0.4 * r;
+
+                    sum += sampleLayer(clamp(luv + vec2(cos(a), sin(a)) * texel * r, 0.0, 1.0)) * w;
+                    weight += w;
+                }
+
+                return sum / max(weight, 0.0001);
+            }
+
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_strength <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec4 blur = glowSample(luv, clamp(u_strength, 0.0, 2.0) * 60.0);
+                vec3 adj = min(blur.rgb * max(u_brightness, 0.0), vec3(1.0));
+                float lum = min(1.0, luma(adj) * max(u_brightness, 0.0));
+                vec3 blendColor = mix(adj, lum * u_color.rgb, clamp(u_blend, 0.0, 1.0));
+
+                blendColor = mix(blendColor, vec3(lum), lum * clamp(u_highlights, 0.0, 1.0));
+                blendColor *= mix(vec3(1.0), blendColor, clamp(u_contrast, 0.0, 1.0));
+
+                vec3 inside = clamp(blendColor, 0.0, 1.0) * clamp(u_alpha, 0.0, 1.0);
+                vec3 rgb = 1.0 - (1.0 - c.rgb) * (1.0 - inside);
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 2F, 0.1F, 0.01F)
+            .p("brightness", "亮度", 0F, 2F, 1F, 0.01F)
+            .p("contrast", "对比度", 0F, 1F, 0.2F, 0.01F)
+            .p("highlights", "高光", 0F, 1F, 0.5F, 0.01F)
+            .p("blend", "着色混合", 0F, 1F, 0.25F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 1F, 0.01F)
+            .c("color", "光晕颜色", 0xFFFF5566));
+
+        add(new AmEffectDef("am_dark_glow", "暗部发光", "AM · 调色", """
+            vec4 glowSample(vec2 luv, float radiusPx)
+            {
+                vec2 texel = radiusPx / max(LayerSize, vec2(1.0));
+                vec4 sum = vec4(0.0);
+                float weight = 0.0;
+
+                for (int i = 0; i < 12; i++)
+                {
+                    float a = 6.2831853 * float(i) / 12.0;
+                    float r = 0.5 + 0.5 * mod(float(i), 2.0);
+                    float w = 1.0 - 0.4 * r;
+
+                    sum += sampleLayer(clamp(luv + vec2(cos(a), sin(a)) * texel * r, 0.0, 1.0)) * w;
+                    weight += w;
+                }
+
+                return sum / max(weight, 0.0001);
+            }
+
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_strength <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec4 blur = glowSample(luv, clamp(u_strength, 0.0, 2.0) * 80.0);
+                float lum = luma(blur.rgb);
+                float mask = 1.0 - smoothstep(u_threshold, u_threshold + 0.15, lum);
+                vec3 tinted = blur.rgb * mix(vec3(1.0), u_color.rgb, clamp(u_blend, 0.0, 1.0));
+                float amount = mask * clamp(u_strength, 0.0, 2.0) * 0.5 * clamp(u_alpha, 0.0, 1.0);
+                fragColor = vec4(clamp(mix(c.rgb, tinted, clamp(amount, 0.0, 1.0)), 0.0, 1.0), c.a);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 2F, 0.25F, 0.005F)
+            .p("threshold", "暗部阈值", 0F, 1F, 0.3F, 0.001F)
+            .p("blend", "着色混合", 0F, 1F, 0.25F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 0.75F, 0.01F)
+            .c("color", "光晕颜色", 0xFFFF5566));
+
+        add(new AmEffectDef("am_light_glow", "亮部发光", "AM · 调色", """
+            vec4 glowSample(vec2 luv, float radiusPx)
+            {
+                vec2 texel = radiusPx / max(LayerSize, vec2(1.0));
+                vec4 sum = vec4(0.0);
+                float weight = 0.0;
+
+                for (int i = 0; i < 12; i++)
+                {
+                    float a = 6.2831853 * float(i) / 12.0;
+                    float r = 0.5 + 0.5 * mod(float(i), 2.0);
+                    float w = 1.0 - 0.4 * r;
+
+                    sum += sampleLayer(clamp(luv + vec2(cos(a), sin(a)) * texel * r, 0.0, 1.0)) * w;
+                    weight += w;
+                }
+
+                return sum / max(weight, 0.0001);
+            }
+
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_strength <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec4 blur = glowSample(luv, clamp(u_strength, 0.0, 2.0) * 70.0);
+                float lum = luma(blur.rgb);
+                float mask = smoothstep(u_threshold, min(1.0, u_threshold + 0.2), lum);
+                vec3 tinted = blur.rgb * mix(vec3(1.0), u_color.rgb, clamp(u_blend, 0.0, 1.0));
+                float amount = mask * clamp(u_intensity, 0.0, 5.0) * 0.5 * clamp(u_alpha, 0.0, 1.0);
+                vec3 halo = tinted * mask * clamp(u_halo, 0.0, 5.0) * 0.3;
+                vec3 rgb = mix(c.rgb, tinted, clamp(amount, 0.0, 1.0));
+
+                rgb = 1.0 - (1.0 - rgb) * (1.0 - clamp(halo, 0.0, 1.0));
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", 0F, 2F, 0.25F, 0.005F)
+            .p("threshold", "亮部阈值", 0F, 1F, 0.7F, 0.001F)
+            .p("intensity", "亮度", 0F, 5F, 1F, 0.01F)
+            .p("blend", "着色混合", 0F, 1F, 0.25F, 0.01F)
+            .p("halo", "光晕", 0F, 5F, 0F, 0.01F)
+            .p("alpha", "不透明度", 0F, 1F, 0.75F, 0.01F)
+            .c("color", "光晕颜色", 0xFFFF5566));
+
+        add(new AmEffectDef("am_color_hot", "热色", "AM · 调色", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (u_intensity <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                float lum = pow(clamp(luma(c.rgb), 0.0, 1.0), 1.0 / max(u_gamma, 0.01));
+                vec3 warm = mix(vec3(lum), u_color.rgb * (0.4 + lum * 0.9), clamp(u_intensity, 0.0, 2.0) * 0.5);
+                float hot = clamp(lum * 1.4, 0.0, 1.0);
+                vec3 rgb = mix(c.rgb, warm + vec3(lum * lum * 0.4), clamp(u_intensity, 0.0, 1.0) * hot);
+                fragColor = vec4(clamp(rgb, 0.0, 1.0), c.a);
+            }
+            """, 0F, "intensity")
+            .p("intensity", "强度", 0F, 2F, 1F, 0.01F)
+            .p("gamma", "亮度伽马", 0.01F, 9.99F, 1F, 0.005F)
+            .c("color", "暖色", 0xFFFF5522));
+
+        add(new AmEffectDef("am_pinch_bulge_2", "收缩与膨胀 2", "AM · 变形", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (abs(u_strength) <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec2 center = vec2(u_center_x, u_center_y);
+                float aspect = max(LayerSize.x, 1.0) / max(LayerSize.y, 1.0);
+                vec2 uv = luv - center;
+
+                uv.x *= aspect;
+                float dist = length(uv);
+                float radius = max(u_radius, 0.0001);
+
+                if (dist < radius)
+                {
+                    float p = dist / radius;
+
+                    if (u_strength > 0.0)
+                    {
+                        uv *= mix(1.0, smoothstep(0.0, radius / max(dist, 0.0001), p), u_strength * 0.75);
+                    }
+                    else
+                    {
+                        uv *= mix(1.0, pow(p, 1.0 + u_strength * 0.75) * radius / max(dist, 0.0001), 1.0 - p);
+                    }
+                }
+
+                uv.x /= aspect;
+                fragColor = sampleLayer(center + uv);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", -1F, 1F, -0.9F, 0.01F)
+            .p("radius", "半径", 0F, 2.5F, 0.3F, 0.005F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_swirl_4", "旋转扭曲 2", "AM · 变形", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (abs(u_strength) <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec2 center = vec2(u_center_x, u_center_y);
+                vec2 d = luv - center;
+                float dist = length(d);
+                float falloff = 1.0 - smoothstep(0.0, max(u_radius, 0.0001), dist);
+                float angle = u_strength * 6.2831853 * falloff;
+                fragColor = sampleLayer(center + rot(angle) * d);
+            }
+            """, 0F, "strength")
+            .p("strength", "强度", -0.5F, 0.5F, 0.1F, 0.001F)
+            .p("radius", "半径", 0F, 0.8F, 0.3F, 0.01F)
+            .p("center_x", "中心 X", 0F, 1F, 0.5F, 0.01F)
+            .p("center_y", "中心 Y", 0F, 1F, 0.5F, 0.01F));
+
+        add(new AmEffectDef("am_hex_rotate", "六边形旋转", "AM · 变形", """
+            void main()
+            {
+                vec2 luv = layerUv(vUv);
+                vec4 c = sampleLayer(luv);
+
+                if (abs(u_rotate) + abs(u_warp_angle) + abs(u_angle) + abs(u_twirl) <= 0.0001)
+                {
+                    fragColor = c;
+
+                    return;
+                }
+
+                vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 0.5);
+                vec2 p = luv * max(LayerSize, vec2(1.0)) / spacing;
+                vec2 a = mod(p, vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
+                vec2 b = mod(p + vec2(0.5, 0.0), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
+                vec2 local = dot(a, a) < dot(b, b) ? a : b;
+                vec2 center = p - local;
+                vec2 norm = local / vec2(0.5, 0.8660254);
+                float angle = radians(u_rotate)
+                    + radians(u_warp_angle) * (hash(center + u_seed) - 0.5) * 2.0
+                    + radians(u_angle) * (mod(center.x + center.y, 2.0) - 1.0)
+                    + radians(u_twirl) * length(norm);
+                vec2 rotated = rot(angle) * (norm * vec2(max(u_stretch_x, 0.01), max(u_stretch_y, 0.01)));
+                vec2 sourceLocal = rotated * vec2(0.5, 0.8660254) + center;
+                vec2 sourceUv = sourceLocal * spacing / max(LayerSize, vec2(1.0)) + vec2(u_position_x, u_position_y);
+                fragColor = sampleLayer(sourceUv);
+            }
+            """, 0F, null)
+            .neutralAt("rotate", 0)
+            .neutralAt("warp_angle", 0)
+            .neutralAt("angle", 0)
+            .neutralAt("twirl", 0)
+            .neutralAt("position_x", 0)
+            .neutralAt("position_y", 0)
+            .p("rotate", "整体旋转", 0F, 3600F, 45F, 0.5F)
+            .p("warp_angle", "随机旋转幅度", -3600F, 3600F, 0F, 1F)
+            .p("position_x", "位置 X", -1F, 1F, 0F, 0.01F)
+            .p("position_y", "位置 Y", -1F, 1F, 0F, 0.01F)
+            .p("size", "六边形大小（像素）", 0.5F, 200F, 10F, 0.1F)
+            .p("stretch_x", "拉伸 X", 0.01F, 10F, 1F, 0.01F)
+            .p("stretch_y", "拉伸 Y", 0.01F, 10F, 1F, 0.01F)
+            .p("angle", "交替旋转", 0F, 3600F, 0F, 0.5F)
+            .p("twirl", "扭转", 0F, 3600F, 0F, 1F)
+            .p("seed", "随机种子", 0F, 5F, 0F, 0.01F));
     }
 
     private AmEffectLibrary()

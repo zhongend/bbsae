@@ -65,6 +65,22 @@ public class UICompTabBar extends UIElement
         super.render(context);
     }
 
+    /**
+     * Tabs are absolutely positioned and never clipped, so in a narrow dock panel the overflow tabs
+     * sit on top of the neighbouring panel. BBS dispatches clicks without testing the parent's
+     * rectangle; this guard keeps a clipped tab from stealing a click outside its bar.
+     */
+    @Override
+    protected boolean subMouseClicked(UIContext context)
+    {
+        if (!this.area.isInside(context))
+        {
+            return false;
+        }
+
+        return super.subMouseClicked(context);
+    }
+
     public UICompTabBar active(IntSupplier active)
     {
         this.active = active;

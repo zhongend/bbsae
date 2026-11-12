@@ -475,19 +475,24 @@ public final class CompScene
             if (effect != null && effect.enabled && "shake".equals(effect.type))
             {
                 /* Shake is a transform, so the pixel pass is a no-op; the 效果强度 cross-fade has to
-                 * be applied here instead of being silently ignored. */
+                 * be applied here instead of being silently ignored.
+                 *
+                 * Every value goes through effectValue(), not effectParam(): shake is authored with
+                 * the inspector sliders, which write CompEffect.params and create no channel at
+                 * all. A channel-only read returned the fallback for every one of them, so the
+                 * sliders (and 效果强度) had no effect on the render until a keyframe existed. */
                 float strength = Math.max(0F, Math.min(1F,
-                    layer.effectParam(effect.id, dev.bbsae.comp.CompEffect.STRENGTH, 1F, ctx.frame)));
+                    layer.effectValue(effect, dev.bbsae.comp.CompEffect.STRENGTH, 1F, ctx.frame)));
 
                 if (strength <= 0.0001F)
                 {
                     continue;
                 }
 
-                float amount = Math.max(0F, layer.effectParam(effect.id, "amplitude", 18F, ctx.frame)) * strength;
-                float frequency = Math.max(0.01F, layer.effectParam(effect.id, "frequency", 6F, ctx.frame));
-                float rotation = Math.max(0F, layer.effectParam(effect.id, "rotation", 2F, ctx.frame)) * strength;
-                float seed = layer.effectParam(effect.id, "seed", 0F, ctx.frame);
+                float amount = Math.max(0F, layer.effectValue(effect, "amplitude", 18F, ctx.frame)) * strength;
+                float frequency = Math.max(0.01F, layer.effectValue(effect, "frequency", 6F, ctx.frame));
+                float rotation = Math.max(0F, layer.effectValue(effect, "rotation", 2F, ctx.frame)) * strength;
+                float seed = layer.effectValue(effect, "seed", 0F, ctx.frame);
                 float t = ctx.time * frequency * 6.2831855F;
                 Shake shake = new Shake();
 

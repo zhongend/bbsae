@@ -55,6 +55,7 @@ public class EffectLibraryNamingTest
             {"grid", "am_grid_lines"},
             {"colorama", "am_palette_map"},
             {"stroke", "am_outline"},
+            {"unsharp_mask", "am_unsharp_mask"},
         };
 
         for (String[] pair : pairs)

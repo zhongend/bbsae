@@ -359,6 +359,39 @@ public final class CompCurveChannel
         return this.layer.scalar(this.path, 0F);
     }
 
+    /**
+     * Writes an animated value into the layer's base property.
+     *
+     * <p>{@link CompLayer#putScalar(String, float)} is a deliberate no-op for unknown paths, and
+     * {@code fx/<id>/<param>} is one of them: the curve editor used to update only the keyframe,
+     * so the graph and the inspector showed the dragged value while the renderer kept reading the
+     * effect's old parameter map, and removing the last key snapped the picture back to that old
+     * base. Effect parameters are mirrored into the effect instance instead, the same way the
+     * inspector's {@code setScalar()} does it. Mask and shape paths are supported by
+     * {@code putScalar()} and need no special case.</p>
+     */
+    private void writeBaseValue(float value)
+    {
+        if (this.path != null && this.path.startsWith("fx/"))
+        {
+            String[] parts = this.path.split("/", 3);
+
+            if (parts.length == 3)
+            {
+                CompEffect effect = this.layer.getEffect(parts[1]);
+
+                if (effect != null)
+                {
+                    effect.put(parts[2], value);
+                }
+            }
+
+            return;
+        }
+
+        this.layer.putScalar(this.path, value);
+    }
+
     /** Insert (or overwrite) a key at a tick. Returns the keyframe that now holds the value. */
     @SuppressWarnings("unchecked")
     public Keyframe<?> insert(float tick, float value)
@@ -375,7 +408,7 @@ public final class CompCurveChannel
         KeyframeChannel<Float> channel = (KeyframeChannel<Float>) this.raw();
         Keyframe<Float> key = channel.insertInheriting(tick, value);
 
-        this.layer.putScalar(this.path, value);
+        this.writeBaseValue(value);
         this.touch();
 
         return key;
@@ -385,7 +418,7 @@ public final class CompCurveChannel
     public void setKeyValue(Keyframe<?> key, float value)
     {
         ((Keyframe<Float>) key).setValue(value);
-        this.layer.putScalar(this.path, value);
+        this.writeBaseValue(value);
         this.touch();
     }
 

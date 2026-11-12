@@ -5,6 +5,8 @@ import dev.bbsae.client.render.CompRenderContext;
 import dev.bbsae.client.render.CompScene;
 import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompLayer;
+import dev.bbsae.comp.CompPathGeometry;
+import dev.bbsae.comp.CompPenSession;
 import dev.bbsae.comp.CompProject;
 import org.joml.Vector2f;
 import org.junit.jupiter.api.Test;
@@ -254,5 +256,157 @@ public class PenProjectionTest
             assertFalse(Float.isNaN(screen[0]) || Float.isInfinite(screen[0]));
             assertFalse(Float.isNaN(screen[1]) || Float.isInfinite(screen[1]));
         }
+    }
+
+    @Test
+    public void hitTestSelectsWhatIsUnderTheCursorOnARotatedLayer()
+    {
+        CompDocument doc = document();
+        CompProject project = project(doc);
+        CompRenderContext rc = context(project, doc, camera(doc, true));
+        CompLayer layer = card(doc, false);
+
+        layer.rotation = 30F;
+        layer.scaleX = 1.5F;
+        layer.scaleY = 0.7F;
+
+        UIPenTool.View view = view(rc, doc);
+        CompPathGeometry.ArrayPath path = curvedPath();
+        CompPenSession.Projector projector = (x, y) -> UIPenTool.localToScreen(layer, view, x, y);
+
+        float[] vertex = UIPenTool.localToScreen(layer, view, path.x(1), path.y(1));
+        CompPenSession.Hit vertexHit = CompPenSession.hitTest(path, projector,
+            vertex[0] + 4F, vertex[1] + 2F, 9F, 9F, 6F, null);
+
+        assertEquals(CompPenSession.HIT_VERTEX, vertexHit.kind);
+        assertEquals(1, vertexHit.point);
+
+        float[] midpoint = CompPathGeometry.pointOnPath(path, 2, 0.5F);
+        float[] screen = UIPenTool.localToScreen(layer, view, midpoint[0], midpoint[1]);
+        CompPenSession.Hit segmentHit = CompPenSession.hitTest(path, projector,
+            screen[0] + 3F, screen[1] - 2F, 9F, 9F, 6F, null);
+
+        assertEquals(CompPenSession.HIT_SEGMENT, segmentHit.kind);
+        assertEquals(2, segmentHit.segment, "perspective/rotation must not mis-attribute the segment");
+        assertEquals(0.5F, segmentHit.t, 0.05F);
+    }
+
+    @Test
+    public void hitTestSelectsWhatIsUnderTheCursorOnATiltedCard()
+    {
+        CompDocument doc = document();
+        CompProject project = project(doc);
+        CompRenderContext rc = context(project, doc, camera(doc, true));
+        CompLayer layer = card(doc, true);
+
+        layer.rotationY = 30F;
+
+        UIPenTool.View view = view(rc, doc);
+        CompPathGeometry.ArrayPath path = curvedPath();
+        CompPenSession.Projector projector = (x, y) -> UIPenTool.localToScreen(layer, view, x, y);
+
+        float[] vertex = UIPenTool.localToScreen(layer, view, path.x(1), path.y(1));
+        CompPenSession.Hit vertexHit = CompPenSession.hitTest(path, projector,
+            vertex[0] - 3F, vertex[1] + 3F, 9F, 9F, 6F, null);
+
+        assertEquals(CompPenSession.HIT_VERTEX, vertexHit.kind);
+        assertEquals(1, vertexHit.point);
+
+        /* The near (left) edge of a yaw-30 card is larger on screen; the 9 px hit radius must stay
+         * a screen-space 9 px on both sides (AE behaviour), so the same offset works on both. */
+        for (int point : new int[] {0, 2})
+        {
+            float[] screen = UIPenTool.localToScreen(layer, view, path.x(point), path.y(point));
+            CompPenSession.Hit hit = CompPenSession.hitTest(path, projector,
+                screen[0] + 5F, screen[1] - 4F, 9F, 9F, 6F, null);
+
+            assertEquals(CompPenSession.HIT_VERTEX, hit.kind, "vertex " + point);
+            assertEquals(point, hit.point);
+        }
+    }
+
+    private static CompPathGeometry.ArrayPath curvedPath()
+    {
+        CompPathGeometry.ArrayPath path = new CompPathGeometry.ArrayPath(4);
+
+        path.add(0F, 0F, 0F, 0F, 40F, 10F);
+        path.add(120F, 10F, -40F, -20F, 0F, 30F);
+        path.add(120F, 120F, 0F, -30F, -40F, 0F);
+        path.add(0F, 120F, 40F, 0F, 0F, 0F);
+        path.setClosed(true);
+
+        return path;
+    }
+
+    @Test
+    public void shiftConstraintIs45DegreesOnScreenOnARotatedLayer()
+    {
+        CompDocument doc = document();
+        CompProject project = project(doc);
+        CompRenderContext rc = context(project, doc, camera(doc, true));
+        CompLayer layer = card(doc, false);
+
+        /* Rotated and non-uniformly scaled: a 45° angle in layer space is not 45° on screen. */
+        layer.rotation = 30F;
+        layer.scaleX = 1.6F;
+        layer.scaleY = 0.7F;
+
+        UIPenTool.View view = view(rc, doc);
+        float[] anchor = UIPenTool.localToScreen(layer, view, 0F, 0F);
+
+        assertNotNull(anchor);
+
+        /* Cursor at ~8.5° from the anchor: the constraint must snap it to horizontal. */
+        float mouseX = anchor[0] + 120F;
+        float mouseY = anchor[1] + 18F;
+        float[] constrainedLocal = UIPenTool.constrainTo45OnScreen(layer, view, 0F, 0F, mouseX, mouseY);
+
+        assertNotNull(constrainedLocal);
+
+        float[] constrainedScreen = UIPenTool.localToScreen(layer, view, constrainedLocal[0], constrainedLocal[1]);
+
+        assertNotNull(constrainedScreen);
+
+        double angle = Math.toDegrees(Math.atan2(
+            constrainedScreen[1] - anchor[1], constrainedScreen[0] - anchor[0]));
+        float expectedLength = (float) Math.hypot(120D, 18D);
+
+        assertEquals(0D, angle, 0.5D, "constraint must be applied in screen space, not layer space");
+        assertEquals(expectedLength, constrainedScreen[0] - anchor[0], 0.5F, "screen length is preserved");
+        assertEquals(0F, constrainedScreen[1] - anchor[1], 0.5F);
+    }
+
+    @Test
+    public void shiftConstraintWorksOnATiltedPerspectiveLayer()
+    {
+        CompDocument doc = document();
+        CompProject project = project(doc);
+        CompRenderContext rc = context(project, doc, camera(doc, true));
+        CompLayer layer = card(doc, true);
+
+        layer.rotationY = 30F;
+
+        UIPenTool.View view = view(rc, doc);
+        float[] anchor = UIPenTool.localToScreen(layer, view, 0F, 0F);
+
+        assertNotNull(anchor);
+
+        float mouseX = anchor[0] - 90F;
+        float mouseY = anchor[1] + 14F;
+        float[] constrainedLocal = UIPenTool.constrainTo45OnScreen(layer, view, 0F, 0F, mouseX, mouseY);
+
+        assertNotNull(constrainedLocal);
+
+        float[] constrainedScreen = UIPenTool.localToScreen(layer, view, constrainedLocal[0], constrainedLocal[1]);
+
+        assertNotNull(constrainedScreen);
+
+        double angle = Math.toDegrees(Math.atan2(
+            constrainedScreen[1] - anchor[1], constrainedScreen[0] - anchor[0]));
+        float expectedLength = (float) Math.hypot(90D, 14D);
+
+        assertEquals(180D, Math.abs(angle), 0.8D, "perspective constraint must also be a screen 45° multiple");
+        assertEquals(expectedLength, Math.abs(constrainedScreen[0] - anchor[0]), 1.5F,
+            "the constrained screen point maps back to the same pixel");
     }
 }

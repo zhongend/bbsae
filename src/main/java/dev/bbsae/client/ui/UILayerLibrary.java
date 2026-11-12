@@ -288,6 +288,8 @@ public class UILayerLibrary extends UIElement
         private float smoothScroll;
         private boolean smoothInit;
         private final UiMotion motion = new UiMotion();
+        /** Per-card channel names ({hover, select}), rebuilt with the entry list. */
+        private final List<String[]> cardKeys = new ArrayList<>();
         private int hot = -1;
         private int selected = -1;
         private int pressY = Integer.MIN_VALUE;
@@ -302,6 +304,20 @@ public class UILayerLibrary extends UIElement
             this.entries.addAll(list);
             this.selected = list.isEmpty() ? -1 : 0;
             this.scrollY = 0;
+            this.rebuildMotionKeys();
+        }
+
+        /** Channel names are built once per list; a render pass never concatenates one. */
+        private void rebuildMotionKeys()
+        {
+            this.cardKeys.clear();
+
+            for (int i = 0; i < this.entries.size(); i++)
+            {
+                this.cardKeys.add(new String[] {"layer:" + i + ":h", "layer:" + i + ":s"});
+            }
+
+            this.motion.replay();
         }
 
         LayerCatalog.Entry selected()
@@ -449,8 +465,9 @@ public class UILayerLibrary extends UIElement
         private void renderCard(UIContext context, LayerCatalog.Entry entry, int index, int x, int y, int cardWidth)
         {
             boolean active = index == this.selected;
-            float hover = this.motion.hover("layer:" + index, this.hot == index ? "layer:" + index : null);
-            float sel = this.motion.select("layer:" + index, active);
+            String[] keys = index < this.cardKeys.size() ? this.cardKeys.get(index) : null;
+            float hover = keys == null ? 0F : this.motion.anim(keys[0], this.hot == index ? 1F : 0F, 24F);
+            float sel = keys == null ? 0F : this.motion.anim(keys[1], active ? 1F : 0F, 22F);
             float intro = this.motion.intro(Math.min(0.32F, index * 0.008F));
             int drawY = y + Math.round((1F - intro) * 5F * this.motion.intensity() * 2F);
             int fill = UiMotion.lerpColor(0xFF1E2530, 0xFF26313F, hover);

@@ -111,9 +111,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
    `UiPageTransition`（已在 0.92 提供）。本任务的子组件只保证“内容出现时自己会错峰/淡入”，页面级滑动 + veil 需要 Host 接线。
 3. **快捷面板显隐**：`UILayerQuickPanel` 内部已做揭示/行反馈；面板宽度的展开/收起（时间轴让位）属于布局层，
    建议用 `UiLayoutTween`（计划 6.4），不要在本面板内部改 `area`。
-4. **可选共享优化**：现在 prune 节奏由各宿主自带。若希望 `UIAssetBrowser`/`UILayerLibrary` 等既有动效宿主
-   （不在本任务写域）也自动 prune，最省事的是在 `UiMotion.tickFrame()` 内部每 60 帧自动 `prune` 一次
-   （`UiMotion` 不在本任务写域，故未改）；这会把所有既有宿主的通道泄漏一起治好。
+4. **可选共享优化（Round 3 已落地）**：prune 节奏原本由各宿主自带；Round 3 起 `UiMotion.tickFrame()`
+   每 60 帧自动 `prune` 一次（见第 8 节），`UIAssetBrowser`/`UILayerLibrary` 等既有宿主无需再各自接线。
+   宿主里已有的显式 `motion.prune(...)` 调用保留也无害（幂等）。
 
 ---
 
@@ -155,8 +155,95 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 
 | 计划 | 实际 | 原因 |
 | --- | --- | --- |
-| 在 `UiMotion` 内加 spring/tween/prune 等 | 0.92 已由前序工作完成，本任务**只调用** | `UiMotion` 不在本任务写域 |
+| 在 `UiMotion` 内加 spring/tween/prune 等 | 0.92 已由前序工作完成；Round 3 已补**全局自动 prune** | `UiMotion` 在 Round 3 才授权修改，见第 8 节 |
 | 新增 `CompPrefs` 的 `buttonFeedback/listStagger/panelTransitions` 开关 | **未加**，复用现有总开关 + 强度/速度 | 写域禁止改 `CompPrefs`；总开关已能覆盖“全部关掉”的诉求，拆细开关等 Lead 决定 |
-| `prune` 统一在 `UiMotion` 内 | 各宿主每 60 帧自行 prune | 同上；已在第 5 节建议 Lead 后续上移到 `tickFrame` |
+| `prune` 统一在 `UiMotion` 内 | **Round 3 已实现**：`tickFrame()` 每 60 帧自动 prune，宿主无需接 | 见第 8 节 |
 | `UiPageTransition` / `UiLayoutTween` 宿主接线 | 未接线 | 属于 `UICompositorPanel`（Lead 重构中）写域 |
 | `UICompCurveEditor`（时间轴曲线页）hover | 未改 | 不在本任务写域，且 2400+ 行、风险高；留给后续 |
+
+---
+
+## 8. Round 3（0.94）：剩余页面 + UiMotion 全局 prune + 浮层关闭过渡
+
+> 0.93 已发布后继续补齐：`UIAssetBrowser`/`UILayerLibrary` 行态、开始页/引导缺项、
+> `UIImportBrowser`/`UIEffectLibraryOverlay` 关闭淡出、以及 `UiMotion` 的全局 prune。
+> **没有新增 CompPrefs 开关**；没有开客户端。
+
+### 8.1 改动文件
+
+| 文件 | Round 3 改动 |
+| --- | --- |
+| `UiMotion.java` | **全局自动 prune**：`tickFrame()` 每 `PRUNE_EVERY_FRAMES=60` 帧调一次 `prune(2F)`；prune 现在同时清理 IDLE 通道、**未再被查询的 tween**（会让 `isActive()` 变陈旧）和**未被读取的 flash**；`flash()`/`flash(key,duration)` 改用注入的帧时钟（`nowNanos`）而不是 `System.nanoTime()`，flash 与其它通道同一时基、可确定性测试；`reset()` 重置计数；新增诊断 `flashCount()/tweenCount()` |
+| `UiPageTransition.java` | 新增嵌套 `CloseFade`（140ms，`begin()/tick(long)/isClosing()/progress()/remaining()`）。`tick` 只在结束那一帧返回一次 `true`，重复 `begin` 被忽略；动效关闭时第一帧即结束；`begin` 时把通道预置为 0（否则 tween 会从目标值开始瞬间结束） |
+| `UIImportBrowser.java` | 新增 `beginClose(Runnable onDone)` / `isClosing()`：关闭时背板淡出、弹窗下滑 10px 后回调；回调经 `context.render.postRunnable()` 在**本帧渲染结束后**执行（宿主可安全 `removeFromParent()`，不会在父级遍历子元素时改列表）；淡出期间 `box` 禁用、根节点吞掉鼠标/键盘事件（保持模态）；重复调用忽略 |
+| `UIEffectLibraryOverlay.java` | 同上 `beginClose(Runnable)`/`isClosing()`（关闭时背板淡出 + 内容下滑 10px）；Esc 在关闭中不再二次触发 `onClose` |
+| `UIAssetBrowser.java` | Grid：tile 的 hover/select 通道名在 `rebuild()` 里预生成（`List<String[]>`），缩略图淡入 key 按 asset path 缓存（上限 1024 清理）；`rebuild()` 时 `replay()` 错峰；分类条 Strip：13 个 chip 的选中/悬停插值（颜色/底边/文字），key 在构造时预生成 —— 均不再每帧 `"tile:"+i`/`"chip:"+i` 拼字符串。prune 由 UiMotion 全局接管 |
+| `UILayerLibrary.java` | Grid：卡片 hover/select 通道名在 `setEntries()` 里预生成（`List<String[]>`）并 `replay()` 错峰；不再每帧 `"layer:"+i` 拼接 |
+| `UIStartScreen.java` | 工程列表行错峰入场（18ms/行、封顶 200ms、2px + 淡入，文字颜色走 `RowStyle.textColor`）；`FormPanel`（新建工程表单）显示时从下方滑入 8px，`showForm()` 重放；按钮本身已是 `UICompButton` 有按下反馈 |
+| `UIOnboarding.java` | 页内卡片错峰揭示：`pageItemDelay(index)=min(0.18, index*0.022)`（纯函数），`pageIntro(index)` 用 `pageAt` 计算，用于欢迎页清单/功能卡、布局卡、动效卡、快捷键卡、完成页摘要框（位移 + 淡入）；布局/动效/快捷键卡 hover/select 通道名改为类常量（不再每帧拼 `"layout:"+i`）；步骤圆点选中宽度/颜色插值；左右箭头 hover 淡入；`bigButton` 增加按下（hover+物理键按下→内缩 1px/变暗/回弹）并缓存 hover 通道名；prune 由 UiMotion 全局接管 |
+
+`UiStagger.java` 无改动（本轮的页内错峰是同语义的 `pageItemDelay` + `pageIntro`，因为引导页的“显示时钟”是 `pageAt` 而不是面板 `markShown`）。
+
+### 8.2 宿主接入点（2 处，都在 `UICompositorPanel`，本任务未改）
+
+1. **`UIImportBrowser`**：宿主所有 `onClose` 回调改为走关闭淡出。把现有的
+   ```java
+   () -> { if (this.importBrowser != null) { this.importBrowser.removeFromParent(); this.importBrowser = null; } }
+   ```
+   改成：
+   ```java
+   () -> { if (this.importBrowser != null && !this.importBrowser.isClosing())
+       this.importBrowser.beginClose(() -> {
+           this.importBrowser.setVisible(false);
+           this.importBrowser.removeFromParent();
+           this.importBrowser = null;
+       }); }
+   ```
+   即“取消/关闭按钮/确认导入后的清理”都调用同一个 lambda 即可（浏览器内部的取消按钮已经走 `onClose`，无需另外改）。回调在渲染结束后执行，宿主可直接移除；若宿主不接入，行为与 0.93 一致（瞬切）。
+2. **`UIEffectLibraryOverlay`**：`openEffectLibraryOverlay(...)` 的 `onClose` lambda 同理：
+   ```java
+   () -> { if (this.effectLibraryOverlay != null && !this.effectLibraryOverlay.isClosing())
+       this.effectLibraryOverlay.beginClose(() -> {
+           this.effectLibraryOverlay.setVisible(false);
+           this.effectLibraryOverlay.removeFromParent();
+           this.effectLibraryOverlay = null;
+       }); }
+   ```
+   （现有 `openEffectLibraryOverlay` 里的清理 lambda 保留原样作为 `beginClose` 的 `onDone` 内容即可。）
+
+### 8.3 新增测试
+
+`src/test/java/dev/bbsae/client/ui/UiMotionGlobalPruneTest.java`（8 个）：
+
+| 测试 | 断言 |
+| --- | --- |
+| `autoPruneDropsIdleChannelsWithoutHostCalls` | 180 帧不触碰任何通道、且**不调用**宿主 prune：通道表清空（60 帧一次自动 sweep） |
+| `autoPruneKeepsChannelsTouchedThisFrame` | 每帧更新的可见通道在 600 帧内始终存活 |
+| `autoPruneDropsIdleTweenAndFlashes` | 宿主不再查询的 tween、没被读取的 flash 在 idle 窗口后被清；`isActive()` 随之变 false |
+| `autoPruneBoundsChannelChurnInLongSession` | 900 帧里每帧新增一个只触碰一次的通道：数量被限制在 “常驻 + 2s 内” 的量级 |
+| `closeFadeCallsFinishExactlyOnce` | 关闭进度单调、`tick` 恰好返回一次 `true`、结束后不再返回 true |
+| `closeFadeSnapsWhenAnimationsAreOff` | 关动效后第一帧即结束（进度=1），不残留 |
+| `closeFadeIgnoresRepeatedBegin` | Esc+点击同帧只开始一次；结束后再 `begin` 不会复活 |
+| `onboardingPageDelayIsMonotonicAndCapped` | `pageItemDelay` 首项 0、负数 clamp 0、单调、封顶 0.18s |
+
+加上既有 `UiFeedbackMotionTest`（10）+ `UiMotionSpringTest`（9），动效相关纯逻辑测试共 **27 个**。
+
+### 8.4 Round 3 回归结果
+
+- 串行包装器全量（含所有并行任务测试）：**110 suites / 669 tests / 0 failed / 0 errors / 1 skipped，BUILD SUCCESSFUL**。
+- 动效相关：`UiMotionGlobalPruneTest`（8）+ `UiFeedbackMotionTest`（10）+ `UiMotionSpringTest`（9）共 **27 个纯逻辑测试全绿**。
+- 执行期间工作区被 5 个并行任务同时修改，曾出现两类临时红（AM `unsharp_mask` 的显示名/缩略图、`CompUi` rail 图标新测试），
+  均来自其他协作者的进行中改动；他们收尾后复跑全量已全绿。合并前建议再跑一次全量。
+
+### 8.5 Round 3 风险
+
+1. **关闭回调时机依赖 `UIRenderingContext.postRunnable`**（BBS 2.7 1.20.1 jar 已核对存在，`UIScreen` 每帧渲染后执行）。
+   若宿主未接入 `beginClose`，仍走旧的瞬切路径，无行为变化。
+2. **页内错峰用 `pageAt` + `System.nanoTime`**（引导页自身时钟，不走注入时钟）；动效关闭/强度 0 时 `pageIntro` 直接返回 1。
+   因此它只有纯函数 `pageItemDelay` 可单测，时间曲线本身以真机为准。
+3. **UIAssetBrowser/UILayerLibrary 的通道名按列表位置生成**：搜索/切分类后同一位置换成了别的素材，hover/选中会从
+   上一个条目的值平滑过去（视觉上就是“淡入淡出”），不会错位到别的行；若要求严格按素材 id 持久，可后续改成 path-key。
+4. **入场位移期间命中矩形仍在最终位置**（≤6px，仅 0.3 s）：快速点击落点比画面早一点，和上一轮同类风险一致。
+5. **全局 prune 会清理“2 秒没被查询的 tween”**：如果某个宿主把 tween 当作跨帧但每帧不查询的状态，会被提前清理；
+   现有调用方（`CloseFade`、时间轴/overlay 的 flash）都是每帧查询，未受影响。
+

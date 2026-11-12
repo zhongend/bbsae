@@ -27,12 +27,25 @@ public class ReplayWritebackTest
 
         double at(float tick)
         {
-            return this.values.get(tick);
+            Double value = this.values.get(tick);
+
+            return value == null ? Double.NaN : value;
         }
 
         int count()
         {
             return this.values.size();
+        }
+
+        Map<Float, Double> snapshot()
+        {
+            return new LinkedHashMap<>(this.values);
+        }
+
+        void restore(Map<Float, Double> snapshot)
+        {
+            this.values.clear();
+            this.values.putAll(snapshot);
         }
     }
 
@@ -83,5 +96,88 @@ public class ReplayWritebackTest
         assertEquals(0D, x.at(0F));
         assertEquals(5D, x.at(20F));
         assertTrue(y.count() == 2 && z.count() == 2);
+    }
+
+    /** What the gizmo's "one gesture = one key at the playhead" contract writes, all at one tick. */
+    @Test
+    public void aWholePlacementWritesAllSevenChannelsAtTheSameTick()
+    {
+        RecordingChannel x = new RecordingChannel();
+        RecordingChannel y = new RecordingChannel();
+        RecordingChannel z = new RecordingChannel();
+        RecordingChannel yaw = new RecordingChannel();
+        RecordingChannel head = new RecordingChannel();
+        RecordingChannel body = new RecordingChannel();
+        RecordingChannel pitch = new RecordingChannel();
+
+        ReplayWriteback.placement(7F, 1D, 2D, 3D, 15D, 90D, 5D, -10D,
+            x, y, z, yaw, head, body, pitch);
+
+        assertEquals(1D, x.at(7F), 0.0001D);
+        assertEquals(2D, y.at(7F), 0.0001D);
+        assertEquals(3D, z.at(7F), 0.0001D);
+        assertEquals(-90D, yaw.at(7F), 0.0001D);
+        assertEquals(-85D, head.at(7F), 0.0001D);
+        assertEquals(-100D, body.at(7F), 0.0001D);
+        assertEquals(15D, pitch.at(7F), 0.0001D);
+        assertEquals(7, x.count() + y.count() + z.count() + yaw.count() + head.count() + body.count() + pitch.count(),
+            "exactly one key per channel at the tick");
+    }
+
+    @Test
+    public void writingThePlayheadAgainOverwritesThatKeyInsteadOfAppending()
+    {
+        RecordingChannel x = new RecordingChannel();
+        RecordingChannel y = new RecordingChannel();
+        RecordingChannel z = new RecordingChannel();
+
+        ReplayWriteback.placement(0F, 0D, 0D, 0D, 0D, 0D, 0D, 0D,
+            x, y, z, new RecordingChannel(), new RecordingChannel(), new RecordingChannel(), new RecordingChannel());
+        ReplayWriteback.placement(0F, 4D, 5D, 6D, 30D, 45D, 0D, 0D,
+            x, y, z, new RecordingChannel(), new RecordingChannel(), new RecordingChannel(), new RecordingChannel());
+
+        assertEquals(1, x.count(), "a key at the same tick is replaced, not duplicated");
+        assertEquals(4D, x.at(0F), 0.0001D);
+        assertEquals(5D, y.at(0F), 0.0001D);
+        assertEquals(6D, z.at(0F), 0.0001D);
+    }
+
+    /**
+     * Undo/redo consistency at the writeback layer: one gesture writes, undo restores the snapshot
+     * taken before it, redo re-applies the same values. (The real film undo swaps a JSON snapshot
+     * in {@code UIFilmPanel}; that path needs a client and is listed as a real-machine item.)
+     */
+    @Test
+    public void undoRestoresThePreGestureValuesAndRedoReappliesThem()
+    {
+        RecordingChannel x = new RecordingChannel();
+        RecordingChannel y = new RecordingChannel();
+        RecordingChannel z = new RecordingChannel();
+        RecordingChannel yaw = new RecordingChannel();
+
+        ReplayWriteback.placement(0F, 1D, 2D, 3D, 0D, 10D, 0D, 0D,
+            x, y, z, yaw, new RecordingChannel(), new RecordingChannel(), new RecordingChannel());
+
+        Map<Float, Double> beforeX = x.snapshot();
+        Map<Float, Double> beforeYaw = yaw.snapshot();
+
+        ReplayWriteback.placement(20F, 9D, 9D, 9D, 45D, 90D, 0D, 0D,
+            x, y, z, yaw, new RecordingChannel(), new RecordingChannel(), new RecordingChannel());
+
+        /* undo */
+        x.restore(beforeX);
+        yaw.restore(beforeYaw);
+
+        assertEquals(1, x.count(), "the gesture's key is gone after undo");
+        assertEquals(1D, x.at(0F), 0.0001D);
+        assertEquals(10D, yaw.at(0F) * -1D, 0.0001D, "yaw was written as -yaw");
+
+        /* redo */
+        ReplayWriteback.placement(20F, 9D, 9D, 9D, 45D, 90D, 0D, 0D,
+            x, y, z, yaw, new RecordingChannel(), new RecordingChannel(), new RecordingChannel());
+
+        assertEquals(2, x.count());
+        assertEquals(9D, x.at(20F), 0.0001D);
+        assertEquals(-90D, yaw.at(20F), 0.0001D);
     }
 }

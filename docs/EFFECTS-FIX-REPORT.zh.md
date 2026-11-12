@@ -188,7 +188,6 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 `comp/CompProject.java`、`gradle.properties`。
 
 ## 7. 剩余风险
-
 1. 文字渲染本身无法 headless 验证，方向契约用非对称图案覆盖同一条栅格/效果路径；最终仍需 Lead 真机
    用"文字 + 效果"对"文字"截图确认。
 2. 合成空间复制在合成尺寸 FBO 上做 8×8 上限的循环（每像素最多 64 次采样）；默认参数 4×3=12 次。
@@ -199,3 +198,154 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
    （详见 gap 文档第 2 节），这是为可动画/可预览做的刻意取舍，不视为回归。
 5. 重复类缩略图的测试卡是满幅图层，复制体（原尺寸）在 4×3 网格里相互重叠，缩略图比旧版更"满"；
    实际小图层场景是清晰的复制体。若要更漂亮的缩略图需要给缩略图单独构造小图层，不属于效果逻辑。
+
+## 8. Round 3 数据层修复（P1-A / B / C / D）
+
+> 本轮只碰数据层：`client/render/CompScene.java`（仅 shake 相关）与
+> `comp/{CompLayer,CompAnimationPreset,CompCurveChannel,CompStore}.java` 的对应方法/新增辅助。
+> 未改 UI / GL / shader / replay / 构建脚本。全量：**110 suites / 669 tests / 0 failures / 1 skipped**。
+
+### P1-A 抖动 / 震屏滑杆对渲染完全无效
+
+根因：`CompScene.shakeOf()` 原来用 `CompLayer.effectParam(...)` 读 strength / amplitude / frequency /
+rotation / seed，而它只是 `scalarAt("fx/<id>/<param>")`：**没有通道时直接返回调用方传的字面 fallback，
+永远不读 `CompEffect.params`**。滑杆写入的正是 `params`，所以幅度、频率、旋转、种子、效果强度全都不生效，
+只有"先 key 一个关键帧"才能动；不 key 时振幅永远退回 18px。
+
+修复：
+
+- `CompLayer#effectValue(CompEffect effect, String key, float fallback, float frame)`：先
+  `resolveEffect(effect, frame)`（基值 = `params`，`fx/` 通道逐参数覆盖），再 `valueF(key, fallback)`。
+  这是效果参数唯一正确的读取入口（基值 + 通道覆盖）。
+- `CompScene#shakeOf()` 五个参数全部改走 `effectValue(...)`。
+- `CompLayer#effectParam(String, ...)` 标注 `@Deprecated` 并改为 `effectValue` 的委托，避免旧调用点继续
+  静默失效（语义从"只读通道"变成"基值 + 通道覆盖"）。
+
+单测（`ShakeEffectValueTest`，6）：amplitude=200 且无任何通道 → `CompScene.local()` 的平移超过 50px
+（旧实现最多只有 18px，所以"非 0"断言抓不到这个 bug，测试特意用位移阈值）；strength=0 冻结；
+关键帧 strength 覆盖基值；只有关键帧无基值仍动画；`effectValue` 基值/覆盖/空 effect；`effectParam` 委托。
+
+### P1-B 动画预设清空 / 注入内容通道
+
+根因：`capture()` 直接 `copy.channels.putAll(layer.channels)`（含 fx / mask / shape / text 通道），
+`applyTo()` 先 `target.channels.clear()` 再 `putAll(source.channels)`。于是"保存图层动画"会连蒙版/形状/效果
+动画一起存；"应用预设"会删掉目标层自己的内容动画，并把源层的 `fx/<id>/...` 注入目标——id 对不上，形成
+"幽灵动画"，还会在之后误伤同 id 的新效果。
+
+修复：
+
+- 新增 `CompAnimationPreset.isPresetChannel(String path)`：白名单，明确排除 `fx/`、`mask/`、`shape/`、
+  `text/` 前缀，其余标量通道（transform 轴 / camera / timeRemap / squash 等）保留。
+- `capture()` 只采白名单通道。
+- `applyTo()` 不再全表 clear：先 `target.saveTracks()` 把运行时通道落盘（否则未保存的键会被合并丢掉），
+  再把目标"非预设通道"（内容动画）收进 `preserved`，只替换预设拥有的属性通道，合并后 `loadTracks()`。
+  `transformData`/`opacityData` 在 merge 之后才从源预设取，避免被 `saveTracks()` 覆盖。
+- 旧预设（旧版 capture 写入了 fx 通道）在 apply 时同样过滤，不会继续污染旧工程。
+
+单测（`CompAnimationPresetTest`，5）：白名单判定；capture 不含内容通道；apply 后目标 mask/shape/fx/text
+通道原样保留、源 fx 不出现、transform/opacity 正常搬运；旧格式预设注入被过滤；空预设拒绝。
+
+### P1-C 曲线编辑器改 fx 关键帧不写回
+
+根因：`CompCurveChannel.insert()` / `setKeyValue()` 只调 `layer.putScalar(path, value)`，而 `putScalar`
+对 `fx/` 路径是 no-op（效果参数在 `CompEffect.params`）。在曲线里拖模糊半径只会改关键帧：渲染仍读旧基值，
+删光关键帧后参数回到旧值。
+
+修复：新增私有 `CompCurveChannel#writeBaseValue(float)`：`fx/<id>/<param>` 镜像到
+`layer.getEffect(id).put(param, value)`（与 `UICompositorPanel.setScalar()` 的既有处理一致，**未改 UI**）；
+其余路径继续 `putScalar`。`insert` 与 `setKeyValue` 都走它。
+
+mask/shape 支持性检查：`putScalar` 支持 mask 的全部可动画路径（feather / opacity / expansion + 每点
+x/y/inX/inY/outX/outY）和 shape 的 x/y/width/height/roundness/rotation/trimStart/trimEnd/trimOffset/
+repeater*/角半径/路径点；**唯一缺口是 `shape/<id>/fillGradientAngle`**：它出现在 `shapeAt()` 的读取里，
+但 `putNestedScalar` / `nestedScalar` 都没有这个键（写入被 default 吞掉、曲线默认值读成 0）。属于 CompLayer
+的缺口，不在本轮写域内，见剩余风险 1。
+
+单测（`CompCurveChannelFxWritebackTest`，4）：insert / setKeyValue 后 `effect.params` 同步；删光关键帧保留
+最后拖拽值；effect 已删除时 fx 通道不抛异常；mask/shape 写回回归。
+
+### P1-D uniqueEffectId 复用被删除效果的 id
+
+根因：`CompStore.uniqueEffectId()` 只按 effect 列表找最小空号，不看仍存在的 `fx/<id>/` 通道。删除效果后 id
+被复用，新效果会"继承"旧效果的关键帧曲线（旧动画被劫持到新效果上）。
+
+修复：新增 `CompStore.hasEffectChannels(CompLayer, id)`（同时检查运行时 `animatedPaths()` 与序列化
+`channels` map，覆盖刚反序列化、尚未 `loadTracks()` 的状态），`uniqueEffectId()` 跳过仍有通道的编号。
+删除效果的路径可直接复用该谓词。
+
+单测（`CompStoreEffectIdTest`，6）：空层从 fx1 开始；已有 effect 跳过；fx/fx1、fx/fx2 通道但无 effect → fx3；
+删除 effect 后 id 仍不释放；精确 id 匹配（fx10 不匹配 fx1）；序列化 map 也生效。
+
+### 本轮变更文件 / 方法
+
+- `client/render/CompScene.java`：`shakeOf()`（5 处读取改 `effectValue`）
+- `comp/CompLayer.java`：新增 `effectValue(...)`；`effectParam(...)` 改 `@Deprecated` 委托
+- `comp/CompAnimationPreset.java`：新增 `isPresetChannel(...)`；`capture()` / `applyTo()` 重写合并逻辑
+- `comp/CompCurveChannel.java`：新增私有 `writeBaseValue(...)`；`insert()` / `setKeyValue()` 改走它
+- `comp/CompStore.java`：新增 `hasEffectChannels(...)`；`uniqueEffectId()` 跳过有通道的 id
+- 测试：`ShakeEffectValueTest`（新，6）、`CompAnimationPresetTest`（新，5）、
+  `CompCurveChannelFxWritebackTest`（新，4）、`CompStoreEffectIdTest`（新，6），合计 21
+
+### 验证
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 compileJava compileTestJava --offline --console=plain
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 test --tests "dev.bbsae.client.render.ShakeEffectValueTest" --tests "dev.bbsae.comp.CompAnimationPresetTest" --tests "dev.bbsae.comp.CompCurveChannelFxWritebackTest" --tests "dev.bbsae.comp.CompStoreEffectIdTest" --offline --console=plain
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle-run.ps1 test --offline --console=plain
+```
+
+结果：`compileJava` / `compileTestJava` BUILD SUCCESSFUL；定向 21/21 通过；全量 **110 suites / 669 tests /
+0 failures / 1 skipped**。
+
+首次全量跑红在 `EffectLibraryNamingTest.visibleEffectNamesAreUnique`（`USM 锐化`：`unsharp_mask` 与
+`am_unsharp_mask` 重名）。那是队友并行修改 `comp/AmEffectLibrary.java` + `comp/CompEffectRegistry.java`
+（`am_unsharp_mask` 新增，随后 `unsharp_mask` 加入库隐藏列表）的 WIP，与本轮四项修复无关；队友补完隐藏项后
+重跑全绿。
+
+### 剩余风险
+
+1. **`shape/<id>/fillGradientAngle`**：曲线能显示（`shapeAt()` 读它）但 `putScalar` 写不进、`scalar()`
+   也读不到（默认值 0）。拖这个关键帧仍会"显示改了、基值没改"。修法是在 `CompLayer.putNestedScalar` /
+   `nestedScalar` 补 `fillGradientAngle`——属于本轮写域限制外的方法，留给 Lead 决定。
+2. **删除效果留下的 fx 通道不会自动清理**：`uniqueEffectId` 只是不再复用 id；通道会保留到工程被清理。
+   这是"删效果不删动画"的既有刻意行为，本轮没有改变清理策略。
+3. **`effectValue` 每次调用都 copy 一次 effect**：`shakeOf` 每帧最多 5 次；参数表很小，相对 GL 开销
+   可忽略。若以后有热路径大量调用，可缓存一次 `resolveEffect` 结果。
+4. **预设对 transform 是"整族替换"**：源预设没有某轴通道时，目标该轴通道会被清掉（基值字段保留），
+   与旧行为一致；没有"只覆盖预设里存在的轴"这种部分应用语义。
+5. 本轮为纯数据层 + 单测，未做客户端真机验证；建议 Lead 用"滑杆调 shake / 应用预设 / 曲线拖 fx 关键帧"
+   三条路径截图确认。
+
+## Round 3（0.94）效果 P1 批次 + 两处跨效果正确性修复
+
+> 详细参数/差异见 [`EFFECTS-AM-GAP.zh.md`](EFFECTS-AM-GAP.zh.md) 第 3.0/3.2 节。
+
+### 1. AM P1 模糊/调色/变形批（13 个新效果）
+
+- 模糊（5 新 + 1 既有对齐）：`am_unsharp_mask`、`am_lens_blur_2`、`am_streak_strips`、`am_warp_blur`、
+  `am_chromatic_zoom_blur`；既有 `am_spin_blur` 的 angle 范围/步进对齐 AM `spinblur2`（0..60°/0.1）
+  并补显式恒等分支。旧 `unsharp_mask` 加入 `LIBRARY_HIDDEN`（AM 后继 `am_unsharp_mask`），
+  保持"效果库同名唯一、隐藏 id 仍可渲染"的既有契约。
+- 调色（5）：`am_spectral_map`、`am_soft_glow`、`am_dark_glow`、`am_light_glow`、`am_color_hot`。
+- 变形（3）：`am_pinch_bulge_2`、`am_swirl_4`、`am_hex_rotate`。
+- 全部走 `AmEffectDef` 数据驱动（无新增 shader 家族）；每个 body 都有显式恒等分支，零点契约分别用
+  `zeroKey` 或 `neutralAt` 声明。`EffectP1BatchTest`（隐藏 GL）对每个条目断言"默认参数确实改变画面"
+  与"中性配置在渲染器短路和强制 shader 两条路径上都逐像素还原"。
+
+### 2. REPLICATE 直通 alpha 合成（预览与导出同时错 → 已修）
+
+复制 pass 之前把直通 alpha 的源像素用预乘公式累加、又按直通输出：α=128 的红拷贝输出成
+(128,0,0,128)，opacity=0.5 时复制体发黑，文字抗锯齿/发光软边重复后边缘发黑。
+现在在预乘空间累加、结尾统一 un-premultiply；`EffectRepeatTest` 新增两个像素测试。
+
+### 3. 预览 proxy 的像素单位（"预览=导出" → 已修）
+
+三类"参数按合成像素、换算按 FBO 像素"的路径：RGB 分离的 `Texel`、投影/内阴影偏移
+（`PassRenderer.draw` 新增 offset 参考尺寸重载）、图层样式 `inner()` 的距离/模糊半径
+（`EffectRenderer.proxyScale`）。`PreviewProxyTest` 断言换算纯函数，
+`EffectPipelineTest.proxyTargetKeepsPixelAuthoredEffectDistances` 用 1:1 与 0.5 两档渲染同一
+RGB 分离图并断言同一相对位置采样一致。
+
+验证：全量 `test`（串行 wrapper）**110 suites / 669 tests / 0 failures / 1 skipped**；本轮新增
+`EffectP1BatchTest`（3）+ `AmEffectLibraryTest`（1）+ `EffectRepeatTest`（2）+
+`PreviewProxyTest`（1）+ `EffectPipelineTest`（1）。未开客户端。

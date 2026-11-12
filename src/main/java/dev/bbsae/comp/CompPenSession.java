@@ -19,7 +19,11 @@ import java.util.Set;
  */
 public final class CompPenSession
 {
-    /** A path the pen can edit. Reads are the live base values; writes are animation aware. */
+    /**
+     * A path the pen can edit. Reads are the <b>value at the current playhead</b> when the path is
+     * animated (the adapter evaluates the channels), so overlay, hit testing and drag deltas all
+     * agree with what is rendered; writes are animation aware (base value + key at the playhead).
+     */
     public interface Target extends CompPathGeometry.PathView
     {
         void setPoint(int index, float x, float y);
@@ -32,6 +36,22 @@ public final class CompPenSession
         void remove(int index);
 
         void setClosed(boolean closed);
+
+        /**
+         * Reorders the vertices of a closed path: new index {@code i} receives the old
+         * {@code (i + shift) mod count}. Used by Set First Vertex; {@link #canRotatePoints()}
+         * reports whether the target supports it before anything is mutated.
+         */
+        default boolean rotatePoints(int shift)
+        {
+            return false;
+        }
+
+        /** Capability check for {@link #rotatePoints}; false when reordering is unsupported. */
+        default boolean canRotatePoints()
+        {
+            return false;
+        }
 
         /**
          * True when any point channel of this path already has keyframes. Such a path needs a
@@ -94,6 +114,21 @@ public final class CompPenSession
 
         /** Inserts or overwrites one key, inheriting the neighbouring key's curve style when new. */
         void setKey(int point, int component, float tick, float value);
+
+        /**
+         * Copies the repeat loops of one channel onto another. A loop is an absolute-time repeat
+         * block, so it must follow the channel to a new index and must also exist on channels
+         * created for a newly inserted point — otherwise the path stops repeating on that point
+         * after the loop's source range.
+         */
+        void copyLoops(int fromPoint, int fromComponent, int toPoint, int toComponent);
+
+        /**
+         * Rotates the six-channel groups of {@code count} points: new index {@code i} receives the
+         * channels of old {@code (i + shift) mod count}. Used by Set First Vertex; keys, curves and
+         * loops move with the channels.
+         */
+        void rotateChannels(int count, int shift);
     }
 
     /** Side effects the UI has to perform around a mutation. */
@@ -241,6 +276,18 @@ public final class CompPenSession
     public boolean isCreatingTangent()
     {
         return this.drag == Drag.NEW_TANGENT;
+    }
+
+    /** True while vertices (not a handle) are being dragged; Shift constrains only these. */
+    public boolean isDraggingVertices()
+    {
+        return this.drag == Drag.VERTEX;
+    }
+
+    /** True while a handle (in or out) is being dragged. */
+    public boolean isDraggingHandle()
+    {
+        return this.drag == Drag.IN_HANDLE || this.drag == Drag.OUT_HANDLE;
     }
 
     public Target target()
@@ -1072,6 +1119,79 @@ public final class CompPenSession
         return true;
     }
 
+    /**
+     * AE's "Set First Vertex": rotates a closed path so {@code index} becomes vertex 0.
+     *
+     * <p>The closed shape does not change — only which vertex the path starts from (which matters
+     * for the closing segment, the pen's start dot and, for shape paths, the stroke seam). An
+     * animated path rotates its six channels per point with the vertices, so every keyframe keeps
+     * the same geometry; repeat loops travel with the channel.</p>
+     */
+    public boolean setFirstVertex(int index)
+    {
+        if (this.target == null)
+        {
+            return false;
+        }
+
+        int count = this.target.count();
+
+        if (!this.target.closed())
+        {
+            this.listener.status("只有闭合路径才能设置第一顶点");
+
+            return false;
+        }
+
+        if (count < 3)
+        {
+            this.listener.status("路径至少需要 3 个点才能设置第一顶点");
+
+            return false;
+        }
+
+        if (index <= 0 || index >= count)
+        {
+            return false;
+        }
+
+        if (!this.target.canRotatePoints())
+        {
+            this.listener.status("该路径不支持重排顶点");
+
+            return false;
+        }
+
+        Animation animation = this.target.animated() ? this.target.animation() : null;
+
+        if (this.target.animated() && animation == null)
+        {
+            this.listener.status("路径动画通道不可用：不能设置第一顶点");
+
+            return false;
+        }
+
+        this.listener.beginAction("钢笔：设为第一顶点");
+
+        if (animation != null)
+        {
+            /* Channels are rotated before the model list: both use the old index order. */
+            animation.rotateChannels(count, index);
+        }
+
+        this.target.rotatePoints(index);
+
+        this.selection.clear();
+        this.selection.add(0);
+        this.anchorPoint = this.target.count() - 1;
+        this.drag = Drag.NONE;
+        this.dragPoint = -1;
+        this.listener.changed();
+        this.listener.status("已把锚点 " + (index + 1) + " 设为第一顶点");
+
+        return true;
+    }
+
     /** Inserts a vertex on a segment, preserving the shape through a de Casteljau split. */
     public boolean insertOnSegment(int segment, float t)
     {
@@ -1382,6 +1502,13 @@ public final class CompPenSession
             }
         }
 
+        /* Repeat loops are absolute-time blocks on the channel; the new point's fresh channels have
+         * to join them or the path would stop repeating on that vertex after the source range. */
+        for (int component = 0; component < COMPONENT_COUNT; component++)
+        {
+            animation.copyLoops(start, component, at, component);
+        }
+
         this.selection.clear();
         this.selection.add(at);
         this.anchorPoint = this.target.count() - 1;
@@ -1447,6 +1574,14 @@ public final class CompPenSession
             for (int component = 0; component < COMPONENT_COUNT; component++)
             {
                 animation.setKey(oldCount, component, ticks[i], split[component]);
+            }
+        }
+
+        if (oldCount >= 1)
+        {
+            for (int component = 0; component < COMPONENT_COUNT; component++)
+            {
+                animation.copyLoops(oldCount - 1, component, oldCount, component);
             }
         }
 

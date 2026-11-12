@@ -18,13 +18,13 @@
 | --- | --- |
 | AM 非 internal 定义（去重 token） | 277 |
 | 其中有可执行 shader | 180 |
-| 本项目 AM 定义 | 127（0.93 新增 3 个 repeat 家族 + 2 个调色条目） |
-| 自动匹配（同名/历史别名） | 94 |
+| 本项目 AM 定义 | 140（0.93 +3 repeat/2 调色，0.94 +13 P1 批） |
+| 自动匹配（同名/历史别名） | 107 |
 | 未匹配：deprecated 旧版本 | 72 |
 | 未匹配：非 shader（图层属性 / 复制器） | 20 |
 | 未匹配：3D 图元（本项目 `s3d_*` + MeshRenderer） | 19 |
-| 未匹配：同族旧版本（boxblur→boxblur3 等） | 8 |
-| 未匹配：可执行 shader、真正缺失 | 64 |
+| 未匹配：同族旧版本（boxblur→boxblur3 等） | 6 |
+| 未匹配：可执行 shader、真正缺失 | 54 |
 
 自动匹配覆盖了大部分"效果语义"，没有覆盖的 66 条多数是成员限定/冷门 procedural（grunge、ominodiff、
 voronoi、turbulence、ribbons 等）与 drawing 家族（electricedges、roughenedges、smoothbevel）。
@@ -95,18 +95,31 @@ generated 文件第 2 节按"AM 直接参数 vs 本项目同名键"列出。缺�
 
 | 优先级 | AM id | 类别 | 参数数 | 备注 |
 | --- | --- | --- | --- | --- |
+| **剩余 P1（未完成）** | `pinchbulgeinside` / `ominoglass` / `wavewarp2` / `turbulentdisplace3` / `tileshift2` / `stretchsegment` | distort | 4–23 | 有同族条目，但参考版参数/公式差异大（ominoglass 23 参数、wavewarp2 9 参数），留待下一批 |
+| **剩余 P1（未完成）** | `texttransform` / `textspacing` 等 6 个文字效果 | text | 0–16 | 非 shader，需要 UI 写域接入图层属性，本轮不做 |
 | **P0（重复）✅ 0.93** | `repeat` / `radial` / `scatter` | repeat | 6/21/19 | 非 shader；已用 REPLICATE 机制补齐为 `am_repeat` / `am_repeat_radial` / `am_repeat_scatter`（见第 3 节） |
 | P0（重复） | `path` | repeat | 19 | 非 shader；沿**路径**复制，需要给效果提供路径几何（本项目文字/图形路径数据在 `CompShape`/排版层，不进效果参数表），本轮未做，列出接口方案后再定 |
 | P0（重复） | `shapefield` | repeat | 18 | shader 版重复，可随后 |
-| P1（模糊） | `unsharpmask` | blur | 5 | 本项目已有经典 `unsharp_mask`，可改造成 AM 参数版 |
-| P1（模糊） | `lensblur2` / `spinblur2` / `streakstrips` / `warpblur` / `chromaticzoomblur` | blur | 6/6/5/12/3 | 镜头/旋转/条纹模糊变体 |
-| P1（调色） | `rgb-mixer` ✅ / `solidcolor` ✅ | color | 6/4 | 0.93 已补：`am_rgb_mixer`、`am_solid_color`（数据驱动 body，恒等三元组/alpha=0 零点契约） |
-| P1（调色） | `spectralmap` / `softglow` / `darkglow` / `lightglow` / `colorhot` | color | 9/11/9/11/1 | 待下一批（softglow/darkglow/lightglow 需 blur 基元；colorhot 无参数、零点契约需另设计） |
-| P1（变形） | `pinchbulge2` / `pinchbulgeinside` / `swirl4` / `hexrotate` / `ominoglass` / `wavewarp2` / `turbulentdisplace3` / `tileshift2` / `stretchsegment` | distort | 4–23 | 已有同族条目，补新版参数即可 |
+| P1（模糊） | `unsharpmask` ✅ / `lensblur2` ✅ / `spinblur2` ✅ / `streakstrips` ✅ / `warpblur` ✅ / `chromaticzoomblur` ✅ | blur | 3/5/5/5/11/2 | 0.94 已补（数据驱动 body，单 pass tap 循环近似参考实现的 buffer 模糊输入） |
+| P1（调色） | `rgb-mixer` ✅ / `solidcolor` ✅ / `spectralmap` ✅ / `softglow` ✅ / `darkglow` ✅ / `lightglow` ✅ / `colorhot` ✅ | color | 6/4/8/8/6/8/2 | rgb-mixer、solidcolor 0.93 已补；其余 0.94 已补（glow 家族单 pass 环采样，参考实现的多段 buffer 模糊未复刻） |
+| P1（变形） | `pinchbulge2` ✅ / `swirl4` ✅ / `hexrotate` ✅ | distort | 4/4/10 | 0.94 已补；pinchbulge2 复刻参考公式（收敛/膨胀两段），hexrotate 用六边形网格逐格旋转近似 |
 | P1（文字） | `texttransform` / `textspacing` / `textprogress` / `textrand` / `timecode` / `counter` | text | 16/2/3/6/0/2 | **非 shader**；本项目 4.34 已用"文字内容/文字动画器"实现同等能力，但不在效果库里。补进效果库需要 UI 写域（`UICompositorPanel`），本轮不做 |
 | P2 | drawing 家族 `electricedges/roughenedges/smoothbevel/findedges`、procedural `voronoi2/ridges2/turbulence2/noise3/lightning/ribbon/volumetricclouds` 等 | drawing/procedural | 3–27 | 冷门/高性能开销，后续按需 |
 
 ## 3. 本轮已修复（参数/语义）
+
+### 3.0 0.94 跨效果正确性修复（不属于某个新效果，但影响全部 P1/重复家族）
+
+- **REPLICATE 直通 alpha 合成**：复制 pass 之前把直通 alpha 的源像素按预乘公式累加又按直通输出，
+  半透明复制体（α=128 的红）会变成 (128,0,0,128)、opacity 0.5 时复制体发黑、文字抗锯齿边缘重复后
+  发黑。现在累加在预乘空间、结尾统一 un-premultiply 成直通输出；`EffectRepeatTest` 新增两个像素测试
+  （半透明单拷贝保持颜色/α、opacity 0.5 只降 α 不变色）。
+- **预览 proxy 的像素单位**：三类"以合成像素为参数、却按 FBO 像素换算"的路径修正——
+  ① RGB 分离的 `Texel` 改用合成 texel（之前面板 960 px 时 14 px 分离看起来 28 px）；
+  ② 投影/内阴影的偏移经 `PassRenderer.draw(..., offsetReferenceWidth/Height)` 按合成尺寸归一化；
+  ③ 图层样式 `inner()` 的距离/模糊半径经 `EffectRenderer.proxyScale()` 从合成像素换算到目标像素。
+  `PreviewProxyTest.pixelAuthoredParametersScaleWithTheProxyTarget` + `EffectPipelineTest.
+  proxyTargetKeepsPixelAuthoredEffectDistances`（1:1 vs 0.5 两档渲染同一 RGB 分离图，采样位置一致）。
 
 ### 3.1 0.93（AM P0 repeat 家族补齐）
 
@@ -126,6 +139,32 @@ generated 文件第 2 节按"AM 直接参数 vs 本项目同名键"列出。缺�
   家族零点返回输入），`AmEffectLibraryTest` 新增 3 个（零点判据 / 目录与渲染器注册 / P1 调色零点）。
   缩略图重新生成（3 张）。
 
+### 3.2 0.94（AM P1 模糊/调色/变形批：13 个）
+
+全部数据驱动（`AmEffectDef`/`CompEffectRegistry`），无新增 shader 家族；每个效果都有显式恒等分支 +
+零点契约，`EffectP1BatchTest` 逐条做"默认可见 + 中性逐像素恒等（渲染器短路与强制 shader 两条路径）"。
+
+| 分类 | id | 名称 | 零点契约 | 与 AM 的差异 |
+| --- | --- | --- | --- | --- |
+| 模糊 | `am_unsharp_mask` | USM 锐化 | amount=0 | 原版模糊来自 buffer 纹理；这里 9 tap 自采样 |
+| 模糊 | `am_lens_blur_2` | 镜头模糊 2（对焦） | strength=0 | 按对焦半径外的距离加权；参考的 buffer 模糊输入未复刻（旧 `am_lens_blur` 是散景盘模糊，对应 AM deprecated `lensblur`） |
+| 模糊 | `am_streak_strips` | 条纹拖影 | alpha=0 | 参考的条纹相位/条带噪声简化为 sin 调制 |
+| 模糊 | `am_warp_blur` | 湍流模糊 | intensity=0 | 参考的 4 向 selector 保留为数值参数（0 水平/1 垂直/2 径向/3 切向）；parr 点参数与 octaves 未暴露 |
+| 模糊 | `am_chromatic_zoom_blur` | 彩色径向模糊 | strength=0 | 参考的 7 段色度权重简化为红/蓝两端 |
+| 模糊 | `am_spin_blur`（既有，参数对齐） | 旋转模糊 | angle=0 | AM `spinblur2` 与本项目既有条目同为"绕中心旋转模糊"；本轮把 angle 从 -180..180 对齐为 AM 的 0..60°/0.1° 步进并补显式恒等分支，中心用既有 center_x/y |
+| 调色 | `am_spectral_map` | 光谱映射 | alpha=0 | 复刻 mapChannel 三角波映射；reverse/scaleBrightness 等未暴露参数未做 |
+| 调色 | `am_soft_glow` | 柔光 | strength=0 | 12 tap 环采样近似 blurBuf；outsideAlpha（需要下方合成）未做 |
+| 调色 | `am_dark_glow` | 暗部发光 | strength=0 | 同上 |
+| 调色 | `am_light_glow` | 亮部发光 | strength=0 | 同上 |
+| 调色 | `am_color_hot` | 热色 | intensity=0 | AM 定义无参数；本项目加了 intensity/gamma/暖色三个可控参数（否则无法满足零点契约与可调性） |
+| 变形 | `am_pinch_bulge_2` | 收缩与膨胀 2 | strength=0（另 radius=0 也是恒等） | 复刻参考公式（aspect、pinch/bulge 两段） |
+| 变形 | `am_swirl_4` | 旋转扭曲 2 | strength=0 | 参考的径向 falloff 保留 |
+| 变形 | `am_hex_rotate` | 六边形旋转 | 六项旋转/位置全 0 | 六边形网格逐格旋转 + warp/twirl 近似；参考的 stretch 点参数拆成 stretch_x/y |
+
+测试：`EffectP1BatchTest`（隐藏 GL，3 个测试，逐条覆盖 13 个新效果 + 对齐后的 `am_spin_blur`）、
+`AmEffectLibraryTest.p1BatchDeclaresItsZeroValues`；`ShaderCompileTest` 自动编译新 body；
+效果缩略图生成器已修退化检查（本轮新缩略图 13 张 + `am_spin_blur` 更新 1 张）。
+
 ### 3.1b 0.93（P1 调色首批：2 个）
 
 - `am_rgb_mixer`（RGB 混合）：AM `rgb-mixer` 的 6 参数（rmix/gmix/bmix 三色 + gamma + offset），
@@ -135,7 +174,7 @@ generated 文件第 2 节按"AM 直接参数 vs 本项目同名键"列出。缺�
   `alpha=0` 是严格恒等（real zeroKey）。
 - 两者都走 `AmEffectDef` 数据驱动机制（无新增 shader 家族），已进效果库/参数面板/关键帧通道。
 
-### 3.2 0.92（上一轮）
+### 3.3 0.92（上一轮）
 
 1. **重复类语义**（需求 c）：`grid_repeat` / `random_repeat` / `am_grid_repeat` / `am_line_repeat`
    从"图层内平铺"改为 AM repeat 家族语义的**合成空间图层复制**（`ShaderSources.REPLICATE`）。

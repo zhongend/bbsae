@@ -3,6 +3,8 @@ package dev.bbsae.client.replay;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Pins the film-tick ↔ composition-second/frame conversion the replay panel's playhead uses. */
 public class ReplayTimeTest
@@ -45,5 +47,39 @@ public class ReplayTimeTest
     {
         assertEquals(0.25F, ReplayTime.phase(5.25F), EPS);
         assertEquals(0F, ReplayTime.phase(5F), EPS);
+        assertEquals(0F, ReplayTime.phase(Float.NaN), EPS, "a NaN cursor must not poison the sampled pose");
+        assertEquals(0F, ReplayTime.phase(Float.POSITIVE_INFINITY), EPS);
+    }
+
+    @Test
+    public void clampTickCoversBothEndsAndNonFiniteValues()
+    {
+        assertEquals(0F, ReplayTime.clampTick(-5F, 100), EPS);
+        assertEquals(0F, ReplayTime.clampTick(0F, 100), EPS);
+        assertEquals(50F, ReplayTime.clampTick(50F, 100), EPS);
+        assertEquals(100F, ReplayTime.clampTick(100F, 100), EPS);
+        assertEquals(100F, ReplayTime.clampTick(999F, 100), EPS);
+
+        assertEquals(0F, ReplayTime.clampTick(Float.NaN, 100), EPS);
+        assertEquals(0F, ReplayTime.clampTick(Float.NEGATIVE_INFINITY, 100), EPS);
+        assertEquals(100F, ReplayTime.clampTick(Float.POSITIVE_INFINITY, 100), EPS);
+    }
+
+    @Test
+    public void clampTickTreatsADegenerateDurationAsOneTick()
+    {
+        assertEquals(0F, ReplayTime.clampTick(-3F, 0), EPS);
+        assertEquals(1F, ReplayTime.clampTick(3F, 0), EPS);
+        assertEquals(1F, ReplayTime.clampTick(1F, -50), EPS);
+    }
+
+    @Test
+    public void tickValidityMatchesTheClamp()
+    {
+        assertTrue(ReplayTime.isValidTick(0F, 100));
+        assertTrue(ReplayTime.isValidTick(100F, 100));
+        assertFalse(ReplayTime.isValidTick(-1F, 100));
+        assertFalse(ReplayTime.isValidTick(101F, 100));
+        assertFalse(ReplayTime.isValidTick(Float.NaN, 100));
     }
 }

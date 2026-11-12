@@ -94,4 +94,38 @@ public class ReplayCullingTest
         assertFalse(ReplayCulling.shouldCull(threshold));
         assertTrue(ReplayCulling.shouldCull(threshold + 1));
     }
+
+    @Test
+    public void aNonFiniteMatrixFallsBackToDrawingEverything()
+    {
+        Matrix4f broken = viewProjection();
+
+        broken.m00(Float.NaN);
+
+        assertFalse(ReplayCulling.isFinite(broken));
+
+        boolean[] visible = ReplayCulling.visible(broken,
+            List.of(new Vector3f(0F, 0F, -5F), new Vector3f(500F, 0F, -5F)), 1F, -1);
+
+        assertTrue(visible[0], "a corrupt camera must not blank the viewport");
+        assertTrue(visible[1]);
+    }
+
+    @Test
+    public void aNonFiniteActorPositionIsCulledUnlessSelected()
+    {
+        List<Vector3f> positions = List.of(new Vector3f(Float.NaN, 0F, 0F), new Vector3f(Float.NaN, 0F, 0F));
+
+        boolean[] visible = ReplayCulling.visible(viewProjection(), positions, 1F, 1);
+
+        assertFalse(visible[0]);
+        assertTrue(visible[1], "the selected actor stays visible so its gizmo does not vanish");
+    }
+
+    @Test
+    public void theMatrixFiniteCheckAcceptsTheNormalProjection()
+    {
+        assertTrue(ReplayCulling.isFinite(viewProjection()));
+        assertFalse(ReplayCulling.isFinite(null));
+    }
 }

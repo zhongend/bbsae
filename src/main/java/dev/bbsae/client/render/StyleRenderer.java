@@ -31,7 +31,7 @@ public final class StyleRenderer
             }
 
             case CompStyle.INNER_SHADOW:
-                return EffectRenderer.inner(content, style.color, style.opacity, style.distance, style.angle, Math.max(1F, style.blur));
+                return EffectRenderer.inner(content, style.color, style.opacity, style.distance, style.angle, Math.max(1F, style.blur), context);
 
             case CompStyle.OUTER_GLOW:
             {
@@ -46,10 +46,10 @@ public final class StyleRenderer
             }
 
             case CompStyle.INNER_GLOW:
-                return EffectRenderer.inner(content, style.color, style.opacity, 0F, 0F, Math.max(1F, style.size));
+                return EffectRenderer.inner(content, style.color, style.opacity, 0F, 0F, Math.max(1F, style.size), context);
 
             case CompStyle.SATIN:
-                return EffectRenderer.inner(content, style.color, style.opacity * 0.6F, style.distance, style.angle + 180F, Math.max(1F, style.blur));
+                return EffectRenderer.inner(content, style.color, style.opacity * 0.6F, style.distance, style.angle + 180F, Math.max(1F, style.blur), context);
 
             case CompStyle.STROKE:
             {
@@ -69,8 +69,8 @@ public final class StyleRenderer
 
             case CompStyle.BEVEL:
             {
-                GlFramebuffer light = EffectRenderer.inner(content, style.color, style.opacity * 0.5F, style.distance, style.angle + 180F, Math.max(1F, style.blur));
-                GlFramebuffer result = EffectRenderer.inner(light, style.color2, style.opacity * 0.5F, style.distance, style.angle, Math.max(1F, style.blur));
+                GlFramebuffer light = EffectRenderer.inner(content, style.color, style.opacity * 0.5F, style.distance, style.angle + 180F, Math.max(1F, style.blur), context);
+                GlFramebuffer result = EffectRenderer.inner(light, style.color2, style.opacity * 0.5F, style.distance, style.angle, Math.max(1F, style.blur), context);
 
                 if (light != content)
                 {

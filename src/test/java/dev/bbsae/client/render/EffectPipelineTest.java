@@ -647,6 +647,102 @@ public class EffectPipelineTest
         return null;
     }
 
+    /**
+     * The preview proxy must not change the visual size of a pixel-authored effect.
+     *
+     * <p>RGB separation offsets its channels by {@code amount} composition pixels. This test renders
+     * the same composition at 1:1 (64 px target) and at a half-resolution proxy (32 px target) and
+     * asserts that the same relative position sees the same sampled channel — before the fix the
+     * shader used the proxy texel, so the 8 px separation became 16 px and the sample missed the
+     * coloured band entirely.</p>
+     */
+    @Test
+    public void proxyTargetKeepsPixelAuthoredEffectDistances()
+    {
+        CompProject project = new CompProject();
+        CompDocument comp = new CompDocument();
+
+        comp.width = 64;
+        comp.height = 64;
+        project.comps.add(comp);
+
+        CompRenderContext context = new CompRenderContext(project, comp, 0F, null, null, null);
+        CompLayer layer = new CompLayer("band", "Band", "solid");
+
+        layer.width = 64F;
+        layer.height = 64F;
+        layer.anchorX = 0F;
+        layer.anchorY = 0F;
+
+        CompEffect effect = CompEffectRegistry.create("rgb_split", 1);
+
+        effect.put("amount", 8D);
+        effect.put("angle", 0D);
+        effect.put("mix", 1D);
+
+        EffectSpace space = EffectSpace.identity(context);
+        int[] full = applyRgbSplit(layer, effect, space, 64);
+        int[] proxy = applyRgbSplit(layer, effect, space, 32);
+
+        /* Red is sampled 8 comp px to the right: at the horizontal centre that lands inside the
+         * band at x ∈ [40,48) in both renders. */
+        assertEquals(255, red(full[32 * 64 + 32]), 2, "1:1 render red channel must sample the band");
+        assertEquals(255, red(proxy[16 * 32 + 16]), 2, "proxy render must sample the same band");
+
+        /* A position whose shifted sample is outside the band must stay 0 in both. */
+        assertEquals(0, red(full[16 * 64 + 8]), 2, "1:1 off-band sample");
+        assertEquals(0, red(proxy[8 * 32 + 4]), 2, "proxy off-band sample");
+    }
+
+    /** Vertical red band at composition x ∈ [40,48), rendered into a {@code size}-sized target. */
+    private static int[] applyRgbSplit(CompLayer layer, CompEffect effect, EffectSpace space, int size)
+    {
+        int[] source = new int[size * size];
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float compX = (x + 0.5F) / size * 64F;
+                boolean band = compX >= 40F && compX < 48F;
+
+                source[y * size + x] = (255 << 24) | ((band ? 255 : 0) << 16);
+            }
+        }
+
+        GlFramebuffer input = new GlFramebuffer(size, size);
+
+        input.color.uploadTopDown(source);
+
+        GlFramebuffer output = EffectRenderer.apply(layer, effect, input, contextFor(space), space);
+
+        try
+        {
+            return output.readTopDown();
+        }
+        finally
+        {
+            if (output != input)
+            {
+                FboPool.release(output);
+            }
+
+            FboPool.release(input);
+        }
+    }
+
+    private static CompRenderContext contextFor(EffectSpace space)
+    {
+        CompProject project = new CompProject();
+        CompDocument comp = new CompDocument();
+
+        comp.width = space.compWidth;
+        comp.height = space.compHeight;
+        project.comps.add(comp);
+
+        return new CompRenderContext(project, comp, 0F, null, null, null);
+    }
+
     private static Outcome applyTo(int[] sourcePixels, CompEffect effect)
     {
         CompRenderContext context = context();

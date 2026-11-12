@@ -334,7 +334,7 @@ public final class EffectRenderer
             case "matte_choker":
                 return key(input, effect, "matte_choker", space);
             case "rgb_split":
-                return rgbSplit(input, effect);
+                return rgbSplit(input, effect, space);
             case "shake":
                 /* Transform-only effect: CompRenderer applies it while building the model
                  * matrix, so the pixel pass must not process the image twice. */
@@ -444,6 +444,32 @@ public final class EffectRenderer
     {
         program.set("Texel", 1F / refWidth(space, input), 1F / refHeight(space, input));
         program.set("Size", refWidth(space, input), refHeight(space, input));
+    }
+
+    /**
+     * Framebuffer pixels per composition pixel for this pass.
+     *
+     * <p>Effect parameters are authored in composition pixels while a preview renders into a
+     * smaller proxy target. Any pass that hands a pixel-authored value to a consumer measured in
+     * framebuffer pixels (an FBO blur radius, a raw GL quad offset, …) has to convert through this
+     * factor, or the effect is 1/scale times too large in the preview and snaps back on export.</p>
+     */
+    static float proxyScale(EffectSpace space, GlFramebuffer input)
+    {
+        return proxyScale(input.width, refWidth(space, input));
+    }
+
+    /** Pure form of {@link #proxyScale(EffectSpace, GlFramebuffer)} for unit tests. */
+    static float proxyScale(int targetWidth, int referenceWidth)
+    {
+        if (referenceWidth <= 0)
+        {
+            /* No composition reference: treat the target as the reference (1:1) instead of
+             * producing an infinite factor that would zero out every pixel parameter. */
+            return 1F;
+        }
+
+        return targetWidth / (float) referenceWidth;
     }
 
     /**
@@ -1438,9 +1464,19 @@ public final class EffectRenderer
         return output;
     }
 
-    public static GlFramebuffer inner(GlFramebuffer input, int color, float opacity, float distance, float angle, float radius)
+    /**
+     * Inner shadow / inner glow / satin / bevel primitive.
+     *
+     * <p>Style distances and blur radii are authored in composition pixels; the optional context
+     * provides the composition size so a proxy preview renders them at the same visual size
+     * (previously both were measured in target pixels and doubled at scale 0.5).</p>
+     */
+    public static GlFramebuffer inner(GlFramebuffer input, int color, float opacity, float distance, float angle, float radius, CompRenderContext context)
     {
-        GlFramebuffer blurred = PassRenderer.blur(input, Math.max(0.1F, radius));
+        int referenceWidth = context == null ? input.width : Math.max(1, context.width);
+        int referenceHeight = context == null ? input.height : Math.max(1, context.height);
+        float scale = proxyScale(input.width, referenceWidth);
+        GlFramebuffer blurred = PassRenderer.blur(input, Math.max(0.1F, radius * scale));
         GlslProgram program = CompShaders.inner;
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
 
@@ -1457,8 +1493,8 @@ public final class EffectRenderer
         }
 
         float radians = (float) Math.toRadians(angle);
-        float dx = (float) Math.cos(radians) * distance / Math.max(1, input.width);
-        float dy = (float) Math.sin(radians) * distance / Math.max(1, input.height);
+        float dx = (float) Math.cos(radians) * distance / referenceWidth;
+        float dy = (float) Math.sin(radians) * distance / referenceHeight;
 
         output.begin();
         GlStateManager._disableBlend();
@@ -1515,8 +1551,11 @@ public final class EffectRenderer
         float dx = (float) Math.cos(angle) * distance;
         float dy = (float) Math.sin(angle) * distance;
         /* PassRenderer offsets are texture-space (V grows upwards); screen +Y is down, so the
-         * vertical component has to be negated or a 90° shadow lands above the layer. */
-        GlFramebuffer base = PassRenderer.draw(shadow, null, null, CompLayer.BLEND_NORMAL, 1F, dx, -dy, 0xFFFFFF);
+         * vertical component has to be negated or a 90° shadow lands above the layer. The offset is
+         * in composition pixels and PassRenderer normalises by the reference size, so a proxy
+         * preview keeps the same shadow distance instead of doubling it. */
+        GlFramebuffer base = PassRenderer.draw(shadow, null, null, CompLayer.BLEND_NORMAL, 1F, dx, -dy, 0xFFFFFF,
+            refWidth(space, input), refHeight(space, input));
         GlFramebuffer output = PassRenderer.draw(input, base, null, CompLayer.BLEND_NORMAL, 1F, 0F, 0F, 0xFFFFFF);
 
         FboPool.release(shadow);
@@ -1612,7 +1651,7 @@ public final class EffectRenderer
     }
 
 
-    private static GlFramebuffer rgbSplit(GlFramebuffer input, CompEffect effect)
+    private static GlFramebuffer rgbSplit(GlFramebuffer input, CompEffect effect, EffectSpace space)
     {
         GlslProgram program = CompShaders.rgbSplit;
         GlFramebuffer output = FboPool.acquire(input.width, input.height);
@@ -1630,7 +1669,9 @@ public final class EffectRenderer
         GlStateManager._disableBlend();
         program.use();
         PassRenderer.bind(program, "Source", 0, input);
-        program.set("Texel", 1F / input.width, 1F / input.height);
+        /* `amount` is authored in composition pixels; the shader multiplies it by Texel, so Texel
+         * must be the composition texel, not the (possibly smaller) proxy target texel. */
+        program.set("Texel", 1F / refWidth(space, input), 1F / refHeight(space, input));
         program.set("Offset", (float) Math.cos(angle) * amount, (float) Math.sin(angle) * amount);
         program.set("Amount", effect.valueF("mix", 1F));
         program.drawFullscreen();

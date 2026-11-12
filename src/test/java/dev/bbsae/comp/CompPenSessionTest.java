@@ -144,11 +144,16 @@ public class CompPenSessionTest
 
     private static CompPenSession.Hit vertexHit(int index)
     {
+        return vertexHit(index, 2F);
+    }
+
+    private static CompPenSession.Hit vertexHit(int index, float screenDistance)
+    {
         CompPenSession.Hit hit = new CompPenSession.Hit();
 
         hit.kind = CompPenSession.HIT_VERTEX;
         hit.point = index;
-        hit.screenDistance = 2F;
+        hit.screenDistance = screenDistance;
 
         return hit;
     }
@@ -500,5 +505,85 @@ public class CompPenSessionTest
         assertFalse(session.drag(0F, 0F, 0F, 0F, false, false));
         assertFalse(session.release());
         assertNotNull(session.selection());
+    }
+
+    @Test
+    public void hitTestHandlesZeroOneAndTwoPointPaths()
+    {
+        CompPenSession.Projector projector = (x, y) -> new float[] {x, y};
+
+        assertHit(CompPenSession.HIT_NONE, CompPenSession.hitTest(
+            new CompPathGeometry.ArrayPath(0), projector, 0F, 0F, 9F, 9F, 6F, null));
+
+        CompPathGeometry.ArrayPath single = new CompPathGeometry.ArrayPath(1);
+
+        single.add(10F, 10F);
+        assertHit(CompPenSession.HIT_VERTEX, CompPenSession.hitTest(single, projector, 11F, 11F, 9F, 9F, 6F, null));
+        assertHit(CompPenSession.HIT_NONE, CompPenSession.hitTest(single, projector, 500F, 500F, 9F, 9F, 6F, null));
+
+        CompPathGeometry.ArrayPath two = new CompPathGeometry.ArrayPath(2);
+
+        two.add(0F, 0F);
+        two.add(100F, 0F);
+
+        CompPenSession.Hit segment = CompPenSession.hitTest(two, projector, 50F, 2F, 9F, 9F, 6F, null);
+
+        assertHit(CompPenSession.HIT_SEGMENT, segment);
+        assertEquals(0, segment.segment);
+        assertEquals(0.5F, segment.t, 0.03F);
+
+        /* A closed two-point path is a degenerate sliver, but the hit test must still answer
+         * instead of throwing or returning a nonsense segment index. */
+        two.setClosed(true);
+        assertHit(CompPenSession.HIT_SEGMENT, CompPenSession.hitTest(two, projector, 50F, 2F, 9F, 9F, 6F, null));
+    }
+
+    @Test
+    public void segmentHitParameterIsUsableForSplitting()
+    {
+        CompPathGeometry.ArrayPath path = new CompPathGeometry.ArrayPath(4);
+
+        path.add(0F, 0F, 0F, 0F, 20F, 20F);
+        path.add(200F, 0F, -30F, 20F, 30F, 0F);
+        path.add(200F, 200F, 0F, -30F, 0F, 0F);
+        path.add(0F, 200F, 0F, 30F, 0F, 0F);
+        path.setClosed(true);
+
+        float[] expected = CompPathGeometry.pointOnPath(path, 1, 0.25F);
+        CompPenSession.Projector projector = (x, y) -> new float[] {x, y};
+        CompPenSession.Hit hit = CompPenSession.hitTest(path, projector, expected[0], expected[1], 9F, 9F, 6F, null);
+
+        assertHit(CompPenSession.HIT_SEGMENT, hit);
+        assertEquals(1, hit.segment, "segment index must survive projection");
+        assertEquals(0.25F, hit.t, 0.03F, "t must be precise enough to split without moving the curve");
+    }
+
+    @Test
+    public void closingRequiresTheCursorToBeWithinTheCloseRadius()
+    {
+        CompPenSession session = new CompPenSession(new Recorder());
+        FakeTarget target = new FakeTarget();
+
+        session.begin(target);
+        session.press(0F, 0F, 0F, 0F, false, false, CLOSE, CompPenSession.Hit.none());
+        session.release();
+        session.press(100F, 0F, 100F, 0F, false, false, CLOSE, CompPenSession.Hit.none());
+        session.release();
+
+        /* Just outside the 8 px closing radius: the click must not close the path. */
+        session.press(0F, 0F, 9F, 0F, false, false, CLOSE, vertexHit(0, 9F));
+        assertFalse(target.closed, "a click 9 px away from the start is not a closing gesture");
+        assertTrue(session.isDrawing(), "the path keeps being drawn");
+        session.release();
+
+        /* Inside the radius it closes. */
+        session.press(0F, 0F, 3F, 0F, false, false, CLOSE, vertexHit(0, 3F));
+        assertTrue(target.closed);
+        assertFalse(session.isDrawing());
+    }
+
+    private static void assertHit(int expected, CompPenSession.Hit hit)
+    {
+        assertEquals(expected, hit.kind, "hit kind");
     }
 }

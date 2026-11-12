@@ -149,10 +149,10 @@ public final class ShaderSources
                 discard;
             }
 
-            if (source.a < 0.004)
-            {
-                discard;
-            }
+            /* No "almost transparent" cutoff: a layer raster stores alpha in 1/255 steps, so the
+             * old `source.a < 0.004` test dropped the alpha = 1/255 antialiased border that the
+             * whole-layer painter path does draw. That was the last 1/255 difference between
+             * per-pixel depth and depth-off (asserted at zero tolerance now). */
 
             vec2 ndc = vUv * 2.0 - 1.0;
             vec4 ray = InvProjection * vec4(ndc, -1.0, 1.0);
@@ -1864,7 +1864,14 @@ public final class ShaderSources
         /* Composite one copy of the layer over the accumulator. `copy` is the copy centre in
          * composition UV, `rot` its rotation and `sc` the inverse sampling scale (1 = original
          * size). The source content spans the same composition extent as the copy, so a 1:1 copy
-         * needs no size factor at all. */
+         * needs no size factor at all.
+         *
+         * <p>The accumulation runs in <b>premultiplied</b> space and is un-premultiplied once at
+         * the end. The source texture is straight alpha (the compositor un-premultiplies every
+         * layer), so the old `acc.rgb = texel.rgb * a + acc.rgb * (1 - a)` plus straight output
+         * darkened every translucent copy: an α=128 red copy came out (128,0,0,128) instead of
+         * (255,0,0,128), and soft edges (text antialiasing, glows) turned black when repeated.</p>
+         */
         void accumulate(inout vec4 acc, vec2 copy, float rot, float sc, float weight)
         {
             vec2 delta = rotate(vUv - copy, -rot) / max(sc, 0.0001);
@@ -1874,6 +1881,17 @@ public final class ShaderSources
 
             acc.rgb = texel.rgb * a + acc.rgb * (1.0 - a);
             acc.a = a + acc.a * (1.0 - a);
+        }
+
+        /* Premultiplied accumulator -> straight alpha, which is what the compositor expects. */
+        vec4 straight(vec4 acc)
+        {
+            if (acc.a <= 0.0001)
+            {
+                return vec4(0.0);
+            }
+
+            return vec4(acc.rgb / acc.a, clamp(acc.a, 0.0, 1.0));
         }
 
         void main()
@@ -1937,7 +1955,7 @@ public final class ShaderSources
                     accumulate(acc, copy, rot, max(sc, 0.0001), alpha);
                 }
 
-                fragColor = vec4(acc.rgb, acc.a);
+                fragColor = straight(acc);
 
                 return;
             }
@@ -1997,7 +2015,7 @@ public final class ShaderSources
                 }
             }
 
-            fragColor = vec4(acc.rgb, acc.a);
+            fragColor = straight(acc);
         }
         """;
 

@@ -1,6 +1,6 @@
 # AM 参数对齐差异清单（自动生成）
 
-对比对象：`_research/am/effects.json`（AM apk 提取的 277 条非 internal 定义）与 `comp/AmEffectLibrary.java`（数据驱动效果库，127 条定义）。
+对比对象：`_research/am/effects.json`（AM apk 提取的 277 条非 internal 定义）与 `comp/AmEffectLibrary.java`（数据驱动效果库，140 条定义）。
 参数 `kind` 覆盖：本项目 `AmEffectDef` 直接表达 `spinner/slider/color`；AM 的 `point/selector/texture` 在移植时被拆成两个 float 键或数值模式键，这属于既定的模式差异，不算缺失（但在第 2 节逐条标出）。
 
 ## 0. 规模
@@ -8,15 +8,15 @@
 | 指标 | 数量 |
 | --- | --- |
 | AM 非 internal 定义（去重后 token） | 277 |
-| 本项目 AM 定义 | 127 |
-| 自动匹配（同名/别名） | 94 |
+| 本项目 AM 定义 | 140 |
+| 自动匹配（同名/别名） | 107 |
 | 缺失：deprecated 旧版本 | 72 |
 | 缺失：非 shader（图层属性/复制器） | 20 |
 | 缺失：3D 图元（本项目 MeshRenderer） | 19 |
-| 缺失：同族旧版本（boxblur→boxblur3 等） | 8 |
-| 缺失：可执行 shader 效果（候选） | 64 |
+| 缺失：同族旧版本（boxblur→boxblur3 等） | 6 |
+| 缺失：可执行 shader 效果（候选） | 54 |
 
-## 1. 已匹配（94 条）的参数差异
+## 1. 已匹配（107 条）的参数差异
 
 ### `am_bend` ↔ `bendwarp`（弯曲）
 
@@ -249,7 +249,7 @@
 
 ### `am_spin_blur` ↔ `spinblur`（旋转模糊）
 
-- `angle`: min: 本项目 -180 / AM 0；max: 本项目 180 / AM 60；default: 本项目 20 / AM 5；step: 本项目 0.5 / AM 0.01
+- `angle`: step: 本项目 0.1 / AM 0.01
 
 ### `am_starfield` ↔ `starfield`（星空）
 
@@ -278,6 +278,10 @@
 ### `am_tile` ↔ `tile`（平铺）
 
 - `scale`: default: 本项目 2 / AM 1
+
+### `am_warp_blur` ↔ `warpblur`（湍流模糊）
+
+- `scale`: min: 本项目 0.01 / AM 0.1
 
 ### `am_zoom_blur` ↔ `zoomblur2`（径向模糊）
 
@@ -346,7 +350,9 @@
 | `am_rotate_tile` | `tilerotate2` | 6 | 1 | `amount`, `offset`, `rotation`, `seed`, `strength` |
 | `am_sat_vib` | `satvib` | 5 | 1 | `brightness`, `contrast`, `hue`, `vib` |
 | `am_scale_assist` | `scaleassist` | 2 | 0 | `damp`, `scale` |
+| `am_soft_glow` | `softglow` | 8 | 6 | `color`, `outsideAlpha` |
 | `am_solid_matte` | `solidmatte` | 2 | 0 | `alpha`, `color` |
+| `am_spectral_map` | `spectralmap` | 8 | 5 | `blueColor`, `greenColor`, `redColor` |
 | `am_spin_blur` | `spinblur` | 4 | 1 | `cx`, `cy`, `radius` |
 | `am_spot_color` | `spotcolor` | 4 | 0 | `color`, `feather`, `saturation`, `threshold` |
 | `am_squeeze` | `squeeze` | 2 | 0 | `radius`, `strength` |
@@ -364,9 +370,9 @@
 
 `outlinebad`、`outlinebasic`、`shadow`、`test`、`test2`、`test3`、`testblur`、`cube`、`flip`、`flip2`、`heart`、`spherize`、`triprism`、`boxblur`、`boxblur2`、`fastboxblur`、`lensblur`、`motionblur`、`motionblur3`、`zoomblur`、`brightcont`、`bumpmap`、`colorhot2`、`colortint`、`colortune`、`gradientoverlay`、`layernormtest`、`longshadow`、`circularripple`、`displacemap`、`displacemap2`、`fractalwarp`、`fractalwarp2`、`fractalwarp3`、`glass`、`pixelate`、`swirl2`、`swirl3`、`tilerotate`、`tileshift`、`turbulentdisplace`、`turbulentdisplace2`、`wavewarp`、`differencematte`、`lumakey`、`lumakey2`、`wipe`、`blink`、`checkerdissolve`、`flicker`、`pulseopacity`、`blocknoise`、`checker`、`clouds`、`clouds2`、`dots`、`irridescence`、`noise`、`noise2`、`ridges`、`simplestars`、`starfield2`、`turbulence`、`voronoi`、`facemotion`、`movealongpath`、`movealongpath2`、`oscillate`、`oscillate2`、`perlindisplace`、`shake`、`stretch`
 
-### 3.2 同族旧版本（已有新版本，不补）（8 条）
+### 3.2 同族旧版本（已有新版本，不补）（6 条）
 
-`motionblur4`、`spinblur2`、`zoomblur3`、`radialshadow2`、`spotcolor2`、`pinchbulge2`、`swirl4`、`starfield3`
+`motionblur4`、`spinblur2`、`zoomblur3`、`radialshadow2`、`spotcolor2`、`starfield3`
 
 ### 3.3 非 shader 效果（AM 用图层属性/复制器实现）（20 条）
 
@@ -376,34 +382,24 @@
 
 `box`、`cube2`、`cylinder`、`ellipsoid`、`extrude`、`heart2`、`hexprism`、`hollowbox`、`octahedron`、`pagecurl`、`plus`、`pyramid`、`ring`、`spherize2`、`starpoly`、`starprism`、`torus`、`triprism2`、`tunnel`
 
-### 3.5 可执行 shader 效果：真正缺失（候选批次）（64 条）
+### 3.5 可执行 shader 效果：真正缺失（候选批次）（54 条）
 
 | AM id | 类别 | 参数数 | 备注 |
 | --- | --- | --- | --- |
-| `warpblur` | blur | 12 | 高优先级 |
 | `chromaticvortexblur` | blur | 7 | 高优先级 |
-| `streakstrips` | blur | 5 | 高优先级 |
-| `unsharpmask` | blur | 5 | 高优先级 |
 | `mosaic` | blur | 4 | 高优先级 |
-| `chromaticzoomblur` | blur | 3 | 高优先级 |
 | `dblur` | blur | 3 | 高优先级 |
 | `sharpen` | blur | 3 | 高优先级 |
 | `bumpmap2` | color | 24 | 高优先级 |
-| `lightglow` | color | 11 | 高优先级 |
-| `softglow` | color | 11 | 高优先级 |
 | `rays` | color | 10 | 高优先级 |
-| `darkglow` | color | 9 | 高优先级 |
-| `spectralmap` | color | 9 | 高优先级 |
 | `exposure` | color | 5 | 高优先级 |
 | `rgbsep` | color | 5 | 高优先级 |
 | `threshold` | color | 4 | 高优先级 |
 | `brightcont2` | color | 3 | 高优先级 |
 | `posterize` | color | 3 | 高优先级 |
-| `colorhot` | color | 1 | 高优先级 |
 | `invert` | color | 1 | 高优先级 |
 | `ominoglass` | distort | 23 | 高优先级 |
 | `turbulentdisplace3` | distort | 12 | 高优先级 |
-| `hexrotate` | distort | 9 | 高优先级 |
 | `wavewarp2` | distort | 9 | 高优先级 |
 | `displacemaprad` | distort | 8 | 高优先级 |
 | `tileshift2` | distort | 7 | 高优先级 |

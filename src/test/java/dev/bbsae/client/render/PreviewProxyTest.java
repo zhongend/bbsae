@@ -118,4 +118,28 @@ public class PreviewProxyTest
 
         assertTrue(CompPrecache.hasWorldLayer(doc));
     }
+
+    /**
+     * Pixel-authored effect/style parameters are authored in composition pixels. Passes that hand
+     * them to a framebuffer-pixel consumer must convert through the proxy factor, otherwise the
+     * preview renders the effect 1/scale times too large and the export "snaps back".
+     */
+    @Test
+    public void pixelAuthoredParametersScaleWithTheProxyTarget()
+    {
+        assertEquals(1F, EffectRenderer.proxyScale(64, 64), 0.0001F, "full resolution is 1:1");
+        assertEquals(0.5F, EffectRenderer.proxyScale(32, 64), 0.0001F, "half-resolution proxy");
+        assertEquals(0.25F, EffectRenderer.proxyScale(480, 1920), 0.0001F);
+
+        /* A 12 px shadow distance in a composition rendered at half resolution is a 6 px target
+         * offset — and the composition-pixel figure is recovered by dividing by the same factor. */
+        float half = EffectRenderer.proxyScale(960, 1920);
+
+        assertEquals(6F, 12F * half, 0.0001F);
+        assertEquals(12F, (12F * half) / half, 0.0001F);
+
+        /* Guard against a zero/negative composition size ever reaching the conversion: without a
+         * reference the pass is treated as 1:1 instead of scaling by infinity. */
+        assertEquals(1F, EffectRenderer.proxyScale(64, 0), 0.0001F);
+    }
 }

@@ -28,6 +28,7 @@
 | **P5-R1** | 面板/真机清单/文档 | ✅ 完成 | 第一版报告与真机清单。 |
 | **P5-R2** | **真机验证钩子 + 性能裁剪 + 空状态/健壮性** | ✅ 完成 | `ReplayDebugHook`（`-Dbbsae.debugReplayFilm` / `-Dbbsae.debugView=replay`）；`ReplayCulling` 视锥裁剪 + 选中优先；`ReplayLogLimiter` 失败日志限流；`ReplayCalibration` 标定常量可 `-D` 覆盖；空状态/错误提示；`onAppear` 自动绑定复核并修复「换影片后不回绑」。 |
 | **P5-R3** | **真机验证收尾：崩溃/可见性/光照** | ✅ 本次完成（有截图证据） | 修复 ① `StackOverflowError`（列表选择回调 ↔ `scrollToReplay` 递归）；② 模型 pass 的 model-view 应为**旋转-only**（camera-relative 几何，不能带 comp 锚点平移）；③ UI pass 绑白色 lightmap（Sampler2）+ 固定 `setShaderLights`，否则模型全黑；④ 单模型 framing 最小距离 600px（只框有模型的 replay）；⑤ 验证钩子默认选中**有模型**的 replay。真机截图：`docs/verify/round48-replay-models.png`（模型有明暗 + 原版 gizmo 在模型上）。 |
+| **P6** | **交互写回/模型库/列表增删的无头测试与 bug 审查** | ✅ 本次完成（未开客户端） | 新增 `ReplayListOps`（身份选择/索引映射）、`ReplayFraming`（NaN/Inf 保护）、`ReplayPickIds`（pick id 往返），`ReplayTime.clampTick/phase` NaN 保护，`ReplayCulling` 非有限矩阵/位置降级，`ReplayWriteback.placement` 一次性七通道写入；修 5 类数据层 bug；replay 单测 38 → **71**。 |
 
 ---
 
@@ -38,19 +39,22 @@
 | 文件 | 职责 |
 | --- | --- |
 | `ReplaySceneSpace.java` | **comp↔world 映射（纯 JOML）**：`(x,y,z)_comp = (S·x, −S·y, −S·z)+anchor`，默认 `flipZ=true` 取正行列式（纯旋转，不镜像）；`centerOn` 把影片某点放到 comp 原点；默认 S/flipZ 从 `ReplayCalibration`（系统属性）取；**Round 3：`linearFromWorld()`（无平移的 S，模型 pass 的旋转-only view 依赖它）**。 |
-| `ReplayTime.java` | **frame↔tick 换算**：BBS 影片 tick（20/s）↔ bbsae 合成秒/帧；`phase()` 取 sub-tick。 |
-| `ReplayWriteback.java` | **Replay 通道写回语义**：位置三轴同 tick 全写；`yaw=-y`；转身同时带 headYaw/bodyYaw 偏移；以 `Channel` 接口解耦。 |
+| `ReplayTime.java` | **frame↔tick 换算**：BBS 影片 tick（20/s）↔ bbsae 合成秒/帧；`phase()` 取 sub-tick；**Round 4：`clampTick`（NaN→0、+Inf→duration、-Inf/负→0、越界 clamp）、`isValidTick`、`phase(NaN)→0`**。 |
+| `ReplayWriteback.java` | **Replay 通道写回语义**：位置三轴同 tick 全写；`yaw=-y`；转身同时带 headYaw/bodyYaw 偏移；以 `Channel` 接口解耦；**Round 4：`placement(...)` 一次调用写位置+朝向七个通道（同 tick），替换 `autoKeyPlacement` 里两段可能错 tick 的调用**。 |
 | `ReplayFormSwap.java` | **模型选择落到 Form**：先 copy 再写 replay.form 槽（BBS 原版同样 copy）。 |
 | `ReplayCalibration.java` | **Round 2 新增：标定/性能常量集中**，全部可 `-D` 覆盖：`bbsae.replayPixelsPerBlock`、`replayFlipZ`、`replayYawOffset`、`replayPitchOffset`、`replayCullThreshold`、`replayCullRadius`；解析严格（非法值回落默认、越界 clamp）。 |
-| `ReplayCulling.java` | **Round 2 新增：视锥裁剪（纯 JOML）**：`FrustumIntersection` 对每个 replay 的世界位置做球体测试；**选中回放永远可见**；小影片（≤ 阈值）不裁剪；`shouldCull/countVisible/allVisible`。 |
+| `ReplayCulling.java` | **Round 2 新增：视锥裁剪（纯 JOML）**：`FrustumIntersection` 对每个 replay 的世界位置做球体测试；**选中回放永远可见**；小影片（≤ 阈值）不裁剪；`shouldCull/countVisible/allVisible`；**Round 4：非有限矩阵 → 全部可见（不因坏相机黑屏）、非有限位置 → 仅选中可见、`isFinite(Matrix4f)`**。 |
 | `ReplayLogLimiter.java` | **Round 2 新增：失败日志限流**：首次立刻记录，之后每 5s 一条并带 `(+N suppressed)`；时钟注入，可单测。 |
+| `ReplayListOps.java` | **Round 4 新增：列表身份 bookkeeping（纯泛型）**：`indexOfIdentical/containsIdentical`（`Replay extends ValueGroup` 的 `equals` 比内容，用 `List.indexOf` 会选错回放）、`sameOrder`、`clampIndex/elementAt`、`selectionAfterChange`（增删/重排后保持选中；被删时落到最近索引而不是首条/等值孪生）。 |
+| `ReplayFraming.java` | **Round 4 新增：framing NaN/Inf 保护（纯函数）**：`isFinite/accumulate/isValidBounds/center/safeDistance`；坏坐标不进入 bounds，bounds 非法/为空时回到默认机位，相机距离永远有限。 |
+| `ReplayPickIds.java` | **Round 4 新增：pick id 算术**：`offsetFor/idFor/indexFor/isGizmoHandle`；stencil 写入与点击反查用同一公式，gizmo 句柄区间显式隔离（纯函数，可用假 gizmo 边界单测）。 |
 | `ReplayEditSession.java` | 编辑会话：借用唯一 `UIFilmPanel` 的 film/controller/entities/undo；playhead 用 filmPanel tick cursor；`ensureEntities/recreateEntities`；`applyPose`；双相机；`frameAll`；transport；**Round 2：`updateVisibility()` / `isReplayVisible()` / `visibleCount/culledCount/placeableCount`**；**Round 3：`frameAll` 只框有模型的 replay，单模型最小距离 `ReplayCalibration.frameMinDistance()`（默认 600px）；`hasModel(replay)`**。 |
 | `ReplayViewCamera.java` | 从 `CompViewportCamera` 生成 BBS Camera（gizmo 拖动）与 MC Camera（`FilmEntityRenderer`；`setPos/setRotation` protected → 私有子类）；**Round 2：yaw/pitch 偏移走 `ReplayCalibration`**；**Round 3：`camera.view`/`ModelViewMat` 改为旋转-only（`viewport.view · linearFromWorld`，清掉平移），因为 film actor 几何是 camera-relative、BBS `Camera.view` 本身也是 rotation-only——这是模型“看不见”的根因**。 |
 | `ReplayModelPass.java` | **3D 模型 pass**：私有颜色+深度 FBO → 逐可见 replay `applyPose` + `FilmEntityRenderer` → `GlStateGuard` 全量还原 → `texturedBox` blit；**Round 2：按 `session.isReplayVisible` 跳过裁剪模型、失败日志限流、`lastError/hasRecentError/lastDrawn/lastAttempted/lastSkipped` 供 HUD**；**Round 3：`ModelViewMat = rotation-only view`；UI pass 绑 16×16 全白 lightmap 到 `Sampler2`（`RenderSystem.setShaderTexture(2, …)`，BBS 粒子编辑器同款）+ 固定 `setShaderLights`，修复黑色剪影；texture 停机释放**。 |
 | `ReplayPickPass.java` | **拾取 pass**：照抄 `FilmStencilPicker` 序列；模型 id = `Gizmo.STENCIL_MAX+1+replay 列表下标`（Round 2 修正：不再按「启用的第几个」计数）；原版 gizmo 句柄 id 1..MAX；**Round 2：同样只拾取可见模型、日志限流**。 |
 | `ReplayTrackBuilder.java` | **轨道行装配**：`TrackCatalog.forPart` + `UIReplaysEditorUtils.buildSheets` + 原版 curated channels/分组/颜色 + disabled-sheet 过滤 + pruneTree。 |
 | `UIReplayViewport.java` | **3D 视口 UI 元素**：模型/拾取/原版 gizmo 视觉 + 相机导航 + HUD；**Round 2：HUD 显示 `模型 drawn/placeable`、裁剪计数、空状态/失败原因（无回放/无模型/视野外/FBO 失败）**。 |
-| `UIReplayModePanel.java` | **面板本体**：顶部工具条 + 左原版 `UIReplaysListPanel` + 中 3D 视口 + 右原版 `UIReplayPropertiesPanel` + 底部原版 `UIKeyframeEditor`；`bind`；**Round 2：`onAppear` 每次回绑 dashboard 当前影片（修复换影片后显示旧影片）、状态行空状态文案、`debugPrepare()` 验证预设**；**Round 3：`selectReplayFromList()`（列表回调，不 scroll）+ `applySelection(replay, scrollList)` + `selectingReplay` re-entrancy guard，修复 `scrollToReplay → 列表回调 → selectReplay → scrollToReplay` 的 StackOverflowError**。 |
+| `UIReplayModePanel.java` | **面板本体**：顶部工具条 + 左原版 `UIReplaysListPanel` + 中 3D 视口 + 右原版 `UIReplayPropertiesPanel` + 底部原版 `UIKeyframeEditor`；`bind`；**Round 2：`onAppear` 每次回绑 dashboard 当前影片（修复换影片后显示旧影片）、状态行空状态文案、`debugPrepare()` 验证预设**；**Round 3：`selectReplayFromList()`（列表回调，不 scroll）+ `applySelection(replay, scrollList)` + `selectingReplay` re-entrancy guard，修复 `scrollToReplay → 列表回调 → selectReplay → scrollToReplay` 的 StackOverflowError**；**Round 4：`knownOrder` 每帧身份比对（增删/重排/撤销后选中不丢、被删落到最近索引）、拒绝陈旧 replay 对象（undo 重建 ValueGroup 后不把写回打到脱管记录）、`statusText` 身份索引、`autoKeyPlacement` 合到 `ReplayWriteback.placement`**。 |
 | `ReplayDebugHook.java` | **Round 2 新增：真机验证钩子**：满足条件时在客户端 tick 里取影片（属性指定 id → 磁盘上第一个有 replay 的影片 → 内存合成 3 个原版生物 replay 的影片，不落盘），`fill` 进 dashboard 唯一 `UIFilmPanel`，再 `BbsAeClient.openReplayMode(...)` 并应用 `debugPrepare`（选 replay/seek/相机）。 |
 
 ### 2.2 改动
@@ -59,17 +63,20 @@
 | --- | --- |
 | `client/BbsAeClient.java` | 上一轮：`replayModePanel` 注册 + `openReplayMode(...)` + 停机释放 FBO。**Round 2：`ReplayDebugHook.install()`；`-PbbsaeView=replay` 时跳过合成器 debug 视图（避免抢面板）。** |
 
-### 2.3 测试（7 个文件 / 38 个 test）
+### 2.3 测试（10 个文件 / 71 个 test）
 
 | 文件 | 数量 | 断言 |
 | --- | --- | --- |
 | `ReplaySceneSpaceTest` | 8 | 往返、1.8 格=115.2px、矩阵与点助手一致、默认映射行列式>0、flipZ=false 为镜像、centerOn、px/格可配置、`linearFromWorld` 无平移且保留 S 符号 |
-| `ReplayTimeTest` | 5 | 20 tick/s、帧→tick、tick→帧、duration→≥1 tick、sub-tick phase |
-| `ReplayWritebackTest` | 3 | 三轴同 tick、`yaw=-y`、head/body 偏移、多 tick 追加 |
-| `ReplayFormSwapTest` | 3 | copy 后落槽、空选择不写、copy 失败不写半成品 |
+| `ReplayTimeTest` | 8 | 20 tick/s、帧↔tick、duration→≥1 tick、sub-tick phase、`clampTick` 两端/NaN/±Inf/退化 duration、`isValidTick` |
+| `ReplayWritebackTest` | 6 | 三轴同 tick、`yaw=-y`、head/body 偏移、多 tick 追加、`placement` 七通道同 tick、同 tick 覆盖不追加、undo 快照/redo 幂等（写入层模拟） |
+| `ReplayFormSwapTest` | 6 | copy 后落槽、不写 live form、空选择/copy 失败不写、重复选择最后生效、null copy/slot 安全 |
 | `ReplayCalibrationTest` | 6 | 默认值、属性覆盖、非法值回落、越界 clamp、严格解析器、`ReplaySceneSpace` 默认跟随属性 |
-| `ReplayCullingTest` | 7 | 视锥内可见/外裁剪、选中永不裁剪、null 位置视为可见、半径保留边缘、allVisible/countVisible、阈值开关 |
+| `ReplayCullingTest` | 10 | 视锥内外、选中永不裁剪、null/NaN 位置、半径边缘、allVisible/countVisible、阈值开关、NaN 矩阵→全可见、`isFinite` |
 | `ReplayLogLimiterTest` | 6 | 首次必记、区间内吞掉并计数、下一区间放行、suffix、reset、非正间隔 |
+| `ReplayListOpsTest` | 10 | 身份 index/contains（等值孪生不算同一对象）、elementAt/clampIndex、sameOrder、重排保选中、删除落邻近/不落等值孪生、新增保选中、空列表清选择 |
+| `ReplayFramingTest` | 6 | NaN/Inf 位置不入 bounds、非法 bounds 拒绝、center、safeDistance 回退、坏 fallback 仍有有限距离 |
+| `ReplayPickIdsTest` | 5 | replay id 紧接 gizmo 区间、id↔index 往返、gizmo/空像素不是 replay、越界拒绝、句柄区间闭区间 |
 
 ---
 
@@ -188,6 +195,41 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\bbsae-build\_tools\gradle
 **本轮未覆盖（下一轮真机）：** 模型明暗与 BBS 原版同机位/同光照的逐像素对照；`-Dbbsae.debugReplaySynth` 合成影片路径；
 gizmo 实际拖动（写回关键帧 + Ctrl+Z）与模型库换模型的交互操作（静态截图只证明视觉/位置正确）；>32 replay 的裁剪性能。
 
+### 3.7 Round 4 无头测试与 bug 审查（未开客户端）
+
+**为什么不能直接单测 BBS 交互类**：尝试在 JUnit 里 `new Replay("probe")`，失败链是
+`Replay.<init>` → `BBSMod.<clinit>` → `Registries.<clinit>` → `IllegalArgumentException: Not bootstrapped`；
+补 `Bootstrap.initialize()` 后又在 `SimpleRegistry.set` 抛 `IllegalAccessError`（loom 测试运行时的 Minecraft
+类未按开发环境做 access-widen）。因此 **BBS 的 `UIReplayPropTransform` / `filmPanel.undo()` 真实路径无法无头执行**，
+本轮把「可测的那层」抽成纯函数（身份索引、tick/坐标/矩阵防护、pick id、写回通道语义）并在测试里用
+`Channel`/`List`/`Matrix4f` 假实现模拟，真实 UI 交互留在 §7.1 真机待办。
+
+**修掉的 bug（本轮代码改动）**：
+
+1. **内容等值选错回放**：`Replay extends ValueGroup`，`equals` 比内容；`List.indexOf/contains` 会在两条等值 replay
+   间返回错误对象（选择、状态行、scroll 条件、`updateVisibility` 的选中索引）。全部改 `ReplayListOps` 的**身份**比较。
+2. **undo/换影片后陈旧对象**：undo 会按 JSON 重建 `ValueGroup` 子对象，旧 `Replay` 引用不再属于 film；原来的面板可能继续把它
+   当选中回放，gizmo/自动关键帧会写到**脱管记录**。`applySelection` 现在拒绝不在当前 film 列表（身份）里的 replay。
+3. **等长列表变更检测不到**：原来只在 `size` 变化时更新选择，删一条+加一条（或重排）后可能仍指向已删对象；
+   现在每帧 `knownOrder` 身份比对 + `selectionAfterChange`（被删落到最近索引，不跳到首条/等值孪生）。
+4. **NaN/Inf tick 污染 runner**：`seek` 原来 `Math.min/max` 会把 NaN 透传给 `filmPanel.setCursor`；
+   `ReplayTime.clampTick`（NaN→0、+Inf→duration、-Inf/负→0、越界 clamp）与 `phase(NaN)→0`。
+5. **NaN framing 黑屏**：坏坐标进入 bounds → `Camera.frame` 产出 NaN 矩阵 → 视口全黑且无报错；
+   `ReplayFraming` 跳过非有限坐标、拒绝非法 bounds、相机距离 `safeDistance`，坏数据回默认机位（空影片/无模型不再刷 warn）。
+6. **坏相机矩阵导致全裁剪**：`FrustumIntersection` 对 NaN 矩阵全部 test false → 一个模型都不画；
+   `ReplayCulling` 检测非有限矩阵时**全部可见**（慢一帧可恢复，黑屏不可恢复），非有限位置只保留选中。
+7. **pick FBO 创建失败会从 UI render 抛异常**：`StencilFormFramebuffer.setup`（资源包/GL 异常）原来在 try 外；
+   现在 try/catch + 限流日志，视口继续渲染、只是点击/gizmo 拾取不可用。
+8. **pick id 公式两处重复**：stencil 写入与点击反查各写一遍；抽 `ReplayPickIds`（`Gizmo.STENCIL_MAX+1+index`）并单测往返/越界/句柄区间。
+9. **`autoKeyPlacement` 分两次写可能错 tick**：位置与朝向两次调用各自取 tick；合并 `ReplayWriteback.placement` 一次写七通道。
+10. **空状态噪音**：空影片/无模型时 `frameAll` 每次都 warn；现在静默默认机位，只有真实坏数据才 warn。
+
+**复核未发现问题（记录在案）**：`ReplaySceneSpace` 映射数学（行列式/往返/`linearFromWorld`）；颜色 pass 与 pick pass
+共用同一 `visible[]` 且 entity+form 过滤一致；stencil pass 始终执行（gizmo 视觉矩阵不因鼠标在视口外丢失）；
+culling 强制选中可见；空影片/空 replay 文案；`ReplayFormSwap` copy 后落槽语义。
+
+**仍不能无头覆盖 → 真机待办见 §7.1。**
+
 ---
 
 ## 4. 性能 / 标定（Round 2）
@@ -229,7 +271,7 @@ gizmo 实际拖动（写回关键帧 + Ctrl+Z）与模型库换模型的交互�
 
 ```
 powershell ... gradle-run.ps1 test --offline --console=plain --tests "dev.bbsae.client.replay.*"
-→ BUILD SUCCESSFUL，38 tests（7 suites）
+→ BUILD SUCCESSFUL，71 tests（10 suites，Round 4 后）
 ```
 
 ### 6.2 编译
@@ -239,14 +281,20 @@ powershell ... gradle-run.ps1 compileJava compileTestJava --offline --console=pl
 → BUILD SUCCESSFUL
 ```
 
-### 6.3 全量测试（Round 3 收尾）
+### 6.3 全量测试（Round 4 运行时刻）
 
 ```
 powershell ... gradle-run.ps1 test --offline --console=plain
-→ BUILD SUCCESSFUL，96 suites / 565 tests，0 failed，1 skipped
+→ 663 tests completed, 4 failed, 1 skipped
+  EffectLibraryNamingTest / EffectThumbnailResourceTest  （effects 队友并发改动）
+  PreviewProxyTest / CompUiResponsiveTest                （UI/effects 队友并发改动）
 ```
 
-### 6.4 真机
+> replay 包 71 tests 全绿、编译绿；4 个失败均不在 `replay` 范围（effects/UI 队友当轮正在改的
+> `EffectRenderer`/`CompUi` 等），以对应负责人收尾为准。Round 3 收尾时全量曾为
+> 96 suites / 565 tests / 0 failed；Round 4 起新增的是 replay 无头测试与其它队友的测试。
+
+### 6.4 真机（Round 3 证据，Round 4 未开客户端）
 
 ```
 runClientView -PbbsaeView=replay -PbbsaeShot=replay-models -PbbsaeShotTicks=420 -PbbsaeQuitAfterShot=true
@@ -289,6 +337,19 @@ runClientView -PbbsaeView=replay -PbbsaeShot=replay-models -PbbsaeShotTicks=420 
    - 同机位与原版对照；模型前后相反 → `-Dbbsae.replayFlipZ=false` 试一次（诊断）；
    - 整体朝向偏 → `-Dbbsae.replayYawOffset`；比例偏 → `-Dbbsae.replayPixelsPerBlock`。
 
+### 7.1 交互真机验证待办（Round 4/5，需客户端）
+
+> Round 4 按用户要求**未开客户端**；以下是无头测试覆盖不到、必须在真机走一遍的交互（数据层已加防护）。
+
+1. **gizmo 写回**：选中回放 → 拖 Y/X 移动杆、yaw/pitch 旋转环 → 轨道对应行在播放头出现/更新关键帧；松手后
+   `Ctrl+Z` 回退、`Ctrl+Shift+Z`/`Ctrl+Y` 重做；连续两次拖动（不同 tick）undo 合并行为；切回原版影片编辑器看到同一关键帧。
+2. **模型库换模型**：Pick/Edit 两个入口；无模型 replay → 选模型后立即出现且自动关键帧落在播放头；带骨骼的 ModelForm 换入/换出；
+   换模型后立刻 seek（前后 tick）姿态与轨道一致；Esc 退出不残留。
+3. **列表增删/重排**：右键 add/dupe/remove/分类/搜索/拖拽排序 → 选中不丢、3D 点击仍选中正确 replay、undo 后恢复。
+4. **播放头边界**：tick 0、duration、超出 duration（seek/step/播放循环）、NaN 防护（若 form 的 molang 输出 NaN 坐标）。
+5. **性能**：>32 replay 的裁剪开关（HUD 显示 visible/total）、200 replay 旋转相机帧率。
+6. **合成影片兜底路径**：`-Dbbsae.debugReplaySynth=true`（run 配置 vmArg）一次，确认无磁盘影片时仍有 3 个生物 replay 可编辑。
+
 ---
 
 ## 8. 关键设计决定（与 plan 的一致性）
@@ -315,7 +376,8 @@ runClientView -PbbsaeView=replay -PbbsaeShot=replay-models -PbbsaeShotTicks=420 
 | R6 | **合成调试影片路径（`-Dbbsae.debugReplaySynth`）本轮未走真机** | 本轮用的是真实 `export_test`（2 replay / 1 placeable），自动选片 + 默认选中可玩 replay 均生效；合成影片逻辑保留为无影片兜底 |
 | R7 | **fill 进 filmPanel 的副作用** | 调试用 `fill` 与用户打开影片同一路径；合成影片 id `bbsae_debug_replay` 不落盘，`BBSSettings.recentData` 可能记一条最近影片（仅 dev run 目录） |
 | R8 | **原版列表/属性面板副作用** | add/dupe/delete 会同步隐藏的 `filmPanel.replayEditor`（借用唯一面板的预期结果，切回原版状态一致） |
-| R9 | **全量测试** | Round 3 收尾全绿：96 suites / 565 tests / 0 failed / 1 skipped；replay 包 38 tests 全绿 |
+| R9 | **全量测试** | Round 4 运行时刻：663 tests / 4 failed / 1 skipped；4 个失败都在 effects/UI 队友的并发改动范围，replay 包 **71 tests 全绿**、编译绿 |
+| R10 | **无头覆盖的硬边界** | BBS 的 `Replay`/`UIReplayPropTransform`/`UIFilmPanel.undo()` 不能在 JUnit 里构造（`BBSMod.<clinit>` → `Registries` 需要 game bootstrap；补 `Bootstrap.initialize()` 又在 loom 测试运行时抛 `IllegalAccessError`）。所以「真实 gizmo 手势 → 原版 `UIReplayPropTransform` → 原版 undo」仍需真机（§7.1）；本轮把可测层抽成纯函数并模拟通道语义 |
 
 ---
 

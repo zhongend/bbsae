@@ -144,17 +144,20 @@ public final class ReplayEditSession
         return this.entity(this.replay);
     }
 
-    /** Index of a replay in the film's replay list, or -1. */
+    /** Index of a replay in the film's replay list, or -1.
+     *
+     * <p>Identity, not {@code List.indexOf}: {@code Replay} extends {@code ValueGroup}, whose
+     * {@code equals} compares contents, so an equal-valued replay would win the lookup and the
+     * selection/pick could address the wrong actor.</p>
+     */
     public int replayIndex(Replay replay)
     {
-        return replay == null ? -1 : this.film.replays.getList().indexOf(replay);
+        return ReplayListOps.indexOfIdentical(this.film.replays.getList(), replay);
     }
 
     public Replay replayAt(int index)
     {
-        List<Replay> replays = this.film.replays.getList();
-
-        return index >= 0 && index < replays.size() ? replays.get(index) : null;
+        return ReplayListOps.elementAt(this.film.replays.getList(), index);
     }
 
     /* ------------------------------------------------------------ visibility */
@@ -198,7 +201,7 @@ public final class ReplayEditSession
         }
 
         this.visible = ReplayCulling.visible(viewProjection, positions,
-            ReplayCalibration.cullRadius(), replays.indexOf(this.replay));
+            ReplayCalibration.cullRadius(), this.replayIndex(this.replay));
         this.visibleCount = ReplayCulling.countVisible(this.visible);
         this.culledCount = count - this.visibleCount;
     }
@@ -355,10 +358,10 @@ public final class ReplayEditSession
         return Math.max(1, duration);
     }
 
-    /** Seeks the shared film cursor, clamped to the film's duration. */
+    /** Seeks the shared film cursor, clamped to the film's duration (NaN-safe). */
     public void seek(float ticks)
     {
-        float value = Math.max(0F, Math.min(this.durationTicks(), ticks));
+        float value = ReplayTime.clampTick(ticks, this.durationTicks());
 
         this.filmPanel.setCursor(value);
     }
@@ -591,8 +594,9 @@ public final class ReplayEditSession
 
         if (frameList.isEmpty())
         {
-            this.space.anchor.set(0F, 0F, 0F);
-            this.camera.setTarget(0F, 0F, 0F).setPose(0F, 20F, 2000F);
+            /* No replay with a live entity: a normal state (empty film, plugin-less forms), not an
+             * error. Reset the camera quietly; the panel's status line explains how to add one. */
+            this.defaultFraming();
 
             return;
         }
@@ -608,18 +612,30 @@ public final class ReplayEditSession
 
             Vector3f comp = this.space.toComp(entity.getX(), entity.getY(), entity.getZ());
 
-            min.min(comp);
-            max.max(comp);
+            ReplayFraming.accumulate(min, max, comp.x, comp.y, comp.z);
+        }
+
+        /* A NaN/infinite actor position (molang-driven keyframe, corrupt value) must not reach the
+         * camera: one bad coordinate turns the whole view matrix into NaN and the viewport goes
+         * blank with no error. Nothing valid to frame → safe default camera. */
+        if (!ReplayFraming.isValidBounds(min, max))
+        {
+            this.fallbackFraming();
+
+            return;
         }
 
         /* Second pass, after the origin moved: the bounds have to be measured in the final
          * composition space (the first pass measured them around the old anchor). */
-        Vector3f centerWorld = new Vector3f(
-            (min.x + max.x) * 0.5F,
-            (min.y + max.y) * 0.5F,
-            (min.z + max.z) * 0.5F
-        );
+        Vector3f centerWorld = ReplayFraming.center(min, max, new Vector3f());
         Vector3f center = this.space.toWorld(centerWorld);
+
+        if (!ReplayFraming.isFinite(center))
+        {
+            this.fallbackFraming();
+
+            return;
+        }
 
         this.space.centerOn(center.x, center.y, center.z);
 
@@ -637,12 +653,13 @@ public final class ReplayEditSession
 
             Vector3f comp = this.space.toComp(entity.getX(), entity.getY(), entity.getZ());
 
-            min.min(comp);
-            max.max(comp);
+            ReplayFraming.accumulate(min, max, comp.x, comp.y, comp.z);
         }
 
-        if (min.x > max.x)
+        if (!ReplayFraming.isValidBounds(min, max))
         {
+            this.fallbackFraming();
+
             return;
         }
 
@@ -651,16 +668,37 @@ public final class ReplayEditSession
         /* A single actor has (almost) zero bounds, and framing that put the camera at distance 3
          * composition pixels — i.e. inside the model — in the second real-machine screenshot.
          * Keep a human-scale minimum distance so the actor is actually visible. */
-        float minDistance = ReplayCalibration.frameMinDistance();
+        float minDistance = ReplayFraming.safeDistance(
+            ReplayCalibration.frameMinDistance(), ReplayFraming.FALLBACK_DISTANCE);
+        float distance = ReplayFraming.safeDistance(this.camera.distance, minDistance);
 
-        if (this.camera.distance < minDistance)
+        if (distance < minDistance)
         {
-            this.camera.setPose(this.camera.yaw, this.camera.pitch, minDistance);
-            this.camera.update();
+            distance = minDistance;
         }
 
+        this.camera.setPose(this.camera.yaw, this.camera.pitch, distance);
+        this.camera.update();
         this.framed = true;
     }
+
+    /** The camera state used whenever there is nothing sane to frame. */
+    private void fallbackFraming()
+    {
+        this.defaultFraming();
+
+        BbsAeAddon.LOGGER.warn("Replay mode framing had no usable bounds; using the default camera");
+    }
+
+    /** Quiet reset to the default free camera (empty scene / no models). */
+    private void defaultFraming()
+    {
+        this.space.anchor.set(0F, 0F, 0F);
+        this.camera.setTarget(0F, 0F, 0F).setPose(0F, 20F, ReplayFraming.FALLBACK_DISTANCE);
+        this.camera.update();
+        this.framed = true;
+    }
+
 
     public boolean isFramed()
     {

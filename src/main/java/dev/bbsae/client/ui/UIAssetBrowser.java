@@ -20,6 +20,7 @@ import net.minecraft.util.Identifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -480,6 +481,7 @@ public class UIAssetBrowser extends UIElement
         }
 
         this.grid.repaint();
+        this.grid.rebuildMotionKeys();
         this.updateCountLabel();
         this.updateButtons();
     }
@@ -771,6 +773,18 @@ public class UIAssetBrowser extends UIElement
         private int dragStartX = Integer.MIN_VALUE;
         private int dragStartScroll;
         private boolean dragged;
+        private final UiMotion motion = new UiMotion();
+        /** Stable channel names for each chip's selected/hover amounts, built once. */
+        private final String[] chipKeys = new String[CATEGORY_LABELS.length * 2];
+
+        Strip()
+        {
+            for (int i = 0; i < CATEGORY_LABELS.length; i++)
+            {
+                this.chipKeys[i * 2] = "chip:" + i + ":s";
+                this.chipKeys[i * 2 + 1] = "chip:" + i + ":h";
+            }
+        }
 
         int chipWidth(int index)
         {
@@ -828,6 +842,8 @@ public class UIAssetBrowser extends UIElement
         @Override
         public void render(UIContext context)
         {
+            this.motion.tickFrame();
+
             /* Live drag-to-slide: the strip is 13 chips wide, and on a trackpad the arrows are a
              * poor substitute for pushing the row. Click/release are the only events BBS sends, so
              * the offset is followed here while the pointer is down. */
@@ -852,12 +868,26 @@ public class UIAssetBrowser extends UIElement
                 {
                     int w = this.chipWidth(i);
                     boolean active = i == UIAssetBrowser.this.category;
+                    boolean hovered = context.mouseX >= x && context.mouseX <= x + w
+                        && context.mouseY >= this.area.y && context.mouseY <= this.area.ey();
 
                     if (x + w >= this.area.x && x <= this.area.ex())
                     {
-                        context.batcher.box(x, y, x + w, y + h, active ? 0xFF2F5C9E : 0xFF1E242D);
-                        context.batcher.box(x, y + h - 1, x + w, y + h, active ? 0xFF4C8BE0 : 0xFF2A313B);
-                        context.batcher.text(CATEGORY_LABELS[i], x + 6, y + (h - 8) / 2, active ? 0xFFFFFFFF : 0xFFB8C4D6);
+                        /* Chip state is interpolated like every other row in the editor; the
+                         * channel names are built once (13 chips), not per frame. */
+                        float sel = this.motion.anim(this.chipKeys[i * 2], active ? 1F : 0F, 22F);
+                        float hov = this.motion.anim(this.chipKeys[i * 2 + 1], hovered ? 1F : 0F, 24F);
+                        int fill = UiMotion.lerpColor(0xFF1E242D, 0xFF2A3442, hov);
+
+                        fill = UiMotion.lerpColor(fill, 0xFF2F5C9E, sel);
+
+                        int line = UiMotion.lerpColor(0xFF2A313B, 0xFF4C8BE0, sel);
+                        int textColor = UiMotion.lerpColor(
+                            UiMotion.lerpColor(0xFFB8C4D6, 0xFFFFFFFF, hov * 0.6F), 0xFFFFFFFF, sel);
+
+                        context.batcher.box(x, y, x + w, y + h, fill);
+                        context.batcher.box(x, y + h - 1, x + w, y + h, line);
+                        context.batcher.text(CATEGORY_LABELS[i], x + 6, y + (h - 8) / 2, textColor);
                     }
 
                     x += w + 4;
@@ -985,7 +1015,12 @@ public class UIAssetBrowser extends UIElement
         private float scrollSmooth;
         private boolean smoothInit;
         private final UiMotion motion = new UiMotion();
-        private String hot;
+        /** Index of the hovered tile, or -1; an int so no channel name is built per frame. */
+        private int hot = -1;
+        /** Per-visible-tile channel names ({hover, select}), rebuilt with the filtered list. */
+        private final List<String[]> tileKeys = new ArrayList<>();
+        /** Stable thumbnail-fade channel per asset path, built on first sight. */
+        private final Map<String, String> thumbKeys = new HashMap<>();
         private long lastClick;
         private int lastIndex = -1;
         private int pressX = Integer.MIN_VALUE;
@@ -1000,6 +1035,48 @@ public class UIAssetBrowser extends UIElement
         void scrollToTop()
         {
             this.scrollY = 0;
+        }
+
+        /**
+         * Rebuilds the per-tile channel names and replays the staggered entrance for a new list.
+         * Called from {@code rebuild()} only — never from a render pass.
+         */
+        void rebuildMotionKeys()
+        {
+            this.tileKeys.clear();
+
+            for (int i = 0; i < UIAssetBrowser.this.filtered.size(); i++)
+            {
+                this.tileKeys.add(new String[] {"asset:" + i + ":h", "asset:" + i + ":s"});
+            }
+
+            this.motion.replay();
+        }
+
+        /** Stable channel name for the per-asset thumbnail fade. */
+        private String thumbKey(String path)
+        {
+            String key = this.thumbKeys.get(path);
+
+            if (key == null)
+            {
+                /* Assets come and go with resource packs; a hard cap keeps a long session bounded
+                 * without a second prune pass of its own. */
+                if (this.thumbKeys.size() > 1024)
+                {
+                    this.thumbKeys.clear();
+                }
+
+                key = "thumb:" + path;
+                this.thumbKeys.put(path, key);
+            }
+
+            return key;
+        }
+
+        private String[] tileKeys(int index)
+        {
+            return index >= 0 && index < this.tileKeys.size() ? this.tileKeys.get(index) : null;
         }
 
         /** Scrolls the tile at {@code index} into view, one row of margin. */
@@ -1140,7 +1217,7 @@ public class UIAssetBrowser extends UIElement
                 : this.scrollY;
 
             int hotIndex = this.tileAt(context.mouseX, context.mouseY);
-            this.hot = hotIndex >= 0 ? "tile:" + hotIndex : null;
+            this.hot = hotIndex;
 
             /* Scrollbar drags are polled like the tile drag: BBS only dispatches click/release,
              * and a fast drag can release over a sibling that consumes the release. Without the
@@ -1240,9 +1317,9 @@ public class UIAssetBrowser extends UIElement
         private void renderTile(UIContext context, Asset asset, int index, int x, int y)
         {
             boolean isSelected = index == this.selected;
-            String key = "tile:" + index;
-            float hover = this.motion.hover(key, this.hot);
-            float select = this.motion.select(key, isSelected);
+            String[] keys = this.tileKeys(index);
+            float hover = keys == null ? 0F : this.motion.anim(keys[0], index == this.hot ? 1F : 0F, 26F);
+            float select = keys == null ? 0F : this.motion.anim(keys[1], isSelected ? 1F : 0F, 22F);
             float intro = this.motion.intro(Math.min(0.36F, index * 0.006F));
             float intensity = this.motion.intensity();
             int drawY = y + Math.round((1F - intro) * 7F * intensity * 2F);
@@ -1279,7 +1356,7 @@ public class UIAssetBrowser extends UIElement
             else
             {
                 ImageTextureCache.Entry texture = ImageTextureCache.get(UIAssetBrowser.this.projectId.get(), asset.path);
-                float shown = this.motion.anim("thumb:" + asset.path, texture != null ? 1F : 0F, 8F);
+                float shown = this.motion.anim(this.thumbKey(asset.path), texture != null ? 1F : 0F, 8F);
 
                 if (texture != null)
                 {

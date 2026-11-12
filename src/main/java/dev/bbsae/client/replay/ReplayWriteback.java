@@ -55,4 +55,23 @@ public final class ReplayWriteback
         bodyYawChannel.insert(tick, writtenYaw + bodyYawOffset);
         pitchChannel.insert(tick, pitch);
     }
+
+    /**
+     * Writes a replay's whole placement (position and orientation) at one tick — what the film
+     * editor's gizmo does when a drag ends or when a model import keys the current pose.
+     *
+     * <p>One method so the seven channels are written at exactly the same tick; splitting it into
+     * separate calls at call sites is how position and rotation end up a fraction of a tick apart.</p>
+     */
+    public static void placement(float tick, double x, double y, double z,
+                                 double pitch, double yaw,
+                                 double headYawOffset, double bodyYawOffset,
+                                 Channel xChannel, Channel yChannel, Channel zChannel,
+                                 Channel yawChannel, Channel headYawChannel,
+                                 Channel bodyYawChannel, Channel pitchChannel)
+    {
+        position(tick, x, y, z, xChannel, yChannel, zChannel);
+        rotation(tick, pitch, yaw, headYawOffset, bodyYawOffset,
+            yawChannel, headYawChannel, bodyYawChannel, pitchChannel);
+    }
 }

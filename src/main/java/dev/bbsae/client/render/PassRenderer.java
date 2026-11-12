@@ -29,9 +29,27 @@ public final class PassRenderer
      */
     public static GlFramebuffer draw(GlFramebuffer source, GlFramebuffer backdrop, GlFramebuffer mask, int blendMode, float opacity, float offsetX, float offsetY, int tint)
     {
+        return draw(source, backdrop, mask, blendMode, opacity, offsetX, offsetY, tint,
+            Math.max(1, source.width), Math.max(1, source.height));
+    }
+
+    /**
+     * Same draw, but {@code offsetX/offsetY} are expressed in <b>reference pixels</b> (composition
+     * pixels) and normalised by the given reference size.
+     *
+     * <p>A preview renders the same composition into a smaller proxy target, while effect
+     * parameters (shadow distance, chroma separation, …) are authored in composition pixels. The
+     * offset must therefore be divided by the composition size, not by the proxy target size,
+     * otherwise "offset 12 px" becomes 12 / proxyScale in the 960 px preview.</p>
+     */
+    public static GlFramebuffer draw(GlFramebuffer source, GlFramebuffer backdrop, GlFramebuffer mask, int blendMode,
+                                     float opacity, float offsetX, float offsetY, int tint,
+                                     int offsetReferenceWidth, int offsetReferenceHeight)
+    {
         GlFramebuffer output = FboPool.acquire(source.width, source.height);
 
-        drawInto(output, source, backdrop, mask, blendMode, opacity, offsetX, offsetY, tint, 0);
+        drawInto(output, source, backdrop, mask, blendMode, opacity, offsetX, offsetY, tint, 0,
+            offsetReferenceWidth, offsetReferenceHeight);
 
         return output;
     }
@@ -66,6 +84,12 @@ public final class PassRenderer
     }
     public static void drawInto(GlFramebuffer output, GlFramebuffer source, GlFramebuffer backdrop, GlFramebuffer mask, int blendMode, float opacity, float offsetX, float offsetY, int tint, int maskChannel)
     {
+        drawInto(output, source, backdrop, mask, blendMode, opacity, offsetX, offsetY, tint, maskChannel,
+            Math.max(1, source.width), Math.max(1, source.height));
+    }
+
+    public static void drawInto(GlFramebuffer output, GlFramebuffer source, GlFramebuffer backdrop, GlFramebuffer mask, int blendMode, float opacity, float offsetX, float offsetY, int tint, int maskChannel, int offsetReferenceWidth, int offsetReferenceHeight)
+    {
         GlslProgram program = CompShaders.composite;
 
         if (program == null)
@@ -90,7 +114,7 @@ public final class PassRenderer
         program.set("MaskChannel", maskChannel);
         program.set("Blend", blendMode);
         program.set("Opacity", opacity);
-        program.set("Offset", offsetX / Math.max(1, source.width), offsetY / Math.max(1, source.height));
+        program.set("Offset", offsetX / Math.max(1, offsetReferenceWidth), offsetY / Math.max(1, offsetReferenceHeight));
         program.set("Tint", ((tint >> 16) & 0xFF) / 255F, ((tint >> 8) & 0xFF) / 255F, (tint & 0xFF) / 255F, 1F);
 
         program.drawFullscreen();
