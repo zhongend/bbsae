@@ -220,12 +220,13 @@ public final class CompScene
         {
             model = new Matrix4f(camera.view).mul(world);
         }
-        else if (spatial(ctx))
+        else if (layer.threeD && spatial(ctx))
         {
-            /* A flat layer under a tilted camera is still drawn flat — into comp space, with no
-             * camera at all. The camera is applied afterwards, once, by projecting the finished
-             * comp-space image onto the layer's z plane. Keeping the camera out of the model is
-             * what lets masks and effects stay in comp space and still come out right. */
+            /* A threeD flat layer under a tilted camera is still drawn flat — into comp space,
+             * with no camera at all. The camera is applied afterwards, once, by projecting the
+             * finished comp-space image onto the layer's z plane. Keeping the camera out of the
+             * model is what lets masks and effects stay in comp space and still come out right.
+             * A plain 2D layer is screen-attached and always uses view2D instead. */
             model = new Matrix4f(world);
         }
         else
@@ -417,8 +418,8 @@ public final class CompScene
         }
 
         /* A 2D layer is screen-attached: it goes through the 2D view, exactly like its content
-         * does. Projecting it with the perspective camera is what made selection boxes drift away
-         * from 2D layers whenever the camera was tilted. */
+         * does. The camera tilt is deliberately ignored for twoD layers; only threeD flat layers
+         * are projected through projectPlane(). */
         camera.view2D.transformPosition(point);
 
         return new Vector2f(point.x, point.y);

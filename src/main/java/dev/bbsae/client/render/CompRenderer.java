@@ -813,7 +813,7 @@ public final class CompRenderer
                             /* A 2D matte over a 3D target has to be projected too, otherwise the
                              * matte lives in camera-view space while the target content is already
                              * in perspective composition space. */
-                            if (!is2D && CompScene.spatial(context) && !CompScene.usePerspective(context, matte))
+                            if (!is2D && matte.threeD && CompScene.spatial(context) && !CompScene.usePerspective(context, matte))
                             {
                                 GlFramebuffer projectedMatte = projectPlane(matteFbo, matte, context, batcher);
 
@@ -835,7 +835,7 @@ public final class CompRenderer
                  * onto the layer's z plane. Doing it here — after masks, effects and styles — is
                  * what keeps those passes exact: they never see the perspective, they just draw
                  * the layer where it lives. */
-                if (CompScene.spatial(context) && !CompScene.usePerspective(context, layer))
+                if (layer.threeD && CompScene.spatial(context) && !CompScene.usePerspective(context, layer))
                 {
                     GlFramebuffer projected = projectPlane(content, layer, context, batcher);
 

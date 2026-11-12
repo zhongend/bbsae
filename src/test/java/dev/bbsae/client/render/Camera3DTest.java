@@ -153,6 +153,33 @@ public class Camera3DTest
     }
 
     @Test
+    public void a2DLayerUsesView2DEvenWhenTheCameraIsTilted()
+    {
+        CompDocument doc = document();
+        CompProject project = project(doc);
+        CompLayer camera = camera(doc);
+
+        camera.rotationX = 25F;
+        camera.rotationY = 20F;
+        doc.layers.add(camera);
+        doc.activeCameraId = camera.id;
+
+        CompRenderContext ctx = context(project, doc);
+        CompLayer flat = card(doc, false);
+
+        assertTrue(CompScene.spatial(ctx), "tilt must switch the composition into spatial mode");
+        assertTrue(!CompScene.usePerspective(ctx, flat), "a 2D layer never uses perspective");
+
+        org.joml.Vector3f point = new org.joml.Vector3f(100F, 50F, 0F);
+        org.joml.Vector3f modelPoint = CompScene.model(ctx, flat).transformPosition(new org.joml.Vector3f(point));
+        org.joml.Vector3f viewPoint = new org.joml.Matrix4f(CompScene.camera(ctx).view2D)
+            .mul(CompScene.world(ctx, flat)).transformPosition(new org.joml.Vector3f(point));
+
+        assertEquals(viewPoint.x, modelPoint.x, 0.1F);
+        assertEquals(viewPoint.y, modelPoint.y, 0.1F);
+    }
+
+    @Test
     public void positiveZMovesTowardsTheCameraAndMagnifies()
     {
         CompDocument doc = document();
