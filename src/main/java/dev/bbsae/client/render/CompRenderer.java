@@ -1171,17 +1171,32 @@ public final class CompRenderer
      * null when none of those pixel operations exist (the direct path is cheaper and already
      * correct).
      */
-    private static GlFramebuffer renderBaked3D(CompLayer layer, CompRenderContext context, Matrix4f model,
-                                               Matrix4f layerProjection, Batcher2D batcher)
+    /**
+     * Whether a 3D layer's pixel operations belong in the layer-local bake. Replay entity layers
+     * are excluded: their matte is projected in composition space, so baking them layer-locally
+     * made 3D effects sample the wrong region of the world frame.
+     */
+    static boolean shouldBake3D(CompLayer layer)
     {
-        if (!layer.threeD || "camera".equals(layer.type) || "adjustment".equals(layer.type))
+        if (layer == null || !layer.threeD || "camera".equals(layer.type) || "adjustment".equals(layer.type))
         {
-            return null;
+            return false;
+        }
+
+        if (layer.isEntityLayer())
+        {
+            return false;
         }
 
         boolean masked = layer.masks != null && !layer.masks.isEmpty();
 
-        if (!hasEnabledEffects(layer) && !hasEnabledStyles(layer) && !masked)
+        return hasEnabledEffects(layer) || hasEnabledStyles(layer) || masked;
+    }
+
+    private static GlFramebuffer renderBaked3D(CompLayer layer, CompRenderContext context, Matrix4f model,
+                                               Matrix4f layerProjection, Batcher2D batcher)
+    {
+        if (!shouldBake3D(layer))
         {
             return null;
         }

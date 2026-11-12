@@ -110,15 +110,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.89.jar`](https://github.com/zhongend/bbsae/releases/download/v0.89/bbsae-0.89.jar)
-   from the **v0.89** release (the asset is updated with each source push).
+1. Download [`bbsae-0.90.jar`](https://github.com/zhongend/bbsae/releases/download/v0.90/bbsae-0.90.jar)
+   from the **v0.90** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.89.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.90.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.89.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
+`bbsae-0.90.jar` SHA-256: `EAA836A9D072633A38CF1CB023D2E4CBFB3009C80AC963220213C1D8970F1E6C`.
 
 ## Gallery
 
@@ -185,6 +185,17 @@ The compositor does not re-encode films or patch `.dat` files. BBS serializes a 
 `RegisterFrameOverlaysEvent` point. That means the same composition appears in BBS's preview and in
 its FFmpeg film export, and BBS keeps ownership of keyframes, undo, project storage and video
 encoding.
+
+## What's new in 0.90 — replay entity layers keep their matte in 3D effects
+
+- A replay entity layer's coverage matte is projected in **composition space** (the world camera
+  decides which actor pixels are keyed), but the 3D effect bake rasterized the layer in **layer-local
+  space**. A 3D effect on an entity layer therefore sampled the wrong region of the world frame.
+- Entity layers are now excluded from the layer-local bake: they render through the direct
+  composition-space path, so 3D effects run on the correctly keyed image.
+- `shouldBake3D` is a testable function; `EntityLayerBakeTest` covers entity layers, normal 3D
+  shapes and 2D layers.
+- 378 tests green.
 
 ## What's new in 0.89 — fix the camera-preview ghost by disabling the depth plane path
 
