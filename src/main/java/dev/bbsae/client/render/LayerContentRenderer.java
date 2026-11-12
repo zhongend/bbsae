@@ -204,7 +204,8 @@ final class LayerContentRenderer
 
     private static void drawShapes(CompLayer layer, CompRenderContext context, Batcher2D batcher)
     {
-        ShapeCache.Raster raster = ShapeCache.get(layer, context.frame);
+        ShapeCache.Raster raster = ShapeCache.get(layer, context.frame,
+            MaskCache.cacheScope(context.project, context.comp));
 
         if (raster == null)
         {

@@ -26,12 +26,58 @@ public final class ImageTextureCache
         public final GlTexture texture;
         public final int width;
         public final int height;
+        /** File identity (path + mtime + size): what a signature must use, not just the path. */
+        public final long contentId;
 
-        private Entry(GlTexture texture, int width, int height)
+        private Entry(GlTexture texture, int width, int height, long contentId)
         {
             this.texture = texture;
             this.width = width;
             this.height = height;
+            this.contentId = contentId;
+        }
+    }
+
+    /**
+     * Content identity of an image source: the path plus the file's modification time and size, or
+     * the resource id for resource-pack images.
+     *
+     * <p>Hashing only {@code layer.imagePath} meant replacing {@code logo.png} with different pixels
+     * did not invalidate the composition frame cache or a baked 3D layer raster: the renderer kept
+     * showing the old texture. This is a cheap stat (no image decode); return 0 when the source is
+     * missing so signatures simply do not change.</p>
+     */
+    public static long contentId(String projectId, String path)
+    {
+        if (path == null || path.isBlank())
+        {
+            return 0L;
+        }
+
+        if (path.indexOf(':') > 0 && !path.startsWith("/") && !path.contains("\\"))
+        {
+            return path.hashCode() * 31L + 0x5DEECE66DL;
+        }
+
+        Path file = resolve(projectId, path);
+
+        if (file == null || !Files.isRegularFile(file))
+        {
+            return 0L;
+        }
+
+        try
+        {
+            long id = file.toAbsolutePath().toString().hashCode() * 31L;
+
+            id = id * 31L + Files.getLastModifiedTime(file).toMillis();
+            id = id * 31L + Files.size(file);
+
+            return id;
+        }
+        catch (Exception e)
+        {
+            return 0L;
         }
     }
 
@@ -82,7 +128,7 @@ public final class ImageTextureCache
             texture.allocate(w, h);
             texture.uploadRaw(pixels);
 
-            entry = new Entry(texture, w, h);
+            entry = new Entry(texture, w, h, contentId(projectId, path));
             CACHE.put(key, entry);
 
             while (CACHE.size() > MAX)
@@ -155,7 +201,7 @@ public final class ImageTextureCache
                 texture.allocate(w, h);
                 texture.uploadRaw(pixels);
 
-                Entry entry = new Entry(texture, w, h);
+                Entry entry = new Entry(texture, w, h, key.hashCode());
 
                 CACHE.put(key, entry);
 

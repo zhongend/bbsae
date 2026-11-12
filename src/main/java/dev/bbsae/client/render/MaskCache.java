@@ -1,6 +1,8 @@
 package dev.bbsae.client.render;
 
+import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompLayer;
+import dev.bbsae.comp.CompProject;
 import dev.bbsae.comp.CompMask;
 
 import java.awt.AlphaComposite;
@@ -95,17 +97,36 @@ public final class MaskCache
 
     public static MaskTexture get(CompLayer layer, int width, int height, Matrix4f world, float frame)
     {
-        return get(layer, width, height, world, frame, 1F);
+        return get(layer, width, height, world, frame, 1F, "");
     }
 
     /**
+     * Scoped variant: the slot key includes project + composition id.
+     *
+     * <p>A parent composition and a nested precomp can both contain a layer called {@code mask}; the
+     * old key was {@code layer.id:WxH}, so the first one's mask texture was served to the second and
+     * the per-frame state comparison forced a re-rasterization every frame.</p>
+     *
      * @param scale raster pixels per layer pixel. The point transform already includes it; feather
      *              and expansion are expressed in layer pixels and are applied in raster space, so
      *              they have to be converted too — otherwise a 3D mask's feather shrinks with the
      *              proxy resolution.
      */
-    public static synchronized MaskTexture get(CompLayer layer, int width, int height, Matrix4f world,
-                                               float frame, float scale)
+    public static MaskTexture get(CompLayer layer, int width, int height, Matrix4f world, float frame,
+                                  float scale, String scope)
+    {
+        return getScoped(layer, width, height, world, frame, scale, scope);
+    }
+
+    public static MaskTexture get(CompLayer layer, int width, int height, Matrix4f world,
+                                  float frame, float scale)
+    {
+        return getScoped(layer, width, height, world, frame, scale, "");
+    }
+
+    private static synchronized MaskTexture getScoped(CompLayer layer, int width, int height,
+                                                      Matrix4f world, float frame, float scale,
+                                                      String scope)
     {
         if (layer == null || layer.masks == null || layer.masks.isEmpty() || width <= 0 || height <= 0)
         {
@@ -126,7 +147,7 @@ public final class MaskCache
                 return null;
             }
 
-            String slotKey = slotKey(layer, width, height);
+            String slotKey = textureSlot(scope, layer, width, height);
             long state = stateOf(stack.contentHash, world, false);
             MaskTexture texture = CACHE.get(slotKey);
 
@@ -240,8 +261,23 @@ public final class MaskCache
      * authored in layer pixels and multiplied by it, exactly like the affine proxy path. Masks
      * partially behind the camera are approximated by dropping the off-screen vertices.</p>
      */
-    public static synchronized MaskTexture getProjected(CompLayer layer, int width, int height,
-                                                        Matrix4f viewProjection, float frame, float scale)
+    public static MaskTexture getProjected(CompLayer layer, int width, int height,
+                                           Matrix4f viewProjection, float frame, float scale)
+    {
+        return getProjected(layer, width, height, viewProjection, frame, scale, "");
+    }
+
+    /** Scoped variant of {@link #getProjected(CompLayer, int, int, Matrix4f, float, float)}. */
+    public static MaskTexture getProjected(CompLayer layer, int width, int height,
+                                           Matrix4f viewProjection, float frame, float scale,
+                                           String scope)
+    {
+        return getProjectedScoped(layer, width, height, viewProjection, frame, scale, scope);
+    }
+
+    private static synchronized MaskTexture getProjectedScoped(CompLayer layer, int width, int height,
+                                                               Matrix4f viewProjection, float frame,
+                                                               float scale, String scope)
     {
         if (layer == null || layer.masks == null || layer.masks.isEmpty()
             || viewProjection == null || width <= 0 || height <= 0)
@@ -266,7 +302,7 @@ public final class MaskCache
             /* The slot is shared with the affine path: the state bit says which projection the
              * pixels in the texture belong to. A 3D layer can use either path depending on whether
              * its bake was available, but never both at the same time. */
-            String slotKey = slotKey(layer, width, height);
+            String slotKey = textureSlot(scope, layer, width, height);
             long state = stateOf(stack.contentHash, viewProjection, true);
             MaskTexture texture = CACHE.get(slotKey);
 
@@ -543,6 +579,14 @@ public final class MaskCache
     {
         return layer.id + ":" + width + "x" + height;
     }
+
+    /** Project/comp scope for cache keys: nested precomps may reuse layer ids. */
+    public static String cacheScope(CompProject project, CompDocument comp)
+    {
+        return (project == null || project.id == null ? "" : project.id) + "/"
+            + (comp == null || comp.id == null ? "" : comp.id);
+    }
+
 
     private static long stateOf(long contentHash, Matrix4f matrix, boolean projected)
     {
@@ -936,7 +980,14 @@ public final class MaskCache
     /** Identity of the texture slot a layer+size maps to; it deliberately has no world term. */
     static synchronized String textureSlot(CompLayer layer, int width, int height)
     {
-        return layer == null ? "" : slotKey(layer, width, height);
+        return textureSlot("", layer, width, height);
+    }
+
+    static synchronized String textureSlot(String scope, CompLayer layer, int width, int height)
+    {
+        String suffix = layer == null ? "" : slotKey(layer, width, height);
+
+        return scope == null || scope.isEmpty() ? suffix : scope + "/" + suffix;
     }
 
     /** Full upload fingerprint (content + world + projection). */

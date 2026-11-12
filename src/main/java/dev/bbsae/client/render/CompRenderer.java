@@ -1107,6 +1107,12 @@ public final class CompRenderer
                     continue;
                 }
 
+                /* Every acquired framebuffer below is owned by this iteration. A malformed layer
+                 * (bad replay data, an effect that throws) must not leak its content target into
+                 * the void: the outer finally only knows the accumulation target. The catch is
+                 * deliberately at this scope so normal releases keep their inline shape. */
+                try
+                {
                 boolean effectsBaked = rendered.effectsBaked;
 
                 content = applyLayerMask(content, layer, context, model, effectsBaked, renderMasks);
@@ -1233,8 +1239,16 @@ public final class CompRenderer
                             int channel = layer.trackMatteMode == CompLayer.MATTE_LUMA ? 1 : layer.trackMatteMode == CompLayer.MATTE_ALPHA_INVERTED ? 2 : layer.trackMatteMode == CompLayer.MATTE_LUMA_INVERTED ? 3 : 0;
                             GlFramebuffer matted = PassRenderer.mask(content, matteFbo.color.id, channel);
 
-                            FboPool.release(content);
                             FboPool.release(matteFbo);
+
+                            if (matted == null)
+                            {
+                                /* Shader unavailable: the track matte cannot be applied; keep the
+                                 * unmasked content instead of dropping the layer or leaking it. */
+                                continue;
+                            }
+
+                            FboPool.release(content);
                             content = matted;
                         }
                     }
@@ -1265,6 +1279,16 @@ public final class CompRenderer
                 FboPool.release(content);
                 FboPool.release(accumulation);
                 accumulation = blended;
+                }
+                catch (RuntimeException | Error e)
+                {
+                    if (content != null && !content.pooled)
+                    {
+                        FboPool.release(content);
+                    }
+
+                    throw e;
+                }
             }
 
             batcher.flush();
@@ -1447,7 +1471,7 @@ public final class CompRenderer
             float maskScale = projectedMaskScale(context, layer, maskCamera);
 
             mask = MaskCache.getProjected(layer, maskWidth, maskHeight, maskViewProjection,
-                context.frame, maskScale);
+                context.frame, maskScale, MaskCache.cacheScope(context.project, context.comp));
         }
         else
         {
@@ -1455,7 +1479,7 @@ public final class CompRenderer
             Matrix4f maskModel = new Matrix4f(model)
                 .scale(maskScale, maskScale, 1F);
             mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame,
-                maskLayerScale(model, maskScale));
+                maskLayerScale(model, maskScale), MaskCache.cacheScope(context.project, context.comp));
         }
 
         if (mask == null)
@@ -1464,6 +1488,12 @@ public final class CompRenderer
         }
 
         GlFramebuffer masked = PassRenderer.mask(content, mask.texture.id, 0);
+
+        if (masked == null)
+        {
+            /* No mask pass available: keep the unmasked content; the caller still owns it. */
+            return content;
+        }
 
         FboPool.release(content);
 
@@ -1711,18 +1741,25 @@ public final class CompRenderer
             float maskScale = Math.max(0.0001F, maskWidth / (float) Math.max(1, context.width));
             Matrix4f maskModel = new Matrix4f(CompScene.world(context, layer)).scale(maskScale, maskScale, 1F);
             MaskCache.MaskTexture mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame,
-                maskLayerScale(CompScene.world(context, layer), maskScale));
+                maskLayerScale(CompScene.world(context, layer), maskScale),
+                MaskCache.cacheScope(context.project, context.comp));
 
             if (mask != null)
             {
                 GlFramebuffer masked = PassRenderer.mask(processed, mask.texture.id, 0);
-                GlFramebuffer result = PassRenderer.draw(masked, original, null, CompLayer.BLEND_NORMAL, opacity, 0F, 0F, 0xFFFFFF);
 
-                FboPool.release(masked);
-                FboPool.release(processed);
-                FboPool.release(original);
+                if (masked != null)
+                {
+                    GlFramebuffer result = PassRenderer.draw(masked, original, null, CompLayer.BLEND_NORMAL, opacity, 0F, 0F, 0xFFFFFF);
 
-                return result;
+                    FboPool.release(masked);
+                    FboPool.release(processed);
+                    FboPool.release(original);
+
+                    return result;
+                }
+
+                /* Fall through: no mask pass means the adjusted pixels are the result. */
             }
         }
 

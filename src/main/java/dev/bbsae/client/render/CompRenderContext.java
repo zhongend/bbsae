@@ -30,6 +30,29 @@ public final class CompRenderContext
     public boolean preview = true;
 
     /**
+     * Long-edge cap for layer source rasters created for this pass; 0 = derive from the mode.
+     *
+     * <p>The pre-render cache matches 1280x720, so its 3D layer bakes must not be capped to the
+     * 1024 px draft guard; the encoder may go up to the composition's long edge; the panel preview
+     * keeps 1024. Callers that know the target set this on the context (or through
+     * {@link #setTargetEdge(int)} before creating it).</p>
+     */
+    public int targetEdge;
+
+    /**
+     * Process-wide override read by the constructor. The render entry points construct their own
+     * contexts inside {@link CompRenderer}, so the frame server / pre-render cache announce the grid
+     * they are about to render and clear it afterwards (render thread only, nested calls inherit).
+     */
+    private static int targetEdgeOverride;
+
+    /** Sets the default {@link #targetEdge} for contexts created afterwards, 0 to clear. */
+    public static void setTargetEdge(int edge)
+    {
+        targetEdgeOverride = Math.max(0, edge);
+    }
+
+    /**
      * True only for the free 3D workspace draft viewport ({@link CompViewportRenderer}).
      *
      * <p>The 3D workspace draws a cheap <b>draft</b>: a precomp layer is represented by a blue
@@ -100,6 +123,7 @@ public final class CompRenderContext
         this.projection = projection;
         this.camera = camera;
         this.depth = depth;
+        this.targetEdge = targetEdgeOverride;
     }
 
     public boolean hasDepth()

@@ -128,6 +128,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private int timelinePage;
     private final List<UIElement> trackOnlyTools = new ArrayList<>();
     private final UIElement preview;
+    /** Cancel hook for the preview's own drag gestures (layer/gizmo/camera handles). */
+    private java.util.function.BooleanSupplier previewGestureCancel;
     private final UIElement previewBar;
     private final UILabel previewInfo;
     private final UIElement inspectorColumn;
@@ -314,6 +316,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private float playRate;
     private String statusMessage = "";
     private int statusTicks;
+    /** Throttles the background-export status line shown on the edit page. */
+    private long lastExportStatusMs;
     private float lastInspectorTime = Float.NaN;
     private final List<Runnable> inspectorBindings = new ArrayList<>();
     private final Map<String, Boolean> sectionFolds = new HashMap<>();
@@ -423,11 +427,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.showStartScreen();
         });
 
-        this.save = CompUi.flat("保存", "把工程写入磁盘（Ctrl+S）；工程在 config/bbsae/projects", () ->
-        {
-            this.save();
-            this.setStatus("工程已保存");
-        });
+        this.save = CompUi.flat("保存", "把工程写入磁盘（Ctrl+S）；工程在 config/bbsae/projects", this::saveNow);
 
         this.addLayer = CompUi.iconButton(Icons.ADD, "打开图层库（纯色/文字/形状/媒体/界面/摄像机…）", this::showAddLayerMenu);
 
@@ -579,6 +579,66 @@ public class UICompositorPanel extends UIDashboardPanel
             private float startScreenAngle;
             private float cameraStartTargetX;
             private float cameraStartTargetY;
+            private float cameraStartTargetZ;
+            /** Full press-time pose snapshot: Esc must really restore every field a drag writes. */
+            private float startZ;
+            private float startRotationX;
+            private float startRotationY;
+            private float startScaleZ = 1F;
+
+            {
+                /* The panel's Esc handler cannot see this anonymous class; register a cancel hook
+                 * so a preview drag can be aborted instead of letting Esc clear the selection
+                 * while the mouse is still down. */
+                UICompositorPanel.this.previewGestureCancel = this::cancelActiveLayerGesture;
+            }
+
+            /**
+             * Esc during a layer/gizmo/camera-handle drag: restore the press-time transform, drop
+             * the gesture's undo checkpoint and keep the selection. Returns false when nothing is
+             * being dragged so the Esc ladder can continue.
+             */
+            private boolean cancelActiveLayerGesture()
+            {
+                if (this.dragMode == DRAG_NONE)
+                {
+                    return false;
+                }
+
+                CompLayer layer = this.gizmoLayerId == null || UICompositorPanel.this.doc == null
+                    ? null : UICompositorPanel.this.doc.getLayer(this.gizmoLayerId);
+
+                if (layer != null)
+                {
+                    this.writeTransform(layer, this.startScaleX, this.startScaleY, this.startRotation,
+                        this.layerStartX, this.layerStartY);
+
+                    if (layer.threeD)
+                    {
+                        UICompositorPanel.this.setScalar(layer, "z", this.startZ);
+                        UICompositorPanel.this.setScalar(layer, "rotationX", this.startRotationX);
+                        UICompositorPanel.this.setScalar(layer, "rotationY", this.startRotationY);
+                        UICompositorPanel.this.setScalar(layer, "scaleZ", this.startScaleZ);
+                    }
+
+                    if (this.dragMode == DRAG_CAMERA_BODY || this.dragMode == DRAG_CAMERA_TARGET)
+                    {
+                        UICompositorPanel.this.setScalar(layer, "cameraTargetX", this.cameraStartTargetX);
+                        UICompositorPanel.this.setScalar(layer, "cameraTargetY", this.cameraStartTargetY);
+                        UICompositorPanel.this.setScalar(layer, "cameraTargetZ", this.cameraStartTargetZ);
+                    }
+                }
+
+                this.dragMode = DRAG_NONE;
+                this.gizmoAxisIndex = -1;
+                this.gizmoLayerId = null;
+                UICompositorPanel.this.refreshInspector();
+                UICompositorPanel.this.refreshSheets();
+                UICompositorPanel.this.discardCancelledAction();
+                UICompositorPanel.this.setStatus("已取消拖动（Esc）");
+
+                return true;
+            }
 
             /* AE camera tool drag state. The tool turns the three mouse buttons into AE's three
              * camera gestures, so it must not share the layer drag modes above: those are written
@@ -595,6 +655,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private float ctStartDistance;
             private float ctStartRadius;
             private float ctStartZoom = 1F;
+            private boolean ctStartLookAt;
             private final org.joml.Vector3f ctStartEye = new org.joml.Vector3f();
             private final org.joml.Vector3f ctStartTarget = new org.joml.Vector3f();
             private final org.joml.Vector3f ctStartRight = new org.joml.Vector3f(1F, 0F, 0F);
@@ -2827,6 +2888,15 @@ public class UICompositorPanel extends UIDashboardPanel
                     return -1;
                 }
 
+                /* A hidden / trimmed-out / soloed-out layer is not drawn, so it must not offer
+                 * drag handles either: "select it in the timeline, drag the empty preview" used to
+                 * move an invisible layer. */
+                if (!layer.visible || !layer.activeAt(UICompositorPanel.this.time)
+                    || (UICompositorPanel.this.doc != null && UICompositorPanel.this.doc.isSoloedOut(layer)))
+                {
+                    return -1;
+                }
+
                 if ("camera".equals(layer.type))
                 {
                     if (UICompositorPanel.this.doc == null || UICompositorPanel.this.doc.activeCamera(UICompositorPanel.this.time) != layer)
@@ -3605,8 +3675,30 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     if (this.ctMode != CT_NONE)
                     {
+                        CompLayer cancelledCamera = UICompositorPanel.this.doc == null ? null
+                            : UICompositorPanel.this.doc.activeCamera(UICompositorPanel.this.time);
+
+                        if (cancelledCamera != null)
+                        {
+                            /* Restore the pose captured on press, exactly like every other drag:
+                             * "ended" without a restore is the same trust bug as a fake cancel. */
+                            this.writeTransform(cancelledCamera, null, null, null, this.ctStartEye.x, this.ctStartEye.y);
+                            cancelledCamera.cameraZ = this.ctStartEye.z;
+                            cancelledCamera.z = this.ctStartEye.z;
+                            UICompositorPanel.this.setScalar(cancelledCamera, "cameraZ", this.ctStartEye.z);
+                            cancelledCamera.cameraLookAt = this.ctStartLookAt;
+
+                            if (cancelledCamera.cameraLookAt)
+                            {
+                                UICompositorPanel.this.setScalar(cancelledCamera, "cameraTargetX", this.ctStartTarget.x);
+                                UICompositorPanel.this.setScalar(cancelledCamera, "cameraTargetY", this.ctStartTarget.y);
+                                UICompositorPanel.this.setScalar(cancelledCamera, "cameraTargetZ", this.ctStartTarget.z);
+                            }
+                        }
+
                         this.endCameraToolDrag();
-                        UICompositorPanel.this.setStatus("已结束摄像机工具拖动（Esc）");
+                        UICompositorPanel.this.discardCancelledAction();
+                        UICompositorPanel.this.setStatus("已取消摄像机拖动（Esc）");
                     }
                 }
 
@@ -3615,6 +3707,14 @@ public class UICompositorPanel extends UIDashboardPanel
                     || UICompositorPanel.this.doc == null
                     || Boolean.getBoolean("bbsae.debugViewLock"))
                 {
+                    if (this.ctMode != CT_NONE)
+                    {
+                        this.endCameraToolDrag();
+                    }
+
+                    /* Turning the tool off mid-press left cameraToolDragging true; the next Esc
+                     * was then swallowed by a drag that no longer existed. */
+                    UICompositorPanel.this.cameraToolDragging = false;
                     this.ctLeftWasDown = false;
                     this.ctMiddleWasDown = false;
                     this.ctRightWasDown = false;
@@ -3680,6 +3780,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.ctStartY = context.mouseY;
                 this.ctStartEye.set(CompCamera.eyeOf(camera, UICompositorPanel.this.getFrame(), doc.height));
                 this.ctStartZoom = Math.max(0.0001F, view.zoom);
+                this.ctStartLookAt = camera.cameraLookAt;
                 this.ctStartDistance = Math.max(1F, view.distance);
                 this.ctStartRight.set(view.right);
                 this.ctStartUp.set(view.up);
@@ -4447,7 +4548,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     if ("shape".equals(layer.type))
                     {
-                        dev.bbsae.client.render.ShapeCache.Raster raster = dev.bbsae.client.render.ShapeCache.get(layer, renderContext.frame);
+                        dev.bbsae.client.render.ShapeCache.Raster raster = dev.bbsae.client.render.ShapeCache.get(
+                            layer, renderContext.frame,
+                            dev.bbsae.client.render.MaskCache.cacheScope(project, doc));
 
                         if (raster == null)
                         {
@@ -4507,12 +4610,11 @@ public class UICompositorPanel extends UIDashboardPanel
                 if (!UICompositorPanel.this.is3DSpace() && context.mouseButton == 1
                     && !Boolean.getBoolean("bbsae.debugViewLock"))
                 {
-                    /* Right-drag is the orbit gesture everywhere in the preview. In the 2D editor it
-                     * enters the 3D workspace first, so "drag to look around" can never silently do
-                     * nothing because the mode was not what the user assumed. */
-                    UICompositorPanel.this.enter3DSpace();
-                    this.beginViewportDrag(context, CompInput.shiftDown() ? VP_PAN : VP_ORBIT, 1);
-                    UICompositorPanel.this.setStatus("已进入 3D 视口：拖动即可环绕");
+                    /* AE: the right button never changes the workspace. It used to force the whole
+                     * editor into the 3D view on a right-drag and steal the layer selection — the
+                     * exact opposite of the camera contract users expect. Orbit stays inside the
+                     * 3D workspace, which is entered explicitly (sphere button / 0 key). */
+                    UICompositorPanel.this.setStatus("2D 预览不响应右键环绕：点预览右侧球体或按 0 进入 3D 空间");
 
                     return true;
                 }
@@ -4796,6 +4898,16 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.dragStartY = context.mouseY;
                 this.cameraStartTargetX = layer.scalarAt("cameraTargetX", layer.cameraTargetX, UICompositorPanel.this.getFrame());
                 this.cameraStartTargetY = layer.scalarAt("cameraTargetY", layer.cameraTargetY, UICompositorPanel.this.getFrame());
+                this.cameraStartTargetZ = layer.scalarAt("cameraTargetZ", layer.cameraTargetZ, UICompositorPanel.this.getFrame());
+                /* Every handle drag (not only the 3D gizmo) needs the target id: Esc restore used
+                 * to look at gizmoLayerId, which only beginGizmoDrag ever set, so 12 of the 13
+                 * gestures "cancelled" without restoring anything. */
+                this.gizmoLayerId = layer.id;
+                this.startZ = layer.scalarAt("z", layer.z, UICompositorPanel.this.getFrame());
+                this.startRotationX = layer.scalarAt("rotationX", layer.rotationX, UICompositorPanel.this.getFrame());
+                this.startRotationY = layer.scalarAt("rotationY", layer.rotationY, UICompositorPanel.this.getFrame());
+                this.startScaleZ = Math.max(0.0001F,
+                    layer.scalarAt("scaleZ", layer.scaleZ, UICompositorPanel.this.getFrame()));
                 this.startScaleX = start.scale.x;
                 this.startScaleY = start.scale.y;
                 this.startRotation = start.rotate.z;
@@ -5768,44 +5880,65 @@ public class UICompositorPanel extends UIDashboardPanel
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.restoreFocusBeforePersist();
-            /* Never leave an encoder running with no visible export UI behind a closed panel. */
-            if (CompExportManager.isBusy())
-            {
-                CompExportManager.cancel();
-            }
-            this.savePanelLayout();
-            this.flushSave();
-            CompPrefs.flush();
-
-            if (this.settingsOverlay != null)
-            {
-                this.settingsOverlay.close();
-            }
-
-            dev.bbsae.client.overlay.BbsPreviewBridge.detach();
+            this.leavePanel(true);
         });
         this.onDisappear(() ->
         {
             this.lastPlayNanos = 0L;
             this.keyframeEditor.view.pickKeyframe(null);
             this.restoreFocusBeforePersist();
-            /* Never leave an encoder running with no visible export UI behind a closed panel. */
+            this.leavePanel(false);
+        });
+    }
+
+    /**
+     * Shared leave logic. Closing the panel (the user is done) may stop background work, but
+     * merely switching to another dashboard page must NOT silently cancel a running export: the
+     * export keeps ticking from the client and is still reachable through the render page/status
+     * line. Precache only advances while this panel renders, so it is stopped either way.
+     */
+    private void leavePanel(boolean closed)
+    {
+        this.stopCameraFlightOnLeave();
+        this.savePanelLayout();
+        this.flushSave();
+        CompPrefs.flush();
+
+        if (closed)
+        {
+            /* No visible export UI exists any more once the panel is closed. */
             if (CompExportManager.isBusy())
             {
                 CompExportManager.cancel();
+                this.setStatus("已取消导出（关闭合成器面板）");
             }
-            this.savePanelLayout();
-            this.flushSave();
-            CompPrefs.flush();
 
             if (this.settingsOverlay != null)
             {
                 this.settingsOverlay.close();
             }
+        }
 
-            dev.bbsae.client.render.CompPrecache.stop();
-            dev.bbsae.client.overlay.BbsPreviewBridge.detach();
-        });
+        dev.bbsae.client.render.CompPrecache.stop();
+        dev.bbsae.client.overlay.BbsPreviewBridge.detach();
+    }
+
+    /** A dashboard page switch must not leave the hidden-pointer BBS flight controller running. */
+    private void stopCameraFlightOnLeave()
+    {
+        if (this.cameraFlying)
+        {
+            this.cameraFlying = false;
+            this.flightCamera = null;
+            this.flightLastMouseX = Integer.MIN_VALUE;
+
+            try
+            {
+                mchorse.bbs_mod.graphics.window.Window.setCursorHidden("bbsae_bbs_flight", false);
+            }
+            catch (RuntimeException ignored)
+            {}
+        }
     }
 
     /* Film-scoped lifecycle */
@@ -8622,6 +8755,52 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /**
+     * Save button / Ctrl+S: writes now and reports the real result. The old handler marked the
+     * project dirty, printed "saved" and left the actual write to the 600 ms debounce (which can
+     * itself be deferred while the mouse is down) — a read-only file or a full disk looked like a
+     * successful save until much later.
+     */
+    public boolean saveNow()
+    {
+        if (this.project == null)
+        {
+            return false;
+        }
+
+        this.save();
+        this.flushSave();
+
+        String error = CompStore.lastSaveError();
+
+        if (error == null || error.isBlank())
+        {
+            this.setStatus("工程已保存");
+
+            return true;
+        }
+
+        String message = "保存失败：" + error;
+
+        this.notifyError(message);
+        this.setStatus(message);
+
+        return false;
+    }
+
+    /** CLIENT_STOPPING flush: writes pending document + view state without closing the panel. */
+    public void flushNow()
+    {
+        if (this.project != null)
+        {
+            this.savePanelLayout();
+            this.save();
+            this.flushSave();
+        }
+
+        CompPrefs.flush();
+    }
+
+    /**
      * Persists UI-only state (dock layout, panel sizes, editor modes) without marking the document
      * edited.
      *
@@ -10572,6 +10751,13 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         this.selectedLayer = primary;
 
+        /* One kind of selection at a time: a layer selection clears a highlighted audio clip, so
+         * Delete can never remove the audio while a layer is the visible selection. */
+        if (primary != null)
+        {
+            this.selectedAudio = null;
+        }
+
         if (this.trackTimeline != null)
         {
             this.trackTimeline.ensureSelectionVisible();
@@ -10589,7 +10775,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void clearSelection()
     {
-        if (this.selectedLayer == null && this.selectedIds.isEmpty())
+        if (this.selectedLayer == null && this.selectedIds.isEmpty() && this.selectedAudio == null)
         {
             return;
         }
@@ -10597,6 +10783,9 @@ public class UICompositorPanel extends UIDashboardPanel
         this.selectedIds.clear();
 
         this.selectedLayer = null;
+        /* Esc/empty-click must clear the highlighted audio clip too, otherwise the audio bar
+         * stays "selected" and Delete removes it on the next keypress. */
+        this.selectedAudio = null;
 
         if (this.effectLibrary != null)
         {
@@ -13171,6 +13360,33 @@ public class UICompositorPanel extends UIDashboardPanel
             || (this.keyframeHandle != null && this.keyframeHandle.isDragging());
     }
 
+    /** Esc during a legacy splitter drag: restore the size captured on press. */
+    private boolean cancelPanelResize()
+    {
+        PanelResizeHandle[] handles = {this.leftHandle, this.rightHandle, this.timelineHandle, this.keyframeHandle};
+
+        for (PanelResizeHandle handle : handles)
+        {
+            if (handle != null && handle.cancelDrag())
+            {
+                this.setStatus("已取消分栏拖动（Esc）");
+
+                return true;
+            }
+        }
+
+        /* BBS' own dock splitters have no cancel API. Swallow the key instead of letting the menu
+         * ladder clear the layer selection while the layout keeps following the mouse. */
+        if (this.dock != null && this.dock.isAnySplitterDragging())
+        {
+            this.setStatus("松开鼠标结束停靠分栏拖动（Esc 无法撤销 BBS 停靠布局）");
+
+            return true;
+        }
+
+        return false;
+    }
+
     private class PanelResizeHandle extends UIElement
     {
         private final int mode;
@@ -13189,6 +13405,23 @@ public class UICompositorPanel extends UIDashboardPanel
         boolean isDragging()
         {
             return this.dragging;
+        }
+
+        /** Esc during a splitter drag: restore the press-time panel sizes. */
+        boolean cancelDrag()
+        {
+            if (!this.dragging)
+            {
+                return false;
+            }
+
+            this.dragging = false;
+            UICompositorPanel.this.leftPanelWidth = this.startLeft;
+            UICompositorPanel.this.rightPanelWidth = this.startRight;
+            UICompositorPanel.this.timelinePanelHeight = this.startHeight;
+            UICompositorPanel.this.applyLayout();
+
+            return true;
         }
 
         @Override
@@ -14019,7 +14252,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (camera != null)
         {
-            this.selectLayer(camera);
+            /* Entering a view must not steal the selection: picking the camera made "look around"
+             * silently deselect the layer the user was editing (audit P1-4). */
         }
 
         this.refreshInspector();
@@ -14050,6 +14284,15 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.project.settings.cameraToolActive = active;
+
+        /* Two editors cannot own the same mouse: arming the camera tool must disarm the pen, or
+         * the first click creates a mask/path point AND starts a camera drag (one wasted undo
+         * step, two tools lit at once). */
+        if (active && this.penTool != null && this.penTool.isActive())
+        {
+            this.penTool.cancel();
+        }
+
         this.save();
         this.setStatus(active
             ? "AE 摄像机工具：左键环绕 · 中键 Track XY · 右键 Track Z 推拉；没有摄像机时不会自动创建"
@@ -18615,6 +18858,14 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.queue.setList(this.project.renderQueue);
+
+        /* The queue is rebuilt on project switch/undo; a selected job from the previous object
+         * graph must not stay "selected" (start/remove/retry would target a job that is no longer
+         * listed). */
+        if (this.selectedJob != null && !this.project.renderQueue.contains(this.selectedJob))
+        {
+            this.selectedJob = null;
+        }
     }
 
     /* ------------------------------------------------------------ render queue */
@@ -18753,6 +19004,18 @@ public class UICompositorPanel extends UIDashboardPanel
 
         job.outputName = this.queueName.getText().isBlank() ? this.doc.id : this.queueName.getText();
 
+        /* Two queued jobs with the same output name write the same folder/file. The second one
+         * clears the first one's frames and both report success ("the export I made earlier is
+         * gone"). Deduplicate within the queue. */
+        String baseOutput = job.outputName;
+        int suffix = 2;
+
+        while (this.renderQueueNameTaken(job.outputName))
+        {
+            job.outputName = baseOutput + "_" + suffix;
+            suffix += 1;
+        }
+
         float start = (float) this.queueStart.getValue();
         float end = (float) this.queueEnd.getValue();
 
@@ -18788,6 +19051,25 @@ public class UICompositorPanel extends UIDashboardPanel
 
     /** Unique job id: "job_" + size+1 collided after removing a middle job, and UI motion channels
      *  are keyed by id, so two live jobs shared hover/flash state. */
+    /** True when another queued job already uses this output name. */
+    private boolean renderQueueNameTaken(String outputName)
+    {
+        if (outputName == null || this.project == null)
+        {
+            return false;
+        }
+
+        for (CompRenderJob existing : this.project.renderQueue)
+        {
+            if (existing != null && outputName.equals(existing.outputName))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private String nextRenderJobId()
     {
         java.util.Set<String> used = new java.util.HashSet<>();
@@ -19610,6 +19892,27 @@ public class UICompositorPanel extends UIDashboardPanel
                 return true;
             }
 
+            /* Esc must also stop the gestures the panel owns itself: curve keys/handles, preview
+             * layer/gizmo/camera-handle drags and legacy splitter drags. Previously these fell
+             * through to the generic ladder and cleared the selection while the mouse was still
+             * down, which then wrote the drag into a fresh selection. */
+            if (this.curveEditor != null && this.curveEditor.endDrag())
+            {
+                this.setStatus("已结束曲线拖动（Esc）");
+
+                return true;
+            }
+
+            if (this.previewGestureCancel != null && this.previewGestureCancel.getAsBoolean())
+            {
+                return true;
+            }
+
+            if (this.cancelPanelResize())
+            {
+                return true;
+            }
+
             if (this.cameraToolActive())
             {
                 this.setCameraTool(false);
@@ -19796,7 +20099,7 @@ public class UICompositorPanel extends UIDashboardPanel
             case "layer.duplicate" -> { this.duplicateSelected(); return true; }
             case "select.all" -> { this.selectAllLayers(); this.setStatus("已全选 " + this.getSelectionCount() + " 个图层"); return true; }
             case "tool.select" -> { this.setStatus("选择工具：本合成器始终为选择模式"); return true; }
-            case "file.save" -> { this.save(); this.setStatus("工程已保存"); return true; }
+            case "file.save" -> { this.saveNow(); return true; }
             case "file.export" -> { this.showExportDialog(); return true; }
             case "view.focus" -> { this.toggleFocusMode(); return true; }
             case "settings.open" -> { this.openSettings("motion"); return true; }
@@ -20418,7 +20721,11 @@ public class UICompositorPanel extends UIDashboardPanel
     @Override
     public void render(UIContext context)
     {
-        boolean wantQuick = this.selectedLayer != null && !this.renderView && !this.focusMode;
+        /* Quick panel changes the timeline width; doing that on the press frame of a drag made the
+         * track's x->time mapping change under the cursor (clips jumped a few pixels on grab).
+         * Defer layout changes until the mouse is released. */
+        boolean wantQuick = this.selectedLayer != null && !this.renderView && !this.focusMode
+            && !mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0);
 
         if (this.quickPanel != null && this.quickPanel.isVisible() != wantQuick)
         {
@@ -20451,6 +20758,21 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.depthDegradedNotice = degraded;
             this.setStatus(degraded);
+        }
+
+        /* An export continues while the user edits (it now runs on a snapshot), but its only
+         * visible controls live on the render page. Surface progress on the status line so the
+         * user is not left with an invisible background job after switching pages. */
+        if (!this.renderView && CompExportManager.isBusy())
+        {
+            long now = System.currentTimeMillis();
+
+            if (now - this.lastExportStatusMs > 2000L && this.statusTicks <= 0)
+            {
+                this.lastExportStatusMs = now;
+                this.setStatus("导出中 " + Math.round(CompExportManager.progress() * 100F)
+                    + "% · 打开「渲染」页可查看/取消");
+            }
         }
 
         /* Opaque backdrop, unconditionally.

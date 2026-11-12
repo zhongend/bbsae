@@ -1809,6 +1809,7 @@ public class UICompTrackTimeline extends UIElement
         if (context.mouseX >= eyeX && context.mouseX < eyeX + 16)
         {
             this.panel.toggleLayerVisible(layer);
+            this.lastClickRow = -1;
 
             return;
         }
@@ -1816,6 +1817,7 @@ public class UICompTrackTimeline extends UIElement
         if (context.mouseX >= lockX && context.mouseX < lockX + 16)
         {
             this.panel.toggleLayerLocked(layer);
+            this.lastClickRow = -1;
 
             return;
         }
@@ -1823,6 +1825,7 @@ public class UICompTrackTimeline extends UIElement
         if (context.mouseX >= threeDX && context.mouseX < threeDX + 16)
         {
             this.panel.toggleLayer3D(layer);
+            this.lastClickRow = -1;
 
             return;
         }
@@ -1830,6 +1833,7 @@ public class UICompTrackTimeline extends UIElement
         if (context.mouseX >= parentX && context.mouseX < parentX + 16)
         {
             this.showParentMenu(layer);
+            this.lastClickRow = -1;
 
             return;
         }
@@ -2408,10 +2412,19 @@ public class UICompTrackTimeline extends UIElement
         boolean workDrag = this.dragMode == MODE_WORK_IN || this.dragMode == MODE_WORK_OUT;
         boolean reorder = this.dragMode == MODE_REORDER;
         boolean scrub = this.dragMode == MODE_SCRUB;
+        boolean navigate = this.dragMode == MODE_NAVIGATE;
 
-        if (!layerDrag && !audioDrag && !workDrag && !reorder && !scrub)
+        if (!layerDrag && !audioDrag && !workDrag && !reorder && !scrub && !navigate)
         {
             return false;
+        }
+
+        if (navigate)
+        {
+            /* Middle-drag pans the time axis; Esc restores the view captured on press instead of
+             * falling through to "clear selection" with the timeline parked halfway. */
+            this.xAxis.setShift(this.dragShift);
+            this.fitMode = false;
         }
 
         if (layerDrag)

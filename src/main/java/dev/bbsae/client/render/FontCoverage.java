@@ -111,6 +111,33 @@ public final class FontCoverage
      * {@code false} or {@code true} exactly like the old implementation did (a stb init failure
      * means "assume the font can draw it", an I/O error means "it cannot").</p>
      */
+    /**
+     * Content identity of a font file (path + mtime + size), or 0 for the built-in font / missing
+     * file. Signatures that only hash the font name did not notice a replaced font file: text
+     * layers (and their baked 3D rasters) kept the old glyph atlas.
+     */
+    public static long contentId(String fontName)
+    {
+        if (fontName == null || fontName.isBlank())
+        {
+            return 0L;
+        }
+
+        File file = RESOLVED.get(fontName);
+
+        if (file == null)
+        {
+            file = resolve(fontName);
+        }
+
+        if (file == null || !file.isFile())
+        {
+            return 0L;
+        }
+
+        return file.getAbsolutePath().hashCode() * 31L + file.lastModified() * 17L + file.length();
+    }
+
     public static Coverage coverage(File file)
     {
         if (file == null)

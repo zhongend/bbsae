@@ -108,15 +108,15 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.98.jar`](https://github.com/zhongend/bbsae/releases/download/v0.98/bbsae-0.98.jar)
-   from the **v0.98** release (the asset is updated with each source push).
+1. Download [`bbsae-0.99.jar`](https://github.com/zhongend/bbsae/releases/download/v0.99/bbsae-0.99.jar)
+   from the **v0.99** release (the asset is updated with each source push).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.98.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
 
-`bbsae-0.98.jar` SHA-256: `75B894CB3D4537BBBDD964F6584C5E8EC98F954E354585519BF647532E44B373` (3,806,193 bytes).
+`bbsae-0.99.jar` SHA-256: `949554D3FF488C8781CFB07A567B3B7D26F2E7906C63D1AAEF3B025125F37493` (3,814,597 bytes).
 
 ## Gallery
 
@@ -2068,5 +2068,6 @@ MIT.
 - **Round 49 (exhaustive bug audit: effect data layer P1s, compositor interaction P1s, per-pixel-depth cleanup, replay/pen/motion polish, AM P1 batch, v0.94):** [`docs/ROUND49-AUDIT-FIXES.zh.md`](docs/ROUND49-AUDIT-FIXES.zh.md)
 - **Round 50 (second audit wave: timeline/undo/selection + 3D camera/render-cache pipeline, replay interaction real-machine verification, AM deform batch, v0.95):** [`docs/ROUND50-AUDIT-FIXES.zh.md`](docs/ROUND50-AUDIT-FIXES.zh.md)
 - **Round 51 (third audit wave: persistence/save isolation + export pipeline deadlock/queue guards, depth AUTO default, pen keep-count/RotoBezier, AM final batch, settings motion, v0.98):** [`docs/ROUND51-AUDIT-FIXES.zh.md`](docs/ROUND51-AUDIT-FIXES.zh.md)
+- **Round 54 (UI state-machine audit + render/cache audit P0/P1: real Esc cancel, export snapshot, mask ownership, cache scope, GPU byte budgets, green-frame race, v0.99):** [`docs/ROUND54-UI-STATE.zh.md`](docs/ROUND54-UI-STATE.zh.md), [`docs/RENDER-AUDIT-FIX.zh.md`](docs/RENDER-AUDIT-FIX.zh.md), [`docs/PERF-GPU-MEMORY.zh.md`](docs/PERF-GPU-MEMORY.zh.md)
 - **Round 53 (replay undo UI root cause fixed + 3D camera/layer audit + save/curve performance, v0.98):** [`docs/ROUND53-PERF-REPLAY-CAMERA.zh.md`](docs/ROUND53-PERF-REPLAY-CAMERA.zh.md)
 - **Round 52 (effect 2D/3D/export consistency + 3D effect unit/matte/raster fixes, effects-right default dock, text/mask performance, save-path tuning, v0.98):** [`docs/ROUND52-EFFECT-3D-PERF.zh.md`](docs/ROUND52-EFFECT-3D-PERF.zh.md)

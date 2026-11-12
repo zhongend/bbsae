@@ -211,7 +211,7 @@ public final class CompRenderCache
     private static long layerRecursive(long h, CompProject project, CompLayer layer, float frame,
                                        int depth, java.util.Set<String> stack)
     {
-        h = layer(h, layer, frame);
+        h = layer(h, layer, frame, project == null ? "" : project.id);
 
         if (project == null || layer == null || layer.precompId == null || layer.precompId.isEmpty())
         {
@@ -273,7 +273,7 @@ public final class CompRenderCache
         return h;
     }
 
-    private static long layer(long h, CompLayer layer, float frame)
+    private static long layer(long h, CompLayer layer, float frame, String projectId)
     {
         if (layer == null)
         {
@@ -315,6 +315,8 @@ public final class CompRenderCache
         h = mix(h, layer.strokeWidth);
         h = mix(h, layer.text == null ? 0 : layer.text.hashCode());
         h = mix(h, layer.fontName == null ? 0 : layer.fontName.hashCode());
+        /* Same for a replaced font file: the glyph atlas must be rebuilt. */
+        h = mix(h, FontCoverage.contentId(layer.fontName));
         h = mix(h, layer.fontSize);
         h = mix(h, layer.tracking);
         h = mix(h, layer.lineHeight);
@@ -325,6 +327,9 @@ public final class CompRenderCache
         h = mix(h, layer.textBoxWidth);
         h = mix(h, layer.textBoxHeight);
         h = mix(h, layer.imagePath == null ? 0 : layer.imagePath.hashCode());
+        /* The path alone did not notice a replaced file: same name, different pixels kept the old
+         * cached frame. Mix the file identity (mtime + size) into the fingerprint. */
+        h = mix(h, ImageTextureCache.contentId(projectId, layer.imagePath));
         h = mix(h, layer.imageFit);
         h = mix(h, layer.textureFilter);
         h = mix(h, layer.precompId == null ? 0 : layer.precompId.hashCode());

@@ -1,5 +1,59 @@
 # BBS AE 更新日记
 
+## 0.99 — 2026-11-14
+
+第六轮「假设所有功能都有 bug」：UI 操作逻辑/状态机审计 + 渲染/缓存资源审计的 P0/P1 修复。修掉
+Esc「假取消」、离开页面临杀导出、导出中编辑混版、右键预览强制进 3D、保存谎报、蒙版 Pass 所有权
+违约、Mask/Shape 跨合成串键、图片/字体内容身份、显存无字节预算、绿帧写盘竞态、预渲染巨栅格等。
+全量 **145 个测试套件 / 929 项测试全绿（1 skipped）**（0.98 基线 142/905）。
+
+### UI 状态机
+
+- **Esc 真取消**：图层/手柄拖动记录完整 press-time 姿态（x/y、scale 三轴、rotation 三轴、z、相机
+  目标），Esc 真正还原并丢弃撤销检查点；相机工具 Esc 回写开始姿态；分栏拖动 Esc 恢复宽度（dock
+  分栏无 BBS cancel API 时吞掉 Esc 并提示，不再清空选择）；曲线拖动 Esc 结束当前手势（还原快照
+  留 task-35 下一轮）；时间轴中键平移 Esc 恢复视图。
+- **离开页面不再杀导出**：关闭面板才取消导出；切换 dashboard 页面保留后台导出并在编辑页状态栏
+  显示"导出中 42% · 打开渲染页可查看/取消"；离开时退出 BBS 飞行并释放光标。
+- **保存不再谎报**：Ctrl+S/保存按钮走 `saveNow()`（立即写盘 + 读 lastSaveError），失败弹错误。
+- **右键预览不再强制进 3D/抢选择**：2D 预览右键不做破坏性操作（提示用球体/0 键进入 3D）；
+  `enter3DSpace` 不再改选择。
+- 钢笔与相机工具互斥；隐藏/剪出/solo-out 图层不显示拖动手柄；选图层清音频选择（Delete 不删错）；
+  quickPanel 布局变化不再发生在拖动首帧；队列同名输出自动加后缀；关闭客户端时再 flush 一次；
+  队列刷新校验 selectedJob。
+
+### 导出快照 / 状态
+
+- `CompExportManager.start` 对工程做深拷贝：导出=快照，导出期间编辑/撤销不会让成片混入两种版本，
+  任务也仍登记在 live 工程队列中（不再"脱管"）。
+- 每个 start 失败分支写 job.message（合成不存在/输出模块不存在）；完成/失败状态保留一段时间
+  （不再一帧变 Idle）；`cancel(reason)` 记录原因；新增 `CompExportManagerTest` 5 例（快照隔离/失败消息/状态保留）。
+
+### 渲染/缓存（审计 P0/P1，全部落地）
+
+- **P0 `PassRenderer.mask` 所有权违约**：program==null 时原来 release 目标后返回入参 → 双重释放/
+  池内纹理串用；现在失败返回 null、4 个调用点判空保留 content；shader 编译成功后才置 initialized。
+- **P1 Mask/Shape 缓存作用域**：key 加 project.id+comp.id（父子预合成同 layer id 不再串纹理/每帧重栅格化），
+  主代码调用点（渲染 + UI 命中）全部带 scope。
+- **P1 烘培签名缺参考网格**：`CompLayerSourceCache.signature` 混入 comp 宽高 + rasterMaxEdge，
+  改合成分辨率后 3D 效果半径不再用旧网格。
+- **P1 资源内容身份**：`ImageTextureCache.contentId`（路径+mtime+size）与字体 contentId 混入帧/烘培
+  签名 → 同名覆盖图片/换字体立刻刷新。
+- **P1 单图层异常不再泄漏 FBO**：异常路径释放仍归本层的 content 后重抛。
+- **P1 GlTexture 写入绑定**：allocate/upload/setLinear 全走 bindForUpdate，delete 清缓存名。
+- **P0 显存字节预算**：`FboPool.bytes()/trimTo()/budgetBytes()`（默认 256MB 可配），按字节淘汰；
+  `CompPrecache.residentBytes()` + 跨 comp 预算/切 comp 释放非活动纹理。
+- **P1 绿帧写盘竞态**：generation/onDisk volatile、帧名带内容签名、prepare 与写任务同锁 + ATOMIC_MOVE、
+  restore 校验签名、sweep AtomicBoolean、CACHES key hash 后缀防截断碰撞。
+- **P1 预渲染目标分辨率**：`CompRenderContext.targetEdge`（预渲染 1280 / 编码器请求尺寸 / 预览 1024 /
+  导出合成长边），4K 工程预渲染不再烘焙 3840² 巨栅格。
+- 新增 RenderAuditFixTest 9 + RenderMemoryBudgetTest 7；文档 docs/RENDER-AUDIT-FIX.zh.md、docs/PERF-GPU-MEMORY.zh.md。
+
+### 3D 逻辑版本迁移锚点
+
+- `CompProject.VERSION` 5→6 + `CompSettings.logicVersion`（1=AE，2=legacy；旧文件由 legacy 开关
+  推导一次），不改视觉默认；新工程=1。为未来 3D 逻辑迁移提供稳定锚点。
+
 ## 0.98 — 2026-11-14
 
 第五轮「假设所有功能都有 bug」：审计 **3D 摄像机/图层 3D 逻辑是否符合 AE 语义**（需求 1 的最终校验），

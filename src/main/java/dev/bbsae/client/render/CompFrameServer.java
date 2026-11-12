@@ -198,7 +198,20 @@ public final class CompFrameServer
         }
 
         long started = System.nanoTime();
-        GlFramebuffer rendered = CompRenderer.renderFrame(project, doc, frameIndex, transparentStage, clampedScale);
+        GlFramebuffer rendered;
+
+        /* The frame request itself defines the pixel grid the encoder/preview expects: a 4K comp at
+         * proxy 0.5 must bake its 3D layers for 1920 px, not the 1024 px draft cap. */
+        CompRenderContext.setTargetEdge(Math.max(width, height));
+
+        try
+        {
+            rendered = CompRenderer.renderFrame(project, doc, frameIndex, transparentStage, clampedScale);
+        }
+        finally
+        {
+            CompRenderContext.setTargetEdge(0);
+        }
 
         lastMillis = (System.nanoTime() - started) / 1_000_000F;
 
@@ -221,7 +234,7 @@ public final class CompFrameServer
         {
             int[] pixels = rendered.readTopDown();
 
-            if (CompFrameDisk.saveAsync(project, doc, key.signature, frameIndex, width, height, pixels))
+            if (CompFrameDisk.saveAsync(project, doc, key.signature, frameIndex, width, height, pixels, key.alpha))
             {
                 diskWrites++;
             }
@@ -256,7 +269,7 @@ public final class CompFrameServer
      */
     private static GlFramebuffer fromDisk(CompProject project, CompDocument doc, Key key, int width, int height)
     {
-        int[] pixels = CompFrameDisk.load(project, doc, key.signature, key.frame, width, height);
+        int[] pixels = CompFrameDisk.load(project, doc, key.signature, key.frame, width, height, key.alpha);
 
         if (pixels == null)
         {

@@ -91,6 +91,18 @@ public final class ShapeCache
 
     public static synchronized Raster get(CompLayer layer, float frame)
     {
+        return get(layer, frame, "");
+    }
+
+    /**
+     * Scoped variant: the cache and the reusable texture are keyed by project+composition+layer.
+     *
+     * <p>Nested precomps can contain a layer with the same id as a layer of the parent composition;
+     * with keys of {@code layer.id:hash} the first raster (and its reusable texture slot) was served
+     * to the second composition, and the per-frame state comparison re-rasterized it every frame.</p>
+     */
+    public static synchronized Raster get(CompLayer layer, float frame, String scope)
+    {
         if (layer == null || layer.shapes == null || layer.shapes.isEmpty())
         {
             return null;
@@ -110,7 +122,8 @@ public final class ShapeCache
             }
 
             long content = contentHash(stack);
-            String key = layer.id + ":" + Long.toHexString(content);
+            String layerSlot = layerSlot(scope, layer.id);
+            String key = layerSlot + ":" + Long.toHexString(content);
             CachedRaster cached = CACHE.get(key);
 
             if (cached != null && cached.width > 0)
@@ -151,14 +164,14 @@ public final class ShapeCache
 
             float originX = (float) bounds.getX() - pad;
             float originY = (float) bounds.getY() - pad;
-            GlTexture texture = upload(layer, key, width, height, work);
+            GlTexture texture = upload(layerSlot, key, width, height, work);
 
-            CachedRaster entry = new CachedRaster(key, layer.id, texture, width, height,
+            CachedRaster entry = new CachedRaster(key, layerSlot, texture, width, height,
                 originX, originY, stack.anchorX, stack.anchorY);
 
             entry.raster = new Raster(texture, width, height, originX, originY);
             CACHE.put(key, entry);
-            RECENT.put(layer.id, entry);
+            RECENT.put(layerSlot, entry);
             trimRecent();
 
             return entry.raster;
@@ -750,9 +763,9 @@ public final class ShapeCache
      * that was silently re-used for a different state. This is what stops a keyframed rotation or
      * trim animation from allocating and deleting a GL texture every frame.</p>
      */
-    private static GlTexture upload(CompLayer layer, String key, int width, int height, ShapeWork work)
+    private static GlTexture upload(String layerSlot, String key, int width, int height, ShapeWork work)
     {
-        CachedRaster recent = RECENT.get(layer.id);
+        CachedRaster recent = RECENT.get(layerSlot);
         GlTexture texture;
 
         if (recent != null && recent.width == width && recent.height == height && recent.texture.id > 0)
@@ -859,6 +872,25 @@ public final class ShapeCache
     }
 
     /* ---------------------------------------------------------------- test hooks */
+
+    /** Layer slot inside a project/composition scope; empty scope keeps the historic key. */
+    static String layerSlot(String scope, String layerId)
+    {
+        return scope == null || scope.isEmpty() ? layerId : scope + "/" + layerId;
+    }
+
+    /** Scoped content identity (scope hash mixed into the pixel-cache identity). */
+    static synchronized long contentKey(CompLayer layer, float frame, String scope)
+    {
+        long key = contentKey(layer, frame);
+
+        if (scope != null && !scope.isEmpty())
+        {
+            key = key * 31L + scope.hashCode();
+        }
+
+        return key;
+    }
 
     /** World/translation-normalised content identity used as the pixel-cache key. */
     static synchronized long contentKey(CompLayer layer, float frame)

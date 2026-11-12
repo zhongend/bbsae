@@ -1098,6 +1098,7 @@ public final class CompStore
         project.comps.add(defaultComp("Main"));
         project.outputPresets = defaultPresets();
         project.settings = new CompProject.CompSettings();
+        project.settings.logicVersion = 1;
 
         CompDocument comp = project.getCompOrFirst(DEFAULT_COMP);
 
@@ -1552,6 +1553,14 @@ public final class CompStore
         if (project.settings == null)
         {
             project.settings = new CompProject.CompSettings();
+        }
+
+        /* v6: record the 3D logic the file was authored with. Older files never recorded it, so a
+         * future logic migration could not tell an AE project from a legacy one; derive the anchor
+         * once from the current toggle without changing any visual default. */
+        if (project.settings.logicVersion == null)
+        {
+            project.settings.logicVersion = project.settings.legacy3DLogic ? 2 : 1;
         }
 
         if (project.renderQueue == null)

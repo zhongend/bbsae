@@ -295,6 +295,14 @@ public class BbsAeClient implements BBSAddonMod
         {
             BbsPreviewBridge.detach();
             dev.bbsae.client.export.CompExportManager.shutdown();
+
+            /* The 600 ms debounce and the 60 s autosave are the only writers otherwise; a normal
+             * quit must not lose the last edits. */
+            if (compositorPanel != null)
+            {
+                compositorPanel.flushNow();
+            }
+
             CompRenderer.clearCaches();
             dev.bbsae.client.replay.ReplayModelPass.release();
         });

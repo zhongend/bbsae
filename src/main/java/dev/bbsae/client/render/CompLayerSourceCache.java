@@ -201,6 +201,13 @@ public final class CompLayerSourceCache
             return MAX_EDGE;
         }
 
+        if (context.targetEdge > 0)
+        {
+            /* Explicit request (pre-render cache 1280, AE encoder frame size, …): the source raster
+             * must not be capped by the draft guard. */
+            return context.targetEdge;
+        }
+
         if (context.preview)
         {
             return MAX_EDGE;
@@ -269,7 +276,7 @@ public final class CompLayerSourceCache
             /* The shape raster is the authority on where shape pixels live (stroke, trim and
              * repeater can all exceed the layer box). It is cached by content, so asking for it
              * here is a lookup, not a second rasterization. */
-            ShapeCache.Raster raster = ShapeCache.get(layer, frame);
+            ShapeCache.Raster raster = ShapeCache.get(layer, frame, MaskCache.cacheScope(context.project, context.comp));
 
             if (raster != null)
             {
@@ -555,13 +562,14 @@ public final class CompLayerSourceCache
          * the 2D order. Before this the 3D path simply ignored masks. */
         if (hasMasks)
         {
-            MaskCache.MaskTexture mask = MaskCache.get(layer, current.width, current.height, world, parent.frame, scale);
+            MaskCache.MaskTexture mask = MaskCache.get(layer, current.width, current.height, world, parent.frame, scale,
+                MaskCache.cacheScope(parent.project, parent.comp));
 
             if (mask != null)
             {
                 GlFramebuffer masked = PassRenderer.mask(current, mask.texture.id, 0);
 
-                if (masked != current)
+                if (masked != null && masked != current)
                 {
                     FboPool.release(current);
                     current = masked;
@@ -970,6 +978,13 @@ public final class CompLayerSourceCache
         h = mix(h, pixelWidth);
         h = mix(h, pixelHeight);
 
+        /* Effect pixel parameters are authored against the composition grid (see EffectSpace's
+         * refWidth/refHeight): resizing the composition must rebuild the baked raster or a 3D
+         * layer keeps the old effect radii. The raster cap is part of the same grid decision. */
+        h = mix(h, context.comp == null ? 0 : context.comp.width);
+        h = mix(h, context.comp == null ? 0 : context.comp.height);
+        h = mix(h, (long) rasterMaxEdge(context));
+
         /* The frame index only enters the fingerprint when the layer's *content* is time dependent.
          * Mixing it in unconditionally rebuilt every solid/image/text layer on every frame of
          * playback — the whole composition re-rasterized 30 times a second for nothing. */
@@ -990,6 +1005,7 @@ public final class CompLayerSourceCache
         h = mix(h, dev.bbsae.comp.TextContent.contentHash(layer));
         h = mix(h, layer.text == null ? 0 : layer.text.hashCode());
         h = mix(h, layer.fontName == null ? 0 : layer.fontName.hashCode());
+        h = mix(h, FontCoverage.contentId(layer.fontName));
         h = mix(h, layer.fontSizeAt(frame));
         h = mix(h, layer.trackingAt(frame));
         h = mix(h, layer.lineHeightAt(frame));
@@ -1001,6 +1017,8 @@ public final class CompLayerSourceCache
         h = mix(h, layer.textBoxWidth);
         h = mix(h, layer.textBoxHeight);
         h = mix(h, layer.imagePath == null ? 0 : layer.imagePath.hashCode());
+        h = mix(h, ImageTextureCache.contentId(context.project == null ? "" : context.project.id,
+            layer.imagePath));
         h = mix(h, layer.imageFit);
         /* Filtering is applied while the source raster is built, so a policy change must rebuild
          * it. AUTO depends on the source and the raster size, both already in the fingerprint. */

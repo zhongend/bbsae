@@ -61,8 +61,12 @@ public final class PassRenderer
 
         if (program == null)
         {
+            /* Ownership: returning the input while also releasing the freshly acquired target was a
+             * double-release (the caller cannot tell whether it still owns source, and the pool got
+             * the same target back twice). Failure means "no result", so the caller keeps its input. */
             FboPool.release(output);
-            return source;
+
+            return null;
         }
 
         output.begin();

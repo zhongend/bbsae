@@ -44,6 +44,10 @@ public final class CompExportManager
 {
     private static Session session;
     private static CompProject queuedProject;
+    /** Last human-readable result, kept after the session ends so the status line is not "Idle"
+     * for exactly one frame (the render page then shows Done/Failed for a change). */
+    private static String lastStatus = "";
+    private static long lastStatusMs;
     private static final List<String> LOG = new ArrayList<>();
 
     /** Wall-clock slice of one client tick spent on export frames (50 ms tick at 20 TPS). */
@@ -68,12 +72,81 @@ public final class CompExportManager
 
     public static String status()
     {
-        return session == null ? "Idle" : session.status;
+        if (session != null)
+        {
+            return session.status;
+        }
+
+        /* Keep the last result around for a while instead of collapsing to "Idle" immediately:
+         * the render page reads this once per frame, so a finish message that only exists while
+         * the session is non-null is effectively never seen. */
+        if (!lastStatus.isBlank() && System.currentTimeMillis() - lastStatusMs < 15000L)
+        {
+            return lastStatus;
+        }
+
+        return "Idle";
     }
 
+    /** The project the running export is actually reading (a snapshot, not the live object). */
+    static CompProject sessionProjectForTests()
+    {
+        return session == null ? null : session.project;
+    }
+
+    private static void remember(Session finished)
+    {
+        if (finished == null)
+        {
+            return;
+        }
+
+        String message = finished.status;
+
+        if (message == null || message.isBlank())
+        {
+            message = String.valueOf(finished.job.message);
+        }
+
+        lastStatus = message;
+        lastStatusMs = System.currentTimeMillis();
+    }
     public static List<String> log()
     {
         return LOG;
+    }
+
+    /**
+     * Deep copy of the project an export will read. Exposed within the package so the
+     * "editing during a render cannot change the output" contract is testable without a client or
+     * GL context (starting a real Session creates output folders).
+     */
+    static CompProject snapshotForExport(CompProject project)
+    {
+        if (project == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            String json = CompStore.snapshot(project);
+
+            return json == null || json.isBlank() ? null : CompStore.restore(json);
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.error("Could not snapshot the project for export", e);
+
+            return null;
+        }
+    }
+
+    /** Test hook for the last-status retention rule. */
+    static void debugRememberStatus(String message)
+    {
+        lastStatus = message == null ? "" : message;
+        lastStatusMs = System.currentTimeMillis();
     }
 
     public static synchronized boolean start(CompProject project, CompRenderJob job)
@@ -83,14 +156,33 @@ public final class CompExportManager
             return false;
         }
 
-        CompDocument comp = project.getComp(job.compId);
+        /* Export reads a deep snapshot, never the live object graph: editing/undoing while a long
+         * render runs used to mix old and new content in one file, and an undo could replace the
+         * project the session pointed at (the running job then "disappeared" from the queue while
+         * still rendering). The job itself stays in the live queue so progress/cancel work. */
+        CompProject snapshot = snapshotForExport(project);
 
-        if (comp == null)
+        if (snapshot == null)
         {
+            job.status = CompRenderJob.FAILED;
+            job.message = "工程快照失败，无法导出";
+            BbsAeAddon.LOGGER.warn("Export job {}: project snapshot failed", job.id);
+
             return false;
         }
 
-        CompOutputPreset preset = project.getPreset(job.presetId);
+        CompDocument comp = snapshot.getComp(job.compId);
+
+        if (comp == null)
+        {
+            job.status = CompRenderJob.FAILED;
+            job.message = "合成不存在：" + job.compId;
+            BbsAeAddon.LOGGER.warn("Export job {} references missing composition '{}'", job.id, job.compId);
+
+            return false;
+        }
+
+        CompOutputPreset preset = snapshot.getPreset(job.presetId);
 
         if (preset == null)
         {
@@ -99,20 +191,20 @@ public final class CompExportManager
              * file is the worst possible failure mode because the user cannot see it. */
             if ("alpha_prores".equals(job.presetId))
             {
-                preset = project.getPreset("alpha_prores4444");
+                preset = snapshot.getPreset("alpha_prores4444");
             }
 
             if (preset == null)
             {
                 job.status = CompRenderJob.FAILED;
-                job.message = "Unknown output preset: " + job.presetId;
+                job.message = "输出模块不存在：" + job.presetId;
                 BbsAeAddon.LOGGER.warn("Export job {} references unknown output preset '{}'", job.id, job.presetId);
 
                 return false;
             }
         }
 
-        session = new Session(project, comp, preset, job);
+        session = new Session(snapshot, comp, preset, job);
 
         try
         {
@@ -145,11 +237,19 @@ public final class CompExportManager
             session.stopEncoder();
             session.job.status = CompRenderJob.CANCELLED;
             session.job.message = "Cancelled (game closing)";
+            session.status = "已取消：关闭游戏";
+            remember(session);
             session = null;
         }
     }
 
     public static synchronized void cancel()
+    {
+        cancel("用户取消");
+    }
+
+    /** Cancel with a reason so the status line explains where the job went. */
+    public static synchronized void cancel(String reason)
     {
         queuedProject = null;
 
@@ -158,7 +258,9 @@ public final class CompExportManager
             session.cancelled = true;
             session.stopEncoder();
             session.job.status = CompRenderJob.CANCELLED;
-            session.job.message = "Cancelled";
+            session.job.message = reason == null || reason.isBlank() ? "Cancelled" : "Cancelled: " + reason;
+            session.status = "已取消：" + (reason == null || reason.isBlank() ? "用户取消" : reason);
+            remember(session);
             session = null;
         }
     }
@@ -218,6 +320,7 @@ public final class CompExportManager
         {
             if (current.cancelled)
             {
+                remember(current);
                 session = null;
                 return;
             }
@@ -270,6 +373,7 @@ public final class CompExportManager
 
             if (current.finished)
             {
+                remember(current);
                 session = null;
             }
         }
@@ -285,6 +389,7 @@ public final class CompExportManager
              * waiting on stdin holds the output file open, so every later export of the same
              * name fails until the game is restarted. */
             current.stopEncoder();
+            remember(current);
             session = null;
         }
     }

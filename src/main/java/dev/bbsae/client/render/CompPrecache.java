@@ -120,7 +120,7 @@ public final class CompPrecache
         int index;
         GlTexture texture;
         long lastUsed;
-        boolean onDisk;
+        volatile boolean onDisk;
         boolean failed;
     }
 
@@ -131,8 +131,9 @@ public final class CompPrecache
         final String compId;
         long signature;
         /** Bumped whenever the on-disk frames are wiped (signature change); queued disk writes
-         * from the previous generation must not resurrect deleted files. */
-        int generation;
+         * from the previous generation must not resurrect deleted files. Volatile: the writer
+         * thread compares it against the generation captured when the write was queued. */
+        volatile int generation;
         int width;
         int height;
         /** Single scale both {@link #width}/{@link #height} and the render call are derived from. */
@@ -229,6 +230,57 @@ public final class CompPrecache
         return root().resolve(safe(key));
     }
 
+    /**
+     * Cache identity: project + comp, sanitised for the filesystem plus a hash suffix.
+     *
+     * <p>{@link #safe} truncates at 64 characters and maps every non-alphanumeric to {@code _}, so
+     * two long comp ids that differ only at the end (or in punctuation) produced the same directory
+     * and served each other's green frames. The hash of the original ids disambiguates them.</p>
+     */
+    static String cacheKey(String projectId, String compId)
+    {
+        String a = safe(projectId);
+        String b = safe(compId);
+        int hash = 31 * String.valueOf(projectId).hashCode() + String.valueOf(compId).hashCode();
+
+        return a + "/" + b + "~" + Integer.toHexString(hash);
+    }
+
+    /** Total resident bytes of pre-render textures (active caches + free list). */
+    public static long residentBytes()
+    {
+        long total = 0;
+
+        for (Cache cache : CACHES.values())
+        {
+            for (Frame entry : cache.frames.values())
+            {
+                if (entry.texture != null)
+                {
+                    total += textureBytes(entry.texture);
+                }
+            }
+        }
+
+        if (freeWidth > 0 && freeHeight > 0)
+        {
+            total += (long) freeWidth * freeHeight * 4L * FREE.size();
+        }
+
+        return total;
+    }
+
+    /** Byte budget for resident pre-render textures; -Dbbsae.precacheBudgetBytes overrides. */
+    static long residentBudgetBytes()
+    {
+        return Math.max(0L, Long.getLong("bbsae.precacheBudgetBytes", 256L * 1024 * 1024));
+    }
+
+    private static long textureBytes(GlTexture texture)
+    {
+        return (long) Math.max(1, texture.width) * Math.max(1, texture.height) * 4L;
+    }
+
     private static String safe(String value)
     {
         if (value == null || value.isEmpty())
@@ -250,7 +302,12 @@ public final class CompPrecache
 
     private static Path frameFile(Cache cache, int frame)
     {
-        return dir(cache.key).resolve(String.format(java.util.Locale.ROOT, "f%06d.rgba", frame));
+        /* The content signature is part of the file name. The writer task can otherwise land a
+         * frame from the PREVIOUS document state inside a directory that prepare() has already
+         * re-signatured (the old code only re-checked generation before writing), and the next
+         * session's restore() would serve it as if it belonged to the new content. */
+        return dir(cache.key).resolve(String.format(java.util.Locale.ROOT, "f%06d_%016x.rgba",
+            frame, cache.signature));
     }
 
     private static Path metaFile(Cache cache)
@@ -276,7 +333,7 @@ public final class CompPrecache
             return null;
         }
 
-        String key = safe(project.id) + "/" + safe(comp.id);
+        String key = cacheKey(project.id, comp.id);
         int[] size = cacheSize(comp);
         long signature = CompRenderCache.signature(project, comp, 0F, true, true, 0, size[0], size[1], false);
         Cache cache = CACHES.get(key);
@@ -307,38 +364,45 @@ public final class CompPrecache
         cache.stale = false;
 
         /* A signature change means every pixel is stale. Delete the files instead of leaving
-         * them to accumulate: a cache directory is not a project archive. */
-        cache.generation += 1;
-
-        try
+         * them to accumulate: a cache directory is not a project archive. The bump + wipe are one
+         * critical section with the writer task (which also locks the cache), so a queued write
+         * either lands before the wipe or is dropped by its generation check. */
+        synchronized (cache)
         {
-            Path directory = dir(key);
+            cache.generation += 1;
 
-            if (Files.isDirectory(directory))
+            try
             {
-                try (java.util.stream.Stream<Path> stream = Files.list(directory))
-                {
-                    stream.filter((path) -> !path.getFileName().toString().equals("meta.txt"))
-                        .forEach((path) ->
-                        {
-                            try
-                            {
-                                Files.deleteIfExists(path);
-                            }
-                            catch (IOException ignored)
-                            {}
-                        });
-                }
-            }
+                Path directory = dir(key);
 
-            Files.createDirectories(directory);
-            Files.writeString(metaFile(cache), signature + " " + size[0] + " " + size[1] + " " + comp.duration);
+                if (Files.isDirectory(directory))
+                {
+                    try (java.util.stream.Stream<Path> stream = Files.list(directory))
+                    {
+                        stream.filter((path) -> !path.getFileName().toString().equals("meta.txt"))
+                            .forEach((path) ->
+                            {
+                                try
+                                {
+                                    Files.deleteIfExists(path);
+                                }
+                                catch (IOException ignored)
+                                {}
+                            });
+                    }
+                }
+
+                Files.createDirectories(directory);
+                Files.writeString(metaFile(cache), signature + " " + size[0] + " " + size[1] + " " + comp.duration);
+            }
+            catch (IOException e)
+            {
+                BbsAeAddon.LOGGER.warn("Could not prepare the pre-render cache at {}", dir(key), e);
+                cache.broken = true;
+            }
         }
-        catch (IOException e)
-        {
-            BbsAeAddon.LOGGER.warn("Could not prepare the pre-render cache at {}", dir(key), e);
-            cache.broken = true;
-        }
+
+        releaseInactiveCaches(cache);
 
         return cache;
     }
@@ -568,7 +632,21 @@ public final class CompPrecache
 
     private static void renderFrame(CompProject project, CompDocument comp, Cache cache, int frame, float time)
     {
-        GlFramebuffer fbo = CompRenderer.renderForCache(project, comp, time, cache.scale);
+        GlFramebuffer fbo;
+
+        /* The green bar stores 1280-px frames, so the layer source rasters must be able to reach
+         * 1280 too; the 1024 px draft cap made 1080p pre-rendered frames visibly softer than they
+         * needed to be. */
+        CompRenderContext.setTargetEdge(MAX_WIDTH);
+
+        try
+        {
+            fbo = CompRenderer.renderForCache(project, comp, time, cache.scale);
+        }
+        finally
+        {
+            CompRenderContext.setTargetEdge(0);
+        }
 
         if (fbo == null)
         {
@@ -621,6 +699,7 @@ public final class CompPrecache
         entry.failed = false;
 
         evictTextures(cache);
+        enforceResidentBudget(cache);
 
         /* Persisting is the expensive half (deflate + fsync), so it happens off-thread. The
          * frame is already usable from VRAM the moment this returns. */
@@ -630,33 +709,65 @@ public final class CompPrecache
     private static void writeAsync(Cache cache, int frame, byte[] pixels)
     {
         final Frame entry = cache.frames.get(frame);
-        final Path file = frameFile(cache, frame);
+        final long signature = cache.signature;
         final int generation = cache.generation;
 
         WRITER.execute(() ->
         {
-            /* A signature change wiped this directory while our task sat in the queue; writing
-             * now would put pre-edit pixels under the NEW signature (served after a restart). */
-            if (cache.generation != generation)
+            /* The signature change and the directory wipe are one locked critical section, so this
+             * check is race-free: either the write completes before the wipe (and its file name
+             * carries the old signature, so restore() ignores it), or the generation moved and the
+             * write is dropped. */
+            synchronized (cache)
             {
-                return;
-            }
-
-            byte[] compressed = compress(pixels);
-
-            try
-            {
-                Files.createDirectories(file.getParent());
-                Files.write(file, compressed);
-
-                if (entry != null)
+                if (cache.generation != generation || cache.signature != signature)
                 {
-                    entry.onDisk = true;
+                    return;
                 }
-            }
-            catch (IOException e)
-            {
-                BbsAeAddon.LOGGER.warn("Could not write a cached frame to {}", file, e);
+
+                byte[] compressed = compress(pixels);
+                Path file = frameFile(cache, frame);
+                Path temporary = null;
+
+                try
+                {
+                    Files.createDirectories(file.getParent());
+                    temporary = Files.createTempFile(file.getParent(), file.getFileName().toString(), ".tmp");
+                    Files.write(temporary, compressed);
+
+                    try
+                    {
+                        Files.move(temporary, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                    }
+                    catch (java.nio.file.AtomicMoveNotSupportedException unsupported)
+                    {
+                        Files.move(temporary, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+
+                    temporary = null;
+
+                    if (entry != null)
+                    {
+                        entry.onDisk = true;
+                    }
+                }
+                catch (IOException e)
+                {
+                    BbsAeAddon.LOGGER.warn("Could not write a cached frame to {}", file, e);
+                }
+                finally
+                {
+                    if (temporary != null)
+                    {
+                        try
+                        {
+                            Files.deleteIfExists(temporary);
+                        }
+                        catch (IOException ignored)
+                        {}
+                    }
+                }
             }
         });
     }
@@ -728,6 +839,7 @@ public final class CompPrecache
                 entry.texture = texture;
                 entry.lastUsed = System.nanoTime();
                 evictTextures(cache);
+                enforceResidentBudget(cache);
 
                 return texture;
             }
@@ -743,7 +855,7 @@ public final class CompPrecache
             return null;
         }
 
-        String key = safe(project.id) + "/" + safe(comp.id);
+        String key = cacheKey(project.id, comp.id);
         Cache cache = CACHES.get(key);
 
         if (cache == null)
@@ -824,14 +936,27 @@ public final class CompPrecache
 
                     try
                     {
-                        int frame = Integer.parseInt(name.substring(1, name.length() - 5));
+                        /* f<frame>_<signature>.rgba: a file written for another signature must
+                         * never be served to this cache (and is dead weight on disk). */
+                        int underscore = name.indexOf('_');
+                        int frame = Integer.parseInt(name.substring(1, underscore));
+                        long fileSignature = Long.parseUnsignedLong(
+                            name.substring(underscore + 1, name.length() - 5), 16);
+
+                        if (fileSignature != signature)
+                        {
+                            Files.deleteIfExists(path);
+
+                            return;
+                        }
+
                         Frame entry = new Frame();
 
                         entry.index = frame;
                         entry.onDisk = true;
                         cache.frames.put(frame, entry);
                     }
-                    catch (NumberFormatException ignored)
+                    catch (NumberFormatException | IOException ignored)
                     {}
                 });
             }
@@ -1141,6 +1266,87 @@ public final class CompPrecache
         freeWidth = texture.width;
         freeHeight = texture.height;
         FREE.push(texture);
+    }
+
+    /**
+     * Global texture budget shared by every composition.
+     *
+     * <p>Per-cache caps (16 textures) multiplied by the number of open compositions: four 4K comps
+     * could hold a gigabyte of green frames. The resident set is now measured in bytes and the
+     * inactive caches give theirs up first.</p>
+     */
+    private static void enforceResidentBudget(Cache active)
+    {
+        long budget = residentBudgetBytes();
+
+        if (residentBytes() <= budget)
+        {
+            return;
+        }
+
+        for (Cache other : CACHES.values())
+        {
+            if (other == active)
+            {
+                continue;
+            }
+
+            for (Frame entry : other.frames.values())
+            {
+                if (entry.texture != null)
+                {
+                    recycle(entry.texture);
+                    entry.texture = null;
+                }
+            }
+        }
+
+        while (residentBytes() > budget)
+        {
+            Frame oldest = null;
+
+            for (Frame entry : active.frames.values())
+            {
+                if (entry.texture != null && (oldest == null || entry.lastUsed < oldest.lastUsed))
+                {
+                    oldest = entry;
+                }
+            }
+
+            if (oldest == null)
+            {
+                break;
+            }
+
+            recycle(oldest.texture);
+            oldest.texture = null;
+        }
+
+        while (residentBytes() > budget && !FREE.isEmpty())
+        {
+            FREE.pop().delete();
+        }
+    }
+
+    /** Releases the textures of the caches that are not the one being displayed. */
+    private static void releaseInactiveCaches(Cache active)
+    {
+        for (Cache other : CACHES.values())
+        {
+            if (other == active)
+            {
+                continue;
+            }
+
+            for (Frame entry : other.frames.values())
+            {
+                if (entry.texture != null)
+                {
+                    recycle(entry.texture);
+                    entry.texture = null;
+                }
+            }
+        }
     }
 
     /** Drops the least recently used textures when the cache exceeds its VRAM budget. */

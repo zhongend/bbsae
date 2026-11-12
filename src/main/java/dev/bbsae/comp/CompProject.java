@@ -77,8 +77,13 @@ public class CompProject
      * 5 — the preview background became a solid colour. Version 4 files were migrated to the live
      * BBS world behind a transparent stage; that is also transparent, so version 5 turns it off
      * once. The "BBS 实时画面" toggle still exists, it just is not the default any more.
+     *
+     * 6 — 3D logic anchor. Per-layer 3D + the legacy toggle arrived without a version bump, so old
+     * files cannot be told apart from v5 files authored with either logic. Version 6 records
+     * {@link CompSettings#logicVersion} once (derived from the legacy toggle for older files); no
+     * visual default changes, it only gives future 3D-logic migrations a stable anchor.
      */
-    public static final int VERSION = 5;
+    public static final int VERSION = 6;
 
     public String format = FORMAT;
     public int version = VERSION;
@@ -323,6 +328,14 @@ public class CompProject
          * work should not use it.</p>
          */
         public boolean legacy3DLogic = false;
+
+        /**
+         * Which 3D-layer logic the project was authored with: 1 = AE per-layer 3D (default),
+         * 2 = legacy all-layer camera projection. Null means a pre-v6 file that never recorded
+         * it (CompStore.migrate derives it from {@link #legacy3DLogic}). This is a migration
+         * anchor, not a second switch: the toggle above stays the runtime decision.
+         */
+        public Integer logicVersion = null;
 
         /**
          * Developer switch for camera creation (Settings → 开发者).

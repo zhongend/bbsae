@@ -58,8 +58,9 @@ public final class CompShaders
             return;
         }
 
-        initialized = true;
-
+        /* Compiled below; `initialized` is only latched when the essential programs exist. Latching
+         * it up front meant one failed compile (a bad GL context, a driver hiccup) kept every program
+         * null for the rest of the session and every masked/style pass silently degraded. */
         composite = make("composite", ShaderSources.COMPOSITE);
         premultiply = make("premultiply", ShaderSources.PREMULTIPLY);
         unpremultiply = make("unpremultiply", ShaderSources.UNPREMULTIPLY);
@@ -88,6 +89,7 @@ public final class CompShaders
         mesh = makeMesh();
         viewport3d = make("viewport3d", ShaderSources.VIEWPORT_3D_VERTEX, ShaderSources.VIEWPORT_3D_FRAGMENT);
         depthPlane = make("depth_plane", ShaderSources.DEPTH_PLANE);
+        initialized = composite != null && premultiply != null && unpremultiply != null;
     }
 
     private static GlslProgram makeMesh()

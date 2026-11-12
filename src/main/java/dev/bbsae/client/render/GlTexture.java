@@ -55,7 +55,7 @@ public final class GlTexture
         this.height = Math.max(1, height);
         this.internalFormat = internalFormat;
 
-        GlStateManager._bindTexture(this.id);
+        bindForUpdate(this.id);
         GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, internalFormat, this.width, this.height, 0, format, type, (ByteBuffer) null);
         return this;
     }
@@ -124,7 +124,7 @@ public final class GlTexture
 
     private void upload(ByteBuffer buffer)
     {
-        GlStateManager._bindTexture(this.id);
+        bindForUpdate(this.id);
         GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1);
 
         /* Mask/texture uploads are tightly packed. BBS image uploads may leave a non-zero
@@ -162,7 +162,7 @@ public final class GlTexture
             return;
         }
 
-        GlStateManager._bindTexture(this.id);
+        bindForUpdate(this.id);
         int filter = linear ? GL11.GL_LINEAR : GL11.GL_NEAREST;
 
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, filter);
@@ -174,6 +174,11 @@ public final class GlTexture
         if (this.id > 0)
         {
             GL11.glDeleteTextures(this.id);
+
+            /* Do not leave GlStateManager naming a deleted texture: the next recycled texture gets a
+             * silently skipped bind and writes/parameters land on whatever is actually bound. */
+            GlStateManager._bindTexture(0);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
             this.id = 0;
         }
     }

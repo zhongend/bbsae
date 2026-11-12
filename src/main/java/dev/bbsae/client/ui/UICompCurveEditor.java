@@ -188,6 +188,23 @@ public class UICompCurveEditor extends UIElement
         return this.graph.dragMode != Graph.DRAG_NONE;
     }
 
+    /**
+     * Esc hook: end an in-progress key/handle drag (the edits made so far stay, the gesture stops).
+     * Returning true lets the panel consume Esc instead of clearing the layer selection while the
+     * mouse is still down.
+     */
+    public boolean endDrag()
+    {
+        if (!this.isInteracting())
+        {
+            return false;
+        }
+
+        this.graph.finishDrag();
+
+        return true;
+    }
+
     /** Verification hook: select the first key of the active channel so handles are visible. */
     public void debugSelectFirstKey()
     {

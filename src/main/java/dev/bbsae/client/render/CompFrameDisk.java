@@ -60,7 +60,8 @@ public final class CompFrameDisk
     private static final Set<Path> PENDING = new HashSet<>();
 
     private static Thread writer;
-    private static boolean sweeping;
+    private static final java.util.concurrent.atomic.AtomicBoolean SWEEPING =
+        new java.util.concurrent.atomic.AtomicBoolean();
 
     private static final class PendingWrite
     {
@@ -112,7 +113,18 @@ public final class CompFrameDisk
 
     static Path file(CompProject project, CompDocument doc, long signature, int frame, int width, int height)
     {
-        return folder(project, doc).resolve(Long.toHexString(signature) + "_" + frame + "_" + width + "x" + height + ".rgba");
+        return file(project, doc, signature, frame, width, height, false);
+    }
+
+    /**
+     * Name includes the alpha stage bit: an opaque frame and an alpha frame of the same frame index
+     * are different pixels, and sharing a file served the wrong one across BBS/AE previews.
+     */
+    static Path file(CompProject project, CompDocument doc, long signature, int frame, int width, int height,
+                     boolean alpha)
+    {
+        return folder(project, doc).resolve(Long.toHexString(signature) + "_" + frame + "_" + width + "x"
+            + height + "_a" + (alpha ? 1 : 0) + ".rgba");
     }
 
     /**
@@ -122,7 +134,13 @@ public final class CompFrameDisk
      */
     public static int[] load(CompProject project, CompDocument doc, long signature, int frame, int width, int height)
     {
-        Path file = file(project, doc, signature, frame, width, height);
+        return load(project, doc, signature, frame, width, height, false);
+    }
+
+    public static int[] load(CompProject project, CompDocument doc, long signature, int frame, int width, int height,
+                             boolean alpha)
+    {
+        Path file = file(project, doc, signature, frame, width, height, alpha);
 
         if (!Files.isRegularFile(file))
         {
@@ -176,12 +194,18 @@ public final class CompFrameDisk
 
     public static void save(CompProject project, CompDocument doc, long signature, int frame, int width, int height, int[] pixels)
     {
+        save(project, doc, signature, frame, width, height, pixels, false);
+    }
+
+    public static void save(CompProject project, CompDocument doc, long signature, int frame, int width, int height,
+                            int[] pixels, boolean alpha)
+    {
         if (!valid(pixels, width, height))
         {
             return;
         }
 
-        write(file(project, doc, signature, frame, width, height), frame, width, height, pixels);
+        write(file(project, doc, signature, frame, width, height, alpha), frame, width, height, pixels);
     }
 
     /**
@@ -192,12 +216,18 @@ public final class CompFrameDisk
      */
     public static boolean saveAsync(CompProject project, CompDocument doc, long signature, int frame, int width, int height, int[] pixels)
     {
+        return saveAsync(project, doc, signature, frame, width, height, pixels, false);
+    }
+
+    public static boolean saveAsync(CompProject project, CompDocument doc, long signature, int frame, int width, int height,
+                                    int[] pixels, boolean alpha)
+    {
         if (!valid(pixels, width, height))
         {
             return false;
         }
 
-        Path file = file(project, doc, signature, frame, width, height);
+        Path file = file(project, doc, signature, frame, width, height, alpha);
 
         synchronized (WRITE_LOCK)
         {
@@ -381,12 +411,10 @@ public final class CompFrameDisk
      */
     private static void sweep(Path folder)
     {
-        if (sweeping)
+        if (!SWEEPING.compareAndSet(false, true))
         {
             return;
         }
-
-        sweeping = true;
 
         try
         {
@@ -442,7 +470,7 @@ public final class CompFrameDisk
         }
         finally
         {
-            sweeping = false;
+            SWEEPING.set(false);
         }
     }
 

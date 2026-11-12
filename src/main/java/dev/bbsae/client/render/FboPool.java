@@ -19,8 +19,74 @@ public final class FboPool
      * covers a busy composition without unbounded VRAM.
      */
     private static final int MAX_IDLE = 32;
+
+    /** Default VRAM ceiling for idle targets; -Dbbsae.fboBudgetBytes overrides (tests use this). */
+    static final long DEFAULT_BUDGET_BYTES = 256L * 1024 * 1024;
     private static final Map<Long, Deque<GlFramebuffer>> CACHE = new HashMap<>();
     private static int idle;
+    private static long idleBytes;
+
+    /** Bytes one framebuffer occupies (RGBA8 colour + optional DEPTH24 renderbuffer). */
+    static long bytesOf(GlFramebuffer framebuffer)
+    {
+        long pixels = (long) Math.max(1, framebuffer.width) * Math.max(1, framebuffer.height);
+
+        return pixels * (framebuffer.depthBuffer != 0 ? 8L : 4L);
+    }
+
+    /** Idle (pooled) bytes, i.e. VRAM the pool is holding for reuse. */
+    public static long bytes()
+    {
+        return idleBytes;
+    }
+
+    public static int idleCount()
+    {
+        return idle;
+    }
+
+    /** Budget read on every release so tests/debug can adjust the property at runtime. */
+    static long budgetBytes()
+    {
+        return Math.max(0L, Long.getLong("bbsae.fboBudgetBytes", DEFAULT_BUDGET_BYTES));
+    }
+
+    /**
+     * Deletes the oldest idle targets (insertion order within each size bucket) until the pool is
+     * under {@code budget} bytes. Count caps alone were not a memory bound: 32 targets of a 4K
+     * composition is 1 GB, while 32 targets of a thumbnail is 2 MB.
+     */
+    public static void trimTo(long budget)
+    {
+        long limit = Math.max(0L, budget);
+
+        while (idleBytes > limit)
+        {
+            Deque<GlFramebuffer> victim = null;
+
+            for (Deque<GlFramebuffer> deque : CACHE.values())
+            {
+                if (!deque.isEmpty())
+                {
+                    victim = deque;
+                    break;
+                }
+            }
+
+            if (victim == null)
+            {
+                idleBytes = 0;
+
+                return;
+            }
+
+            GlFramebuffer framebuffer = victim.pollLast();
+
+            idle -= 1;
+            idleBytes -= bytesOf(framebuffer);
+            framebuffer.delete();
+        }
+    }
 
     private FboPool()
     {}
@@ -34,11 +100,11 @@ public final class FboPool
 
         if (deque != null && !deque.isEmpty())
         {
-            idle -= 1;
-
             GlFramebuffer framebuffer = deque.pop();
 
             framebuffer.pooled = false;
+            idle -= 1;
+            idleBytes -= bytesOf(framebuffer);
 
             return framebuffer;
         }
@@ -79,6 +145,10 @@ public final class FboPool
 
         deque.push(framebuffer);
         idle += 1;
+        idleBytes += bytesOf(framebuffer);
+
+        /* Byte budget, not just a count cap: 32 idle 4K targets would be ~1 GB. */
+        trimTo(budgetBytes());
     }
 
     public static void clear()
@@ -93,5 +163,6 @@ public final class FboPool
 
         CACHE.clear();
         idle = 0;
+        idleBytes = 0;
     }
 }
