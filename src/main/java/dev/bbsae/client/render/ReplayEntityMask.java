@@ -5,6 +5,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.systems.VertexSorter;
 import dev.bbsae.BbsAeAddon;
 import dev.bbsae.comp.CompDocument;
+import dev.bbsae.client.replay.ReplayModelPass;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompProject;
 import mchorse.bbs_mod.BBSModClient;
@@ -869,6 +870,11 @@ public final class ReplayEntityMask
                 modelView.pop();
                 RenderSystem.applyModelViewMatrix();
             }
+
+            /* The coverage target now doubles as the actor-only color image. Use the same white
+             * lightmap as the model pass so the extracted actor is not a black silhouette at night;
+             * only the actor's own pixels and alpha are used. */
+            RenderSystem.setShaderTexture(2, ReplayModelPass.whiteLightmapId());
 
             target.hasColor = true;
         }

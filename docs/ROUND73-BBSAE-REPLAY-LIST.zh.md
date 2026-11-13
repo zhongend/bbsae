@@ -67,8 +67,8 @@ world-plate matte 换成 actor-only 图像。
 ## 7. 验证
 
 - 全量：**151 suites / 948 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix22.jar`，已安装到正式 modpack；
-  SHA-256 `FC02F513EDEA60251FC35AE01350E42CEFC4B02921115E316DF2DB4D5033D7DD`。
+- 本地候选包：`bbsae-0.99-hotfix23.jar`，已安装到正式 modpack；
+  SHA-256 `B51EA1E5DA176C7340C14AE260FE6ADB05D6C53C30117B901ED9A39E8C3540AF`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 
