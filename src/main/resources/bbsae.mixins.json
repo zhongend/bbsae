@@ -3,6 +3,7 @@
   "package": "dev.bbsae.mixin",
   "compatibilityLevel": "JAVA_17",
   "client": [
+    "FilmEntityRendererLightMixin",
     "IrisFinalizeMixin"
   ],
   "injectors": {

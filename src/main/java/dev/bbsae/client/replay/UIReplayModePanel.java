@@ -278,10 +278,20 @@ public class UIReplayModePanel extends UIDashboardPanel
      */
     private int preferredTimelineHeight()
     {
-        int pageHeight = this.area.h > 0 ? this.area.h : 640;
-        int height = Math.round(pageHeight * 0.38F);
+        return timelineHeightFor(this.area.h > 0 ? this.area.h : 640, this.embedded);
+    }
 
-        return Math.max(220, Math.min(480, height));
+    /**
+     * Pure layout arithmetic for the embedded replay page: the bottom dope sheet must never grow
+     * into the list/properties body. Kept package-private so a headless test can pin it.
+     */
+    static int timelineHeightFor(int pageHeight, boolean embedded)
+    {
+        int available = Math.max(0, pageHeight - (embedded ? 0 : HEADER));
+        int height = Math.round(pageHeight * 0.38F);
+        int maxTimeline = Math.max(80, available - 180);
+
+        return Math.max(80, Math.min(480, Math.min(height, maxTimeline)));
     }
 
     private void repositionKeyframeEditor()

@@ -1112,6 +1112,16 @@ public class UICompSettings extends UIElement
             prefs.replayIsolation = value;
             CompPrefs.save();
         }), 170, "进入回放模式时只显示模型/文字/摄像机；默认关闭，保留完整合成"));
+
+        this.add(this.section("回放编辑器预览"));
+        this.add(this.row("合成预览", this.segmented(new String[] {"关闭", "子窗口", "双窗口"},
+            CompPrefs.replayCompPreview(), (value) ->
+        {
+            prefs.replayCompPreview = Math.max(0, Math.min(2, value));
+            CompPrefs.save();
+            this.rebuild();
+        }), 220, "关闭：只显示回放 3D 世界；子窗口：右上角缩略图；双窗口：左侧回放 3D、右侧完整合成预览"));
+
         this.add(this.row("关闭 BBS 洋葱皮残影", this.toggle("", prefs.suppressOnionSkin, (value) ->
         {
             prefs.suppressOnionSkin = value;

@@ -1,8 +1,8 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix39**：回放编辑器现在显示合成画幅、摄像机位置/路径和其他合成元素；合成器
-> 检查器（轨道右侧）改为合并重建并加快页面过渡；图层设置页渐进展开并记住折叠状态。
-> 详见 [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix40**：虚拟回放不再被主世界光照压黑；回放预览新增 BBS 原版自由/绕对象/相机
+> 视角按钮；修复矮窗口下关键帧面板重叠；合成预览可在设置中关闭、子窗口或双窗口。详见
+> [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">

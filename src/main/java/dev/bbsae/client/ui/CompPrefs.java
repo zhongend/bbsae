@@ -92,6 +92,11 @@ public final class CompPrefs
         public boolean modelFocus = false;
         /** When entering replay mode, temporarily show only models/text/camera. */
         public boolean replayIsolation = false;
+        /**
+         * Composition preview inside the replay editor:
+         * 0 = off, 1 = subwindow (picture-in-picture), 2 = two windows (3D left, comp right).
+         */
+        public int replayCompPreview = 1;
         /** Link WAV/OGG audio from its original path instead of copying it into the project. */
         public boolean linkExternalAssets = true;
         /** Keep BBS' editor onion skins off while the compositor is open: their ghost frames can
@@ -407,5 +412,13 @@ public final class CompPrefs
     public static boolean animating()
     {
         return get().animations;
+    }
+
+    /** 0 = off, 1 = subwindow, 2 = two windows. Unknown values fall back to the subwindow. */
+    public static int replayCompPreview()
+    {
+        int mode = get().replayCompPreview;
+
+        return mode < 0 || mode > 2 ? 1 : mode;
     }
 }

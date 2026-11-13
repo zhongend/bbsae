@@ -219,7 +219,7 @@ public final class ReplayActorPass
                 .nameTag("")
                 .relative(false);
 
-            FilmEntityRenderer.renderEntity(actor);
+            ReplayRenderLight.renderEntity(actor);
             GL11.glEnable(GL11.GL_DEPTH_TEST);
 
             if (Boolean.getBoolean("bbsae.debugModelLog"))
@@ -433,7 +433,7 @@ public final class ReplayActorPass
                 .nameTag("")
                 .relative(false);
 
-            FilmEntityRenderer.renderEntity(actor);
+            ReplayRenderLight.renderEntity(actor);
             GL11.glEnable(GL11.GL_DEPTH_TEST);
 
             if (Boolean.getBoolean("bbsae.debugModelLog"))
@@ -658,7 +658,7 @@ public final class ReplayActorPass
                         .nameTag("")
                         .relative(false);
 
-                    FilmEntityRenderer.renderEntity(actor);
+                    ReplayRenderLight.renderEntity(actor);
                 }
                 catch (RuntimeException e)
                 {

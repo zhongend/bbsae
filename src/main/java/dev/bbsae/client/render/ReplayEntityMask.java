@@ -851,7 +851,7 @@ public final class ReplayEntityMask
                             .nameTag("")
                             .relative(false);
 
-                        FilmEntityRenderer.renderEntity(filmContext);
+                        ReplayRenderLight.renderEntity(filmContext);
                         rendered += 1;
                     }
                     catch (RuntimeException e)

@@ -6,6 +6,7 @@ import com.mojang.blaze3d.systems.VertexSorter;
 import dev.bbsae.BbsAeAddon;
 import dev.bbsae.client.render.GlFramebuffer;
 import dev.bbsae.client.render.GlStateGuard;
+import dev.bbsae.client.render.ReplayRenderLight;
 import mchorse.bbs_mod.camera.Camera;
 import mchorse.bbs_mod.film.FilmControllerContext;
 import mchorse.bbs_mod.film.FilmEntityRenderer;
@@ -205,7 +206,7 @@ public final class ReplayModelPass
                             .nameTag("")
                             .relative(Boolean.TRUE.equals(replay.relative.get()));
 
-                        FilmEntityRenderer.renderEntity(context);
+                        ReplayRenderLight.renderEntity(context);
                         drawn += 1;
                     }
                     catch (RuntimeException e)

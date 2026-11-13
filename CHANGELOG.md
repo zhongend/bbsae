@@ -1,5 +1,45 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix40 — 2026-11-13
+
+虚拟回放 full-bright、原版预览视角按钮、关键帧面板重叠修复、合成预览模式设置。
+
+### 虚拟回放光照
+
+- 根因：BBS `FilmEntityRenderer` 用 actor 的**主世界坐标**采样 sky/block light；bbsae 虚拟回放
+  的坐标只是合成摆放锚点，落在暗处就把模型压黑（只绑白色 lightmap 纹理不够）。
+- 新增 `ReplayRenderLight` 嵌套开关和 `FilmEntityRendererLightMixin`：虚拟回放通过它渲染时，
+  `LightmapTextureManager.pack` 重定向为 full-bright；真实影片/BBS 预览层不受影响。
+- `ReplayModelPass`、`ReplayActorPass`、`ReplayEntityMask` 所有 BBS actor 渲染统一走这个入口。
+
+### BBS 原版预览视角按钮
+
+- 回放视口右上角新增三个 BBS `UIIcon`：自由视角（PLANE）、绕对象旋转（ORBIT）、相机视角
+  （FRUSTUM），带原版图标/高亮/提示。
+- 绕对象旋转每帧跟随当前虚拟回放；相机视角从活动合成相机的 eye/target/FOV 反推
+  `CompViewportCamera` 姿态；相机视角下禁用自由导航。
+- 双窗口时按钮贴在左侧 3D 窗口右上角。
+
+### 关键帧面板重叠
+
+- 回放页时间轴高度先保留至少 180px body，再取剩余空间；窗口矮时不再把关键帧编辑器顶到列表/
+  属性面板上。
+- 新增纯函数 `timelineHeightFor` 与 `ReplayTimelineLayoutTest`（120–1080px 全高度断言）。
+
+### 合成预览设置
+
+- `CompPrefs.replayCompPreview`：0 关闭 / 1 子窗口（默认）/ 2 双窗口。
+- 设置页“显示与线索 → 回放编辑器预览”可切换，立即生效并保存。
+- 双窗口：左侧 3D 回放、右侧完整合成预览；子窗口：右上角画中画。两者都跳过含 `bbs` 实时
+  世界层的合成，保持虚拟世界预览。
+
+### 验证
+
+- 日志：`Virtual replay full-bright light override active`。
+- 真机：`docs/verify/round82-twowindow.png`。
+- 全量测试：**153 套件 / 953 项测试 / 0 failures / 0 errors / 1 skipped**。
+- 本地候选包：`bbsae-0.99-hotfix40.jar`（3,906,596 bytes，SHA-256 51BBA127827CD5113F69AC2AA70E5A75EE2918A08001434133E4ADBC57825F5C）。
+
 ## 0.99-hotfix39 — 2026-11-13
 
 回放编辑器补上合成参考；合成器检查器响应提速；图层设置页渐进展开。

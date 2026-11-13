@@ -24,6 +24,7 @@ public class CompPrefsOverlayTest
         assertFalse(data.perPixelDepth);
         assertEquals(1F, data.gizmoOpacity, 0.0001F);
         assertEquals(1F, data.gizmoThickness, 0.0001F);
+        assertEquals(1, data.replayCompPreview);
     }
 
     @Test
