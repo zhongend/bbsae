@@ -58,13 +58,16 @@ world-plate matte 换成 actor-only 图像。
 - 外部音频路径在预览、混音、导出三处共用同一个 resolver；
 - 选中音频后可「重新链接外部音频…」，不复制、不重建 clip；
 - 图片新增「链接外部图片…」，`imagePath` 支持 `external:`；
+- 视频新增 `videolink` 层：`external:绝对路径`，按需 FFmpeg 抽帧到
+  `config/bbsae/cache/video`，源文件不复制；
+- 帧缓存按路径+mtime+frame+分辨率，最多 96 项；
 - 视频 FFmpeg 命令加 `-nostdin`，避免后台导入等待 stdin。
 
 ## 7. 验证
 
 - 全量：**151 suites / 948 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix19.jar`，已安装到正式 modpack；
-  SHA-256 `B713ADFE4026A85042C0CE4166D600C0EA11611764B8E4CF52F87DBF9EB53A68`。
+- 本地候选包：`bbsae-0.99-hotfix20.jar`，已安装到正式 modpack；
+  SHA-256 `5A6B3C623DFC3158BCA463664698297273C4A3FD0D1E6A8A758E1559623D7C59`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 

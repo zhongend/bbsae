@@ -64,6 +64,7 @@ final class LayerContentRenderer
                 break;
             case "image":
             case "footage":
+            case "videolink":
                 drawImage(layer, context, batcher);
                 break;
             case "shape":
@@ -128,7 +129,16 @@ final class LayerContentRenderer
     {
         String path = layer.imagePath;
 
-        if ("footage".equals(layer.type) && path != null && path.matches(".*%0?\\d*d.*"))
+        if ("videolink".equals(layer.type) && context != null)
+        {
+            float sourceTime = layer.sourceTimeAt(context.time, context.frame);
+            java.nio.file.Path frame = CompVideoFrames.frame(context.project.id, path, sourceTime,
+                Math.max(1F, context.comp.fps),
+                Math.max(2, Math.round(layer.width)), Math.max(2, Math.round(layer.height)));
+
+            path = frame == null ? null : frame.toAbsolutePath().toString();
+        }
+        else if ("footage".equals(layer.type) && path != null && path.matches(".*%0?\\d*d.*"))
         {
             float sourceTime = layer.sourceTimeAt(context.time, context.frame);
             int index = Math.max(0, Math.round(sourceTime * Math.max(1F, context.comp.fps)));

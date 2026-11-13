@@ -67,6 +67,21 @@ public final class CompVideoImport
         return RUNNING.get();
     }
 
+    /** Source dimensions of an external video, or null when FFmpeg cannot probe it. */
+    public static int[] probeSize(File file)
+    {
+        try
+        {
+            int[] size = probe(FFMpegUtils.getFFMPEG(), file, 10000, 10000);
+
+            return size[0] >= 2 && size[1] >= 2 ? size : null;
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
     /**
      * Starts an extraction. Returns false when another import is already running or the input is
      * not a readable file.

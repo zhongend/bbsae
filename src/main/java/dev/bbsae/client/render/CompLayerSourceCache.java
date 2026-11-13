@@ -105,6 +105,13 @@ public final class CompLayerSourceCache
             return null;
         }
 
+        /* Externally linked video is decoded per requested time; a static raster bake would freeze
+         * the first frame forever. */
+        if ("videolink".equals(layer.type))
+        {
+            return null;
+        }
+
         String key = cacheKey(context.project == null ? "" : context.project.id, context.comp.id, layer.id);
         Rect rect = bounds(layer, context);
         float scale = rasterScaleFor(rect.width, rect.height, rasterMaxEdge(context));

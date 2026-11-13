@@ -8054,7 +8054,14 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 if (file != null && file.isFile())
                 {
-                    this.importVideoFile(file);
+                    if (CompPrefs.get().linkExternalAssets)
+                    {
+                        this.importVideoLink(file);
+                    }
+                    else
+                    {
+                        this.importVideoFile(file);
+                    }
                 }
             },
             this::openVideoBrowser
@@ -8076,7 +8083,14 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 if (file != null && file.isFile())
                 {
-                    this.importVideoFile(file);
+                    if (CompPrefs.get().linkExternalAssets)
+                    {
+                        this.importVideoLink(file);
+                    }
+                    else
+                    {
+                        this.importVideoFile(file);
+                    }
                 }
 
                 this.closeImportBrowser();
@@ -8096,6 +8110,43 @@ public class UICompositorPanel extends UIDashboardPanel
      * tens of seconds, and dropping a clip into a project the user has since switched away from is
      * worse than telling them it was cancelled.</p>
      */
+    /** Links a video in place and extracts frames on demand; nothing is copied into the project. */
+    private void importVideoLink(java.io.File file)
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        int[] size = dev.bbsae.client.export.CompVideoImport.probeSize(file);
+
+        if (size == null)
+        {
+            this.notifyError("无法读取视频尺寸；请确认 FFmpeg 可用：" + file.getName());
+            return;
+        }
+
+        float scale = Math.min(1F, Math.min(this.doc.width / (float) size[0], this.doc.height / (float) size[1]));
+        CompLayer layer = new CompLayer("videolink", file.getName(), "videolink");
+
+        layer.imagePath = "external:" + file.getAbsoluteFile();
+        layer.width = Math.max(2, Math.round(size[0] * scale) & ~1);
+        layer.height = Math.max(2, Math.round(size[1] * scale) & ~1);
+        layer.x = this.doc.width / 2F;
+        layer.y = this.doc.height / 2F;
+        layer.in = 0F;
+        layer.out = this.doc.duration;
+        layer.imageFit = 0;
+        layer.name = file.getName();
+
+        this.doc.addLayer(layer);
+        this.setSingleSelection(layer);
+        this.refreshLayers();
+        this.refreshInspector();
+        this.save();
+        this.setStatus("已链接外部视频：" + file.getName() + "（按需拆帧，不复制源文件）");
+    }
+
     private void importVideoFile(java.io.File file)
     {
         final CompDocument target = this.doc;
@@ -17788,7 +17839,7 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(this.smallButton("＋ 新建跟踪器", () -> this.createTracker()));
         }
 
-        if ("image".equals(l.type) || "footage".equals(l.type))
+        if ("image".equals(l.type) || "footage".equals(l.type) || "videolink".equals(l.type))
         {
             section.fields.add(this.textRow("序列".equals(l.type) ? "图片序列 (%04d)" : "图片路径", l.imagePath, (text) -> l.imagePath = text));
             section.fields.add(this.smallButton("导入图片…", () -> this.importImage(l)));
