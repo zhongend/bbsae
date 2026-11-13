@@ -303,6 +303,12 @@ public class UICompositorPanel extends UIDashboardPanel
     private UIIcon space3DButton;
     /** AE camera tool toggle (left orbit / middle track XY / right dolly). */
     private UIIcon cameraToolButton;
+    private UIElement replayViewBar;
+    private UIIcon replayCameraViewButton;
+    private UIIcon replayOrbitViewButton;
+    private UIIcon replayFreeViewButton;
+    private UIIcon replayKeyframeButton;
+    private int replayViewMode;
     /** Explicit "new camera" action; the only way a camera is created besides the compat switch. */
     private UIIcon createCameraButton;
     /** Opens Settings → 开发者, where the 3D logic and camera defaults live. */
@@ -5575,6 +5581,36 @@ public class UICompositorPanel extends UIDashboardPanel
         this.cameraToolButton.tooltip(IKey.constant("AE 摄像机工具：左键环绕 / 中键 Track XY / 右键 Track Z 推拉；没有摄像机时不会自动创建"));
         this.preview.add(this.cameraToolButton);
 
+        /* BBS' preview puts its camera/orbit/free view switcher and key tools at bottom center.
+         * bbsae reuses that arrangement; the picture behind it is the virtual bbsae world. */
+        this.replayViewBar = new UIElement();
+        this.replayViewBar.relative(this.preview).x(0.5F).y(1F, -10).w(112).h(20).anchor(0.5F, 1F);
+        this.replayViewBar.setVisible(false);
+
+        this.replayCameraViewButton = new UIIcon(Icons.CAMERA, (button) -> this.setReplayViewMode(0));
+        this.replayCameraViewButton.relative(this.replayViewBar).x(0).y(0).w(20).h(20);
+        this.replayCameraViewButton.tooltip(IKey.constant("摄像机视角（BBS 原版预览切换）"));
+
+        this.replayOrbitViewButton = new UIIcon(Icons.ORBIT, (button) -> this.setReplayViewMode(1));
+        this.replayOrbitViewButton.relative(this.replayViewBar).x(24).y(0).w(20).h(20);
+        this.replayOrbitViewButton.tooltip(IKey.constant("环绕视角（BBS 原版预览切换）"));
+
+        this.replayFreeViewButton = new UIIcon(Icons.SPACE_VIEW, (button) -> this.setReplayViewMode(2));
+        this.replayFreeViewButton.relative(this.replayViewBar).x(48).y(0).w(20).h(20);
+        this.replayFreeViewButton.tooltip(IKey.constant("自由视角（BBS 原版预览切换）"));
+
+        this.replayKeyframeButton = new UIIcon(Icons.KEY, (button) -> this.addTransformKey(false));
+        this.replayKeyframeButton.relative(this.replayViewBar).x(84).y(0).w(20).h(20);
+        this.replayKeyframeButton.tooltip(IKey.constant("在播放头为选中模型插入变换关键帧（不自动 K 帧）"));
+
+        this.replayCameraViewButton.highlight(() -> this.replayViewMode == 0, mchorse.bbs_mod.utils.Direction.BOTTOM);
+        this.replayOrbitViewButton.highlight(() -> this.replayViewMode == 1, mchorse.bbs_mod.utils.Direction.BOTTOM);
+        this.replayFreeViewButton.highlight(() -> this.replayViewMode == 2, mchorse.bbs_mod.utils.Direction.BOTTOM);
+
+        this.replayViewBar.add(this.replayCameraViewButton, this.replayOrbitViewButton,
+            this.replayFreeViewButton, this.replayKeyframeButton);
+        this.preview.add(this.replayViewBar);
+
         /* A camera is an explicit object (AE: Layer → New → Camera). */
         this.createCameraButton = new UIIcon(Icons.CAMERA, (button) -> this.createCamera());
         this.createCameraButton.relative(this.preview).x(1F, -94).y(6).w(20).h(20);
@@ -5647,11 +5683,10 @@ public class UICompositorPanel extends UIDashboardPanel
             this.keyframeEditor.view::toGraphX,
             TimeUtils::formatTime
         ));
-        this.keyframeEditor.view.context((menu) ->
-        {
-            menu.action(Icons.ADD, IKey.constant("在播放头添加变换关键帧"), () -> this.addTransformKey(false));
-            menu.action(Icons.ADD, IKey.constant("在播放头添加不透明度关键帧"), this::addOpacityKey);
-        });
+
+        /* Do not replace UIKeyframes' own context menu here. BBS registers the full keyframe
+         * toolkit (copy/paste, keyframe style, track style, loops, presets) in its constructor;
+         * overwriting it with two bbsae actions removed all of those tools from the replay editor. */
 
         /* BBS calls this after any dope-sheet edit (drag, delete, paste, duplicate). Without it
          * editing keys in the drawer neither marked the project dirty (no disk write, no undo
@@ -13545,6 +13580,8 @@ public class UICompositorPanel extends UIDashboardPanel
             this.applyLeftPage(3, true);
             this.selectFirstReplayModel();
             this.showBbsReplayTimeline(true);
+            this.replayViewBar.setVisible(true);
+            this.setReplayViewMode(0);
             this.updatePlayLabel();
             this.beginPageMotion(this.workspaceMotion, "mode:replay");
             this.applyLayout();
@@ -13557,6 +13594,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.restoreReplayLayers();
             this.applyModelFocus(this.selectedLayer);
             this.showBbsReplayTimeline(false);
+            this.replayViewBar.setVisible(false);
             this.beginPageMotion(this.workspaceMotion, "mode:composite");
             this.applyLeftPage(0, true);
             this.applyLayout();
@@ -13572,6 +13610,33 @@ public class UICompositorPanel extends UIDashboardPanel
      * We build the same {@code UIKeyframeEditor} + {@code UIFilmKeyframes} pair the BBS replay
      * editor uses, and give it the replay's real track sheets.
      */
+    /** BBS-style camera / orbit / free view switch at the bottom center of the preview. */
+    public void setReplayViewMode(int mode)
+    {
+        this.replayViewMode = Math.max(0, Math.min(2, mode));
+
+        if (this.replayViewMode == 0)
+        {
+            if (this.viewportMode)
+            {
+                this.exit3DSpace();
+            }
+
+            this.setStatus("摄像机视角：合成器相机");
+        }
+        else
+        {
+            if (!this.viewportMode)
+            {
+                this.enter3DSpace();
+            }
+
+            this.setStatus(this.replayViewMode == 1
+                ? "环绕视角：拖动预览环绕 bbsae 虚拟世界"
+                : "自由视角：3D 空间内自由观察 bbsae 虚拟世界");
+        }
+    }
+
     private void showBbsReplayTimeline(boolean show)
     {
         if (this.keyframeEditor == null)

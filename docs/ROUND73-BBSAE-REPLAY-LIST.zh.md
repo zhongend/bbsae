@@ -36,7 +36,11 @@ world-plate matte 换成 actor-only 图像。
 - 回放模式底部不再显示合成器 `UICompTrackTimeline` 的剪辑轨道，而是把 BBS 自己的
   `UIKeyframeEditor` 全尺寸放入时间轴，显示所选 bbsae 模型的位置/旋转/缩放等关键帧行；
 - BBS 时间轴绘制期间不重新按“关键帧抽屉”布局，避免被重新挂回抽屉而隐藏；
-- 截图：`docs/verify/round76-bbs-native-gizmo.png`、`docs/verify/round77-bbs-replay-timeline.png`。
+- 截图：`docs/verify/round76-bbs-native-gizmo.png`、`docs/verify/round77-bbs-replay-timeline.png`；
+- 回放预览底部中央加入 BBS 原版排布的视角切换按钮（摄像机 / 环绕 / 自由）和手动 K 帧按钮；
+- 关键帧编辑器保留 BBS `UIKeyframes` 自带的完整右键工具（复制/粘贴、关键帧样式、轨道样式、循环、预设），
+  不再用 bbsae 的两个快捷项覆盖它；
+- 截图：`docs/verify/round78-bbs-replay-tools.png`。
 - **模型焦点/回放隔离默认关闭**：选择 3D 回放图层不再自动隐藏其他图层。
 - **模型焦点**（可选，默认关闭）：开启后选中 bbsae 模型时临时隐藏装饰卡片/背景，只保留模型、
   文字、相机，普通合成预览也能直接看到模型；取消选择或关闭设置即恢复。
@@ -89,8 +93,8 @@ world-plate matte 换成 actor-only 图像。
 ## 7. 验证
 
 - 全量：**152 suites / 951 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix35.jar`，已安装到正式 modpack；
-  SHA-256 `F9028C6D33FDB9BB1DD12831980C8ADDDCB06934ABF4DDF1E5EC7BDE0F6B89F7`。
+- 本地候选包：`bbsae-0.99-hotfix36.jar`，已安装到正式 modpack；
+  SHA-256 `C269CE3278AEA5F54FE7BD8B915E6D6FDD4B4D421E3786B2E6A0C7F4BEFE97D2`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 
