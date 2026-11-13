@@ -182,6 +182,12 @@ public class UIReplayModePanel extends UIDashboardPanel
             BBSSettings.editorRestartOnSeek.set(false);
             this.spaceWasDown = Window.isKeyPressed(GLFW.GLFW_KEY_SPACE);
 
+            /* The camera view is a picture of the film, so it needs the clean BBS world frame and
+             * the world camera must follow the replay playhead. Both are scoped to this page: the
+             * compositor restores its own clock when this page disappears. */
+            dev.bbsae.client.overlay.BbsPreviewBridge.setTimeOverride(this::playheadSeconds);
+            dev.bbsae.client.overlay.BbsPreviewBridge.setReplayWorldPreview(true);
+
             this.bindFromDashboard();
         });
         this.onDisappear(() ->
@@ -193,6 +199,17 @@ public class UIReplayModePanel extends UIDashboardPanel
 
             BBSSettings.editorRewind.set(this.previousEditorRewind);
             BBSSettings.editorRestartOnSeek.set(this.previousRestartOnSeek);
+
+            dev.bbsae.client.overlay.BbsPreviewBridge.clearTimeOverride();
+            dev.bbsae.client.overlay.BbsPreviewBridge.setReplayWorldPreview(false);
+
+            /* The cached composition frame belongs to this page; releasing it on leave keeps the
+             * FBO pool from holding a full-resolution preview texture while another workspace is
+             * open. It is re-baked on the first frame the page appears again. */
+            if (this.viewport != null)
+            {
+                this.viewport.releasePreview();
+            }
 
             /* Leaving the page hands the film panel back before the dashboard reparents it. */
             this.detachBorrowedFilmPanel();
@@ -368,6 +385,20 @@ public class UIReplayModePanel extends UIDashboardPanel
     public void frameAllFromHost()
     {
         this.frameAll();
+    }
+
+    /** Test hook: drive the preview view mode without synthesising a click. */
+    public void setPreviewViewModeFromHost(int mode)
+    {
+        if (this.viewport != null)
+        {
+            this.viewport.setViewModeFromHost(mode);
+        }
+    }
+
+    public int previewViewModeFromHost()
+    {
+        return this.viewport == null ? -1 : this.viewport.viewModeFromHost();
     }
 
     public void openModelLibraryFromHost()
@@ -995,7 +1026,10 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         if (this.session != null)
         {
-            this.session.advancePlayback();
+            /* The playhead is advanced from the render pass, not from this once-per-tick update:
+             * driving a 60 fps composition from a 20 Hz clock made playback visibly stutter, and
+             * every displayed frame must sample the same wall-clock instant as the composition
+             * preview it is compared with. */
 
             if (this.session.isPlaying() && this.keyframeEditor != null)
             {
@@ -1219,7 +1253,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             this.debugReplayIndex, tick, yaw, pitch, distance);
     }
 
-    /** List index of the first replay with a form, or 0 when the film has none. */
+    /** List index of the first replay with a form (virtual-world replays only), or 0 when none. */
     public int firstPlayableReplayIndex()
     {
         if (this.film != null)
@@ -1228,7 +1262,8 @@ public class UIReplayModePanel extends UIDashboardPanel
 
             for (int i = 0; i < replays.size(); i++)
             {
-                if (this.session != null && this.session.hasModel(replays.get(i)))
+                if (this.session != null && this.session.isAllowed(replays.get(i))
+                    && this.session.hasModel(replays.get(i)))
                 {
                     return i;
                 }
@@ -1645,6 +1680,9 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         if (this.viewport != null)
         {
+            /* Keep the free/orbit pose in sync with the new framing; otherwise a later
+             * camera → free switch restores the pre-framing pose and the actor becomes a dot. */
+            this.viewport.syncFreePoseFromCamera();
             this.viewport.setStatus("已框选全部模型");
         }
     }

@@ -272,4 +272,91 @@ public class CompViewportCameraTest
             assertEquals(expected.y, actual.y, 0.1F, "look-through y must equal the rendered frame");
         }
     }
+
+    @Test
+    public void lookThroughCarriesRoll()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.width = 1920;
+        doc.height = 1080;
+        doc.fps = 60F;
+        doc.duration = 10F;
+
+        CompLayer layer = new CompLayer("cam", "Camera", "camera");
+
+        layer.threeD = true;
+        layer.camera3D = true;
+        layer.x = 960F;
+        layer.y = 540F;
+        layer.cameraZ = CompCamera.focalFor(50F, doc.height);
+        layer.z = layer.cameraZ;
+        layer.cameraTargetX = 960F;
+        layer.cameraTargetY = 540F;
+        layer.cameraTargetZ = 0F;
+        layer.cameraFov = 50F;
+        /* A rolled camera is a real shot (handheld / dutch angle). The gizmo and the pick pass
+         * read the viewport projection, so dropping roll here puts every handle off the actor. */
+        layer.rotation = 17F;
+        layer.out = doc.duration;
+        doc.layers.add(layer);
+        doc.activeCameraId = layer.id;
+
+        CompCamera composition = CompCamera.of(doc, 0F, 0F);
+        CompViewportCamera viewport = new CompViewportCamera();
+
+        viewport.setViewport(1920, 1080);
+        viewport.lookThrough(composition);
+        viewport.update();
+
+        assertEquals(17F, viewport.roll, 0.001F, "roll must be adopted from the shot camera");
+
+        for (Vector3f point : new Vector3f[] {
+            new Vector3f(960F, 540F, 0F),
+            new Vector3f(200F, 100F, -400F),
+            new Vector3f(1600F, 950F, 250F)
+        })
+        {
+            Vector2f expected = composition.project(point, doc.width, doc.height);
+            Vector2f actual = viewport.project(point);
+
+            assertNotNull(expected);
+            assertNotNull(actual);
+            assertEquals(expected.x, actual.x, 0.1F, "rolled look-through x");
+            assertEquals(expected.y, actual.y, 0.1F, "rolled look-through y");
+        }
+    }
+
+    @Test
+    public void lookThroughACameraLessCompositionUsesTheDefaultFraming()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.width = 1920;
+        doc.height = 1080;
+        doc.fps = 60F;
+        doc.duration = 10F;
+
+        CompCamera composition = CompCamera.of(doc, 0F, 0F);
+        CompViewportCamera viewport = new CompViewportCamera();
+
+        viewport.setViewport(1920, 1080);
+        viewport.lookThrough(composition);
+        viewport.update();
+
+        for (Vector3f point : new Vector3f[] {
+            new Vector3f(0F, 0F, 0F),
+            new Vector3f(1920F, 1080F, 0F),
+            new Vector3f(960F, 540F, -400F)
+        })
+        {
+            Vector2f expected = composition.project(point, doc.width, doc.height);
+            Vector2f actual = viewport.project(point);
+
+            assertNotNull(expected);
+            assertNotNull(actual);
+            assertEquals(expected.x, actual.x, 0.2F, "default framing x");
+            assertEquals(expected.y, actual.y, 0.2F, "default framing y");
+        }
+    }
 }

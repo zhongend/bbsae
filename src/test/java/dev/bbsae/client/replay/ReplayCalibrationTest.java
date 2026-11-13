@@ -60,6 +60,25 @@ public class ReplayCalibrationTest
     }
 
     @Test
+    public void theAutoFrameDistanceScalesWithTheCompositionPixelDensity()
+    {
+        /* 64 px/block (1080p) keeps the historic ~512 px editing distance; a 320x180 comp at
+         * 22 px/block must not leave a 40 px actor 600 px away. */
+        assertEquals(512F, ReplayCalibration.frameMinDistance(64F), 0.0001F);
+        assertEquals(176F, ReplayCalibration.frameMinDistance(22F), 0.0001F);
+        assertEquals(80F, ReplayCalibration.frameMinDistance(1F), 0.0001F);
+        assertEquals(1600F, ReplayCalibration.frameMinDistance(4096F), 0.0001F);
+    }
+
+    @Test
+    public void anExplicitFrameDistanceStillWins()
+    {
+        System.setProperty(ReplayCalibration.FRAME_MIN_DISTANCE, "900");
+
+        assertEquals(900F, ReplayCalibration.frameMinDistance(22F), 0.0001F);
+    }
+
+    @Test
     public void invalidValuesFallBackInsteadOfBreakingTheScene()
     {
         System.setProperty(ReplayCalibration.PIXELS_PER_BLOCK, "not a number");

@@ -55,7 +55,8 @@ public final class ReplayViewCamera
         camera.far = Math.max(camera.near + 1F, viewport.far * blocksPerPixel);
 
         camera.rotation.set((float) Math.toRadians(viewport.pitch + ReplayCalibration.pitchOffset()),
-            (float) Math.toRadians(viewport.yaw + ReplayCalibration.yawOffset()), 0F);
+            (float) Math.toRadians(viewport.yaw + ReplayCalibration.yawOffset()),
+            (float) Math.toRadians(viewport.roll));
 
         return camera;
     }

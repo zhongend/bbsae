@@ -8,6 +8,7 @@ import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.ui.dashboard.UIDashboard;
 import mchorse.bbs_mod.camera.controller.RunnerCameraController;
 import mchorse.bbs_mod.film.Film;
+import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.ui.film.UIFilmPanel;
 import mchorse.bbs_mod.ui.film.controller.UIFilmController;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
@@ -71,6 +72,12 @@ public final class BbsPreviewBridge
         if (mchorse.bbs_mod.client.BBSRendering.isCustomSize())
         {
             SceneColor.capture();
+
+            if (SceneColor.texture() != null)
+            {
+                worldGeneration += 1;
+                worldSeconds = currentFilmSeconds();
+            }
         }
     }
 
@@ -86,6 +93,22 @@ public final class BbsPreviewBridge
     private static boolean worldCaptureRequested;
     /** True while the editor preview uses the live world frame as its backdrop. */
     private static boolean backdropRequested;
+    /** True while the replay editor needs the clean BBS world frame for its camera preview. */
+    private static boolean replayWorldPreview;
+    /**
+     * Monotonic counter bumped whenever a new world colour copy is produced. The replay preview
+     * uses it to invalidate a composition frame that was baked before the first valid world frame
+     * (the BBS-preview layer in it would otherwise stay empty forever).
+     */
+    private static int worldGeneration;
+    /** Film time (seconds) the current world colour copy was rendered at, or -1 when unknown. */
+    private static float worldSeconds = -1F;
+    /**
+     * Optional source of the film cursor for the world pass. The compositor drives the BBS camera
+     * with its own playhead; the replay editor must drive the same camera with the replay
+     * playhead instead. A supplier is used because the replay panel owns that clock.
+     */
+    private static java.util.function.DoubleSupplier timeOverride;
     /** True while a depth effect needs the world depth buffer. */
     private static boolean depthRequested;
     /** Per-frame depth request from a path that cannot run {@link #syncRequests}. */
@@ -219,6 +242,51 @@ public final class BbsPreviewBridge
     public static void setBackdropRequested(boolean requested)
     {
         backdropRequested = requested;
+    }
+
+    /**
+     * The replay editor's camera view needs the clean world frame as its backdrop. This is an
+     * explicit request rather than a document-derived one: a composition without a BBS-preview
+     * layer still has the film world behind it, and the replay camera view is supposed to show the
+     * final shot (world + composition), not a black stage.
+     */
+    public static void setReplayWorldPreview(boolean requested)
+    {
+        replayWorldPreview = requested;
+    }
+
+    /**
+     * Makes the world camera follow the replay playhead instead of the compositor playhead.
+     * Passing {@code null} restores the compositor clock.
+     */
+    public static void setTimeOverride(java.util.function.DoubleSupplier supplier)
+    {
+        timeOverride = supplier;
+    }
+
+    public static void clearTimeOverride()
+    {
+        timeOverride = null;
+    }
+
+    /** Bumped by every new world colour copy; see {@link #worldGeneration}. */
+    public static int worldGeneration()
+    {
+        return worldGeneration;
+    }
+
+    /** Film time the current world copy was rendered at, in seconds; -1 when unknown. */
+    public static float worldTimeSeconds()
+    {
+        return worldSeconds;
+    }
+
+    /** True when a world colour copy exists and can be drawn. */
+    public static boolean hasUsableWorld()
+    {
+        GlTexture texture = texture();
+
+        return texture != null && texture.width > 0 && texture.height > 0;
     }
 
     /**
@@ -397,6 +465,12 @@ public final class BbsPreviewBridge
 
         SceneColor.capture();
 
+        if (SceneColor.texture() != null)
+        {
+            worldGeneration += 1;
+            worldSeconds = currentFilmSeconds();
+        }
+
         if (depthRequested)
         {
             captureDepthNow();
@@ -420,8 +494,11 @@ public final class BbsPreviewBridge
         runnerAdded = false;
         active = false;
         backdropRequested = false;
+        replayWorldPreview = false;
+        timeOverride = null;
         depthRequested = false;
         depthForced = false;
+        worldSeconds = -1F;
         dev.bbsae.client.render.ReplayEntityMask.clearRequest();
         filmPanel = null;
         document = null;
@@ -483,6 +560,19 @@ public final class BbsPreviewBridge
         carriedController = null;
     }
 
+    /** Film time (seconds) the world camera was last positioned at. */
+    private static float currentFilmSeconds()
+    {
+        try
+        {
+            return filmPanel == null ? -1F : filmPanel.getRunner().getCursor(0F) / TICKS_PER_SECOND;
+        }
+        catch (RuntimeException e)
+        {
+            return -1F;
+        }
+    }
+
     /** Seek the film camera to the compositor's playhead. Cheap; safe to call every frame. */
     public static void sync(float seconds)
     {
@@ -491,9 +581,24 @@ public final class BbsPreviewBridge
             return;
         }
 
+        java.util.function.DoubleSupplier override = timeOverride;
+        float at = seconds;
+
+        if (override != null)
+        {
+            try
+            {
+                at = (float) override.getAsDouble();
+            }
+            catch (RuntimeException ignored)
+            {
+                at = seconds;
+            }
+        }
+
         try
         {
-            filmPanel.getRunner().setCursor(Math.max(0F, seconds) * TICKS_PER_SECOND);
+            filmPanel.getRunner().setCursor(Math.max(0F, at) * TICKS_PER_SECOND);
         }
         catch (RuntimeException ignored)
         {}
@@ -527,6 +632,39 @@ public final class BbsPreviewBridge
                 return;
             }
 
+            /* bbsae's virtual replays are enabled (and therefore have entities) only while the
+             * replay editor is open. They are authors' composition actors, not actors of the real
+             * film: drawing them at their world-space anchors would put ghost copies of every model
+             * into the BBS world plate. Hide them from this one render and restore the map
+             * immediately — the composition/preview passes later in the frame need them. */
+            java.util.Map<String, mchorse.bbs_mod.forms.entities.IEntity> entities =
+                controller.editorController.getEntities();
+            java.util.List<java.util.Map.Entry<String, mchorse.bbs_mod.forms.entities.IEntity>> hidden = null;
+
+            if (entities != null && film != null)
+            {
+                for (Replay replay : film.replays.getList())
+                {
+                    if (replay == null || replay.getId() == null
+                        || !dev.bbsae.client.replay.CompReplayBridge.isVirtual(replay))
+                    {
+                        continue;
+                    }
+
+                    mchorse.bbs_mod.forms.entities.IEntity entity = entities.remove(replay.getId());
+
+                    if (entity != null)
+                    {
+                        if (hidden == null)
+                        {
+                            hidden = new java.util.ArrayList<>();
+                        }
+
+                        hidden.add(java.util.Map.entry(replay.getId(), entity));
+                    }
+                }
+            }
+
             /* Use the composition's fractional tick, not Minecraft's tick delta.
              *
              * The compositor playhead is a wall clock and the runner cursor is set to
@@ -543,8 +681,21 @@ public final class BbsPreviewBridge
                 tickDelta = cursor - (float) Math.floor(cursor);
             }
 
-            controller.editorController.startRenderFrame(tickDelta);
-            controller.editorController.render(context);
+            try
+            {
+                controller.editorController.startRenderFrame(tickDelta);
+                controller.editorController.render(context);
+            }
+            finally
+            {
+                if (hidden != null)
+                {
+                    for (java.util.Map.Entry<String, mchorse.bbs_mod.forms.entities.IEntity> entry : hidden)
+                    {
+                        entities.put(entry.getKey(), entry.getValue());
+                    }
+                }
+            }
         }
         catch (RuntimeException e)
         {
@@ -568,7 +719,7 @@ public final class BbsPreviewBridge
          * the BBS preview layer used to disappear from the exported video. */
         /* Copying the world colour is a full framebuffer copy. Doing it every frame even when no
          * layer samples it was pure GPU cost, so it now requires an actual consumer. */
-        boolean editorNeeds = active && (worldCaptureRequested || backdropRequested);
+        boolean editorNeeds = active && (worldCaptureRequested || backdropRequested || replayWorldPreview);
         boolean exportNeeds = worldCaptureRequested
             && (mchorse.bbs_mod.client.BBSRendering.isCustomSize()
                 || BBSModClient.getVideoRecorder().isRecording());
@@ -580,6 +731,12 @@ public final class BbsPreviewBridge
             if (!mchorse.bbs_mod.client.BBSRendering.isCustomSize())
             {
                 SceneColor.capture();
+            }
+
+            if (SceneColor.texture() != null)
+            {
+                worldGeneration += 1;
+                worldSeconds = currentFilmSeconds();
             }
 
             /* Depth is copied in the same pass, from the same framebuffer, so colour and depth can

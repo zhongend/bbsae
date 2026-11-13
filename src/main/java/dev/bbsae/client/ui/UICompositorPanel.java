@@ -13861,7 +13861,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.beginPageMotion(this.workspaceMotion, "mode:replay");
             this.applyLayout();
             this.updateToolbarLabels();
-            this.setStatus("虚拟回放编辑：仅显示 bbsae 模型；BBS 原版轨道 / 原生 gizmo / 虚拟世界预览");
+            this.setStatus("虚拟回放编辑：相机视角显示 BBS 世界帧 + 最终合成；自由/绕对象视角编辑模型（原版轨道 / 原生 gizmo）");
         }
         else
         {

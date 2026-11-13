@@ -542,10 +542,11 @@ public final class CompRenderer
     }
 
     /**
-     * True when this composition needs the world depth buffer (enabled depth effects).
-     * Package-private for the degradation regression test.
+     * True when this composition needs the world depth buffer (enabled depth effects). Public so
+     * the replay editor's camera preview can request the depth copy before baking a frame; the
+     * package-private visibility is kept for the degradation regression test.
      */
-    static boolean needsWorldDepth(CompProject project, CompDocument doc)
+    public static boolean needsWorldDepth(CompProject project, CompDocument doc)
     {
         return project != null && doc != null && doc.layers != null && needsDepth(project, doc);
     }

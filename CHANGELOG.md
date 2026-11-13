@@ -1,5 +1,68 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix43 — 2026-11-13
+
+回放编辑器预览重构：**相机视角 = BBS 世界帧 + 最终合成**，自由/绕对象视角 = 干净的虚拟舞台，
+相机姿态/roll/正交与 gizmo/拾取精确同步，合成帧缓存与显示帧播放。
+
+### 相机视角显示 BBS 世界帧
+
+- 根因：hotfix42 在回放页用 `CompPreviewFilter` 把 `bbs` 层整层过滤，相机视角只剩合成内容、
+  背景是黑色，所以工程里的「BBS 预览」层“无法显示”。
+- `BbsPreviewBridge` 新增回放页专用的世界帧请求（`setReplayWorldPreview`）、回放播放头
+  时钟覆盖（`setTimeOverride`）与世界帧时间戳（`worldTimeSeconds`）。BBS 胶片相机现在跟
+  回放播放头走，世界帧和合成帧是同一时刻。
+- `renderFilmActors` 在世界 pass 里临时隐藏 bbsae 虚拟回放实体，真实影片演员保留；虚拟模型
+  不会再以世界坐标鬼影出现在 BBS 世界帧里。
+- 相机视角按 `doc.width/doc.height` 计算合成矩形（`ReplayPreviewLayout.fit`），先画黑边，
+  再以 contain 方式画世界帧，最后叠上 `CompRenderer.renderFrame(..., transparentStage=true)`
+  的透明合成帧。
+- `bbs` 层不再被过滤：相机帧走导出/AE 同一条 `renderFrame` 图，文字、图片、形状、3D 卡、
+  蒙版、特效、linked 模型和 BBS 预览层都在。日志
+  `BBS preview layer composited a 1920x1080 world frame` 可直接确认。
+- depth 效果会先 `requestDepth(true)`，等世界深度可用后再烘焙，避免缓存一张无深度帧。
+
+### 自由/绕对象视角退回干净的虚拟舞台
+
+- 根因：hotfix42 的自由视角调用 `CompViewportRenderer`，把整张 2D 合成当成 3D 世界平面画，
+  于是出现巨大文字/色块、模型与合成层互相穿插。
+- 现在自由/绕对象视角画深色渐变 + 细网格舞台，`ReplayModelPass` 用 BBS `FilmEntityRenderer`
+  画虚拟回放模型，`ReplayCompositionOverlay` 只画构图框/相机/图层参考线。
+- `ReplayCalibration.frameMinDistance(pixelsPerBlock)` 让自动取景的最小距离随合成 px/格缩放：
+  320×180 工程不再把 40px 的模型放到 600px 外变成小点；显式
+  `-Dbbsae.replayFrameMinDistance` 仍然优先。
+- 「框选全部」后同步自由相机姿态；camera ↔ free 切换不会回到取景前的默认位置。
+
+### 相机与 gizmo 一致
+
+- `lookThroughCompositionCamera` 改为 `CompCamera.of` + `CompViewportCamera.lookThrough`，
+  eye/target/FOV/near/far/roll/正交全部继承镜头；不再手推 yaw/pitch、不再强制透视。
+- `CompViewportCamera` 增加 roll（与 `CompCamera` 同样的基向量滚转），
+  `ReplayViewCamera` 写入 BBS `Camera.rotation.z`。
+- 相机视角的 gizmo/pick 使用合成矩形 `cameraArea` 而不是整个视口；`getGizmoArea`、
+  pick pass、`GizmoDrag` 全部一致，手柄不再偏。
+
+### 画幅、缓存与播放
+
+- 相机视角不再把合成拉伸到视口：按合成画幅 letterbox；世界帧在其中 contain。
+- `UIReplayViewport` 缓存合成帧（`GlFramebuffer` + `CompRenderCache.signature`），只在
+  帧号/文档签名/烘焙分辨率变化时重渲；暂停时每显示帧只画一个 textured quad。
+- 播放时预览分辨率乘 0.85；`renderFrame` 用 `CompRenderContext.setTargetEdge` 按预览栅格
+  烘焙 3D 层，不再发软。
+- 播放头从 `UIReplayModePanel.update()`（20 Hz）移到 `UIReplayViewport.render()`（显示帧），
+  单调时钟推进；60 fps 合成不再一跳一跳。
+- 跟随 `BBS 世界帧未就绪 / 同步世界与合成时间 / 合成渲染失败` 三种状态在 HUD 中显示。
+
+### 验证
+
+- 全量测试：**155 套件 / 966 项 / 0 failures / 0 errors / 1 skipped**。
+- 真机：`docs/verify/round91-preview-camera.png`、`round91b-preview-camera.png`
+  （相机视角 BBS 世界帧 + gizmo）、`round92-preview-camera.png`。
+- 单次启动双截图钩子：`-PbbsaeReplayViewShots=<prefix>`；日志
+  `_tools/run-round91-preview3.log`、`_tools/run-round91b-preview.log`。
+- 本地候选包：`bbsae-0.99-hotfix43.jar`（3,922,291 bytes，SHA-256
+  `C1CBA6D5128423C46D0A4898BF265BD43B7FFC628663AA14509660D24E7CD9EE`）。
+
 ## 0.99-hotfix42 — 2026-11-13
 
 回放预览真实图层/文字显示、相机跟随、缩放同步、空格播放与轨道指针。

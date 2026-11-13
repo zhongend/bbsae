@@ -819,7 +819,7 @@ public final class ReplayEditSession
          * composition pixels — i.e. inside the model — in the second real-machine screenshot.
          * Keep a human-scale minimum distance so the actor is actually visible. */
         float minDistance = ReplayFraming.safeDistance(
-            ReplayCalibration.frameMinDistance(), ReplayFraming.FALLBACK_DISTANCE);
+            ReplayCalibration.frameMinDistance(this.space.pixelsPerBlock), ReplayFraming.FALLBACK_DISTANCE);
         float distance = ReplayFraming.safeDistance(this.camera.distance, minDistance);
 
         if (distance < minDistance)

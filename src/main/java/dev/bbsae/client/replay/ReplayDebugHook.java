@@ -213,6 +213,46 @@ public final class ReplayDebugHook
                 floatProperty("bbsae.debugReplayDistance")
             );
 
+            /* Optional two-state preview audit: camera view then the free stage, each screenshotted
+             * from the same launch. This is the visual check for the preview overhaul; it is
+             * inert unless the property is set, so it does not affect normal runs. */
+            String viewShots = System.getProperty("bbsae.debugReplayViewShots", "").trim();
+
+            if (!viewShots.isEmpty())
+            {
+                final int[] shotTick = {0};
+
+                ClientTickEvents.END_CLIENT_TICK.register((client) ->
+                {
+                    if (client.player == null)
+                    {
+                        return;
+                    }
+
+                    shotTick[0] += 1;
+
+                    if (shotTick[0] == 50)
+                    {
+                        BbsAeAddon.LOGGER.info("Replay view audit: camera screenshot '{}' (mode={})",
+                            viewShots + "-camera", panel.previewViewModeFromHost());
+                        BbsAeClient.debugScreenshot(viewShots + "-camera", false);
+                    }
+                    else if (shotTick[0] == 80)
+                    {
+                        panel.setPreviewViewModeFromHost(0);
+                        panel.frameAllFromHost();
+                        BbsAeAddon.LOGGER.info("Replay view audit: switched to free view (mode={})",
+                            panel.previewViewModeFromHost());
+                    }
+                    else if (shotTick[0] == 120)
+                    {
+                        BbsAeAddon.LOGGER.info("Replay view audit: free screenshot '{}' (mode={})",
+                            viewShots + "-free", panel.previewViewModeFromHost());
+                        BbsAeClient.debugScreenshot(viewShots + "-free", Boolean.getBoolean("bbsae.debugQuitAfterShot"));
+                    }
+                });
+            }
+
             /* The scripted interaction run (P6) rides on the same verification hook: it performs
              * the gizmo-write/undo/form/library/list interactions and screenshots each state. */
             if (ReplayInteractionScript.isEnabled())

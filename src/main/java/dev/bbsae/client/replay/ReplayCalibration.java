@@ -82,6 +82,29 @@ public final class ReplayCalibration
         return floatProperty(FRAME_MIN_DISTANCE, DEFAULT_FRAME_MIN_DISTANCE, 1F, 1_000_000F);
     }
 
+    /**
+     * Scale-aware default for auto-framing a film whose composition has its own pixels-per-block.
+     *
+     * <p>The historic 600 px constant was calibrated for a 1080p composition (64 px/block): a
+     * 1.8-block actor is 115 px tall, so 600 px is a comfortable editing distance. A 320×180
+     * composition uses ~22 px/block, which makes the same actor 40 px tall — at 600 px away it
+     * becomes a dot. Scaling the default with the composition's scale (while an explicit
+     * {@code -Dbbsae.replayFrameMinDistance} still wins) keeps the actor readable in both.</p>
+     */
+    public static float frameMinDistance(float pixelsPerBlock)
+    {
+        String raw = System.getProperty(FRAME_MIN_DISTANCE);
+
+        if (raw != null && !raw.isBlank())
+        {
+            return frameMinDistance();
+        }
+
+        float scale = Math.max(1F, Math.min(4096F, pixelsPerBlock));
+
+        return Math.max(80F, Math.min(1600F, scale * 8F));
+    }
+
     /** System property as a finite float clamped to {@code [min, max]}, or the fallback. */
     static float floatProperty(String key, float fallback, float min, float max)
     {

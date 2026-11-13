@@ -53,6 +53,12 @@ public final class CompViewportCamera
     public float yaw;
     /** Degrees. Positive = the camera is above the target (composition Y points down). */
     public float pitch = 20F;
+    /**
+     * Screen roll in degrees, matching {@link CompCamera#roll}. Free/orbit navigation clears it;
+     * {@link #lookThrough(CompCamera)} adopts the composition camera's roll so a rolled shot's
+     * gizmo/pick projection lands on the same pixels the composition camera rendered.
+     */
+    public float roll;
     public float fov = CompCamera.DEFAULT_FOV;
     public boolean ortho;
     public float near = 1F;
@@ -80,6 +86,7 @@ public final class CompViewportCamera
     private float builtPitch = Float.NaN;
     private float builtDistance = Float.NaN;
     private float builtFov = Float.NaN;
+    private float builtRoll = Float.NaN;
     private boolean builtOrtho;
     private int builtWidth;
     private int builtHeight;
@@ -115,6 +122,9 @@ public final class CompViewportCamera
         this.yaw = yaw;
         this.pitch = clampPitch(pitch);
         this.distance = clampDistance(distance);
+        /* Free-camera gestures never inherit the shot camera's roll. Keeping a stale roll here
+         * made "switch back to free view" show a tilted horizon with no way to level it. */
+        this.roll = 0F;
         this.matricesDirty = true;
 
         return this;
@@ -126,6 +136,7 @@ public final class CompViewportCamera
         if (!this.matricesDirty
             && this.builtYaw == this.yaw && this.builtPitch == this.pitch
             && this.builtDistance == this.distance && this.builtFov == this.fov
+            && this.builtRoll == this.roll
             && this.builtOrtho == this.ortho
             && this.builtWidth == this.width && this.builtHeight == this.height
             && this.builtTargetX == this.target.x && this.builtTargetY == this.target.y
@@ -139,6 +150,7 @@ public final class CompViewportCamera
         this.builtPitch = this.pitch;
         this.builtDistance = this.distance;
         this.builtFov = this.fov;
+        this.builtRoll = this.roll;
         this.builtOrtho = this.ortho;
         this.builtWidth = this.width;
         this.builtHeight = this.height;
@@ -181,6 +193,19 @@ public final class CompViewportCamera
         r.normalize();
 
         Vector3f u = new Vector3f(f).cross(r).normalize();
+
+        /* Same roll convention as CompCamera: the world appears to rotate the other way, so the
+         * basis' right/up rotate by -roll around the forward axis. */
+        if (Math.abs(this.roll) > 0.0001F)
+        {
+            float radians = (float) Math.toRadians(this.roll);
+            float cos = (float) Math.cos(radians);
+            float sin = (float) Math.sin(radians);
+            Vector3f rolled = new Vector3f(r).mul(cos).add(new Vector3f(u).mul(-sin));
+
+            r.set(rolled).normalize();
+            u.set(new Vector3f(f).cross(r)).normalize();
+        }
 
         this.forward.set(f);
         this.right.set(r);
@@ -305,6 +330,7 @@ public final class CompViewportCamera
         float ry = Math.max(1F, Math.abs(max.y - min.y) * 0.5F);
 
         this.target.set(cx, cy, cz);
+        this.roll = 0F;
 
         float tanHalf = (float) Math.tan(Math.toRadians(this.clampedFov()) * 0.5D);
         float aspect = Math.max(0.01F, this.width / (float) Math.max(1, this.height));
@@ -505,7 +531,10 @@ public final class CompViewportCamera
         this.target.set(interest);
         this.distance = clampDistance(length > 0.001F ? length : Math.max(MIN_DISTANCE, camera.focal));
         this.fov = camera.fov;
+        this.near = Math.max(0.01F, camera.near);
+        this.far = Math.max(this.near + 1F, camera.far);
         this.ortho = !camera.perspective;
+        this.roll = camera.roll;
 
         /* Derive yaw/pitch from the camera's forward vector so the orbit handle agrees with what
          * the user just looked through. */

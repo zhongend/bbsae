@@ -1,15 +1,21 @@
 package dev.bbsae.client.replay;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import dev.bbsae.client.BbsAeClient;
+import dev.bbsae.client.overlay.BbsPreviewBridge;
 import dev.bbsae.client.render.CompCamera;
-import dev.bbsae.client.render.CompPreviewFilter;
+import dev.bbsae.client.render.CompFrameServer;
+import dev.bbsae.client.render.CompRenderCache;
 import dev.bbsae.client.render.CompRenderer;
 import dev.bbsae.client.render.CompViewportCamera;
-import dev.bbsae.client.render.CompViewportRenderer;
+import dev.bbsae.client.render.FboPool;
+import dev.bbsae.client.render.GlFramebuffer;
+import dev.bbsae.client.render.GlTexture;
 import dev.bbsae.client.ui.CompPrefs;
 import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompProject;
 import dev.bbsae.comp.CompLayer;
+import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.film.Film;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.FormUtils;
@@ -38,17 +44,35 @@ import java.util.Locale;
 import java.util.function.IntConsumer;
 
 /**
- * The panel's free 3D viewport: draws the film's replay models, navigates like the compositor's 3D
- * space (right drag orbits, shift+right or middle drag pans, wheel zooms about the cursor), and
- * hosts BBS' own transform gizmo.
+ * The replay editor's preview surface, with two presentation modes and one interaction contract.
  *
- * <p>The gizmo host is the interesting part. BBS' gizmo is a singleton whose visual is drawn in
- * the UI pass and whose handles are picked from a stencil pass; a host only has to supply the
- * viewport projection, the area, a pick buffer and {@code startGizmo}. This class therefore
- * implements {@link GizmoViewport} and forwards everything else to {@link GizmoInteraction} — the
- * same helper the film editor and the model block editor use — so dragging a handle writes
- * through the original {@code UIReplayPropTransform} into the replay's own channels, with the
- * original undo callbacks.</p>
+ * <h2>Camera view — the finished shot</h2>
+ * <p>The default view draws the real composition frame through the active composition camera over
+ * the clean BBS world frame, letterboxed to the document's aspect ratio. Text, images, cards,
+ * effects, masks, 3D layers, linked replay models and the BBS-preview layer all go through the same
+ * {@link CompRenderer} graph the film preview and the export use ({@code renderFrame}), so what the
+ * editor shows is a frame, not a screen recording of the game. The composition frame is cached per
+ * composition frame/document/raster; a parked playhead costs one textured quad per display frame.</p>
+ *
+ * <h2>Free / orbit views — the virtual stage</h2>
+ * <p>Navigating a composition painted into 3D space looked like an exploded shot: every card and
+ * text layer became a giant plane floating around the actor. These views are now a clean dark
+ * stage: a subtle grid, the film's replay models through BBS' own {@code FilmEntityRenderer}, and
+ * {@link ReplayCompositionOverlay}'s lightweight guides (composition frame, cameras, layer centres).
+ * The final composition is one click away in camera view or in the PiP/two-window preview.</p>
+ *
+ * <h2>Interaction</h2>
+ * <p>BBS' gizmo is a singleton whose visual is drawn in the UI pass and whose handles are picked
+ * from a stencil pass; a host only has to supply the viewport projection, the area, a pick buffer
+ * and {@code startGizmo}. This class implements {@link GizmoViewport} and forwards everything else
+ * to {@link GizmoInteraction} — the same helper the film editor and the model block editor use — so
+ * dragging a handle writes through the original {@code UIReplayPropTransform} into the replay's own
+ * channels, with the original undo callbacks. The gizmo/pick area is the composition rectangle in
+ * camera view and the whole viewport on the stage, so handles land on the actor in both.</p>
+ *
+ * <p>The projection is adopted from {@link CompCamera} via
+ * {@link CompViewportCamera#lookThrough(CompCamera)} (eye, target, FOV, near/far, roll and ortho),
+ * which is why the handles cannot drift from the rendered shot.</p>
  */
 public final class UIReplayViewport extends UIElement implements GizmoViewport
 {
@@ -72,9 +96,33 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     private boolean cameraAnchorSaved;
     private final Vector3f cameraAnchor = new Vector3f();
     private boolean freePoseInitialized;
+    /** True once the first switch to the free view has framed the actors. */
+    private boolean freePoseEstablished;
     /** The 3D half of a two-window preview; equals {@link #area} in other modes. */
     private final Area viewArea = new Area();
+    /**
+     * The composition rectangle inside the camera view. Its aspect is the document's, so the
+     * composition is never stretched and the gizmo/pick projection uses the same rectangle the
+     * picture was painted into.
+     */
+    private final Area cameraArea = new Area();
+    /** Scratch rectangle for the picture-in-picture / two-window preview. */
+    private final Area windowPane = new Area();
+    private final Area windowPlate = new Area();
     private int buttonRight = -1;
+
+    /* Cached composition frame for the preview. Rendering the whole graph every display frame made
+     * a 1080p composition compete with the game's own world pass; the frame is baked at most once
+     * per composition frame (and only when the document or the raster changed). */
+    private GlFramebuffer compFrame;
+    private long compFrameSignature;
+    private int compFrameIndex = -1;
+    private int compFrameWidth;
+    private int compFrameHeight;
+    private boolean compFrameWorldReady;
+    private String compositionError;
+    private long compositionErrorMs;
+    private boolean previewWaitingForWorld;
 
     private ReplayEditSession session;
     private final ReplayPickPass pick = new ReplayPickPass();
@@ -172,6 +220,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         }
 
         this.viewMode = mode;
+        this.updateCameraArea();
         this.setStatus(mode == VIEW_FREE ? "自由视角" : (mode == VIEW_ORBIT ? "绕对象旋转" : "相机视角"));
 
         if (mode == VIEW_FREE && this.session != null)
@@ -182,16 +231,36 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             camera.pitch = this.freePitch;
             camera.distance = this.freeDistance;
             camera.target.set(this.freeTarget);
+            /* Leaving the shot camera must also level the horizon. */
+            camera.roll = 0F;
+            camera.ortho = false;
             camera.update();
+
+            /* The first free view should frame the film's actors, not inherit the default orbit
+             * distance. Later switches restore the free pose the user was just editing in. */
+            if (!this.freePoseEstablished)
+            {
+                this.freePoseEstablished = true;
+                this.session.frameAll();
+            }
         }
 
         if (mode == VIEW_ORBIT)
         {
+            if (this.session != null)
+            {
+                this.session.camera().roll = 0F;
+                this.session.camera().ortho = false;
+            }
+
             this.followSelectedActor();
         }
 
         if (mode == VIEW_CAMERA)
         {
+            /* Ask for the clean world frame on the same click that switches view: otherwise the
+             * first camera frame has to wait for the viewport render to re-enable the capture. */
+            BbsPreviewBridge.setReplayWorldPreview(true);
             this.lookThroughCompositionCamera();
         }
     }
@@ -219,7 +288,16 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         camera.update();
     }
 
-    /** Camera mode: derive the orbit state that reproduces the active composition camera. */
+    /**
+     * Camera mode: look through the active composition camera, exactly.
+     *
+     * <p>The old implementation rebuilt the pose by hand (eye/target, a derived yaw/pitch, forced
+     * perspective) and silently dropped the camera's roll and orthographic mode. That is why a
+     * rolled or flat composition previewed correctly but its gizmo/pick sat on different pixels.
+     * {@link CompCamera#of} is the single camera resolver the renderer uses, and
+     * {@link CompViewportCamera#lookThrough(CompCamera)} adopts its eye, target, FOV, near/far,
+     * roll and projection kind, so the preview and the interactive gizmo cannot disagree.</p>
+     */
     private void lookThroughCompositionCamera()
     {
         if (this.session == null)
@@ -245,53 +323,18 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         float time = this.session.playhead() / ReplayTime.TICKS_PER_SECOND;
         float frame = time * Math.max(1F, doc.fps);
-        CompLayer active = doc.activeCamera(time);
 
-        if (active == null)
-        {
-            return;
-        }
+        /* Put the edited actor where the composition puts it before deriving the camera pose: the
+         * anchor is part of the world↔composition mapping the gizmo, pick pass and actor pass all
+         * read, so it must already be aligned when the frame is drawn. */
+        this.alignSpaceToLinkedLayer(doc, time);
 
-        Vector3f eye = CompCamera.eyeOf(active, frame, doc.height);
-        Vector3f target = new Vector3f(
-            active.scalarAt("cameraTargetX", active.cameraTargetX, frame),
-            active.scalarAt("cameraTargetY", active.cameraTargetY, frame),
-            active.scalarAt("cameraTargetZ", active.cameraTargetZ, frame)
-        );
-        Vector3f dir = new Vector3f(eye).sub(target);
-        float distance = Math.max(1F, dir.length());
-        float yaw = (float) Math.toDegrees(Math.atan2(dir.x, dir.z));
-        float pitch = (float) Math.toDegrees(Math.asin(Math.max(-1F, Math.min(1F, -dir.y / distance))));
-
+        CompCamera composition = CompCamera.of(doc, time, frame);
         CompViewportCamera camera = this.session.camera();
 
-        camera.target.set(target);
-        camera.setPose(yaw, pitch, distance);
-        camera.fov = active.scalarAt("cameraFov", active.cameraFov, frame);
-        camera.near = active.cameraNear;
-        camera.far = active.cameraFar;
-        camera.ortho = false;
+        camera.setViewport(this.cameraArea.w, this.cameraArea.h);
+        camera.lookThrough(composition);
         camera.update();
-
-        /* Align the replay scene with the composition: the layer's comp position is where the
-         * replay's world anchor must land. Without this the composition backdrop and the gizmo
-         * disagree by the actor's world offset. */
-        CompLayer linked = this.linkedLayer(doc, this.session.replay());
-
-        if (linked != null)
-        {
-            ReplaySceneSpace space = this.session.space();
-            float s = space.pixelsPerBlock;
-            float zSign = space.flipZ ? -s : s;
-            mchorse.bbs_mod.utils.pose.Transform transform = linked.transformAt(frame);
-            float layerZ = linked.scalarAt("z", linked.z, frame);
-
-            space.anchor.set(
-                transform.translate.x - s * linked.replayAnchorX,
-                transform.translate.y + s * linked.replayAnchorY,
-                layerZ - zSign * linked.replayAnchorZ
-            );
-        }
     }
 
     private CompLayer linkedLayer(CompDocument doc, Replay replay)
@@ -313,47 +356,13 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     }
 
     /**
-     * Draws the real bbsae composition scene (text, cards, triangles, effects, linked replay
-     * actors) through the free/orbit camera. This is the compositor's own
-     * {@link CompViewportRenderer}, so the replay editor and the compositor cannot disagree about
-     * geometry. Only the replay actor is interactive in this page; the other layers are read-only.
-     */
-    private boolean renderCompositionScene3D(UIContext context)
-    {
-        if (this.viewMode == VIEW_CAMERA || this.session == null || !this.compositionPreviewSupported())
-        {
-            return false;
-        }
-
-        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
-        CompProject project = panel.getProject();
-        CompDocument doc = panel.getDocument();
-
-        this.alignSpaceToLinkedLayer(doc, this.session.playhead() / ReplayTime.TICKS_PER_SECOND);
-
-        CompPreviewFilter.push((layer) -> layer == null || !"bbs".equals(layer.type));
-
-        try
-        {
-            CompViewportRenderer.draw(context.batcher, project, doc, this.session.camera(),
-                this.session.playhead() / ReplayTime.TICKS_PER_SECOND,
-                this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
-        }
-        finally
-        {
-            CompPreviewFilter.pop();
-        }
-
-        return true;
-    }
-
-    /**
-     * Align the replay world with the linked CompLayer without moving the actor on screen.
+     * Aligns the replay world with the linked composition layer.
      *
      * <p>The compositor renders the actor at the layer's comp position; the replay editor maps the
-     * actor's world anchor through {@link ReplaySceneSpace}. Setting the anchor so that the world
-     * anchor lands on the layer, then shifting the orbit target by the same delta, keeps the actor
-     * under the cursor and puts the composition's other layers in the same coordinate system.</p>
+     * actor's world anchor through {@link ReplaySceneSpace}. Setting the anchor so that the
+     * replay's anchor lands on the layer keeps the gizmo/pick and the composition actor on the
+     * same pixels. The orbit target is shifted by the same delta so a later free/orbit switch does
+     * not jump.</p>
      */
     private void alignSpaceToLinkedLayer(CompDocument doc, float time)
     {
@@ -387,15 +396,411 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         }
     }
 
+    /**
+     * Draws the real bbsae composition frame through the film's active camera, over the clean BBS
+     * world frame. This is the replay editor's "what will the finished shot look like" view.
+     */
+    private int renderCameraPreview(UIContext context)
+    {
+        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+        CompProject project = panel == null ? null : panel.getProject();
+        CompDocument doc = panel == null ? null : panel.getDocument();
+
+        if (project == null || doc == null)
+        {
+            context.batcher.textCard("没有可预览的合成：先在合成器页打开工程并绑定影片",
+                this.viewArea.x + 10, this.viewArea.y + 10, 0xFFFFB27A, 0xAA140D06);
+
+            return 0;
+        }
+
+        float time = this.session.playhead() / ReplayTime.TICKS_PER_SECOND;
+
+        this.renderCompositionPlate(context, project, doc, this.cameraArea, time, null);
+
+        return this.session.placeableCount();
+    }
+
+    /**
+     * PiP / two-window composition preview for the free and orbit views.
+     *
+     * <p>In camera view the main picture already is the composition, so a second copy would only
+     * cost GPU time. The setting keeps its documented meaning for the free views, where it is the
+     * side-by-side reference.</p>
+     */
+    private void renderCompositionWindow(UIContext context)
+    {
+        int mode = this.compPreviewMode();
+
+        if (mode == 0 || this.session == null || this.viewMode == VIEW_CAMERA || !this.compositionPreviewSupported())
+        {
+            return;
+        }
+
+        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+        CompProject project = panel == null ? null : panel.getProject();
+        CompDocument doc = panel == null ? null : panel.getDocument();
+
+        if (project == null || doc == null)
+        {
+            return;
+        }
+
+        float time = this.session.playhead() / ReplayTime.TICKS_PER_SECOND;
+
+        if (mode == 2)
+        {
+            int px = this.viewArea.ex() + 2;
+            int py = this.area.y;
+            int pw = this.area.ex() - px;
+            int ph = this.area.h;
+
+            if (pw > 60 && ph > 60)
+            {
+                this.windowPane.set(px, py, pw, ph);
+                this.fitPlate(doc, this.windowPane, 8, this.windowPlate);
+                context.batcher.box(this.windowPane.x - 4, this.windowPane.y - 4,
+                    this.windowPane.ex() + 4, this.windowPane.ey() + 4, 0xCC10141B);
+                this.renderCompositionPlate(context, project, doc, this.windowPlate, time, "合成预览 · 双窗口");
+            }
+
+            return;
+        }
+
+        int pw = (int) Math.min(380, Math.max(180, this.viewArea.w * 0.34F));
+        int ph = Math.max(96, Math.round(pw * doc.height / (float) Math.max(1, doc.width)));
+        int px = this.viewArea.ex() - pw - 12;
+        int py = this.viewArea.y + 32;
+
+        /* Keep clear of the view buttons (top-right) and the HUD strip (bottom). */
+        if (px <= this.viewArea.x + 8 || py + ph >= this.viewArea.ey() - 56)
+        {
+            return;
+        }
+
+        this.windowPane.set(px, py, pw, ph);
+        this.fitPlate(doc, this.windowPane, 0, this.windowPlate);
+        context.batcher.box(this.windowPlate.x - 4, this.windowPlate.y - 4,
+            this.windowPlate.ex() + 4, this.windowPlate.ey() + 4, 0xCC10141B);
+        this.renderCompositionPlate(context, project, doc, this.windowPlate, time, "合成预览");
+    }
+
+    /** The dark stage under the free/orbit actor pass. */
+    private void renderStage(UIContext context, Area area)
+    {
+        context.batcher.gradientVBox(area.x, area.y, area.ex(), area.ey(), 0xFF17202B, 0xFF070A0F);
+
+        if (CompPrefs.get().guides)
+        {
+            int step = Math.max(48, Math.min(128, area.w / 12));
+            int color = 0x0BFFFFFF;
+
+            for (int x = area.x + step; x < area.ex(); x += step)
+            {
+                context.batcher.box(x, area.y, x + 1, area.ey(), color);
+            }
+
+            for (int y = area.y + step; y < area.ey(); y += step)
+            {
+                context.batcher.box(area.x, y, area.ex(), y + 1, color);
+            }
+
+            int mid = area.my();
+
+            context.batcher.box(area.x, mid, area.ex(), mid + 1, 0x24FFFFFF);
+        }
+    }
+
+    /**
+     * One complete preview plate: black letterbox, world frame, composition frame, border and
+     * label. Shared by the camera view and the PiP/two-window panes so all three can never show a
+     * different frame from the same playhead.
+     *
+     * @return true when a composition frame was drawn (the world may still be shown without it)
+     */
+    private boolean renderCompositionPlate(UIContext context, CompProject project, CompDocument doc,
+                                           Area rect, float time, String label)
+    {
+        context.batcher.box(rect.x - 1, rect.y - 1, rect.ex() + 1, rect.ey() + 1, 0xFF000000);
+
+        boolean world = this.drawWorldBackdrop(context, rect);
+        boolean composition = this.drawCompositionFrame(context, project, doc, rect, time);
+
+        if (!world && !composition)
+        {
+            context.batcher.textCard("BBS 预览等待世界帧与合成…", rect.x + 8, rect.y + 24, 0xFFFFB27A, 0xAA140D06);
+        }
+        else if (!world && doc != null && BbsPreviewBridge.needsWorldFrame(doc))
+        {
+            context.batcher.textCard("BBS 世界帧等待中…", rect.x + 8, rect.y + 24, 0xFFFFD27A, 0x99140D06);
+        }
+
+        if (label != null && !label.isEmpty())
+        {
+            context.batcher.textCard(label, rect.x + 6, rect.y + 5, 0xFFE6EDF7, 0x99000000);
+        }
+
+        context.batcher.outline(rect.x - 1, rect.y - 1, rect.ex() + 1, rect.ey() + 1, 0xAA4C9AFF);
+
+        return composition;
+    }
+
+    /** Draws the captured BBS world frame, contained (letterboxed) inside the composition rect. */
+    private boolean drawWorldBackdrop(UIContext context, Area rect)
+    {
+        context.batcher.box(rect.x, rect.y, rect.ex(), rect.ey(), 0xFF05070A);
+
+        GlTexture texture = BbsPreviewBridge.texture();
+
+        if (texture == null || texture.width <= 0 || texture.height <= 0)
+        {
+            return false;
+        }
+
+        ReplayPreviewLayout.Rect plate = ReplayPreviewLayout.contain(texture.width, texture.height,
+            new ReplayPreviewLayout.Rect(rect.x, rect.y, rect.w, rect.h));
+
+        context.batcher.clip(rect.x, rect.y, rect.w, rect.h, context);
+
+        try
+        {
+            BbsPreviewBridge.drawFrame(context.batcher, 0xFFFFFFFF, plate.x(), plate.y(), plate.w(), plate.h());
+        }
+        finally
+        {
+            context.batcher.unclip(context);
+        }
+
+        return true;
+    }
+
+    /**
+     * Draws the cached composition frame, baking it only when the frame/document/raster changed.
+     *
+     * <p>A composition that samples the live world (a BBS-preview or entity layer) must not bake
+     * before the first world copy exists: the layer would be empty and the cache would keep that
+     * empty frame for the rest of the frame. {@link ReplayPreviewLayout#canReuse} encodes that
+     * rule; the frame is otherwise reused for every display refresh between two composition
+     * frames, which is what keeps playback smooth.</p>
+     */
+    private boolean drawCompositionFrame(UIContext context, CompProject project, CompDocument doc,
+                                         Area rect, float time)
+    {
+        if (project == null || doc == null || doc.layers == null || doc.layers.isEmpty()
+            || doc.width <= 0 || doc.height <= 0)
+        {
+            return false;
+        }
+
+        int frame = CompFrameServer.frameOf(doc, time);
+        float frameTime = CompFrameServer.timeOf(doc, frame);
+        float scale = CompRenderer.previewScale(doc, rect.w, rect.h, 0, this.deviceScale());
+
+        /* Playback trades a little preview sharpness for a stable frame rate; a parked playhead is
+         * rendered at the panel's full pixel density. */
+        if (this.session.isPlaying())
+        {
+            scale = Math.max(0.2F, Math.round(scale * 0.85F * 16F) / 16F);
+        }
+
+        int[] size = CompRenderer.renderSizeFor(doc, scale);
+        int width = Math.max(1, size[0]);
+        int height = Math.max(1, size[1]);
+        long signature = CompRenderCache.signature(project, doc, frameTime, true, true, 0,
+            width, height, false);
+        boolean liveWorld = BbsPreviewBridge.needsWorldFrame(doc);
+        boolean liveDepth = CompRenderer.needsWorldDepth(project, doc);
+
+        if (liveDepth)
+        {
+            /* Sticky for the next world render, like the compositor's syncRequests path. */
+            BbsPreviewBridge.requestDepth(true);
+        }
+
+        boolean worldReady = (!liveWorld || BbsPreviewBridge.hasUsableWorld())
+            && (!liveDepth || BbsPreviewBridge.depthAvailable());
+        /*
+         * A world copy taken at a different film time is not a valid backdrop for this frame: the
+         * bbs/entity layer samples it, so baking now would store the wrong time under this frame's
+         * cache key. Wait for the bridge to catch up (one render), then bake. While waiting, an
+         * already-baked frame from the previous frame is drawn instead of flashing the comp away.
+         */
+        boolean worldMatches = (!liveWorld
+            || (BbsPreviewBridge.hasUsableWorld() && this.worldMatchesPreviewTime(time)))
+            && (!liveDepth || BbsPreviewBridge.depthAvailable());
+
+        if (!ReplayPreviewLayout.canReuse(this.compFrame != null, this.compFrameIndex,
+            this.compFrameSignature, this.compFrameWidth, this.compFrameHeight, frame, signature,
+            width, height, liveWorld || liveDepth, this.compFrameWorldReady) && worldMatches)
+        {
+            context.batcher.flush();
+
+            GlFramebuffer rendered = null;
+
+            /* 3D layers bake their perspective raster from this edge, exactly like the frame
+             * server does for export/AE frames. Leaving it at zero made the 3D cards in the
+             * preview use a smaller internal target and look soft next to 2D layers. */
+            dev.bbsae.client.render.CompRenderContext.setTargetEdge(Math.max(width, height));
+
+            try
+            {
+                rendered = CompRenderer.renderFrame(project, doc, frame, true, scale);
+            }
+            catch (RuntimeException e)
+            {
+                this.compositionError = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                this.compositionErrorMs = System.currentTimeMillis();
+                dev.bbsae.BbsAeAddon.LOGGER.warn("Replay preview could not render composition frame {} of '{}'",
+                    frame, doc.name, e);
+            }
+            finally
+            {
+                dev.bbsae.client.render.CompRenderContext.setTargetEdge(0);
+            }
+
+            if (rendered == null)
+            {
+                this.previewWaitingForWorld = false;
+                this.releaseCompFrame();
+
+                return false;
+            }
+
+            this.compositionError = null;
+            this.previewWaitingForWorld = false;
+
+            if (this.compFrame != null && this.compFrame != rendered)
+            {
+                FboPool.release(this.compFrame);
+            }
+
+            this.compFrame = rendered;
+            this.compFrameSignature = signature;
+            this.compFrameIndex = frame;
+            this.compFrameWidth = width;
+            this.compFrameHeight = height;
+            this.compFrameWorldReady = worldReady;
+        }
+        else if (this.compFrame == null)
+        {
+            /* No valid frame yet and the world copy is not at this playhead: draw the world plate
+             * alone and retry next render. */
+            this.previewWaitingForWorld = liveWorld || liveDepth;
+            return false;
+        }
+
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        this.previewWaitingForWorld = false;
+
+        /* The frame is a straight-alpha export raster (transparent stage), so it composites over
+         * the world plate exactly like the final BBS overlay does. */
+        context.batcher.texturedBox(this.compFrame.color.id, 0xFFFFFFFF,
+            rect.x, rect.y, rect.w, rect.h,
+            0F, this.compFrame.height, this.compFrame.width, 0F,
+            this.compFrame.width, this.compFrame.height);
+        context.batcher.flush();
+
+        return true;
+    }
+
+    /**
+     * True when the captured world frame was rendered at (roughly) this preview time. One tick of
+     * tolerance covers the bridge's one-render-frame lag without baking a visibly wrong backdrop.
+     */
+    private boolean worldMatchesPreviewTime(float time)
+    {
+        float world = BbsPreviewBridge.worldTimeSeconds();
+
+        return world < 0F || Math.abs(world - time) <= 0.08F;
+    }
+
+    private void releaseCompFrame()
+    {
+        if (this.compFrame != null)
+        {
+            FboPool.release(this.compFrame);
+            this.compFrame = null;
+        }
+
+        this.compFrameIndex = -1;
+        this.compFrameSignature = 0L;
+        this.compFrameWidth = 0;
+        this.compFrameHeight = 0;
+        this.compFrameWorldReady = false;
+    }
+
+    /** Fits {@code bounds} to the document's aspect; result goes into {@code out}. */
+    private void fitPlate(CompDocument doc, Area bounds, int padding, Area out)
+    {
+        ReplayPreviewLayout.Rect rect = ReplayPreviewLayout.fit(doc,
+            bounds.x, bounds.y, bounds.w, bounds.h, padding);
+
+        out.set(rect.x(), rect.y(), rect.w(), rect.h());
+    }
+
+    /** Updates {@link #cameraArea} for the current view mode and document. */
+    private void updateCameraArea()
+    {
+        if (this.viewMode != VIEW_CAMERA || this.session == null)
+        {
+            this.cameraArea.copy(this.viewArea);
+
+            return;
+        }
+
+        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+        CompDocument doc = panel == null ? null : panel.getDocument();
+
+        this.fitPlate(doc, this.viewArea, 8, this.cameraArea);
+    }
+
+    private float deviceScale()
+    {
+        try
+        {
+            float scale = BBSModClient.getGUIScale();
+
+            return scale <= 0.01F ? 1F : Math.max(1F, Math.min(4F, scale));
+        }
+        catch (RuntimeException | LinkageError e)
+        {
+            return 1F;
+        }
+    }
+
+    private boolean isCameraPreviewActive()
+    {
+        return this.viewMode == VIEW_CAMERA && this.session != null && this.compositionPreviewSupported();
+    }
+
     private void applyViewMode()
     {
+        if (this.session == null)
+        {
+            return;
+        }
+
         if (this.viewMode == VIEW_ORBIT)
         {
             this.followSelectedActor();
         }
-        else if (this.viewMode == VIEW_CAMERA)
+        else if (this.viewMode == VIEW_CAMERA && this.isCameraPreviewActive())
         {
             this.lookThroughCompositionCamera();
+        }
+        else if (this.viewMode == VIEW_CAMERA)
+        {
+            /* Camera view without a composition falls back to the stage; do not keep the shot
+             * camera's orthographic/rolled state on a perspective-free stage. */
+            CompViewportCamera camera = this.session.camera();
+
+            if (camera.ortho || camera.roll != 0F)
+            {
+                camera.ortho = false;
+                camera.roll = 0F;
+                camera.update();
+            }
         }
     }
 
@@ -405,6 +810,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.pick.clear();
         this.gizmo.stop();
         this.gizmoActive = false;
+        this.releaseCompFrame();
     }
 
     public void setPickHandler(IntConsumer pickHandler)
@@ -422,7 +828,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     @Override
     public void render(UIContext context)
     {
-        this.area.render(context.batcher, 0xFF0B0E13);
+        this.area.render(context.batcher, 0xFF070A0F);
 
         if (this.session == null || this.area.w <= 8 || this.area.h <= 8)
         {
@@ -433,8 +839,23 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.updateViewArea();
         this.session.syncSceneScale();
 
-        this.session.camera().setViewport(this.viewArea.w, this.viewArea.h);
-        this.session.camera().update();
+        /* Playback is driven from the render pass (not from the once-per-tick panel update): a
+         * 60 fps composition must not step at 20 Hz, and the camera/world pass must sample the
+         * same instant as the composition frame drawn below. */
+        this.session.advancePlayback();
+
+        this.updateCameraArea();
+
+        /* The world copy is a full-framebuffer blit. Only ask for it when a picture in this page
+         * actually samples the world: the camera view, or a PiP/two-window composition preview
+         * that may contain a BBS-preview / entity layer. */
+        boolean needsWorldPicture = this.isCameraPreviewActive()
+            || (this.viewMode != VIEW_CAMERA && this.compPreviewMode() != 0);
+        BbsPreviewBridge.setReplayWorldPreview(needsWorldPicture);
+
+        Area interaction = this.isCameraPreviewActive() ? this.cameraArea : this.viewArea;
+
+        this.session.camera().setViewport(interaction.w, interaction.h);
         this.session.frameIfNeeded(this.viewArea);
 
         if (!this.freePoseInitialized)
@@ -451,20 +872,33 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.applyViewMode();
         this.session.camera().update();
 
-        boolean composition3D = this.renderCompositionScene3D(context);
+        /* Remember the user's free/orbit pose every frame. Toggling to the camera and back must
+         * return to where they were editing, not to the pre-framing default. */
+        if (this.viewMode != VIEW_CAMERA && this.session.isFramed())
+        {
+            this.syncFreePoseFromCamera();
+        }
 
         this.session.updateVisibility();
 
-        boolean compositionBackground = !composition3D && this.renderCompositionBackground(context);
-        int drawn = composition3D || compositionBackground
-            ? this.session.placeableCount()
-            : ReplayModelPass.draw(context.batcher, this.session, this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
+        int drawn;
 
-        ReplayCompositionOverlay.render(context, this.session, this.viewArea.x, this.viewArea.y,
-            this.viewArea.w, this.viewArea.h, !composition3D && !compositionBackground);
-        this.renderCompositionPreview(context);
+        if (this.isCameraPreviewActive())
+        {
+            drawn = this.renderCameraPreview(context);
+        }
+        else
+        {
+            this.renderStage(context, this.viewArea);
+            drawn = ReplayModelPass.draw(context.batcher, this.session,
+                this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
+            ReplayCompositionOverlay.render(context, this.session, this.viewArea.x, this.viewArea.y,
+                this.viewArea.w, this.viewArea.h, true);
+        }
 
-        this.pick.render(context, this.session, this.viewArea);
+        this.renderCompositionWindow(context);
+
+        this.pick.render(context, this.session, interaction);
 
         if (this.session.canEditPlacement())
         {
@@ -475,7 +909,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         this.gizmo.update(context);
         this.pollNavigation(context);
-        this.renderHud(context, drawn);
+        this.renderHud(context, drawn, this.isCameraPreviewActive());
 
         context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
             this.gizmoActive ? 0xFF66CCFF : 0xFF2A3340);
@@ -488,46 +922,28 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         super.render(context);
     }
 
-    /**
-     * A small, real composition preview inside the replay viewport.
-     *
-     * <p>The 3D guides tell you where the camera and the other layers are; this thumbnail tells you
-     * what the active composition camera actually sees (text, cards, effects and the linked replay
-     * actors). It is only drawn while paused: during playback the per-frame composition render
-     * would compete with the replay actor pass, and the thumbnail is a composition aid rather than
-     * the playback output.</p>
-     *
-     * <p>Compositions that contain a BBS preview layer are skipped deliberately: that layer samples
-     * the live Minecraft world, and the replay editor's promise is that its preview is the bbsae
-     * virtual world, not the real one.</p>
-     */
     private int compPreviewMode()
     {
         return CompPrefs.replayCompPreview();
     }
 
-    /** Project/doc are valid and the comp has no live-world layer. */
+    /** Project/doc dimensions are usable; an empty layer stack is still a valid (world-only) preview. */
     private boolean compositionPreviewSupported()
     {
         dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
         CompProject project = panel == null ? null : panel.getProject();
         CompDocument doc = panel == null ? null : panel.getDocument();
 
-        if (project == null || doc == null || doc.layers == null || doc.layers.isEmpty()
-            || doc.width <= 0 || doc.height <= 0)
-        {
-            return false;
-        }
-
-        return true;
+        return project != null && doc != null && doc.width > 0 && doc.height > 0;
     }
 
-    /** Two-window mode gives the 3D preview a left half; otherwise it owns the full area. */
+    /** Two-window mode gives the 3D stage a left half; the camera view owns the full width. */
     private void updateViewArea()
     {
         this.viewArea.copy(this.area);
 
-        if (this.compPreviewMode() == 2 && this.compositionPreviewSupported() && this.area.w > 240)
+        if (this.viewMode != VIEW_CAMERA && this.compPreviewMode() == 2
+            && this.compositionPreviewSupported() && this.area.w > 240)
         {
             this.viewArea.w = Math.max(160, Math.round(this.area.w * 0.52F));
         }
@@ -548,139 +964,18 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         }
     }
 
-    /**
-     * Camera mode renders the real bbsae composition behind the actor gizmo. The composition
-     * already contains the linked replay actors, so the replay actor pass is skipped in this mode;
-     * the gizmo and pick pass still read the same actor world position and the scene anchor is
-     * aligned in {@link #lookThroughCompositionCamera()}.
-     */
-    private boolean renderCompositionBackground(UIContext context)
-    {
-        if (this.viewMode != VIEW_CAMERA || this.session == null || !this.compositionPreviewSupported())
-        {
-            return false;
-        }
-
-        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
-        CompProject project = panel.getProject();
-        CompDocument doc = panel.getDocument();
-        int px = this.viewArea.x;
-        int py = this.viewArea.y;
-        int pw = this.viewArea.w;
-        int ph = this.viewArea.h;
-
-        context.batcher.clip(px, py, pw, ph, context);
-
-        var stack = context.batcher.getContext().getMatrices();
-
-        stack.push();
-        stack.translate(px, py, 0F);
-
-        CompPreviewFilter.push((layer) -> layer == null || !"bbs".equals(layer.type));
-
-        try
-        {
-            CompRenderer.renderCached(project, doc, this.session.playhead() / ReplayTime.TICKS_PER_SECOND,
-                1F, pw, ph, 0, true, true, false, context.batcher);
-        }
-        finally
-        {
-            CompPreviewFilter.pop();
-            stack.pop();
-            context.batcher.unclip(context);
-        }
-
-        return true;
-    }
-
-    private void renderCompositionPreview(UIContext context)
-    {
-        int mode = this.compPreviewMode();
-
-        if (mode == 0 || this.session == null || !this.compositionPreviewSupported())
-        {
-            return;
-        }
-
-        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
-        CompProject project = panel.getProject();
-        CompDocument doc = panel.getDocument();
-
-        if (mode == 2)
-        {
-            int px = this.viewArea.ex() + 1;
-            int py = this.area.y;
-            int pw = this.area.ex() - px;
-            int ph = this.area.h;
-
-            if (pw > 40 && ph > 40)
-            {
-                drawCompositionPreview(context, project, doc, px, py, pw, ph,
-                    this.session.playhead() / ReplayTime.TICKS_PER_SECOND, "合成预览 · 双窗口");
-            }
-
-            return;
-        }
-
-        /* The picture-in-picture is a paused composition aid; during playback it would compete
-         * with the actor pass for a thumbnail that is not the playback output. */
-        if (this.session.isPlaying())
-        {
-            return;
-        }
-
-        int pw = (int) Math.min(360, Math.max(160, this.viewArea.w * 0.34F));
-        int ph = Math.max(90, Math.round(pw * doc.height / (float) doc.width));
-        int px = this.viewArea.ex() - pw - 10;
-        int py = this.viewArea.y + 30;
-
-        if (px <= this.viewArea.x + 8 || py + ph >= this.viewArea.ey() - 8)
-        {
-            return;
-        }
-
-        drawCompositionPreview(context, project, doc, px, py, pw, ph,
-            this.session.playhead() / ReplayTime.TICKS_PER_SECOND, "合成预览");
-    }
-
-    private void drawCompositionPreview(UIContext context, CompProject project, CompDocument doc,
-                                        int px, int py, int pw, int ph, float time, String label)
-    {
-        context.batcher.box(px - 2, py - 2, px + pw + 2, py + ph + 2, 0xCC10141B);
-        context.batcher.clip(px, py, pw, ph, context);
-
-        var stack = context.batcher.getContext().getMatrices();
-
-        stack.push();
-        stack.translate(px, py, 0F);
-
-        CompPreviewFilter.push((layer) -> layer == null || !"bbs".equals(layer.type));
-
-        try
-        {
-            CompRenderer.renderCached(project, doc, time, 1F, pw, ph, 0, true, true, false, context.batcher);
-        }
-        finally
-        {
-            CompPreviewFilter.pop();
-            stack.pop();
-            context.batcher.unclip(context);
-        }
-
-        context.batcher.outline(px - 2, py - 2, px + pw + 2, py + ph + 2, 0xAA4C9AFF);
-        context.batcher.textCard(label, px + 4, py + 3, 0xFFFFFFFF, 0x99000000);
-    }
-
-    private void renderHud(UIContext context, int drawn)
+    private void renderHud(UIContext context, int drawn, boolean cameraView)
     {
         int x = this.viewArea.x + 8;
         int y = this.viewArea.y + 7;
         int replays = this.session.replayCount();
         int placeable = this.session.placeableCount();
 
-        String view = this.viewMode == VIEW_FREE ? "自由视角" : (this.viewMode == VIEW_ORBIT ? "绕对象旋转" : "相机视角");
+        String view = cameraView
+            ? "相机视角 · 最终合成"
+            : (this.viewMode == VIEW_FREE ? "自由视角 · 虚拟世界" : "绕对象旋转 · 虚拟世界");
 
-        context.batcher.textCard("bbsae 虚拟回放 · " + view, x, y);
+        context.batcher.textCard("bbsae 回放预览 · " + view, x, y);
 
         String selection = this.session.replay() == null
             ? "未选择回放"
@@ -689,17 +984,27 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             ? " · 裁剪 " + this.session.visibleCount() + "/" + replays
             : "";
 
-        context.batcher.textCard("模型 " + drawn + "/" + placeable + " · " + selection + cull,
-            x, y + 18, 0xFFDDDDDD, 0x99000000);
+        if (cameraView)
+        {
+            String world = BbsPreviewBridge.hasUsableWorld() ? "BBS 世界帧已就绪" : "BBS 世界帧等待中";
 
-        String problem = this.emptyStateText(drawn, replays, placeable);
+            context.batcher.textCard("模型 " + drawn + " 个 · " + world + " · " + selection + cull,
+                x, y + 18, 0xFFDDDDDD, 0x99000000);
+        }
+        else
+        {
+            context.batcher.textCard("模型 " + drawn + "/" + placeable + " · " + selection + cull,
+                x, y + 18, 0xFFDDDDDD, 0x99000000);
+        }
+
+        String problem = this.emptyStateText(drawn, replays, placeable, cameraView);
 
         if (problem != null)
         {
             context.batcher.textCard(problem, x, y + 36, 0xFFFFB27A, 0xAA140D06);
         }
 
-        this.renderCameraHud(context);
+        this.renderCameraHud(context, cameraView);
 
         if (this.statusTicks > 0 && !this.status.isEmpty())
         {
@@ -707,9 +1012,20 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             this.statusTicks -= 1;
         }
 
-        String hint = this.gizmoActive
-            ? "拖动 gizmo 写回关键帧（Ctrl+Z 撤销）"
-            : "右键环绕 · Shift+右键/中键平移 · 滚轮缩放 · 左键选模型/拖 gizmo · I 或 K 打帧";
+        String hint;
+
+        if (this.gizmoActive)
+        {
+            hint = "拖动 gizmo 写回关键帧（Ctrl+Z 撤销）";
+        }
+        else if (cameraView)
+        {
+            hint = "相机视角由活动合成相机驱动 · 切到自由/绕对象视角可导航 · I 或 K 打帧";
+        }
+        else
+        {
+            hint = "右键环绕 · Shift+右键/中键平移 · 滚轮缩放 · 左键选模型/拖 gizmo · I 或 K 打帧";
+        }
 
         context.batcher.textCard(hint, x, this.viewArea.ey() - 17, 0xFF777777, 0x00000000);
     }
@@ -719,9 +1035,9 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
      * normal state (some models drawn, or a film with no replays is still a normal state that the
      * panel header explains).
      */
-    private String emptyStateText(int drawn, int replays, int placeable)
+    private String emptyStateText(int drawn, int replays, int placeable, boolean cameraView)
     {
-        if (ReplayModelPass.hasRecentError())
+        if (ReplayModelPass.hasRecentError() && !cameraView)
         {
             String error = ReplayModelPass.lastError();
 
@@ -731,6 +1047,38 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             }
 
             return "3D 渲染失败：" + error + "（详细堆栈见客户端日志）";
+        }
+
+        if (cameraView)
+        {
+            if (!this.compositionPreviewSupported())
+            {
+                return "没有可预览的合成：先在合成器页打开工程并绑定影片";
+            }
+
+            if (this.compositionError != null && System.currentTimeMillis() - this.compositionErrorMs < 8000L)
+            {
+                String error = this.compositionError;
+
+                if (error.length() > 70)
+                {
+                    error = error.substring(0, 70) + "…";
+                }
+
+                return "合成预览渲染失败：" + error + "（详细堆栈见客户端日志）";
+            }
+
+            if (this.previewWaitingForWorld && !BbsPreviewBridge.hasUsableWorld())
+            {
+                return "BBS 世界帧尚未捕获：打开影片后会在下一次世界渲染完成";
+            }
+
+            if (this.previewWaitingForWorld)
+            {
+                return "正在同步 BBS 世界帧与合成时间…";
+            }
+
+            return null;
         }
 
         if (replays == 0)
@@ -766,12 +1114,24 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         return null;
     }
 
-    private void renderCameraHud(UIContext context)
+    private void renderCameraHud(UIContext context, boolean cameraView)
     {
         CompViewportCamera camera = this.session.camera();
-        String line = String.format(Locale.ROOT,
-            "偏航 %.0f°  俯仰 %.0f°  距离 %.0f  比例 %.0fpx/格",
-            camera.yaw, camera.pitch, camera.distance, this.session.space().pixelsPerBlock);
+        String line;
+
+        if (cameraView)
+        {
+            line = String.format(Locale.ROOT,
+                "%s FOV %.0f°  滚转 %.0f°  比例 %.0fpx/格",
+                camera.ortho ? "正交" : "透视", camera.clampedFov(), camera.roll,
+                this.session.space().pixelsPerBlock);
+        }
+        else
+        {
+            line = String.format(Locale.ROOT,
+                "偏航 %.0f°  俯仰 %.0f°  距离 %.0f  比例 %.0fpx/格",
+                camera.yaw, camera.pitch, camera.distance, this.session.space().pixelsPerBlock);
+        }
 
         context.batcher.textCard(line, this.viewArea.x + 8, this.viewArea.ey() - 34, 0xFFAAAAAA, 0x99000000);
     }
@@ -799,7 +1159,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         if (context.mouseButton == 1 || context.mouseButton == 2)
         {
-            if (this.viewMode == VIEW_CAMERA)
+            if (this.isCameraPreviewActive())
             {
                 return true;
             }
@@ -857,7 +1217,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     protected boolean subMouseScrolled(UIContext context)
     {
         if (this.session == null || !this.viewArea.isInside(context) || context.mouseWheel == 0D
-            || this.viewMode == VIEW_CAMERA)
+            || this.isCameraPreviewActive())
         {
             return super.subMouseScrolled(context);
         }
@@ -872,7 +1232,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
     private void beginNavigation(UIContext context, int mode)
     {
-        if (this.viewMode == VIEW_CAMERA)
+        if (this.session == null || this.isCameraPreviewActive())
         {
             return;
         }
@@ -946,9 +1306,10 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             return null;
         }
 
+        Area area = this.interactionArea();
         CompViewportCamera camera = this.session.camera();
 
-        camera.setViewport(this.viewArea.w, this.viewArea.h);
+        camera.setViewport(area.w, area.h);
         camera.update();
 
         return camera.projection;
@@ -957,7 +1318,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     @Override
     public Area getGizmoArea()
     {
-        return this.viewArea;
+        return this.interactionArea();
     }
 
     @Override
@@ -968,12 +1329,13 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             return false;
         }
 
+        Area area = this.interactionArea();
         CompViewportCamera camera = this.session.camera();
 
-        camera.setViewport(this.viewArea.w, this.viewArea.h);
+        camera.setViewport(area.w, area.h);
         camera.update();
 
-        GizmoDrag drag = this.session.gizmoDrag(this.viewArea);
+        GizmoDrag drag = this.session.gizmoDrag(area);
 
         if (drag == null)
         {
@@ -990,6 +1352,12 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         }
 
         return started;
+    }
+
+    /** The screen rectangle the 3D interaction/gizmo belongs to this frame. */
+    private Area interactionArea()
+    {
+        return this.isCameraPreviewActive() ? this.cameraArea : this.viewArea;
     }
 
     @Override
@@ -1037,6 +1405,46 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     public Pair<Form, String> pickedForm()
     {
         return this.pick.stencil().getPicked();
+    }
+
+    /** Test hook: switch the preview without a mouse click (0 free, 1 orbit, 2 camera). */
+    public void setViewModeFromHost(int mode)
+    {
+        if (mode >= VIEW_FREE && mode <= VIEW_CAMERA)
+        {
+            this.setViewMode(mode);
+        }
+    }
+
+    public int viewModeFromHost()
+    {
+        return this.viewMode;
+    }
+
+    /**
+     * Saves the current camera as the free/orbit pose. The host calls this after "frame all":
+     * without it, toggling camera → free restored the pose from before the framing and the freshly
+     * framed actor shrank back to a dot.
+     */
+    public void syncFreePoseFromCamera()
+    {
+        if (this.session == null || this.viewMode == VIEW_CAMERA)
+        {
+            return;
+        }
+
+        CompViewportCamera camera = this.session.camera();
+
+        this.freeYaw = camera.yaw;
+        this.freePitch = camera.pitch;
+        this.freeDistance = camera.distance;
+        this.freeTarget.set(camera.target);
+        this.freePoseInitialized = true;
+    }
+
+    public void releasePreview()
+    {
+        this.releaseCompFrame();
     }
 
     public ReplayEditSession session()
