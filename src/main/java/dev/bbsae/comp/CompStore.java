@@ -1887,8 +1887,12 @@ public final class CompStore
         sub.workAreaOut = doc.duration;
 
         /* Keep the parent's 3D view when a single layer is precomposed; the multi-layer path
-         * already does this in CompLayerOps.precompose. */
-        CompLayerOps.inheritActiveCamera(doc, sub, in, fps);
+         * already does this in CompLayerOps.precompose. Precomposing a camera itself is already
+         * the child camera, so don't duplicate it. */
+        if (!"camera".equals(source.type))
+        {
+            CompLayerOps.inheritActiveCamera(doc, sub, in, fps);
+        }
 
         CompLayer copy = source.duplicate();
 

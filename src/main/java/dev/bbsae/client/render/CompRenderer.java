@@ -1183,16 +1183,20 @@ public final class CompRenderer
                          * normal layer. The independent-model branch used to bypass the mask pass
                          * entirely, so a mask on a replay model did nothing. */
                         GlFramebuffer persistent = modelContent;
+                        boolean straight = false;
                         GlFramebuffer masked = applyModelMask(modelContent, layer, context);
 
                         if (masked != modelContent)
                         {
                             modelContent = masked;
+                            /* applyModelMask returns straight alpha (the mask shader leaves RGB
+                             * as authored while changing coverage). The old premultiplied path
+                             * multiplied only alpha, so masked actors stayed too bright. */
+                            straight = true;
                         }
 
                         GlFramebuffer original = modelContent;
-                        boolean straight = false;
-                        GlFramebuffer effected = applyModelPostEffects(layer, context, modelContent);
+                        GlFramebuffer effected = applyModelPostEffects(layer, context, modelContent, !straight);
 
                         if (effected != modelContent)
                         {
@@ -1239,16 +1243,17 @@ public final class CompRenderer
          * composition instead of the actor.
          */
         GlFramebuffer persistent = modelContent;
+        boolean straight = false;
         GlFramebuffer masked = applyModelMask(modelContent, layer, context);
 
         if (masked != modelContent)
         {
             modelContent = masked;
+            straight = true;
         }
 
         GlFramebuffer original = modelContent;
-        boolean straight = false;
-        GlFramebuffer effected = applyModelPostEffects(layer, context, modelContent);
+        GlFramebuffer effected = applyModelPostEffects(layer, context, modelContent, !straight);
 
         if (effected != modelContent)
         {
@@ -1313,16 +1318,35 @@ public final class CompRenderer
             return content;
         }
 
-        /* Do NOT release the input here: a model target is owned by ReplayActorPass's persistent
-         * per-layer cache, not by FboPool. applyLayerMask releases its input, which is why this
-         * path builds the mask pass itself and lets the caller release only the returned copy. */
-        GlFramebuffer masked = PassRenderer.mask(content, mask.texture.id, 0);
+        /*
+         * The model target is premultiplied, but the shared mask shader operates on straight
+         * alpha: it changes coverage without multiplying RGB. Feeding it premultiplied pixels
+         * left the actor's colour too bright under the mask. Un-premultiply a temporary copy, mask
+         * that (straight) result, then hand the caller a straight-alpha framebuffer.
+         *
+         * Do NOT release the input: a model target is owned by ReplayActorPass's persistent
+         * per-layer cache, not by FboPool. Only the temporary straight copy and the mask output
+         * belong to this method/caller.
+         */
+        GlFramebuffer straight = PassRenderer.unpremultiply(content);
+        GlFramebuffer base = straight == null ? content : straight;
+
+        if (base == content)
+        {
+            /* Could not convert: masking premultiplied data would be wrong, so keep the original
+             * unmasked frame rather than producing a bright halo. */
+            return content;
+        }
+
+        GlFramebuffer masked = PassRenderer.mask(base, mask.texture.id, 0);
+
+        FboPool.release(base);
 
         return masked == null ? content : masked;
     }
 
     private static GlFramebuffer applyModelPostEffects(CompLayer layer, CompRenderContext context,
-                                                       GlFramebuffer model)
+                                                       GlFramebuffer model, boolean premultiplied)
     {
         if (model == null || !context.renderEffects || layer.effects == null || layer.effects.isEmpty())
         {
@@ -1353,7 +1377,7 @@ public final class CompRenderer
                 continue;
             }
 
-            if (current == model)
+            if (current == model && premultiplied)
             {
                 GlFramebuffer straight = PassRenderer.unpremultiply(model);
 

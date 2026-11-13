@@ -91,6 +91,37 @@ public class CompLayerOpsTest
         assertEquals(0F, copied.in, 0.001F, "camera time is rebased with the layers");
     }
 
+    /** The single-layer path must inherit the camera exactly like the multi-layer path. */
+    @Test
+    public void singleLayerPrecomposeCarriesTheActiveCamera()
+    {
+        CompProject project = project();
+        CompDocument doc = project.getCompOrFirst("main");
+        CompLayer source = layer(doc, "source", 400F, 300F);
+
+        source.threeD = true;
+        source.in = 2F;
+        source.out = 8F;
+
+        CompLayer camera = new CompLayer("cam", "Camera", "camera");
+
+        camera.x = 960F;
+        camera.y = 540F;
+        camera.z = -900F;
+        camera.in = 0F;
+        camera.out = 10F;
+        doc.layers.add(camera);
+        doc.activeCameraId = camera.id;
+
+        CompLayer precomp = CompStore.precompose(project, doc, source, "单层组");
+        CompDocument sub = project.getComp(precomp.precompId);
+
+        assertNotNull(sub);
+        assertNotNull(sub.getLayer(sub.activeCameraId));
+        assertEquals(960F, sub.getLayer(sub.activeCameraId).x, 0.001F);
+        assertEquals(-900F, sub.getLayer(sub.activeCameraId).z, 0.001F);
+    }
+
     @Test
     public void precomposeMovesTheGroupAndRebasesTime()
     {

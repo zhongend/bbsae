@@ -62,21 +62,80 @@ public final class CompScene
      * composition graph from the free camera instead of the shot camera; a thread-local keeps that
      * override out of every layer call without changing the graph signatures.
      */
-    private static final ThreadLocal<CompCamera> CAMERA_OVERRIDE = new ThreadLocal<>();
+    /**
+     * Stack, not a single slot: a collapsed precomp pushes the parent camera while an outer
+     * explicit-camera render (the replay free/orbit view) is already active. Setting one slot and
+     * removing it on pop dropped the outer camera for every layer after the precomp.
+     *
+     * <p>{@link java.util.LinkedList} is used instead of {@code ArrayDeque} because it tolerates
+     * the null entry used by "temporarily suppress the override" callers.</p>
+     */
+    private static final ThreadLocal<java.util.Deque<CompCamera>> CAMERA_OVERRIDES =
+        ThreadLocal.withInitial(java.util.LinkedList::new);
 
     public static void pushCamera(CompCamera camera)
     {
-        CAMERA_OVERRIDE.set(camera);
+        CAMERA_OVERRIDES.get().push(camera);
     }
 
     public static void popCamera()
     {
-        CAMERA_OVERRIDE.remove();
+        java.util.Deque<CompCamera> stack = CAMERA_OVERRIDES.get();
+
+        if (!stack.isEmpty())
+        {
+            stack.pop();
+        }
+
+        if (stack.isEmpty())
+        {
+            CAMERA_OVERRIDES.remove();
+        }
+    }
+
+    /** True while a caller has an explicit camera override (including a suppression null). */
+    public static boolean hasCameraOverride()
+    {
+        java.util.Deque<CompCamera> stack = CAMERA_OVERRIDES.get();
+
+        return !stack.isEmpty();
+    }
+
+    /**
+     * Temporarily removes the active override so a nested comp can use its own camera. Pair with
+     * {@link #restoreCameraOverride(CompCamera)} in a finally block.
+     */
+    public static CompCamera suspendCameraOverride()
+    {
+        java.util.Deque<CompCamera> stack = CAMERA_OVERRIDES.get();
+
+        if (stack.isEmpty())
+        {
+            return null;
+        }
+
+        CompCamera top = stack.pop();
+
+        if (stack.isEmpty())
+        {
+            CAMERA_OVERRIDES.remove();
+        }
+
+        return top;
+    }
+
+    public static void restoreCameraOverride(CompCamera camera)
+    {
+        if (camera != null)
+        {
+            pushCamera(camera);
+        }
     }
 
     public static CompCamera camera(CompRenderContext ctx)
     {
-        CompCamera override = CAMERA_OVERRIDE.get();
+        java.util.Deque<CompCamera> stack = CAMERA_OVERRIDES.get();
+        CompCamera override = stack.isEmpty() ? null : stack.peek();
 
         if (override != null)
         {
@@ -396,7 +455,7 @@ public final class CompScene
             return true;
         }
 
-        if ("bbs".equals(layer.type) && CAMERA_OVERRIDE.get() != null)
+        if ("bbs".equals(layer.type) && hasCameraOverride())
         {
             return true;
         }
@@ -435,7 +494,7 @@ public final class CompScene
         }
 
         return layer.threeD || isModelVolume(layer)
-            || "bbs".equals(layer.type) && CAMERA_OVERRIDE.get() != null
+            || "bbs".equals(layer.type) && hasCameraOverride()
             || (legacy3D(ctx) && spatial(ctx));
     }
 
@@ -457,7 +516,7 @@ public final class CompScene
         /* The BBS preview layer is a composition-sized world capture. In the shot camera it is
          * normally a screen-fixed backdrop; in the free/orbit composition render it must be a
          * projected plane, otherwise the whole workspace background is that layer again. */
-        if ("bbs".equals(layer.type) && CAMERA_OVERRIDE.get() != null)
+        if ("bbs".equals(layer.type) && hasCameraOverride())
         {
             return camera(ctx).perspective;
         }

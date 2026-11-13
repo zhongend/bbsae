@@ -1,5 +1,45 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix55 — 2026-11-14
+
+模型蒙版预乘、相机 override 栈、单层预合成相机。
+
+### 模型蒙版发亮/边缘不对
+
+- 根因：`ReplayActorPass` 的模型 target 是**预乘 alpha**；`PassRenderer.mask` 的共享 shader
+  只把 alpha 乘以 mask，RGB 保持原样。半透明/羽化边缘处 RGB 仍按原 alpha 预乘，合成后明显
+  过亮，像蒙版没有正确压暗。
+- 修复：`applyModelMask` 先 `unpremultiply` 到临时 FBO，再在**直通 alpha** 空间执行 mask，
+  返回直通结果；`compositeModelTarget` 用 `premultiplied=false` 走 `drawInto`，并在 glitch
+  后处理之前保持直通标志，避免二次反预乘。
+- 所有权：模型原 target 属于 `ReplayActorPass` 持久缓存，不释放；只释放临时直通 FBO 和
+  蒙版输出。
+
+### 相机 override 被嵌套操作丢失
+
+- 根因：`CompScene.pushCamera/popCamera` 是**单槽 ThreadLocal**。回放自由/环绕视角先 push
+  外层相机，折叠预合成再 push 子合成相机；子合成 pop 后整个 override 被清空，后续图层
+  回退默认相机，3D 画面会“突然变平/跳视角”。
+- 修复：改成 `Deque<CompCamera>` 栈（`LinkedList`，允许 null 抑制项）：
+  - `pushCamera` 压栈，`popCamera` 弹栈，空栈才 remove；
+  - `camera()` 读栈顶；
+  - 新增 `hasCameraOverride/suspendCameraOverride/restoreCameraOverride` 供嵌套渲染使用。
+- 新增 `CameraOverrideStackTest` 锁定“内层 pop 恢复外层”。
+
+### 单层预合成相机
+
+- `CompStore.precompose` 现在也调用 `CompLayerOps.inheritActiveCamera`，与多选预合成一致；
+- 预合成源本身是 camera 时不重复复制；
+- 新增 `singleLayerPrecomposeCarriesTheActiveCamera` 回归。
+
+### 验证
+
+- 全量测试：**163 套件 / 999 项 / 0 failures / 0 errors / 1 skipped**。
+- 未启动客户端；请重点验证模型路径蒙版（半透明/羽化边缘不再发亮）、回放自由视角中进入/
+  退出折叠预合成后外层相机是否保持、单层预合成 3D 透视。
+- 候选包：`bbsae-0.99-hotfix55.jar`（3,952,962 bytes，SHA-256
+  `EF56363468C59944B0A9D537BC3A3B8886E36FFD26C1681D3102B290363E0F3F`）。
+
 ## 0.99-hotfix54 — 2026-11-14
 
 操作逻辑/反人类交互优化（用户选择 A/B/C/D/E，低风险 UX）。
