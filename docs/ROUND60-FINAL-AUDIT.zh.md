@@ -1,7 +1,7 @@
 # 0.99-hotfix2 发布候选审计
 
 > 版本策略：项目仍为 `0.99`，本次只加后缀 `hotfix2`，不迭代到 1.0。
-> GitHub 仍未上传；等所有任务确认后才做一次大版本提交。
+> GitHub 已做一次大版本提交：`7154a74`（`feat(0.99): effects-left workspace, embedded replay editor, comp-camera replay actors, 3D extrude/repeat, shader support, pen/matte fixes`）。
 
 ## 1. 构建产物
 
@@ -56,4 +56,5 @@
   - 测试后已恢复 `iris.properties`（`enableShaders=false`）并删除测试世界。
 - 回放左右栏仍使用 BBS 原生列表/属性控件，仅模式条/主体/空状态做了统一。
 - AM 效果没有逐条做像素级对比；本轮解决的是底层坐标、重复、扭曲、模糊上限等基础层。
-- 最终 GitHub 提交仍未执行。
+- GitHub 大版本提交：`7154a74`，remote `zhongend/bbsae` main。
+- 后续若继续修 AM 逐项对齐，只提交小后缀，不迭代 1.0。
