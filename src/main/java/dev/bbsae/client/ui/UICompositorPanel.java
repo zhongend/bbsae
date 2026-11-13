@@ -2165,6 +2165,9 @@ public class UICompositorPanel extends UIDashboardPanel
                     new org.joml.Matrix4f(com.mojang.blaze3d.systems.RenderSystem.getProjectionMatrix());
                 int[] previousViewport = new int[4];
                 org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, previousViewport);
+                boolean previousDepth = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+                boolean previousDepthMask = org.lwjgl.opengl.GL11.glGetBoolean(org.lwjgl.opengl.GL11.GL_DEPTH_WRITEMASK);
+                boolean previousBlend = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_BLEND);
                 boolean pushed = false;
                 boolean ok = false;
 
@@ -2225,6 +2228,26 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     com.mojang.blaze3d.systems.RenderSystem.viewport(previousViewport[0], previousViewport[1],
                         previousViewport[2], previousViewport[3]);
+
+                    if (previousDepth)
+                    {
+                        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+                    }
+                    else
+                    {
+                        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+                    }
+
+                    org.lwjgl.opengl.GL11.glDepthMask(previousDepthMask);
+
+                    if (previousBlend)
+                    {
+                        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_BLEND);
+                    }
+                    else
+                    {
+                        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_BLEND);
+                    }
                 }
 
                 return ok;

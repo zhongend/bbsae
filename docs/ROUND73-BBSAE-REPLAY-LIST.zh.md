@@ -32,7 +32,7 @@ world-plate matte 换成 actor-only 图像。
   bbsae 的 K 帧按钮/检查器写入；
 - 回放模式选中 bbsae 模型时直接调用 BBS `Gizmo.INSTANCE` 绘制原生 cooler-axes gizmo，
   外观与 BBS 影片编辑器一致；点击/拖动仍由 bbsae 的命中测试处理；
-- 原生 gizmo 绘制后恢复投影矩阵/视口，避免一次绘制污染整个 UI；
+- 原生 gizmo 绘制后恢复投影矩阵、视口、深度/混合状态，避免一次绘制污染整个 UI；
 - 截图：`docs/verify/round76-bbs-native-gizmo.png`。
 - **模型焦点/回放隔离默认关闭**：选择 3D 回放图层不再自动隐藏其他图层。
 - **模型焦点**（可选，默认关闭）：开启后选中 bbsae 模型时临时隐藏装饰卡片/背景，只保留模型、
@@ -86,8 +86,8 @@ world-plate matte 换成 actor-only 图像。
 ## 7. 验证
 
 - 全量：**152 suites / 951 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix33.jar`，已安装到正式 modpack；
-  SHA-256 `3ED926C1E353AE9CA937DCA54AFF88C92757E9F346C9F5062448CF3AF3A7A419`。
+- 本地候选包：`bbsae-0.99-hotfix34.jar`，已安装到正式 modpack；
+  SHA-256 `D9010C283D6011DEB210EC32641CD2D02751ADD8211E7BF059AF859CD27B198E`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 
