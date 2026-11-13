@@ -4,11 +4,11 @@ import dev.bbsae.client.BbsAeClient;
 import dev.bbsae.client.render.CompCamera;
 import dev.bbsae.client.render.CompViewportCamera;
 import dev.bbsae.client.ui.CompPrefs;
-import dev.bbsae.client.ui.UICompositorPanel;
 import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompProject;
 import mchorse.bbs_mod.ui.framework.UIContext;
+import mchorse.bbs_mod.ui.utils.Area;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 
@@ -21,14 +21,23 @@ import org.joml.Vector3f;
  * the same free camera as the actors:</p>
  *
  * <ul>
- *   <li>the composition frame corners and edge lines;</li>
+ *   <li>the composition picture rectangle;</li>
  *   <li>every camera's eye, target, motion path and frame corners;</li>
  *   <li>every non-actor layer's centre/bounds, coloured by type, with its name (and text content
  *       for text layers).</li>
  * </ul>
  *
+ * <h2>Why the guides use {@link ReplayGuideSpace}</h2>
+ * <p>The free/orbit picture is the finished composition raster painted into a letterboxed plate.
+ * A 2D layer is screen-fixed inside that raster; a 3D layer was projected by the free camera before
+ * the raster was blitted. Projecting every guide through the 3D camera (and drawing the comp frame
+ * as a 3D quad) made 2D labels and the frame drift off the picture whenever the camera orbited.
+ * {@link ReplayGuideSpace} uses the renderer's own {@code CompScene.project} and then maps the
+ * resulting composition pixels through the exact plate rectangle, so "where the guide is" and
+ * "where the rendered layer is" are one coordinate transform, not two.</p>
+ *
  * <p>It is a guide, not a second renderer: no layer pixels are drawn, so the replay preview stays
- * the lightweight bbsae virtual 3D world. The user can turn it off with the normal guides/camera
+ * the lightweight bbsae composition view. The user can turn it off with the normal guides/camera
  * gizmo display settings.</p>
  */
 public final class ReplayCompositionOverlay
@@ -70,27 +79,31 @@ public final class ReplayCompositionOverlay
             return;
         }
 
-        CompViewportCamera camera = session.camera();
         float time = session.playhead() / ReplayTime.TICKS_PER_SECOND;
         float frame = time * Math.max(1F, doc.fps);
+        CompViewportCamera camera = session.camera();
+        Area plate = new Area(x, y, width, height);
 
-        /* Evaluate the linked layer at the replay playhead, not its saved base transform: a
-         * layer whose position is keyframed otherwise shifts the whole composition guide. */
-        mchorse.bbs_mod.utils.pose.Transform linkedTransform = linked.transformAt(frame);
-        Vector3f offset = session.space().toComp(linked.replayAnchorX, linked.replayAnchorY, linked.replayAnchorZ);
-        offset.sub(linkedTransform.translate.x, linkedTransform.translate.y,
-            linked.scalarAt("z", linked.z, frame));
+        /*
+         * The actor is drawn by the composition from the linked layer's transform, while the
+         * gizmo/pick are drawn from the replay's world position through ReplaySceneSpace. Those
+         * two agree only after UIReplayViewport aligned the anchor this frame (it does, for both
+         * camera and free/orbit views). The guides therefore use pure composition geometry here
+         * instead of shifting the whole frame by an actor-space offset: shifting made the comp
+         * frame and the 2D labels move away from the raster they are supposed to describe.
+         */
+        ReplayGuideSpace guides = new ReplayGuideSpace(project, doc, camera, time, plate);
 
         context.batcher.clip(x, y, width, height, context);
 
         try
         {
-            renderCompFrame(context, camera, doc, offset, x, y);
-            renderCameras(context, camera, doc, offset, frame, time, x, y);
+            renderCompFrame(context, plate);
+            renderCameras(context, guides, doc, frame, time);
 
             if (showLayerBoxes)
             {
-                renderLayers(context, camera, doc, offset, frame, x, y);
+                renderLayers(context, guides, doc, frame);
             }
         }
         finally
@@ -117,48 +130,34 @@ public final class ReplayCompositionOverlay
         return null;
     }
 
-    private static void renderCompFrame(UIContext context, CompViewportCamera camera, CompDocument doc,
-                                        Vector3f offset, int ox, int oy)
+    /**
+     * The composition frame in a free view is the picture rectangle, not a 3D quad: the whole
+     * raster was already projected and blitted into this plate. Drawing its projected corners made
+     * the yellow frame separate from the picture as soon as yaw/pitch changed.
+     */
+    private static void renderCompFrame(UIContext context, Area plate)
     {
-        float w = doc.width;
-        float h = doc.height;
-        Vector2f[] corners = new Vector2f[4];
+        int color = 0x55FFC14D;
 
-        corners[0] = project(camera, new Vector3f(0F, 0F, 0F).add(offset), ox, oy);
-        corners[1] = project(camera, new Vector3f(w, 0F, 0F).add(offset), ox, oy);
-        corners[2] = project(camera, new Vector3f(w, h, 0F).add(offset), ox, oy);
-        corners[3] = project(camera, new Vector3f(0F, h, 0F).add(offset), ox, oy);
+        context.batcher.outline(plate.x, plate.y, plate.ex(), plate.ey(), color);
 
         for (int i = 0; i < 4; i++)
         {
-            Vector2f a = corners[i];
-            Vector2f b = corners[(i + 1) % 4];
+            float cx = (i == 1 || i == 2) ? plate.ex() : plate.x;
+            float cy = i >= 2 ? plate.ey() : plate.y;
 
-            if (a != null && b != null)
-            {
-                line(context, a.x, a.y, b.x, b.y, 0x55FFC14D);
-            }
-        }
-
-        for (int i = 0; i < 4; i++)
-        {
-            if (corners[i] != null)
-            {
-                context.batcher.box(corners[i].x - 2F, corners[i].y - 2F,
-                    corners[i].x + 2F, corners[i].y + 2F, 0xAAFFC14D);
-            }
+            context.batcher.box(cx - 2F, cy - 2F, cx + 2F, cy + 2F, 0xAAFFC14D);
         }
     }
 
-    private static void renderCameras(UIContext context, CompViewportCamera camera, CompDocument doc,
-                                      Vector3f offset, float frame, float time, int ox, int oy)
+    private static void renderCameras(UIContext context, ReplayGuideSpace guides, CompDocument doc,
+                                      float frame, float time)
     {
         if (!CompPrefs.get().cameraGizmos)
         {
             return;
         }
 
-        float fps = Math.max(1F, doc.fps);
         CompLayer active = doc.activeCamera(time);
 
         for (CompLayer layer : doc.layers)
@@ -170,13 +169,9 @@ public final class ReplayCompositionOverlay
 
             int color = layer == active ? 0xFFFFC14D : 0x99FFC14D;
             Vector3f eye = CompCamera.eyeOf(layer, frame, doc.height);
-            Vector3f target = new Vector3f(
-                layer.scalarAt("cameraTargetX", layer.cameraTargetX, frame),
-                layer.scalarAt("cameraTargetY", layer.cameraTargetY, frame),
-                layer.scalarAt("cameraTargetZ", layer.cameraTargetZ, frame)
-            );
-            Vector2f eyeScreen = project(camera, new Vector3f(eye).add(offset), ox, oy);
-            Vector2f targetScreen = project(camera, new Vector3f(target).add(offset), ox, oy);
+            Vector3f target = cameraTarget(layer, frame, eye);
+            Vector2f eyeScreen = guides.projectComp(eye);
+            Vector2f targetScreen = guides.projectComp(target);
 
             if (eyeScreen != null)
             {
@@ -200,13 +195,13 @@ public final class ReplayCompositionOverlay
                 line(context, eyeScreen.x, eyeScreen.y, targetScreen.x, targetScreen.y, 0x66FFC14D);
             }
 
-            /* Composition-plane corners projected into the replay viewport; connecting the eye to
+            /* Composition-plane corners projected into the free viewport; connecting the eye to
              * them communicates aim and framing without a second full composition render. */
             Vector2f[] frameCorners = new Vector2f[] {
-                project(camera, new Vector3f(0F, 0F, 0F).add(offset), ox, oy),
-                project(camera, new Vector3f(doc.width, 0F, 0F).add(offset), ox, oy),
-                project(camera, new Vector3f(doc.width, doc.height, 0F).add(offset), ox, oy),
-                project(camera, new Vector3f(0F, doc.height, 0F).add(offset), ox, oy)
+                guides.projectComp(new Vector3f(0F, 0F, 0F)),
+                guides.projectComp(new Vector3f(doc.width, 0F, 0F)),
+                guides.projectComp(new Vector3f(doc.width, doc.height, 0F)),
+                guides.projectComp(new Vector3f(0F, doc.height, 0F))
             };
 
             if (eyeScreen != null)
@@ -228,8 +223,8 @@ public final class ReplayCompositionOverlay
             for (int i = 0; i <= samples; i++)
             {
                 float t = from + (to - from) * (i / (float) samples);
-                Vector3f p = CompCamera.eyeOf(layer, t * fps, doc.height).add(offset);
-                Vector2f screen = project(camera, p, ox, oy);
+                Vector3f p = CompCamera.eyeOf(layer, t * Math.max(1F, doc.fps), doc.height);
+                Vector2f screen = guides.projectComp(p);
 
                 if (screen != null)
                 {
@@ -240,8 +235,33 @@ public final class ReplayCompositionOverlay
         }
     }
 
-    private static void renderLayers(UIContext context, CompViewportCamera camera, CompDocument doc,
-                                     Vector3f offset, float frame, int ox, int oy)
+    /**
+     * The point the camera aims at. A BBS-style camera is flown with yaw/pitch and has no authored
+     * target, so its stale target fields must not be treated as the aim point.
+     */
+    private static Vector3f cameraTarget(CompLayer layer, float frame, Vector3f eye)
+    {
+        boolean lookAt = layer.cameraStyle != CompLayer.CAMERA_BBS && layer.cameraLookAt;
+
+        if (lookAt)
+        {
+            return new Vector3f(
+                layer.scalarAt("cameraTargetX", layer.cameraTargetX, frame),
+                layer.scalarAt("cameraTargetY", layer.cameraTargetY, frame),
+                layer.scalarAt("cameraTargetZ", layer.cameraTargetZ, frame)
+            );
+        }
+
+        float yaw = (float) Math.toRadians(layer.scalarAt("rotationY", layer.rotationY, frame));
+        float pitch = (float) Math.toRadians(layer.scalarAt("rotationX", layer.rotationX, frame));
+        float dirX = (float) (Math.sin(yaw) * Math.cos(pitch));
+        float dirY = (float) (-Math.sin(pitch));
+        float dirZ = (float) (-Math.cos(yaw) * Math.cos(pitch));
+
+        return new Vector3f(eye.x + dirX * 1000F, eye.y + dirY * 1000F, eye.z + dirZ * 1000F);
+    }
+
+    private static void renderLayers(UIContext context, ReplayGuideSpace guides, CompDocument doc, float frame)
     {
         for (CompLayer layer : doc.layers)
         {
@@ -252,26 +272,22 @@ public final class ReplayCompositionOverlay
                 continue;
             }
 
-            mchorse.bbs_mod.utils.pose.Transform transform = layer.transformAt(frame);
-            float layerX = transform.translate.x;
-            float layerY = transform.translate.y;
-            float layerZ = layer.scalarAt("z", layer.z, frame);
+            float halfW = Math.max(0F, layer.width) * 0.5F;
+            float halfH = Math.max(0F, layer.height) * 0.5F;
+            float left = -layer.width * layer.anchorX;
+            float top = -layer.height * layer.anchorY;
+            Vector2f a = guides.projectLayer(layer, left, top, 0F);
+            Vector2f b = guides.projectLayer(layer, left + halfW * 2F, top, 0F);
+            Vector2f c = guides.projectLayer(layer, left + halfW * 2F, top + halfH * 2F, 0F);
+            Vector2f d = guides.projectLayer(layer, left, top + halfH * 2F, 0F);
+            Vector2f center = guides.projectLayer(layer, left + halfW, top + halfH, 0F);
 
-            int color = layerColor(layer);
-            Vector3f center = new Vector3f(layerX, layerY, layerZ).add(offset);
-            Vector2f screen = project(camera, center, ox, oy);
-
-            if (screen == null)
+            if (center == null)
             {
                 continue;
             }
 
-            float halfW = Math.max(0F, layer.width) * 0.5F;
-            float halfH = Math.max(0F, layer.height) * 0.5F;
-            Vector2f a = project(camera, new Vector3f(layerX - halfW, layerY - halfH, layerZ).add(offset), ox, oy);
-            Vector2f b = project(camera, new Vector3f(layerX + halfW, layerY - halfH, layerZ).add(offset), ox, oy);
-            Vector2f c = project(camera, new Vector3f(layerX + halfW, layerY + halfH, layerZ).add(offset), ox, oy);
-            Vector2f d = project(camera, new Vector3f(layerX - halfW, layerY + halfH, layerZ).add(offset), ox, oy);
+            int color = layerColor(layer);
 
             if (a != null && b != null && c != null && d != null)
             {
@@ -285,7 +301,7 @@ public final class ReplayCompositionOverlay
                 context.batcher.outline(minX, minY, maxX, maxY, (color & 0x00FFFFFF) | 0x55000000);
             }
 
-            context.batcher.box(screen.x - 2F, screen.y - 2F, screen.x + 2F, screen.y + 2F, color);
+            context.batcher.box(center.x - 2F, center.y - 2F, center.x + 2F, center.y + 2F, color);
 
             String label = name(layer);
 
@@ -301,7 +317,7 @@ public final class ReplayCompositionOverlay
                 label += "  " + text;
             }
 
-            context.batcher.textShadow(label, screen.x + 6F, screen.y - 4F, color);
+            context.batcher.textShadow(label, center.x + 6F, center.y - 4F, color);
         }
     }
 
@@ -327,13 +343,6 @@ public final class ReplayCompositionOverlay
             case "precomp" -> 0xFFC79BFF;
             default -> 0xFFB8C4D6;
         };
-    }
-
-    private static Vector2f project(CompViewportCamera camera, Vector3f point, int ox, int oy)
-    {
-        Vector2f screen = camera.project(point);
-
-        return screen == null ? null : new Vector2f(screen.x + ox, screen.y + oy);
     }
 
     /** A one-pixel-ish screen line made of a thin rotated quad would need a matrix; dots are

@@ -21,6 +21,12 @@ public final class GlFramebuffer
     public final GlTexture color;
     /** Depth renderbuffer id, or 0 for a colour-only target. */
     public final int depthBuffer;
+    /**
+     * Sampleable depth attachment, or null when the target only needs a renderbuffer (or no
+     * depth). A model target needs this: its per-pixel depth is what lets a text/shape plane in
+     * front of the actor occlude it correctly instead of the whole model being painted on top.
+     */
+    public final GlTexture depth;
     public final int width;
     public final int height;
     /** True while the framebuffer sits in {@link FboPool}. Guards against double releases. */
@@ -33,6 +39,16 @@ public final class GlFramebuffer
 
     public GlFramebuffer(int width, int height, boolean withDepth)
     {
+        this(width, height, withDepth, false);
+    }
+
+    /**
+     * @param withDepth true to attach a depth buffer
+     * @param sampleableDepth true to attach it as a depth <b>texture</b> the compositor can sample
+     *        (model targets); false keeps the cheaper renderbuffer
+     */
+    public GlFramebuffer(int width, int height, boolean withDepth, boolean sampleableDepth)
+    {
         this.width = Math.max(1, width);
         this.height = Math.max(1, height);
         this.color = new GlTexture();
@@ -43,8 +59,19 @@ public final class GlFramebuffer
         GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, this.color.id, 0);
         GL30.glDrawBuffers(GL30.GL_COLOR_ATTACHMENT0);
 
-        if (withDepth)
+        if (withDepth && sampleableDepth)
         {
+            this.depth = new GlTexture();
+            this.depth.allocate(this.width, this.height, GL30.GL_DEPTH_COMPONENT24,
+                GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT);
+            this.depth.setLinear(false);
+            GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT,
+                GL11.GL_TEXTURE_2D, this.depth.id, 0);
+            this.depthBuffer = 0;
+        }
+        else if (withDepth)
+        {
+            this.depth = null;
             this.depthBuffer = GL30.glGenRenderbuffers();
             GL30.glBindRenderbuffer(GL30.GL_RENDERBUFFER, this.depthBuffer);
             GL30.glRenderbufferStorage(GL30.GL_RENDERBUFFER, GL30.GL_DEPTH_COMPONENT24, this.width, this.height);
@@ -53,6 +80,7 @@ public final class GlFramebuffer
         }
         else
         {
+            this.depth = null;
             this.depthBuffer = 0;
         }
 
@@ -126,7 +154,7 @@ public final class GlFramebuffer
         GlStateManager._clearColor(((clearColor >> 16) & 0xFF) / 255F, ((clearColor >> 8) & 0xFF) / 255F, (clearColor & 0xFF) / 255F, ((clearColor >>> 24) & 0xFF) / 255F);
         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
 
-        if (this.depthBuffer != 0)
+        if (this.depthBuffer != 0 || this.depth != null)
         {
             GL11.glDepthMask(true);
             GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
@@ -136,6 +164,12 @@ public final class GlFramebuffer
     public void bindTexture(int unit)
     {
         this.color.bind(unit);
+    }
+
+    /** GL id of the sampleable depth texture, or 0 when this target has none. */
+    public int depthTextureId()
+    {
+        return this.depth == null ? 0 : this.depth.id;
     }
 
     /** Reads the target as top-down ARGB rows, which is what PNG and video encoders want. */
@@ -232,6 +266,11 @@ public final class GlFramebuffer
         if (this.depthBuffer != 0)
         {
             GL30.glDeleteRenderbuffers(this.depthBuffer);
+        }
+
+        if (this.depth != null)
+        {
+            this.depth.delete();
         }
 
         this.color.delete();

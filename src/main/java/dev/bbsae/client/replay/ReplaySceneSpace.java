@@ -45,6 +45,17 @@ public final class ReplaySceneSpace
     public final Vector3f anchor = new Vector3f();
 
     /**
+     * Optional whole-layer linear transform (rotation/scale) applied after the block→pixel scale.
+     *
+     * <p>An independent replay layer renders its actor through the layer's full world matrix:
+     * {@code layerWorld · S · (entity - replayAnchor)}. The replay editor's actor/gizmo mapping
+     * used only {@code anchor + S · entity}, so a scaled or rotated replay layer put the actor at
+     * one place and its gizmo at another. The free/orbit views install the linked layer's linear
+     * part here; camera view keeps the base scalar mapping (its pose is the composition camera).</p>
+     */
+    private Matrix4f linearOverride;
+
+    /**
      * Z sign: {@code true} maps world Z to {@code −S·z} (positive determinant, culling safe),
      * {@code false} to {@code +S·z} (a mirror; diagnostic calibration only). Default comes from
      * {@code -Dbbsae.replayFlipZ}.
@@ -61,19 +72,21 @@ public final class ReplaySceneSpace
         this.pixelsPerBlock = pixelsPerBlock;
     }
 
-    /** World → composition. Determinant positive while {@link #flipZ} is on. */
-    public Matrix4f compFromWorld()
+    /** Install the linked layer's linear transform for free/orbit actor mapping. */
+    public void setLinearOverride(Matrix4f linear)
     {
-        float s = this.pixelsPerBlock;
-        float z = this.flipZ ? -s : s;
-
-        return new Matrix4f().translation(this.anchor).scale(s, -s, z);
+        this.linearOverride = linear == null ? null : new Matrix4f(linear);
     }
 
-    /** Composition → world: the inverse of {@link #compFromWorld()}. */
-    public Matrix4f worldFromComp()
+    /** Restore the plain block→pixel mapping (camera view and unrelated films). */
+    public void clearLinearOverride()
     {
-        return this.compFromWorld().invert();
+        this.linearOverride = null;
+    }
+
+    public boolean hasLinearOverride()
+    {
+        return this.linearOverride != null;
     }
 
     /**
@@ -84,13 +97,34 @@ public final class ReplaySceneSpace
      * viewport camera's block→view matrix must be exactly this product without any translation.
      * Using the full {@code compFromWorld} (which carries the framing anchor) shifts the actors by
      * the target distance — the "viewport is empty" bug of the real-machine runs.</p>
+     *
+     * <p>Free/orbit can install the linked layer's linear part (including its scale/rotation and
+     * the block→pixel scale) through {@link #setLinearOverride(Matrix4f)}; camera view clears it
+     * and uses the plain scalar mapping.</p>
      */
     public Matrix4f linearFromWorld()
     {
+        if (this.linearOverride != null)
+        {
+            return new Matrix4f(this.linearOverride);
+        }
+
         float s = this.pixelsPerBlock;
         float z = this.flipZ ? -s : s;
 
         return new Matrix4f().scale(s, -s, z);
+    }
+
+    /** World → composition. Determinant positive while {@link #flipZ} is on. */
+    public Matrix4f compFromWorld()
+    {
+        return new Matrix4f().translation(this.anchor).mul(this.linearFromWorld());
+    }
+
+    /** Composition → world: the inverse of {@link #compFromWorld()}. */
+    public Matrix4f worldFromComp()
+    {
+        return this.compFromWorld().invert();
     }
 
     public Vector3f toComp(Vector3d world)
@@ -100,13 +134,9 @@ public final class ReplaySceneSpace
 
     public Vector3f toComp(double x, double y, double z)
     {
-        float s = this.pixelsPerBlock;
+        Vector3f comp = this.linearFromWorld().transformPosition(new Vector3f((float) x, (float) y, (float) z));
 
-        return new Vector3f(
-            (float) (s * x) + this.anchor.x,
-            (float) (-s * y) + this.anchor.y,
-            (float) ((this.flipZ ? -s : s) * z) + this.anchor.z
-        );
+        return comp.add(this.anchor);
     }
 
     public Vector3f toWorld(Vector3f comp)
@@ -116,12 +146,9 @@ public final class ReplaySceneSpace
 
     public Vector3f toWorld(float x, float y, float z)
     {
-        float s = Math.max(0.0001F, this.pixelsPerBlock);
-        float lx = x - this.anchor.x;
-        float ly = y - this.anchor.y;
-        float lz = z - this.anchor.z;
+        Vector3f local = new Vector3f(x, y, z).sub(this.anchor);
 
-        return new Vector3f(lx / s, -ly / s, lz / (this.flipZ ? -s : s));
+        return this.linearFromWorld().invert().transformPosition(local);
     }
 
     /**
@@ -138,13 +165,9 @@ public final class ReplaySceneSpace
 
     public void centerOn(double x, double y, double z)
     {
-        float s = this.pixelsPerBlock;
+        Vector3f comp = this.linearFromWorld().transformPosition(new Vector3f((float) x, (float) y, (float) z));
 
-        this.anchor.set(
-            (float) (-s * x),
-            (float) (s * y),
-            (float) ((this.flipZ ? s : -s) * z)
-        );
+        this.anchor.set(comp.negate());
     }
 
     /** Blocks per composition pixel, for readouts and drag scaling. */

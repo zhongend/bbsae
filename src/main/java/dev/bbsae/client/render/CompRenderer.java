@@ -1004,14 +1004,25 @@ public final class CompRenderer
         CompCamera camera = CompScene.camera(context);
         List<CompLayer> perspective = new ArrayList<>();
 
+        boolean modelVolume = false;
+
         for (CompLayer layer : context.comp.layers)
         {
             if (layer == null || !layer.visible || !layer.activeAt(context.time)
                 || context.comp.isSoloedOut(layer)
-                || !layer.threeD || !CompScene.hasPixels(layer)
+                || !CompScene.hasPixels(layer)
+                /* Legacy projection makes every layer perspective once the frame is spatial;
+                 * AUTO is still a 3D-pixel concept, so a demoted 2D layer must not count. A
+                 * model is the one exception: it is geometry even without the legacy flag. */
+                || (!layer.threeD && !CompScene.isModelVolume(layer))
                 || !CompScene.usePerspective(context, layer))
             {
                 continue;
+            }
+
+            if (CompScene.isModelVolume(layer))
+            {
+                modelVolume = true;
             }
 
             perspective.add(layer);
@@ -1020,6 +1031,17 @@ public final class CompRenderer
         if (perspective.size() < 2)
         {
             return false;
+        }
+
+        /*
+         * A model is not a plane, so parallel-plane painter order cannot resolve it: the actor has
+         * thickness and a text/shape plane can cut through it. Any frame that contains a model and
+         * another 3D pixel layer needs the shared per-pixel depth target, regardless of whether
+         * the layer planes themselves are parallel.
+         */
+        if (modelVolume)
+        {
+            return true;
         }
 
         for (int i = 0; i < perspective.size(); i++)
@@ -1127,26 +1149,42 @@ public final class CompRenderer
             return accumulation;
         }
 
-        GlFramebuffer straight = PassRenderer.unpremultiply(modelContent);
-        GlFramebuffer source = straight == null ? modelContent : straight;
         float opacity = opacityAt(layer, context);
 
-        debugFboSum("model-content-" + layer.id, source);
+        debugFboSum("model-content-" + layer.id, modelContent);
+
+        /*
+         * A model is a depth volume, not a plane. When the frame already has the shared per-pixel
+         * depth target, composite through the model's own depth so a text/shape plane in front
+         * occludes exactly the part of the actor behind it. The flat path stays as the fallback
+         * for frames where the depth path is off or unavailable.
+         *
+         * Both paths consume the premultiplied model colour directly (one fewer full-screen pass
+         * and framebuffer per actor than the old unpremultiply-then-draw sequence).
+         */
+        if (opacity > 0.0001F && context.spatialDepth != null
+            && CompScene.usePerspective(context, layer) && modelContent.depthTextureId() != 0
+            && !Boolean.getBoolean("bbsae.debugNoDepthPlane"))
+        {
+            GlFramebuffer previous = accumulation;
+
+            accumulation = context.spatialDepth.compositeModel(modelContent, modelContent, previous,
+                layer.blendMode, opacity, true);
+            debugFboSum("model-blend-" + layer.id, accumulation);
+            FboPool.release(previous);
+
+            return accumulation;
+        }
 
         if (opacity > 0.0001F)
         {
             GlFramebuffer blended = FboPool.acquire(accumulation.width, accumulation.height);
 
-            PassRenderer.drawInto(blended, source, accumulation, null,
-                layer.blendMode, opacity, 0F, 0F, 0xFFFFFF, 0);
+            PassRenderer.drawIntoPremultiplied(blended, modelContent, accumulation,
+                layer.blendMode, opacity, 0xFFFFFF);
             debugFboSum("model-blend-" + layer.id, blended);
             FboPool.release(accumulation);
             accumulation = blended;
-        }
-
-        if (source != modelContent)
-        {
-            FboPool.release(source);
         }
 
         return accumulation;

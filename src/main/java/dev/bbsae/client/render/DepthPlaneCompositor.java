@@ -192,6 +192,105 @@ final class DepthPlaneCompositor
         return PassRenderer.draw(this.target, accumulation, null, blendMode, opacity, 0F, 0F, 0xFFFFFF);
     }
 
+    /**
+     * Composites an independent replay model through the shared per-pixel depth buffer.
+     *
+     * <p>A model target carries real per-fragment depth; it is not a plane. Using that depth as
+     * {@code gl_FragDepth} lets the model be occluded by (and occlude) the 3D text/shape planes
+     * already in this buffer. This is the fix for "the replay entity penetrates text and shape
+     * layers": whole-layer painter order can only decide the whole silhouette, so the actor was
+     * either entirely in front of or entirely behind a plane even when the plane cut through it.</p>
+     *
+     * @param layer model colour target (premultiplied unless {@code premultiplied} is false)
+     * @param depthSource the same model target; its sampleable depth attachment is used
+     * @param premultiplied true to un-premultiply the model colour while sampling
+     */
+    GlFramebuffer compositeModel(GlFramebuffer layer, GlFramebuffer depthSource, GlFramebuffer accumulation,
+                                 int blendMode, float opacity, boolean premultiplied)
+    {
+        GlslProgram program = CompShaders.modelDepth;
+        int depthTexture = depthSource == null ? 0 : depthSource.depthTextureId();
+
+        if (program == null || layer == null || depthTexture == 0 || accumulation == null)
+        {
+            return PassRenderer.draw(layer, accumulation, null, blendMode, opacity, 0F, 0F, 0xFFFFFF);
+        }
+
+        boolean previousDepthTest = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+        int previousDepthFunc = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_DEPTH_FUNC);
+        boolean previousDepthMask = org.lwjgl.opengl.GL11.glGetBoolean(org.lwjgl.opengl.GL11.GL_DEPTH_WRITEMASK);
+        boolean previousBlend = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_BLEND);
+        int previousFramebuffer = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
+        int[] previousViewport = new int[4];
+        boolean completed = false;
+
+        org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, previousViewport);
+
+        try
+        {
+            this.target.clearColorOnly(0);
+            this.target.bindOnly();
+            com.mojang.blaze3d.platform.GlStateManager._disableBlend();
+
+            program.use();
+            PassRenderer.bindRaw(program, "Layer", 0, layer.color.id);
+            PassRenderer.bindRaw(program, "Depth", 1, depthTexture);
+            program.set("Premultiplied", premultiplied ? 1 : 0);
+
+            /* 1) Opaque fragments: colour and depth in one pass. The depth test rejects anything
+             *    the planes already in the buffer cover; gl_FragDepth makes the test use the
+             *    model's own per-fragment depth. */
+            com.mojang.blaze3d.platform.GlStateManager._enableDepthTest();
+            com.mojang.blaze3d.platform.GlStateManager._depthFunc(org.lwjgl.opengl.GL11.GL_LESS);
+            com.mojang.blaze3d.platform.GlStateManager._depthMask(true);
+            com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
+            program.set("Mode", 0);
+            program.drawFullscreen();
+
+            /* 2) Translucent edges: less-or-equal against the shared depth, no depth writes. */
+            com.mojang.blaze3d.platform.GlStateManager._depthFunc(org.lwjgl.opengl.GL11.GL_LEQUAL);
+            com.mojang.blaze3d.platform.GlStateManager._depthMask(false);
+            program.set("Mode", 1);
+            program.drawFullscreen();
+
+            completed = true;
+        }
+        finally
+        {
+            com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
+            com.mojang.blaze3d.platform.GlStateManager._depthMask(previousDepthMask);
+            com.mojang.blaze3d.platform.GlStateManager._depthFunc(previousDepthFunc);
+
+            if (previousDepthTest)
+            {
+                com.mojang.blaze3d.platform.GlStateManager._enableDepthTest();
+            }
+            else
+            {
+                com.mojang.blaze3d.platform.GlStateManager._disableDepthTest();
+            }
+
+            if (previousBlend)
+            {
+                com.mojang.blaze3d.platform.GlStateManager._enableBlend();
+            }
+            else
+            {
+                com.mojang.blaze3d.platform.GlStateManager._disableBlend();
+            }
+
+            if (!completed)
+            {
+                com.mojang.blaze3d.platform.GlStateManager._glBindFramebuffer(
+                    org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, previousFramebuffer);
+                com.mojang.blaze3d.platform.GlStateManager._viewport(
+                    previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+            }
+        }
+
+        return PassRenderer.draw(this.target, accumulation, null, blendMode, opacity, 0F, 0F, 0xFFFFFF);
+    }
+
     void delete()
     {
         this.deleted = true;

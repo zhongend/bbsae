@@ -300,6 +300,10 @@ public final class CompScene
      * dolly distance, or a trimmed-out 3D layer switched the whole frame into spatial mode (and
      * could trigger the per-pixel depth path) with no visible pixel behind it.</p>
      *
+     * <p>An independent replay model is the one exception to the {@code threeD} test: its target
+     * carries real per-fragment depth even when an old project never set the switch, so it is
+     * depth content at z = 0.</p>
+     *
      * <p>The animated {@code z} channel is sampled, not the static field: a keyframed 3D layer
      * that only leaves z=0 in the middle of the shot used to keep the whole frame non-spatial (and
      * make the 3D layers jump when it finally moved). The static field remains the fallback for
@@ -316,7 +320,10 @@ public final class CompScene
 
         for (CompLayer layer : ctx.comp.layers)
         {
-            if (layer == null || !layer.threeD || !layer.activeAt(ctx.time) || !hasPixels(layer))
+            boolean model = isModelVolume(layer);
+
+            if (layer == null || (!layer.threeD && !model)
+                || !layer.activeAt(ctx.time) || !hasPixels(layer))
             {
                 continue;
             }
@@ -326,6 +333,14 @@ public final class CompScene
                 continue;
             }
 
+            /* An independent replay model is a depth volume even when its layer origin is on
+             * z = 0: the actor has thickness, so a 3D text/shape plane can cut through it. Treating
+             * it as a flat plane is what made the actor "penetrate" those layers. */
+            if (model)
+            {
+                return true;
+            }
+
             if (Math.abs(layer.scalarAt("z", layer.z, ctx.frame)) > 0.01F)
             {
                 return true;
@@ -333,6 +348,18 @@ public final class CompScene
         }
 
         return false;
+    }
+
+    /**
+     * True when this layer renders a real BBS form with its own per-fragment depth (an independent
+     * replay entity), rather than a textured plane. Such a layer must take part in the 3D sort and
+     * in per-pixel depth compositing even when it was authored before the layer's {@code threeD}
+     * switch existed.
+     */
+    public static boolean isModelVolume(CompLayer layer)
+    {
+        return layer != null && layer.independent && layer.isEntityLayer()
+            && (layer.hasModelForm() || layer.hasLinkedReplay());
     }
 
     /**
@@ -374,7 +401,7 @@ public final class CompScene
             return true;
         }
 
-        return layer.threeD;
+        return layer.threeD || isModelVolume(layer);
     }
 
     /**
@@ -407,7 +434,8 @@ public final class CompScene
             return false;
         }
 
-        return layer.threeD || "bbs".equals(layer.type) && CAMERA_OVERRIDE.get() != null
+        return layer.threeD || isModelVolume(layer)
+            || "bbs".equals(layer.type) && CAMERA_OVERRIDE.get() != null
             || (legacy3D(ctx) && spatial(ctx));
     }
 
@@ -430,6 +458,13 @@ public final class CompScene
          * normally a screen-fixed backdrop; in the free/orbit composition render it must be a
          * projected plane, otherwise the whole workspace background is that layer again. */
         if ("bbs".equals(layer.type) && CAMERA_OVERRIDE.get() != null)
+        {
+            return camera(ctx).perspective;
+        }
+
+        /* A model target is always rendered through the camera projection, whatever the legacy
+         * threeD flag says: it is geometry, not a screen-fixed plate. */
+        if (isModelVolume(layer))
         {
             return camera(ctx).perspective;
         }

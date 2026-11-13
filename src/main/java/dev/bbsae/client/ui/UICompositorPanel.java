@@ -72,7 +72,6 @@ import mchorse.bbs_mod.ui.utils.UI;
 import mchorse.bbs_mod.ui.utils.context.ContextMenuManager;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.keys.KeyAction;
-import mchorse.bbs_mod.ui.utils.renderers.TimelineRulerRenderer;
 import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
 import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
@@ -5794,22 +5793,17 @@ public class UICompositorPanel extends UIDashboardPanel
         );
         this.keyframeEditor.view.rulerRenderer((context) ->
         {
-            /* TimelineRulerRenderer's step tables are BBS 20-ticks/second. Feed it that unit so
-             * the seconds steps are really one second apart, and map back to compositor frames for
-             * x and the label. Passing raw frames made 60 fps labels overlap/garbled. */
+            /*
+             * This callback is a decorator inside TimelineRulerRenderer.render, not a replacement:
+             * drawing another ruler here is what painted two overlapping label sets (one in frame
+             * units, one in ticks) over the drawer. Mark the one ruler's axis unit instead; the
+             * TimelineRulerRendererMixin replaces its tick pass with CompKeyframeRuler, which
+             * selects steps in frames and formats sub-second labels without collisions.
+             */
             float fps = this.doc == null ? 20F : Math.max(1F, this.doc.fps);
             boolean seconds = Boolean.TRUE.equals(BBSSettings.editorSeconds.get());
-            double bbsPerFrame = 20D / fps;
-            double framesPerBbs = fps / 20D;
-            mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframes view = this.keyframeEditor.view;
-            int startBbs = (int) Math.round(view.fromGraphX(view.graphArea.x) * bbsPerFrame);
-            int durationBbs = Math.max(1, Math.round((this.doc == null ? 0F : this.doc.duration) * 20F));
 
-            TimelineRulerRenderer.render(context, view.graphArea, startBbs, durationBbs,
-                (bbsTick) -> view.toGraphX(bbsTick * framesPerBbs),
-                (bbsTick) -> seconds
-                    ? mchorse.bbs_mod.camera.utils.TimeUtils.formatTime(bbsTick)
-                    : String.valueOf(Math.round(bbsTick * framesPerBbs)));
+            CompTimelineUnits.set(fps, seconds);
         });
 
         /* Do not replace UIKeyframes' own context menu here. BBS registers the full keyframe

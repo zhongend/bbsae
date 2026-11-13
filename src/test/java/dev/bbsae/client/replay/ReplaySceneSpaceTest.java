@@ -124,6 +124,41 @@ public class ReplaySceneSpaceTest
         assertEquals(1F, linear.m33(), 0.0001F);
     }
 
+    /**
+     * A replay layer can be scaled/rotated; the composition renders the actor through that full
+     * layer matrix, so the gizmo mapping must use the same linear part or it lands at a different
+     * point. This is the default scale-3 replay layer case.
+     */
+    @Test
+    public void aLinearOverrideRoundTripsAndMovesTheAnchorWithIt()
+    {
+        ReplaySceneSpace space = new ReplaySceneSpace(64F);
+        Matrix4f layerLinear = new Matrix4f()
+            .rotateY((float) Math.toRadians(31F))
+            .scale(3F, 2F, 3F);
+        Matrix4f linear = new Matrix4f(layerLinear)
+            .mul(new Matrix4f().scale(64F, -64F, 64F));
+
+        space.setLinearOverride(linear);
+        space.anchor.set(-12F, 44F, 7F);
+
+        Vector3f world = new Vector3f(1.5F, 2F, -3F);
+        Vector3f comp = space.toComp(world.x, world.y, world.z);
+        Vector3f back = space.toWorld(comp);
+
+        assertTrue(new Vector3f(world).sub(back).length() < 0.001F);
+        assertEquals(3F * 64F, new Matrix4f(space.linearFromWorld()).getScale(new Vector3f()).x, 0.001F);
+        assertTrue(space.hasLinearOverride());
+
+        space.clearLinearOverride();
+        assertTrue(!space.hasLinearOverride());
+
+        /* centerOn must solve through the override, not the scalar fallback. */
+        space.setLinearOverride(linear);
+        space.centerOn(4D, -2D, 9D);
+        assertTrue(space.toComp(4D, -2D, 9D).length() < 0.001F);
+    }
+
     @Test
     public void oneBlockIsAlwaysTheConfiguredPixelSize()
     {

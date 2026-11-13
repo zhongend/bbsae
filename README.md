@@ -1,9 +1,11 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix50**：环绕/自由视角用自由相机重新渲染**整条合成图**（与相机视角同一套图层/
-> 文字/形状/BBS 预览/模型/蒙版/效果），并按图层顺序合成模型，修复模型穿透文字/形状到顶层；
-> 自由视角的线框/gizmo 与 letterbox 画面对齐；合成器关键帧抽屉标尺按 BBS tick 适配，修复
-> 帧/秒错位和重叠乱码。相机视角保持不动。详见 [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix51**：修复环绕/自由视角的线框、文字和 gizmo 与合成画面错位（引导层改用与
+> 渲染器相同的 `CompScene.project` + letterbox plate 映射，并同步回放世界锚点）；回放实体按
+> **模型体积的真实逐片元深度**与文字/形状图层互相遮挡，不再整层穿透；合成器关键帧抽屉改为
+> 单条 frame-aware 标尺（不再叠画第二条、不再重复 `0:00` 标签）；自由/环绕画面加入缓存和
+> 导航期代理分辨率，模型合成去掉一次全屏反预乘。相机视角保持不变。详见
+> [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">

@@ -1,5 +1,64 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix51 — 2026-11-13
+
+环绕/自由视角的引导与 gizmo 对齐、回放实体逐像素深度遮挡、关键帧抽屉单标尺、自由视角缓存。
+
+### 环绕/自由：线框、文字、gizmo 与画面错位
+
+- 根因一：引导层把**所有**图层都通过 3D 相机投影并画在视口原点，而自由视角画面已经是
+  合成帧（2D 图层屏幕固定、3D 图层已由自由相机投影、整张栅格再 letterbox 到 plate）。
+  2D 文字/形状标签和合成画幅因此从画面上漂走。
+- 根因二：回放世界锚点只在相机视角的 `lookThroughCompositionCamera()` 里与链接图层同步；
+  自由/环绕沿用旧锚点。合成里的模型按图层变换渲染，gizmo/pick 却按世界锚点映射，于是
+  相差一个固定位移。
+- 修复：新增 `ReplayGuideSpace`，复用 `CompScene.project`（2D→合成像素，3D→自由相机投影）
+  再按 plate/doc 比例映射；合成画幅改为画面矩形的屏幕描边；图层包围框/标签/相机引导同一
+  映射。自由/环绕每帧同步世界锚点但**不移动轨道目标**，并通过 `ReplaySceneSpace` 的线性
+  覆盖使用链接图层的完整 `layerWorldLinear · S`（旋转/缩放；默认回放图层 scale 3 时旧标量
+  映射会让 actor 越偏离锚点、gizmo 偏得越多）。渲染失败回落舞台时引导/拾取改用
+  `viewArea`。相机视角路径未改。
+
+### 回放实体穿透文字/形状图层
+
+- 根因：独立回放模型被当成平面参与整层画家排序和 AUTO 深度判断；平面平行时 AUTO 关闭共享
+  深度，模型合成又是无深度的平面卡片，文字/形状平面无法逐像素遮挡有厚度的模型。
+- 修复：`CompScene.isModelVolume` 把独立回放实体当深度体积（旧 `threeD=false` 也兼容）；
+  模型目标改用可采样深度纹理；新增 `MODEL_DEPTH` shader 与
+  `DepthPlaneCompositor.compositeModel()`，把模型真实深度写入与 3D 图层共享的深度缓冲，
+  实现逐像素互相遮挡。AUTO 在“模型 + 另一 3D 图层”时强制开启。
+- 2D 文字/形状保持 AE 语义（屏幕固定、按栈顺序覆盖整个模型）；预览与导出/AE 帧服务器走
+  同一 `CompRenderer` 路径。
+
+### 关键帧抽屉时间轴字体重叠
+
+- 根因：`UIKeyframes.rulerRenderer` 是 `TimelineRulerRenderer.render` 内部的装饰器；旧代码
+  在装饰器里又画了一整条标尺，默认标尺随后用帧单位再画一遍标签，两套标签重叠。高倍缩放时
+  `TimeUtils.formatTime` 还把相邻帧都显示成 `0:00`。
+- 修复：装饰器只标记单位（`CompTimelineUnits`）；新增 `TimelineRulerRendererMixin` 用
+  `CompKeyframeRuler` 替换该帧的 `renderTicks`，按帧选步长、按实际标签宽度留间距、用
+  `CompTime.rulerLabel` 百分秒标签，不再重复/重叠。其他 BBS 编辑器保持原标尺。
+
+### 性能
+
+- 自由/环绕完整合成帧按 `doc/comp 签名 + 帧 + 自由相机 pose + 栅格尺寸` 缓存；静止时一张
+  纹理 quad。导航/拖动 gizmo 用 0.75× 代理分辨率，结束后自动重烘高清帧。
+- 需要 BBS 世界帧的合成不会缓存空世界；世界未就绪时保留上一张好帧，`worldGeneration` 变化
+  后失效重烘。
+- 模型颜色按预乘 alpha 直接合成（shader 内反预乘），去掉每个模型一次全屏 `unpremultiply`
+  pass；逐像素模型深度改为两 pass（opaque 颜色+深度一次写入，半透明边缘一次 LEQUAL）。
+- 关键帧抽屉去掉重复整条标尺绘制和重复标签。
+
+### 验证
+
+- 全量测试：**161 套件 / 988 项 / 0 failures / 0 errors / 1 skipped**。
+- 新增 `ReplayGuideSpaceTest`、`ModelVolumeDepthTest`、`ModelDepthCompositeTest`（隐藏 GL
+  像素测试）、`CompKeyframeRulerTest`。
+- 按用户要求**未启动客户端**；请在你的工程中测试自由/环绕引导与 gizmo 对齐、3D 文字/形状
+  与模型互相遮挡、关键帧抽屉标尺、自由视角静止/导航性能，以及 2D/3D 预览和导出。
+- 候选包：`bbsae-0.99-hotfix51.jar`（3,943,058 bytes，SHA-256
+  `DE957288390337B682D8D3780C4BF7F689679AE9F4D939484DDA93E732DFD74E`）。
+
 ## 0.99-hotfix50 — 2026-11-13
 
 环绕/自由视角真正重渲染整条合成图；模型按图层顺序遮挡；线框 UI 与 letterbox 画面对齐；

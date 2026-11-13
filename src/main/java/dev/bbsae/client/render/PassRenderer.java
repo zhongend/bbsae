@@ -120,6 +120,46 @@ public final class PassRenderer
         program.set("Opacity", opacity);
         program.set("Offset", offsetX / Math.max(1, offsetReferenceWidth), offsetY / Math.max(1, offsetReferenceHeight));
         program.set("Tint", ((tint >> 16) & 0xFF) / 255F, ((tint >> 8) & 0xFF) / 255F, (tint & 0xFF) / 255F, 1F);
+        program.set("Premultiplied", 0);
+
+        program.drawFullscreen();
+        GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+        GlStateManager._bindTexture(0);
+    }
+
+    /**
+     * Draws a source whose RGB is premultiplied by its alpha (a model target rendered with the
+     * normal {@code SRC_ALPHA, ONE_MINUS_SRC_ALPHA} blend into a transparent buffer) without the
+     * separate full-screen un-premultiply pass the old model compositor paid for every actor.
+     */
+    public static void drawIntoPremultiplied(GlFramebuffer output, GlFramebuffer source, GlFramebuffer backdrop,
+                                             int blendMode, float opacity, int tint)
+    {
+        GlslProgram program = CompShaders.composite;
+
+        if (program == null || source == null)
+        {
+            return;
+        }
+
+        output.begin();
+        GlStateManager._disableScissorTest();
+        GlStateManager._disableDepthTest();
+        GlStateManager._disableCull();
+        GlStateManager._disableBlend();
+
+        program.use();
+        bind(program, "Backdrop", 0, backdrop);
+        bind(program, "Source", 1, source);
+        bind(program, "Mask", 2, null);
+        program.set("UseBackdrop", backdrop == null ? 0 : 1);
+        program.set("UseMask", 0);
+        program.set("MaskChannel", 0);
+        program.set("Blend", blendMode);
+        program.set("Opacity", opacity);
+        program.set("Offset", 0F, 0F);
+        program.set("Tint", ((tint >> 16) & 0xFF) / 255F, ((tint >> 8) & 0xFF) / 255F, (tint & 0xFF) / 255F, 1F);
+        program.set("Premultiplied", 1);
 
         program.drawFullscreen();
         GlStateManager._activeTexture(GL13.GL_TEXTURE0);

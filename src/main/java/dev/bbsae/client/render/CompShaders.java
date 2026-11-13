@@ -34,6 +34,7 @@ public final class CompShaders
     public static GlslProgram mesh;
     public static GlslProgram viewport3d;
     public static GlslProgram depthPlane;
+    public static GlslProgram modelDepth;
 
     private CompShaders()
     {}
@@ -48,7 +49,8 @@ public final class CompShaders
         initialized = false;
         composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial
             = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter
-            = rgbSplit = grade = repeat = replicate = entityKey = opaque = mesh = viewport3d = depthPlane = null;
+            = rgbSplit = grade = repeat = replicate = entityKey = opaque = mesh = viewport3d = depthPlane
+            = modelDepth = null;
     }
 
     public static synchronized void init()
@@ -89,6 +91,7 @@ public final class CompShaders
         mesh = makeMesh();
         viewport3d = make("viewport3d", ShaderSources.VIEWPORT_3D_VERTEX, ShaderSources.VIEWPORT_3D_FRAGMENT);
         depthPlane = make("depth_plane", ShaderSources.DEPTH_PLANE);
+        modelDepth = make("model_depth", ShaderSources.MODEL_DEPTH);
         initialized = composite != null && premultiply != null && unpremultiply != null;
     }
 
@@ -189,8 +192,9 @@ public final class CompShaders
         delete(mesh);
         delete(viewport3d);
         delete(depthPlane);
+        delete(modelDepth);
 
-        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = replicate = entityKey = opaque = mesh = viewport3d = depthPlane = null;
+        composite = premultiply = unpremultiply = inner = gradient = blur = aeBlur = sharpen = radial = color = key = generate = distort = aeDistort = pixel = stroke = transition = depth = shatter = rgbSplit = grade = repeat = replicate = entityKey = opaque = mesh = viewport3d = depthPlane = modelDepth = null;
         initialized = false;
     }
 

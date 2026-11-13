@@ -186,6 +186,55 @@ public final class ShaderSources
         }
         """;
 
+    /**
+     * Per-pixel depth composite for an independent replay model.
+     *
+     * <p>A model target is not a plane: every fragment has its own depth. Sampling that depth and
+     * writing it as {@code gl_FragDepth} puts the actor into the same depth buffer the 3D
+     * text/shape planes use, so a plane in front occludes the part of the actor behind it (and a
+     * plane behind is occluded by the actor) instead of one whole-layer painter decision deciding
+     * the entire silhouette.</p>
+     */
+    public static final String MODEL_DEPTH = """
+        #version 150 core
+
+        uniform sampler2D Layer;
+        uniform sampler2D Depth;
+        uniform int Mode;
+        uniform int Premultiplied;
+
+        in vec2 vUv;
+        out vec4 fragColor;
+
+        void main()
+        {
+            vec4 source = texture(Layer, vUv);
+
+            /* Mode 0 = opaque (depth + colour in one pass), mode 1 = translucent (colour only). */
+            if (Mode == 0 ? source.a < 0.5 : source.a >= 0.5)
+            {
+                discard;
+            }
+
+            float depth = texture(Depth, vUv).r;
+
+            /* No depth written by the model pass at this fragment (transparent background). */
+            if (depth >= 0.999999)
+            {
+                discard;
+            }
+
+            gl_FragDepth = depth;
+
+            if (Premultiplied == 1 && source.a > 0.0001)
+            {
+                source.rgb /= source.a;
+            }
+
+            fragColor = source;
+        }
+        """;
+
     public static final String COMPOSITE = """
         #version 150 core
 
@@ -199,6 +248,7 @@ public final class ShaderSources
         uniform float Opacity;
         uniform vec2 Offset;
         uniform vec4 Tint;
+        uniform int Premultiplied;
 
         in vec2 vUv;
         out vec4 fragColor;
@@ -304,6 +354,15 @@ public final class ShaderSources
         {
             vec2 uv = clamp(vUv - Offset, vec2(0.0), vec2(1.0));
             vec4 s = texture(Source, uv);
+
+            /* Model targets are rendered with ordinary alpha blending, so their RGB is
+             * premultiplied. Un-premultiply here instead of paying a separate full-screen pass
+             * per actor; every other caller leaves the uniform at 0. */
+            if (Premultiplied == 1 && s.a > 0.0001)
+            {
+                s.rgb /= s.a;
+            }
+
             float m = maskValue(vUv);
             float a = clamp(s.a * Opacity * m, 0.0, 1.0);
 

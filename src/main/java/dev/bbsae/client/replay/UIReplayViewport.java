@@ -6,7 +6,9 @@ import dev.bbsae.client.overlay.BbsPreviewBridge;
 import dev.bbsae.client.render.CompCamera;
 import dev.bbsae.client.render.CompFrameServer;
 import dev.bbsae.client.render.CompRenderCache;
+import dev.bbsae.client.render.CompRenderContext;
 import dev.bbsae.client.render.CompRenderer;
+import dev.bbsae.client.render.CompScene;
 import dev.bbsae.client.render.CompViewportCamera;
 import dev.bbsae.client.render.FboPool;
 import dev.bbsae.client.render.GlFramebuffer;
@@ -103,6 +105,12 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     /** Composition rectangle inside the free/orbit view when a comp is rendered there. */
     private final Area freePlate = new Area();
     /**
+     * True when the last free/orbit frame actually painted the composition into {@link #freePlate}.
+     * If the render failed we fall back to the plain stage in {@link #viewArea}; the guide, pick and
+     * gizmo must then use that rectangle instead of the composition plate.
+     */
+    private boolean freeCompositionDrawn;
+    /**
      * The composition rectangle inside the camera view. Its aspect is the document's, so the
      * composition is never stretched and the gizmo/pick projection uses the same rectangle the
      * picture was painted into.
@@ -124,6 +132,19 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     private boolean compFrameWorldReady;
     /** True when the cached frame must be baked again, but may still be shown until then. */
     private boolean previewDirty;
+    /** Free/orbit cache has its own dirty bit: a bake there must not clear the camera view's. */
+    private boolean freePreviewDirty = true;
+    /**
+     * The free/orbit view used to run the whole composition graph on every display frame, even
+     * with the camera parked. This is the same cached-first approach as the camera plate: a parked
+     * free camera costs one textured quad.
+     */
+    private GlFramebuffer freeFrame;
+    private long freeFrameSignature;
+    private int freeFrameIndex = -1;
+    private int freeFrameWidth;
+    private int freeFrameHeight;
+    private float freeFrameScale;
     private String compositionError;
     private long compositionErrorMs;
     private boolean previewWaitingForWorld;
@@ -399,22 +420,92 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
      */
     private void alignSpaceToLinkedLayer(CompDocument doc, float time)
     {
+        this.alignSpaceToLinkedLayer(doc, time, true);
+    }
+
+    /**
+     * @param moveCamera true in the shot-camera view, where the pose is rebuilt from the
+     *        composition camera anyway; false in free/orbit, where the user's orbit target must
+     *        stay where it is while the world anchor snaps onto the comp layer.
+     */
+    private void alignSpaceToLinkedLayer(CompDocument doc, float time, boolean moveCamera)
+    {
         CompLayer linked = this.linkedLayer(doc, this.session.replay());
+        ReplaySceneSpace space = this.session.space();
 
         if (linked == null)
         {
+            space.clearLinearOverride();
+
             return;
         }
 
         float frame = time * Math.max(1F, doc.fps);
-        ReplaySceneSpace space = this.session.space();
-        float s = space.pixelsPerBlock;
-        float zSign = space.flipZ ? -s : s;
         mchorse.bbs_mod.utils.pose.Transform transform = linked.transformAt(frame);
         float layerZ = linked.scalarAt("z", linked.z, frame);
         Vector3f goal = new Vector3f(transform.translate.x, transform.translate.y, layerZ);
         Vector3f old = space.toComp(linked.replayAnchorX, linked.replayAnchorY, linked.replayAnchorZ);
         Vector3f delta = new Vector3f(goal).sub(old);
+
+        if (!moveCamera)
+        {
+            /*
+             * Free/orbit must use the same placement the composition used to draw the model:
+             * layerWorld · S · (entity - replayAnchor). The old scalar anchor+scale mapping put
+             * the actor at a different point as soon as the linked layer had a non-unit scale or a
+             * rotation (the default replay layer is scale 3!), which is the gizmo offset the user
+             * sees. Install the layer's full linear part and solve the anchor at the replay anchor.
+             */
+            dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+            CompProject project = panel == null ? null : panel.getProject();
+
+            if (project == null)
+            {
+                space.clearLinearOverride();
+
+                return;
+            }
+
+            try
+            {
+                CompCamera free = CompCamera.ofFree(this.session.camera(), doc.width, doc.height);
+                CompRenderContext context = new CompRenderContext(project, doc, time, free.projection, null, null);
+
+                context.cameraView = free;
+
+                Matrix4f world = CompScene.world(context, linked);
+                Matrix4f linear = new Matrix4f(world);
+
+                /* Strip only the translation: rotation, scale and the parent chain stay. */
+                linear.m30(0F).m31(0F).m32(0F);
+
+                /* Then apply the same block→composition scale the base mapping uses. */
+                float s = space.pixelsPerBlock;
+                Matrix4f scale = new Matrix4f().scale(s, -s, space.flipZ ? -s : s);
+
+                linear.mul(scale);
+
+                Vector3f layerPosition = world.getTranslation(new Vector3f());
+                Vector3f anchorOffset = linear.transformPosition(
+                    new Vector3f(linked.replayAnchorX, linked.replayAnchorY, linked.replayAnchorZ));
+
+                space.setLinearOverride(linear);
+                space.anchor.set(layerPosition).sub(anchorOffset);
+            }
+            catch (RuntimeException e)
+            {
+                /* A malformed layer expression/binding must not take the editor down; fall back to
+                 * the scalar mapping and leave the normal error path to report the real problem. */
+                space.clearLinearOverride();
+            }
+
+            return;
+        }
+
+        space.clearLinearOverride();
+
+        float s = space.pixelsPerBlock;
+        float zSign = space.flipZ ? -s : s;
 
         space.anchor.set(
             goal.x - s * linked.replayAnchorX,
@@ -531,11 +622,53 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             return false;
         }
 
+        Area plate = this.freePlate;
+
+        if (plate.w <= 0 || plate.h <= 0)
+        {
+            plate = new Area();
+            this.fitPlate(doc, this.viewArea, 0, plate);
+        }
+
         float time = this.session.playhead() / ReplayTime.TICKS_PER_SECOND;
         int frame = Math.max(0, Math.round(time * Math.max(1F, doc.fps)));
-        float scale = Math.max(0.35F, Math.min(1F, this.viewArea.w / Math.max(1F, doc.width) * 1.25F));
+        float frameTime = frame / Math.max(1F, doc.fps);
+        float scale = CompRenderer.previewScale(doc, plate.w, plate.h, 0, this.deviceScale());
+
+        /* Navigation and a live gizmo pose re-bake every display frame; trade a little sharpness
+         * for a stable orbit and restore the full proxy once the gesture ends. */
+        if (this.session.isPlaying() || this.navMode != NAV_NONE || this.gizmoActive)
+        {
+            scale = Math.max(0.2F, Math.round(scale * 0.75F * 16F) / 16F);
+        }
+
+        int[] size = CompRenderer.renderSizeFor(doc, scale);
+        int width = Math.max(1, size[0]);
+        int height = Math.max(1, size[1]);
+        boolean liveWorld = BbsPreviewBridge.needsWorldFrame(doc);
+        long signature = CompRenderCache.signature(project, doc, frameTime, true, true, 0,
+            width, height, false) ^ freeCameraKey(this.session.camera())
+            ^ (liveWorld ? (long) BbsPreviewBridge.worldGeneration() * 0x9E3779B97F4A7C15L : 0L);
+        boolean worldReady = !liveWorld || BbsPreviewBridge.hasUsableWorld();
+
+        if (!this.freePreviewDirty && this.freeFrame != null && this.freeFrameIndex == frame
+            && this.freeFrameSignature == signature && this.freeFrameWidth == width
+            && this.freeFrameHeight == height && this.freeFrameScale == scale)
+        {
+            return this.drawFreeFrame(context, plate);
+        }
+
+        /*
+         * A composition that samples the live world must not bake before the first world copy
+         * exists; keep the last good frame meanwhile. Otherwise an empty BBS layer would be cached
+         * for as long as the camera stays still.
+         */
+        if (!worldReady && this.freeFrame != null)
+        {
+            return this.drawFreeFrame(context, plate);
+        }
+
         GlFramebuffer rendered = null;
-        boolean drawn = false;
 
         try
         {
@@ -549,23 +682,25 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
             if (rendered == null)
             {
-                return false;
+                return this.freeFrame != null && this.drawFreeFrame(context, plate);
             }
 
-            Area plate = this.freePlate;
-
-            if (plate.w <= 0 || plate.h <= 0)
+            if (this.freeFrame != null && this.freeFrame != rendered)
             {
-                plate = new Area();
-                this.fitPlate(doc, this.viewArea, 0, plate);
+                FboPool.release(this.freeFrame);
             }
 
-            context.batcher.box(this.viewArea.x, this.viewArea.y, this.viewArea.ex(), this.viewArea.ey(), 0xFF0E1116);
-            context.batcher.texturedBox(rendered.color.id, 0xFFFFFFFF,
-                plate.x, plate.y, plate.w, plate.h,
-                0F, rendered.height, rendered.width, 0F, rendered.width, rendered.height);
-            context.batcher.flush();
-            drawn = true;
+            this.freeFrame = rendered;
+            this.freeFrameSignature = signature;
+            this.freeFrameIndex = frame;
+            this.freeFrameWidth = width;
+            this.freeFrameHeight = height;
+            this.freeFrameScale = scale;
+
+            /* worldReady is part of the validity contract: if the world was not ready, the next
+             * display frame must retry even when the camera and playhead did not move. */
+            this.freePreviewDirty = !worldReady;
+            rendered = null; /* ownership moved to freeFrame */
         }
         catch (RuntimeException e)
         {
@@ -584,7 +719,47 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             }
         }
 
-        return drawn;
+        return this.freeFrame != null && this.drawFreeFrame(context, plate);
+    }
+
+    private boolean drawFreeFrame(UIContext context, Area plate)
+    {
+        if (this.freeFrame == null)
+        {
+            return false;
+        }
+
+        context.batcher.box(this.viewArea.x, this.viewArea.y, this.viewArea.ex(), this.viewArea.ey(), 0xFF0E1116);
+        context.batcher.texturedBox(this.freeFrame.color.id, 0xFFFFFFFF,
+            plate.x, plate.y, plate.w, plate.h,
+            0F, this.freeFrame.height, this.freeFrame.width, 0F,
+            this.freeFrame.width, this.freeFrame.height);
+        context.batcher.flush();
+
+        return true;
+    }
+
+    /**
+     * Pose key for the free-frame cache. Targets and spherical pose are enough: position is
+     * derived from them, and FOV/roll/ortho are the remaining projection inputs.
+     */
+    private static long freeCameraKey(CompViewportCamera camera)
+    {
+        long hash = 0x9E3779B97F4A7C15L;
+
+        hash = hash * 31L + Float.floatToIntBits(camera.target.x);
+        hash = hash * 31L + Float.floatToIntBits(camera.target.y);
+        hash = hash * 31L + Float.floatToIntBits(camera.target.z);
+        hash = hash * 31L + Float.floatToIntBits(camera.yaw);
+        hash = hash * 31L + Float.floatToIntBits(camera.pitch);
+        hash = hash * 31L + Float.floatToIntBits(camera.distance);
+        hash = hash * 31L + Float.floatToIntBits(camera.fov);
+        hash = hash * 31L + Float.floatToIntBits(camera.near);
+        hash = hash * 31L + Float.floatToIntBits(camera.far);
+        hash = hash * 31L + Float.floatToIntBits(camera.roll);
+        hash = hash * 31L + (camera.ortho ? 1L : 0L);
+
+        return hash;
     }
 
     /** The dark stage under the free/orbit actor pass. */
@@ -981,6 +1156,19 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.compFrameHeight = 0;
         this.compFrameWorldReady = false;
         this.previewDirty = false;
+        this.freePreviewDirty = true;
+
+        if (this.freeFrame != null)
+        {
+            FboPool.release(this.freeFrame);
+            this.freeFrame = null;
+        }
+
+        this.freeFrameIndex = -1;
+        this.freeFrameSignature = 0L;
+        this.freeFrameWidth = 0;
+        this.freeFrameHeight = 0;
+        this.freeFrameScale = 0F;
     }
 
     /** Fits {@code bounds} to the document's aspect; result goes into {@code out}. */
@@ -1200,6 +1388,19 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             this.freePoseInitialized = true;
         }
 
+        /*
+         * The free/orbit picture is the real composition, but the actor gizmo/pick are drawn from
+         * the replay's world position through {@link ReplaySceneSpace}. If the space anchor is not
+         * the one the linked comp layer uses, every 3D guide and the gizmo sit a constant offset
+         * away from the model that is actually in the picture. Camera view re-aligns this in
+         * lookThroughCompositionCamera(); the free views need the same alignment, but must not
+         * move the user's orbit target with it.
+         */
+        if (this.viewMode != VIEW_CAMERA && freeDoc != null)
+        {
+            this.alignSpaceToLinkedLayer(freeDoc, this.session.playhead() / ReplayTime.TICKS_PER_SECOND, false);
+        }
+
         this.applyViewMode();
         this.session.camera().update();
 
@@ -1214,6 +1415,8 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         int drawn;
 
+        this.freeCompositionDrawn = false;
+
         if (this.isCameraPreviewActive())
         {
             drawn = this.renderCameraPreview(context);
@@ -1226,6 +1429,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
             if (project != null && doc != null && this.drawFreeCompositionView(context, project, doc))
             {
+                this.freeCompositionDrawn = true;
                 drawn = doc.layers == null ? 1 : Math.max(1, doc.layers.size());
             }
             else
@@ -1235,13 +1439,17 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
                     this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
             }
 
-            ReplayCompositionOverlay.render(context, this.session, interaction.x, interaction.y,
-                interaction.w, interaction.h, true);
+            /* The fallback stage lives in viewArea, not in the composition plate. Guides, pick
+             * and the gizmo must follow the rectangle that was actually drawn. */
+            Area guideArea = this.interactionArea();
+
+            ReplayCompositionOverlay.render(context, this.session, guideArea.x, guideArea.y,
+                guideArea.w, guideArea.h, true);
         }
 
         this.renderCompositionWindow(context);
 
-        this.pick.render(context, this.session, interaction);
+        this.pick.render(context, this.session, this.interactionArea());
 
         if (this.session.canEditPlacement())
         {
@@ -1711,7 +1919,8 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             return this.cameraArea;
         }
 
-        if (this.viewMode != VIEW_CAMERA && this.freePlate.w > 0 && this.compositionPreviewSupported())
+        if (this.viewMode != VIEW_CAMERA && this.freeCompositionDrawn
+            && this.freePlate.w > 0 && this.compositionPreviewSupported())
         {
             return this.freePlate;
         }
@@ -1805,6 +2014,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     public void invalidatePreview()
     {
         this.previewDirty = true;
+        this.freePreviewDirty = true;
     }
 
     public void releasePreview()

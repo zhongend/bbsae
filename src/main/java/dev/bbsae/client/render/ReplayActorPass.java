@@ -742,7 +742,9 @@ public final class ReplayActorPass
 
         try
         {
-            GlFramebuffer created = new GlFramebuffer(width, height, true);
+            /* Sampleable depth: the compositor resolves the model against 3D text/shape planes
+             * per pixel instead of treating the whole actor as one flat card. */
+            GlFramebuffer created = new GlFramebuffer(width, height, true, true);
 
             MODEL_TARGETS.put(layer, created);
             MODEL_TARGET_SIZES.put(layer, new int[] {width, height});
