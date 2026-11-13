@@ -10,7 +10,7 @@ package dev.bbsae.client.replay;
  *
  * <pre>
  *   -Dbbsae.replayPixelsPerBlock=64    composition pixels per Minecraft block
- *   -Dbbsae.replayFlipZ=true           false mirrors Z (negative determinant; diagnostic only)
+ *   -Dbbsae.replayFlipZ=false         true flips Z (diagnostic only; default matches the composition)
  *   -Dbbsae.replayYawOffset=180        added to the viewport yaw when building the MC camera
  *   -Dbbsae.replayPitchOffset=0        added to the viewport pitch when building the MC camera
  *   -Dbbsae.replayCullThreshold=32     films with more replays get frustum culling
@@ -32,7 +32,7 @@ public final class ReplayCalibration
     public static final String FRAME_MIN_DISTANCE = "bbsae.replayFrameMinDistance";
 
     public static final float DEFAULT_PIXELS_PER_BLOCK = 64F;
-    public static final boolean DEFAULT_FLIP_Z = true;
+    public static final boolean DEFAULT_FLIP_Z = false;
     public static final float DEFAULT_YAW_OFFSET = 180F;
     public static final float DEFAULT_PITCH_OFFSET = 0F;
     public static final int DEFAULT_CULL_THRESHOLD = 32;

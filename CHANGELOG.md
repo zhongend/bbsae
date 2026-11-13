@@ -1,5 +1,44 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix41 — 2026-11-13
+
+回放预览与合成器精确同步；修复轨道播放/编辑与 K pose 数值面板重叠。
+
+### 回放模型与合成器一致
+
+- 根因：回放编辑器原来固定 64px/方块且 Z 轴取反（`flipZ=true`），合成器用
+  `comp.height * 0.12`（或工程自定义）且 `scale(px, -px, +px)`；同一个箱子因此在回放界面
+  方向相反、尺寸/厚度不同。
+- 修复：`DEFAULT_FLIP_Z=false`；`ReplayEditSession.syncSceneScale()` 使用与
+  `ReplayActorPass.pixelsPerBlock` 相同的比例；每次绑定回放页都同步。
+- 回放相机强制透视，不使用正交投影。
+
+### 回放预览
+
+- 默认相机视角直接渲染 bbsae 合成画面（文字/图片/卡片/效果/linked 模型），不只是线框；
+  scene anchor 对齐 CompLayer，原生 gizmo/pick 与合成 actor 重合。
+- 三个 BBS 预览按钮保留；自由/绕对象模式用于 actor 编辑；不引入合成器的摄像机/钢笔工具栏。
+- 独立合成预览默认关闭，设置中可切子窗口/双窗口。
+
+### 轨道播放与编辑
+
+- `ReplayEditSession.seek()` 直接写 `filmPanel.getRunner().setCursor()`，绕过
+  `UIFilmPanel.setCursor()` 每帧发送 SEEK/触发 restart 的副作用；轨道播放不再被不断重启。
+- 播放开始和播放中把时间轴 playhead 保持在可见范围（`shiftIntoMiddle`），不再“跑出屏幕像冻结”。
+
+### 关键帧数值面板重叠
+
+- 旧 `UIKeyframeEditor.target(this.replayProperties)` 会把选中的关键帧数值工厂面板铺满
+  整个右侧回放属性面板，K pose 帧时数值界面全部重叠。
+- 改为不设置 target：使用 keyframe editor 自带的 140px 右侧属性条，数值面板留在时间轴内，
+  右侧回放属性保持独立。
+
+### 验证
+
+- 全量测试：**153 套件 / 954 项测试 / 0 failures / 0 errors / 1 skipped**。
+- 真机：`docs/verify/round83-camera-sync.png`、`docs/verify/round82-twowindow.png`。
+- 本地候选包：`bbsae-0.99-hotfix41.jar`（3,908,419 bytes，SHA-256 C76AC4964B560DCC462F6FB6701190873993CE4F0228DF2745229258CA175B27）。
+
 ## 0.99-hotfix40 — 2026-11-13
 
 虚拟回放 full-bright、原版预览视角按钮、关键帧面板重叠修复、合成预览模式设置。

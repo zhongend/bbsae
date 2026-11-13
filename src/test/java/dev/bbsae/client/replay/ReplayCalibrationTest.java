@@ -31,7 +31,7 @@ public class ReplayCalibrationTest
     public void theDefaultsAreTheDocumentedOnes()
     {
         assertEquals(64F, ReplayCalibration.pixelsPerBlock(), 0.0001F);
-        assertTrue(ReplayCalibration.flipZ());
+        assertFalse(ReplayCalibration.flipZ());
         assertEquals(180F, ReplayCalibration.yawOffset(), 0.0001F);
         assertEquals(0F, ReplayCalibration.pitchOffset(), 0.0001F);
         assertEquals(32, ReplayCalibration.cullThreshold());
@@ -67,7 +67,7 @@ public class ReplayCalibrationTest
         System.setProperty(ReplayCalibration.CULL_THRESHOLD, "-4");
 
         assertEquals(64F, ReplayCalibration.pixelsPerBlock(), 0.0001F);
-        assertTrue(ReplayCalibration.flipZ());
+        assertFalse(ReplayCalibration.flipZ());
         assertEquals(0, ReplayCalibration.cullThreshold());
     }
 
@@ -98,7 +98,7 @@ public class ReplayCalibrationTest
         ReplaySceneSpace defaults = new ReplaySceneSpace();
 
         assertEquals(64F, defaults.pixelsPerBlock, 0.0001F);
-        assertTrue(defaults.flipZ);
+        assertFalse(defaults.flipZ);
     }
 
     @Test

@@ -68,28 +68,30 @@ public class ReplaySceneSpaceTest
     }
 
     /**
-     * A positive determinant means the mapping is a rotation plus scale, not a mirror: triangle
-     * winding and back-face culling stay valid. This is the reason the default Z sign is negative.
+     * The replay viewport must use the same Z sign as the composition's linked-model pass:
+     * {@code scale(px, -px, px)}. That mapping has a negative determinant, but the replay actor
+     * pass disables back-face culling; using the old positive-determinant Z flip made the same box
+     * face the other way and read as a different thickness.
      */
     @Test
-    public void theDefaultMappingIsNotAMirror()
+    public void theDefaultMappingMatchesTheCompositionZSign()
     {
         ReplaySceneSpace space = new ReplaySceneSpace(64F);
         Matrix4f matrix = space.compFromWorld();
         float determinant = matrix.determinant();
 
-        assertTrue(determinant > 0F, "determinant " + determinant + " would mirror the models");
+        assertTrue(determinant < 0F, "default replay Z must match the composition mapping, determinant " + determinant);
     }
 
     @Test
-    public void theOtherZSignIsAMirrorAndIsNotTheDefault()
+    public void theOtherZSignKeepsPositiveDeterminant()
     {
-        ReplaySceneSpace mirrored = new ReplaySceneSpace(64F);
+        ReplaySceneSpace rotated = new ReplaySceneSpace(64F);
 
-        mirrored.flipZ = false;
+        rotated.flipZ = true;
 
-        assertTrue(mirrored.compFromWorld().determinant() < 0F);
-        assertNotEquals(mirrored.flipZ, new ReplaySceneSpace().flipZ);
+        assertTrue(rotated.compFromWorld().determinant() > 0F);
+        assertNotEquals(rotated.flipZ, new ReplaySceneSpace().flipZ);
     }
 
     @Test
@@ -115,7 +117,7 @@ public class ReplaySceneSpaceTest
 
         assertEquals(32F, linear.m00(), 0.0001F);
         assertEquals(-32F, linear.m11(), 0.0001F);
-        assertEquals(-32F, linear.m22(), 0.0001F);
+        assertEquals(32F, linear.m22(), 0.0001F);
         assertEquals(0F, linear.m30(), 0.0001F);
         assertEquals(0F, linear.m31(), 0.0001F);
         assertEquals(0F, linear.m32(), 0.0001F);

@@ -535,6 +535,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             this.viewport.setSession(this.session);
         }
 
+        this.session.syncSceneScale();
         this.session.ensureEntities();
         this.session.resetFraming();
         this.replaysList.replays.refreshReplayList();
@@ -868,7 +869,11 @@ public class UIReplayModePanel extends UIDashboardPanel
             (callback) -> new UIFilmKeyframes(this.filmPanel.cameraEditor, callback).absolute()
         );
 
-        editor.target(this.replayProperties);
+        /* No target: the keyframe editor keeps its 140 px properties strip inside the timeline.
+         * Targeting the replay properties panel made UIKeyframeEditor attach the selected
+         * keyframe's numeric factory full-size over that panel, which is exactly the overlapping
+         * "data interface" seen while K-ing pose frames. BBS itself targets a dedicated edit area;
+         * in this embedded layout the in-timeline strip is that dedicated area. */
         /* The timeline's own empty-state hint ("Click a keyframe...") was drawn over the replay
          * properties in the narrow embedded layout. The dope sheet below has a proper Chinese
          * empty state, so suppress this legacy label. */
@@ -956,6 +961,14 @@ public class UIReplayModePanel extends UIDashboardPanel
         if (this.session != null)
         {
             this.session.advancePlayback();
+
+            if (this.session.isPlaying() && this.keyframeEditor != null)
+            {
+                /* Keep the manually driven playhead inside the dope sheet. BBS' runner does this
+                 * when playback starts; the replay page has its own transport, so it must do the
+                 * same or the cursor runs off screen and the tracks look frozen. */
+                this.keyframeEditor.view.getXAxis().shiftIntoMiddle(this.session.tick());
+            }
         }
     }
 
@@ -1560,6 +1573,14 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.session.togglePlaying();
         this.lastPlaying = this.session.isPlaying();
         this.play.label = IKey.constant(this.lastPlaying ? "暂停" : "播放");
+
+        /* BBS' original transport does this when playback starts: the playhead is put in the
+         * middle of the dope sheet so the tracks can be followed. Without it the cursor runs off
+         * the visible range and the timeline looks frozen even though the film is playing. */
+        if (this.lastPlaying && this.keyframeEditor != null)
+        {
+            this.keyframeEditor.view.getXAxis().shiftIntoMiddle(this.session.tick());
+        }
     }
 
     private void step(int ticks)
@@ -1571,6 +1592,11 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.session.setPlaying(false);
         this.session.step(ticks);
+
+        if (this.keyframeEditor != null)
+        {
+            this.keyframeEditor.view.getXAxis().shiftIntoMiddle(this.session.tick());
+        }
     }
 
     private void frameAll()

@@ -1,7 +1,10 @@
 package dev.bbsae.client.replay;
 
 import dev.bbsae.BbsAeAddon;
+import dev.bbsae.client.BbsAeClient;
 import dev.bbsae.client.render.CompViewportCamera;
+import dev.bbsae.comp.CompDocument;
+import dev.bbsae.comp.CompProject;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.camera.Camera;
 import mchorse.bbs_mod.film.BaseFilmController;
@@ -80,6 +83,34 @@ public final class ReplayEditSession
          * perspective, but older persisted/debug state could have left ortho on; make the contract
          * explicit so the actor/gizmo projection cannot silently flatten. */
         this.camera.setOrtho(false);
+        this.syncSceneScale();
+    }
+
+    /**
+     * Use exactly the same blocks-to-composition-pixels scale as the linked-model pass.
+     *
+     * <p>The compositor derives it from the composition height or the project's
+     * {@code modelPixelsPerBlock}. The replay editor used to keep its own 64 px/block default, so
+     * the same box was about three times larger there and its depth read as a different thickness.
+     * The calibration property remains the fallback only when no composition is open.</p>
+     */
+    public void syncSceneScale()
+    {
+        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+        CompProject project = panel == null ? null : panel.getProject();
+        CompDocument doc = panel == null ? null : panel.getDocument();
+
+        if (doc == null)
+        {
+            return;
+        }
+
+        int custom = project == null || project.settings == null ? 0 : project.settings.modelPixelsPerBlock;
+        float pixelsPerBlock = custom > 0
+            ? Math.max(8F, Math.min(128F, custom))
+            : Math.max(8F, Math.min(64F, doc.height * 0.12F));
+
+        this.space.pixelsPerBlock = pixelsPerBlock;
     }
 
     public UIFilmPanel filmPanel()
@@ -419,7 +450,19 @@ public final class ReplayEditSession
     {
         float value = ReplayTime.clampTick(ticks, this.durationTicks());
 
-        this.filmPanel.setCursor(value);
+        /* Drive BBS' runner directly, like the original transport does. UIFilmPanel.setCursor
+         * also fires a SEEK packet and can schedule an action restart on every call; at the replay
+         * page's per-frame playback cadence that restarts the actors continuously and makes the
+         * tracks look like they never play. The runner is the single source the keyframe editor,
+         * the controller and all editor cursors read. */
+        if (this.filmPanel.getRunner() != null)
+        {
+            this.filmPanel.getRunner().setCursor(value);
+        }
+        else
+        {
+            this.filmPanel.setCursor(value);
+        }
     }
 
     public void step(int ticks)
