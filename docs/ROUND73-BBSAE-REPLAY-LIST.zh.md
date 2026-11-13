@@ -56,14 +56,15 @@ world-plate matte 换成 actor-only 图像。
 - WAV/OGG 默认 **external:绝对路径** 链接，不复制；设置「链接外部素材」可关闭；
 - MP3/FLAC/M4A 用 FFmpeg 转 48k 双声道 WAV（mixer 只解 WAV/OGG）；
 - 外部音频路径在预览、混音、导出三处共用同一个 resolver；
+- 选中音频后可「重新链接外部音频…」，不复制、不重建 clip；
 - 图片新增「链接外部图片…」，`imagePath` 支持 `external:`；
 - 视频 FFmpeg 命令加 `-nostdin`，避免后台导入等待 stdin。
 
 ## 7. 验证
 
 - 全量：**151 suites / 948 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix18.jar`，已安装到正式 modpack；
-  SHA-256 `710AFEBF30D14A80078EDD20340124BCA519795D30772986E4F50E42BB7CA11E`。
+- 本地候选包：`bbsae-0.99-hotfix19.jar`，已安装到正式 modpack；
+  SHA-256 `B713ADFE4026A85042C0CE4166D600C0EA11611764B8E4CF52F87DBF9EB53A68`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 

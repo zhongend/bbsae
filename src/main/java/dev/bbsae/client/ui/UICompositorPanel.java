@@ -17216,6 +17216,37 @@ public class UICompositorPanel extends UIDashboardPanel
             this.setStatus("已移除音频");
         }));
 
+        section.fields.add(this.smallButton("重新链接外部音频…", () -> this.relinkAudio(clip)));
+    }
+
+    /** Re-points an existing clip at another external WAV/OGG without duplicating the clip. */
+    private void relinkAudio(dev.bbsae.comp.CompAudio clip)
+    {
+        NativeFileDialog.pickFile(
+            "重新链接外部音频",
+            new String[] {"wav", "ogg"},
+            (file) ->
+            {
+                if (file == null || !file.isFile())
+                {
+                    return;
+                }
+
+                clip.path = "external:" + file.getAbsoluteFile();
+                float length = dev.bbsae.client.export.CompAudioMixer.probeDuration(file.toPath());
+
+                if (length > 0F)
+                {
+                    clip.duration = length;
+                }
+
+                dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+                this.refreshInspector();
+                this.save();
+                this.setStatus("已重新链接：" + file.getName());
+            },
+            () -> this.notifyError("请使用「导入音频」浏览器选择文件")
+        );
     }
 
     /** One clickable row per clip: name selects it, the × removes it. */
