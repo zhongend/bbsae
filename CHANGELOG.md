@@ -1,5 +1,58 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix53 — 2026-11-14
+
+3D 重复 copy 中心、模型蒙版、预合成摄像机/折叠变换、EffectCraft 蒙版模式。
+
+### 3D 重复仍然偏移/像平面重采样
+
+- 根因：`Replicate3D.copy()` 自己已经加了 pivot，但 `am_repeat`/`am_repeat_radial`/
+  `am_repeat_scatter`/`am_line_repeat` 又把 centre 加进偏移，导致 copy 矩阵的平移量变成
+  `pivot + offset`，普通 2D/3D 图层会出现整组偏移/重叠，看起来仍像平面复制。
+- 修复：偏移改为相对 pivot 的纯 offset，`copy()` 只负责 pivot 旋转/缩放；`am_line_repeat`
+  还改为按合成单元中心减图层原点/栅格中心定位。
+- 回归：`repeatCopiesPivotAroundTheLayerCentreWithoutDoublingIt` 断言中心 100、offset 16 的
+  三个 copy 平移为 -16/0/+16，而不是 84/100/116。
+
+### 所有图层蒙版默认生效
+
+- 独立回放模型分支 `compositeIndependentModel` 之前直接 `continue`，从不调用
+  `applyLayerMask`；模型上的路径蒙版完全无效。
+- 现在模型先执行路径蒙版（3D 用 projected mask，2D 用 layer-space mask），再执行 glitch
+  后处理/合成；输入是 `ReplayActorPass` 的持久 target，因此蒙版 pass 不释放该 target，只
+  释放自己返回的临时 FBO。
+- 普通图层、3D 烘焙、调整层、预合成层的蒙版顺序保持「source → masks → effects → styles →
+  matte → blend」，和 EffectCraft 的 `source → masks → effects → transform → track matte`
+  语义一致；预合成内部的蒙版只作用于子合成 FBO，不会泄漏到父合成。
+
+### 预合成 3D 关系 / 位置
+
+- `precompose` 把选区移入子合成时，过去不复制父级活动摄像机；子合成因此回退到默认 1:1
+  视图，3D 图层位置/透视在分组瞬间改变。
+- 现在把活动摄像机（连同关键帧、in/out、时间重映射）一起复制进子合成并设为
+  `sub.activeCameraId`；摄像机时间与图层一起 rebase。
+- 新增 EffectCraft 风格「折叠变换（Collapse Transformations）」开关：预合成层无蒙版/效果/
+  样式时，子层 3D 渲染使用父合成摄像机（`CompScene.pushCamera`），分组后投影保持一致；
+  一旦预合成层有蒙版/效果/样式，按普通预合成压平（与 EffectCraft 的规则一致）。
+- 新增 `precomposeCarriesTheActiveCameraIntoTheChildComp` 回归。
+
+### EffectCraft 蒙版组合模式
+
+- `CompMask` 新增 `MODE_LIGHTEN`（max）、`MODE_DARKEN`（min）、`MODE_DIFFERENCE`（abs）、
+  `MODE_NONE`（保留 base）；`MaskCache.combine/combineFirst` 与右键菜单/循环按钮同步。
+- 首蒙版规则与 EffectCraft 一致：Intersect/Darken 首层退化为 Add，None 首层为 0。
+- 新增 `MaskCombineModeTest`。
+
+### 验证
+
+- 全量测试：**162 套件 / 997 项 / 0 failures / 0 errors / 1 skipped**。
+- 新增/更新：repeat copy 中心、precomp camera、mask combine modes；此前的 glitch/repeat/
+  shape/gizmo 测试继续运行。
+- 按你的要求未启动客户端；请重点验证：3D 模型/平面的 repeat 是否在正确位置且保持 3D、
+  模型蒙版是否生效、预合成 3D 位置/透视、折叠变换开关，以及 2D/3D 预览/导出。
+- 候选包：`bbsae-0.99-hotfix53.jar`（3,950,728 bytes，SHA-256
+  `AA4EA39070351F24C0F8A1B35276192DF25BF669E49956CD416415E8AF1E3FA3`）。
+
 ## 0.99-hotfix52 — 2026-11-14
 
 3D 模型重复、glitch 范围、gizmo 模式条、布局锁定、蒙版/排除入口、正方形曲度。

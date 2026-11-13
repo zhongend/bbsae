@@ -872,6 +872,7 @@ public final class MaskCache
         return switch (mode)
         {
             case CompMask.MODE_SUBTRACT, CompMask.MODE_EXCLUDE -> 1F - a;
+            case CompMask.MODE_NONE -> 0F;
             default -> a;
         };
     }
@@ -884,6 +885,10 @@ public final class MaskCache
             case CompMask.MODE_SUBTRACT -> base * (1F - a);
             case CompMask.MODE_INTERSECT -> base * a;
             case CompMask.MODE_EXCLUDE -> base + a - 2F * base * a;
+            case CompMask.MODE_LIGHTEN -> Math.max(base, a);
+            case CompMask.MODE_DARKEN -> Math.min(base, a);
+            case CompMask.MODE_DIFFERENCE -> Math.abs(base - a);
+            case CompMask.MODE_NONE -> base;
             default -> base + a - base * a;
         };
 

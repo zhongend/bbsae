@@ -322,6 +322,40 @@ public final class CompLayerOps
             doc.layers.remove(layer);
         }
 
+        /*
+         * A precomp has its own camera namespace. If the selected layers were 3D, dropping the
+         * parent's active camera made the nested scene fall back to the default 1:1 view: the
+         * layers kept their x/y/z, but their projection changed the moment they entered the
+         * precomp. Copy the active camera (and its animation) into the child comp, with the same
+         * time rebase as the layers, so the 3D relationship survives the grouping.
+         */
+        CompLayer sourceCamera = doc.activeCamera(start);
+
+        if (sourceCamera == null)
+        {
+            /* A camera trimmed to start later than the selected layers is still the comp's 3D
+             * view; copy it so the child can evaluate its own in/out instead of silently losing
+             * perspective. */
+            sourceCamera = doc.activeCamera(0F);
+        }
+
+        if (sourceCamera != null)
+        {
+            CompLayer camera = sourceCamera.duplicate();
+
+            camera.id = CompStore.uniqueId("camera", sub.layers, (candidate) -> candidate.id);
+            camera.name = sourceCamera.name;
+            camera.in = Math.max(0F, sourceCamera.in - start);
+            camera.out = Math.max(camera.in + 1F / fps, sourceCamera.out - start);
+            camera.parentId = "";
+            camera.trackMatteId = "";
+            camera.trackMatteEnabled = false;
+            camera.shiftKeyframes(-start * fps);
+            camera.shiftMarkers(-start);
+            sub.layers.add(camera);
+            sub.activeCameraId = camera.id;
+        }
+
         CompLayer precomp = new CompLayer("precomp", name, "precomp");
 
         precomp.id = CompStore.uniqueId("precomp", doc.layers, (candidate) -> candidate.id);

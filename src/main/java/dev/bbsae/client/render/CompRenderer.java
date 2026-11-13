@@ -1179,6 +1179,17 @@ public final class CompRenderer
 
                     if (modelContent != null)
                     {
+                        /* Masks are layer pixels and must apply before effects, exactly as on a
+                         * normal layer. The independent-model branch used to bypass the mask pass
+                         * entirely, so a mask on a replay model did nothing. */
+                        GlFramebuffer persistent = modelContent;
+                        GlFramebuffer masked = applyModelMask(modelContent, layer, context);
+
+                        if (masked != modelContent)
+                        {
+                            modelContent = masked;
+                        }
+
                         GlFramebuffer original = modelContent;
                         boolean straight = false;
                         GlFramebuffer effected = applyModelPostEffects(layer, context, modelContent);
@@ -1195,6 +1206,10 @@ public final class CompRenderer
                         if (modelContent != original)
                         {
                             FboPool.release(modelContent);
+                        }
+                        else if (original != persistent)
+                        {
+                            FboPool.release(original);
                         }
                     }
                 }
@@ -1223,6 +1238,14 @@ public final class CompRenderer
          * Only source-sampling post effects are applied here: generators would flood the whole
          * composition instead of the actor.
          */
+        GlFramebuffer persistent = modelContent;
+        GlFramebuffer masked = applyModelMask(modelContent, layer, context);
+
+        if (masked != modelContent)
+        {
+            modelContent = masked;
+        }
+
         GlFramebuffer original = modelContent;
         boolean straight = false;
         GlFramebuffer effected = applyModelPostEffects(layer, context, modelContent);
@@ -1239,8 +1262,63 @@ public final class CompRenderer
         {
             FboPool.release(modelContent);
         }
+        else if (original != persistent)
+        {
+            FboPool.release(original);
+        }
 
         return result;
+    }
+
+    /**
+     * Apply the layer's path masks to a replay-model target. Models are composition-sized and may
+     * be true 3D volumes, so the projected mask branch of {@link #applyLayerMask} is the correct
+     * one; 2D models fall back to the layer-space branch. The pass is a no-op when {@code 蒙版} is
+     * switched off or the layer has no masks.
+     */
+    private static GlFramebuffer applyModelMask(GlFramebuffer content, CompLayer layer, CompRenderContext context)
+    {
+        if (content == null || layer == null || !context.renderMasks
+            || layer.masks == null || layer.masks.isEmpty())
+        {
+            return content;
+        }
+
+        int maskWidth = context.renderWidth();
+        int maskHeight = context.renderHeight();
+        MaskCache.MaskTexture mask;
+
+        if (CompScene.usePerspective(context, layer))
+        {
+            CompCamera maskCamera = CompScene.camera(context);
+            Matrix4f viewProjection = new Matrix4f(maskCamera.projection)
+                .mul(maskCamera.view)
+                .mul(CompScene.world(context, layer));
+
+            mask = MaskCache.getProjected(layer, maskWidth, maskHeight, viewProjection,
+                context.frame, projectedMaskScale(context, layer, maskCamera),
+                MaskCache.cacheScope(context.project, context.comp));
+        }
+        else
+        {
+            float scale = Math.max(0.0001F, maskWidth / (float) Math.max(1, context.comp.width));
+            Matrix4f maskModel = new Matrix4f(CompScene.model(context, layer)).scale(scale, scale, 1F);
+
+            mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame,
+                maskLayerScale(maskModel, scale), MaskCache.cacheScope(context.project, context.comp));
+        }
+
+        if (mask == null)
+        {
+            return content;
+        }
+
+        /* Do NOT release the input here: a model target is owned by ReplayActorPass's persistent
+         * per-layer cache, not by FboPool. applyLayerMask releases its input, which is why this
+         * path builds the mask pass itself and lets the caller release only the returned copy. */
+        GlFramebuffer masked = PassRenderer.mask(content, mask.texture.id, 0);
+
+        return masked == null ? content : masked;
     }
 
     private static GlFramebuffer applyModelPostEffects(CompLayer layer, CompRenderContext context,

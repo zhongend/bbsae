@@ -509,6 +509,47 @@ public class EffectRepeatTest
     }
 
     /**
+     * The copy transform pivots around the layer-local centre. Passing the centre into the offset
+     * and then letting copy() add the centre again doubled it, which pushed every 2D copy/3D plane
+     * half a layer away (and made a 3D repeat look like a flat, offset smear).
+     */
+    @Test
+    public void repeatCopiesPivotAroundTheLayerCentreWithoutDoublingIt()
+    {
+        CompRenderContext context = context();
+        CompLayer layer = new CompLayer("layer", "Layer", "solid");
+
+        layer.x = 120F;
+        layer.y = 80F;
+        layer.width = 64F;
+        layer.height = 36F;
+        layer.effects.add(effect("am_repeat"));
+
+        CompEffect repeat = Replicate3D.find(layer, context);
+
+        assertNotNull(repeat);
+        repeat.put("count", 3D);
+        repeat.put("offset_x", 16D);
+        repeat.put("offset_y", 0D);
+        repeat.put("angle", 0D);
+        repeat.put("scale", 1D);
+        repeat.put("alpha", 1D);
+
+        java.util.List<Matrix4f> copies = Replicate3D.transforms(repeat, layer, context, 100F, 50F);
+
+        assertEquals(3, copies.size());
+
+        org.joml.Vector3f first = copies.get(0).getTranslation(new org.joml.Vector3f());
+        org.joml.Vector3f middle = copies.get(1).getTranslation(new org.joml.Vector3f());
+        org.joml.Vector3f last = copies.get(2).getTranslation(new org.joml.Vector3f());
+
+        assertEquals(-16F, first.x, 0.001F);
+        assertEquals(0F, middle.x, 0.001F);
+        assertEquals(16F, last.x, 0.001F);
+        assertEquals(0F, first.y, 0.001F);
+    }
+
+    /**
      * Independent replay models are not rendered through renderBaked3D, so their repeat has to be
      * discovered without the projected-effect split. Its copies are layer-local 3D transforms.
      */

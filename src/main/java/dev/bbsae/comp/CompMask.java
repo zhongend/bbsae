@@ -15,6 +15,11 @@ public class CompMask
     public static final int MODE_SUBTRACT = 1;
     public static final int MODE_INTERSECT = 2;
     public static final int MODE_EXCLUDE = 3;
+    /* EffectCraft's extra boolean modes: max, min, absolute difference and "keep the base". */
+    public static final int MODE_LIGHTEN = 4;
+    public static final int MODE_DARKEN = 5;
+    public static final int MODE_DIFFERENCE = 6;
+    public static final int MODE_NONE = 7;
 
     public String id = "mask";
     public String name = "Mask";

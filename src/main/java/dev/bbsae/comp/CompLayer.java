@@ -173,6 +173,13 @@ public class CompLayer
     public String precompId = "";
     public float precompTimeOffset = 0F;
     public float precompTimeScale = 1F;
+    /**
+     * EffectCraft/AE "Collapse Transformations": nested 3D layers use the parent comp's camera
+     * instead of the child comp's camera, so grouping them into a precomp does not change their
+     * projection. Only honoured when the precomp layer has no masks/effects/styles of its own
+     * (those require a flattened render, as in AE).
+     */
+    public boolean collapse = false;
 
     /** AE-style two-node camera: position comes from the normal transform, this is the look-at point. */
     public float cameraTargetX = 960F;

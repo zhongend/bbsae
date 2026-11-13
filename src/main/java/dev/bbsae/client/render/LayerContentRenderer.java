@@ -617,8 +617,43 @@ final class LayerContentRenderer
          * get them back just because the layer happens to be a precomp. The stage is transparent:
          * a nested comp is not the film canvas, so its background colour must not paint an opaque
          * rectangle over every layer below (that is what turned "预合成" into a black box). */
-        GlFramebuffer framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth, context.projection, context.camera, context.stack, batcher, 0,
-            context.renderEffects, context.renderMasks, context.preview, context.scale, true);
+        /*
+         * EffectCraft/AE Collapse Transformations: a precomp with no masks/effects/styles lets its
+         * nested 3D layers join the parent's camera space instead of being projected through the
+         * child comp's camera and then flattened. This is what keeps a multi-layer 3D selection's
+         * relationship intact when it is grouped into a precomp. Masks/effects/styles force the
+         * normal flattened render, because they are applied to the precomp layer itself.
+         */
+        boolean collapse = layer.collapse
+            && (layer.masks == null || layer.masks.isEmpty())
+            && (layer.effects == null || layer.effects.isEmpty())
+            && (layer.styles == null || layer.styles.isEmpty());
+
+        GlFramebuffer framebuffer;
+
+        if (collapse)
+        {
+            CompCamera parentCamera = CompScene.camera(context);
+
+            CompScene.pushCamera(parentCamera);
+
+            try
+            {
+                framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth,
+                    context.projection, context.camera, context.stack, batcher, 0,
+                    context.renderEffects, context.renderMasks, context.preview, context.scale, true);
+            }
+            finally
+            {
+                CompScene.popCamera();
+            }
+        }
+        else
+        {
+            framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth,
+                context.projection, context.camera, context.stack, batcher, 0,
+                context.renderEffects, context.renderMasks, context.preview, context.scale, true);
+        }
 
         if (framebuffer == null)
         {

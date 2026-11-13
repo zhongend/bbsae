@@ -129,7 +129,7 @@ final class Replicate3D
             {
                 float k = i - (count - 1) * 0.5F;
 
-                out.add(copy(cx + ox * k, cy + oy * k, angle * i,
+                out.add(copy(ox * k, oy * k, angle * i,
                     (float) Math.pow(scale, i), cx, cy));
             }
         }
@@ -150,8 +150,8 @@ final class Replicate3D
                 float t = count <= 1 ? 0F : i / (float) (count - 1);
                 float angle = start + sweep * t;
 
-                out.add(copy(cx + (float) Math.cos(angle) * radius + ox,
-                    cy + (float) Math.sin(angle) * radius + oy, angleStep * i,
+                out.add(copy((float) Math.cos(angle) * radius + ox,
+                    (float) Math.sin(angle) * radius + oy, angleStep * i,
                     base * (float) Math.pow(scale, i), cx, cy));
             }
         }
@@ -169,8 +169,8 @@ final class Replicate3D
                 float a = hash01(seed, i * 2 + 1) * 6.2831853F;
                 float r = (float) Math.sqrt(hash01(seed, i * 2 + 2)) * radius;
 
-                out.add(copy(cx + (float) Math.cos(a) * r + ox,
-                    cy + (float) Math.sin(a) * r + oy, angleStep * i,
+                out.add(copy((float) Math.cos(a) * r + ox,
+                    (float) Math.sin(a) * r + oy, angleStep * i,
                     (float) Math.pow(scale, i), cx, cy));
             }
         }
@@ -197,14 +197,19 @@ final class Replicate3D
         {
             int vertical = Math.round(resolved.valueF("vertical", 1F));
             float duty = Math.max(0.01F, Math.min(1F, resolved.valueF("duty", 0.7F)));
+            float step = (vertical != 0 ? context.height : context.width) / count;
 
             for (int i = 0; i < count; i++)
             {
-                float t = i - (count - 1) * 0.5F;
-                float dx = vertical == 0 ? t * context.width / count : 0F;
-                float dy = vertical != 0 ? t * context.height / count : 0F;
+                /* Place the copies at the line cells' composition centres. The model/plane
+                 * origin already includes layer.x/y and (for a raster) the local centre, so the
+                 * offset subtracts both; the old formula ignored them and put every 3D copy
+                 * off-centre. */
+                float centre = (i + 0.5F) * step;
+                float dx = vertical == 0 ? centre - layer.x - cx : 0F;
+                float dy = vertical != 0 ? centre - layer.y - cy : 0F;
 
-                out.add(copy(cx + dx, cy + dy, 0F, duty, cx, cy));
+                out.add(copy(dx, dy, 0F, duty, cx, cy));
             }
         }
 

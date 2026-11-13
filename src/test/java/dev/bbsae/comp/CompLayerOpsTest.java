@@ -45,6 +45,52 @@ public class CompLayerOpsTest
         return layer;
     }
 
+    /**
+     * A 3D selection keeps its projection when it enters a precomp: the active camera must move
+     * with it (same x/y/z, same animation, rebased time). Without the camera the nested comp fell
+     * back to the default view and the 3D relationship changed just by grouping.
+     */
+    @Test
+    public void precomposeCarriesTheActiveCameraIntoTheChildComp()
+    {
+        CompProject project = project();
+        CompDocument doc = project.getCompOrFirst("main");
+        CompLayer a = layer(doc, "a", 400F, 300F);
+        CompLayer b = layer(doc, "b", 800F, 500F);
+
+        a.threeD = true;
+        b.threeD = true;
+        a.in = 2F;
+        a.out = 8F;
+        b.in = 2F;
+        b.out = 8F;
+
+        CompLayer camera = new CompLayer("cam", "Camera", "camera");
+
+        camera.x = 960F;
+        camera.y = 540F;
+        camera.z = -900F;
+        camera.in = 2F;
+        camera.out = 8F;
+        doc.layers.add(camera);
+        doc.activeCameraId = camera.id;
+
+        CompLayer precomp = CompLayerOps.precompose(project, doc, List.of(a, b), "3D 组");
+        CompDocument sub = project.getComp(precomp.precompId);
+
+        assertNotNull(sub);
+        assertEquals(3, sub.layers.size(), "two layers + the inherited camera");
+
+        CompLayer copied = sub.getLayer(sub.activeCameraId);
+
+        assertNotNull(copied, "the child comp must have an active camera");
+        assertEquals("camera", copied.type);
+        assertEquals(960F, copied.x, 0.001F);
+        assertEquals(540F, copied.y, 0.001F);
+        assertEquals(-900F, copied.z, 0.001F);
+        assertEquals(0F, copied.in, 0.001F, "camera time is rebased with the layers");
+    }
+
     @Test
     public void precomposeMovesTheGroupAndRebasesTime()
     {

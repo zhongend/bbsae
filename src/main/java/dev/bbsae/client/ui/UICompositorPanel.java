@@ -19066,6 +19066,14 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(this.smallButton("进入预合成", () -> this.enterPrecomp(l)));
             section.fields.add(this.numberRow("预合成时间偏移", l.precompTimeOffset, -36000F, 36000F, false, (value) -> l.precompTimeOffset = value.floatValue()));
             section.fields.add(this.numberRow("预合成时间缩放", l.precompTimeScale, -10F, 10F, false, (value) -> l.precompTimeScale = value.floatValue()));
+            section.fields.add(new UIToggle(IKey.constant("折叠变换（3D 子层使用父合成相机）"), l.collapse, (toggle) ->
+            {
+                this.beginAction("折叠预合成变换");
+                l.collapse = toggle.getValue();
+                this.save();
+            }));
+            section.fields.add(UI.label(IKey.constant("仅当这个预合成层没有蒙版、效果和图层样式时生效；"
+                + "有这些内容时按普通预合成压平，避免把蒙版/效果复制到父合成。"), 12));
         }
 
         return section;
@@ -20091,7 +20099,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
             final CompMask modeMask = mask;
             UIButton mode = new UICompButton(IKey.constant(maskModeName(mask.mode)), (button) ->
-                this.setMaskMode(modeMask, (modeMask.mode + 1) % 4));
+                this.setMaskMode(modeMask, nextMaskMode(modeMask.mode)));
 
             mode.context((manager) ->
             {
@@ -20099,6 +20107,10 @@ public class UICompositorPanel extends UIDashboardPanel
                 manager.action(Icons.FADING, IKey.constant("相减"), () -> this.setMaskMode(modeMask, CompMask.MODE_SUBTRACT));
                 manager.action(Icons.FADING, IKey.constant("相交"), () -> this.setMaskMode(modeMask, CompMask.MODE_INTERSECT));
                 manager.action(Icons.FADING, IKey.constant("排除"), () -> this.setMaskMode(modeMask, CompMask.MODE_EXCLUDE));
+                manager.action(Icons.FADING, IKey.constant("变亮（取最大）"), () -> this.setMaskMode(modeMask, CompMask.MODE_LIGHTEN));
+                manager.action(Icons.FADING, IKey.constant("变暗（取最小）"), () -> this.setMaskMode(modeMask, CompMask.MODE_DARKEN));
+                manager.action(Icons.FADING, IKey.constant("差值"), () -> this.setMaskMode(modeMask, CompMask.MODE_DIFFERENCE));
+                manager.action(Icons.FADING, IKey.constant("无（保留上方结果）"), () -> this.setMaskMode(modeMask, CompMask.MODE_NONE));
             });
             section.fields.add(this.fieldRow("模式", mode));
             section.fields.add(new UIToggle(IKey.constant("反转"), mask.inverted, (toggle) ->
@@ -23810,7 +23822,26 @@ public class UICompositorPanel extends UIDashboardPanel
             case CompMask.MODE_SUBTRACT -> "相减";
             case CompMask.MODE_INTERSECT -> "相交";
             case CompMask.MODE_EXCLUDE -> "排除";
+            case CompMask.MODE_LIGHTEN -> "变亮";
+            case CompMask.MODE_DARKEN -> "变暗";
+            case CompMask.MODE_DIFFERENCE -> "差值";
+            case CompMask.MODE_NONE -> "无";
             default -> "相加";
+        };
+    }
+
+    private static int nextMaskMode(int mode)
+    {
+        return switch (mode)
+        {
+            case CompMask.MODE_ADD -> CompMask.MODE_SUBTRACT;
+            case CompMask.MODE_SUBTRACT -> CompMask.MODE_INTERSECT;
+            case CompMask.MODE_INTERSECT -> CompMask.MODE_EXCLUDE;
+            case CompMask.MODE_EXCLUDE -> CompMask.MODE_LIGHTEN;
+            case CompMask.MODE_LIGHTEN -> CompMask.MODE_DARKEN;
+            case CompMask.MODE_DARKEN -> CompMask.MODE_DIFFERENCE;
+            case CompMask.MODE_DIFFERENCE -> CompMask.MODE_NONE;
+            default -> CompMask.MODE_ADD;
         };
     }
 

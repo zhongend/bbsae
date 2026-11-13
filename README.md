@@ -1,11 +1,10 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix52**：修复合成器 3D 模型的重复效果仍是平面 2D 复制（独立模型现在按 copy
-> 变换真实重渲染，普通 3D 层的 repeat 也允许在 chain 中非首位）；故障 Glitch 从图层烘焙移
-> 到投影后合成空间，不再被形状边缘裁成蒙版；gizmo 模式切换条移到预览右下角并可在设置中
-> 关闭；蒙版/排除按钮进入右侧蒙版分栏（AM 风格），手动路径蒙版收进高级选项；新增正方形
-> 与可关键帧的曲度/圆角，修复 roundness 被 clamp 到 1px 的旧 bug；布局锁定同时封住分栏线
-> 拖动，并可在设置中锁定。详见 [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix53**：修复 3D 重复的 copy 变换**中心被加两次**（2D/3D 图层/模型复制会整体
+> 偏移，看起来像平面重采样）；回放模型图层现在也会执行路径蒙版（此前 independent 分支完全
+> 绕过蒙版）；预合成会携带父级活动摄像机，3D 子层不再因分组丢失透视，并新增 EffectCraft
+> 风格的「折叠变换」（3D 子层使用父合成相机，有蒙版/效果/样式时自动压平）；蒙版模式补齐
+> EffectCraft 的变亮/变暗/差值/无。详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">
