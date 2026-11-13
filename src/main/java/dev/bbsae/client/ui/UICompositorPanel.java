@@ -762,6 +762,7 @@ public class UICompositorPanel extends UIDashboardPanel
             private static final int CT_TRACK_Z = 3;
             private int ctMode = CT_NONE;
             private int ctButton = -1;
+            private boolean ctMoved;
             private int ctStartX;
             private int ctStartY;
             private float ctStartDistance;
@@ -3905,6 +3906,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 this.ctMode = mode;
                 this.ctButton = button;
+                this.ctMoved = false;
                 this.ctStartX = context.mouseX;
                 this.ctStartY = context.mouseY;
                 this.ctStartEye.set(CompCamera.eyeOf(camera, UICompositorPanel.this.getFrame(), doc.height));
@@ -3953,6 +3955,18 @@ public class UICompositorPanel extends UIDashboardPanel
                 float scale = Math.max(0.0001F, this.fitScale());
                 float dx = context.mouseX - this.ctStartX;
                 float dy = context.mouseY - this.ctStartY;
+
+                /* A click with the camera tool is not a zero-distance camera move: without this
+                 * dead zone every click wrote an undo step and nudged the camera by a pixel. */
+                if (!this.ctMoved)
+                {
+                    if (Math.abs(dx) < 3F && Math.abs(dy) < 3F)
+                    {
+                        return;
+                    }
+
+                    this.ctMoved = true;
+                }
 
                 switch (this.ctMode)
                 {
@@ -4056,9 +4070,22 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (this.ctMode != CT_NONE)
                 {
+                    boolean moved = this.ctMoved;
+
                     this.ctMode = CT_NONE;
+                    this.ctMoved = false;
                     UICompositorPanel.this.refreshInspector();
-                    UICompositorPanel.this.save();
+
+                    if (moved)
+                    {
+                        UICompositorPanel.this.save();
+                    }
+                    else
+                    {
+                        /* Press+release without crossing the dead zone must not leave a phantom
+                         * undo step in the history. */
+                        UICompositorPanel.this.discardCancelledAction();
+                    }
                 }
             }
 
