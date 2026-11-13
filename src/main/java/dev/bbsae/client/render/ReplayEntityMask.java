@@ -872,8 +872,9 @@ public final class ReplayEntityMask
             }
 
             /* The coverage target now doubles as the actor-only color image. Use the same white
-             * lightmap as the model pass so the extracted actor is not a black silhouette at night;
-             * only the actor's own pixels and alpha are used. */
+             * lightmap and white shader tint as the model pass so the extracted actor is not a
+             * black silhouette at night; only the actor's own pixels and alpha are used. */
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
             RenderSystem.setShaderTexture(2, ReplayModelPass.whiteLightmapId());
 
             target.hasColor = true;
