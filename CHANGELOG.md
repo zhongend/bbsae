@@ -38,7 +38,7 @@
 - 日志：`Virtual replay full-bright light override active`。
 - 真机：`docs/verify/round82-twowindow.png`。
 - 全量测试：**153 套件 / 953 项测试 / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix40.jar`（3,906,596 bytes，SHA-256 51BBA127827CD5113F69AC2AA70E5A75EE2918A08001434133E4ADBC57825F5C）。
+- 本地候选包：`bbsae-0.99-hotfix40.jar`（3,906,541 bytes，SHA-256 DCF680CA26C44BD19C795CB1D7ADD1B2925A94DC508539731F54A32AD8C13A2C）。
 
 ## 0.99-hotfix39 — 2026-11-13
 

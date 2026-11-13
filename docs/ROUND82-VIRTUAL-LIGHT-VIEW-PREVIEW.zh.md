@@ -74,4 +74,4 @@ bbsae 虚拟世界。
 - 真机：虚拟回放模型在暗处仍为正常亮度；日志出现 full-bright override active。
 - 真机：双窗口截图左侧 3D + 右上角自由/绕对象/相机三个 BBS 图标，右侧完整合成预览。
 - 全量测试：153 套件 / 953 项 / 0 failures / 0 errors / 1 skipped。
-- 本地候选包：`bbsae-0.99-hotfix40.jar`（3,906,596 bytes，SHA-256 51BBA127827CD5113F69AC2AA70E5A75EE2918A08001434133E4ADBC57825F5C）。
+- 本地候选包：`bbsae-0.99-hotfix40.jar`（3,906,541 bytes，SHA-256 DCF680CA26C44BD19C795CB1D7ADD1B2925A94DC508539731F54A32AD8C13A2C）。

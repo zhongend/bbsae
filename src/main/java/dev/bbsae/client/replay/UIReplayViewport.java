@@ -408,7 +408,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         /* The picture-in-picture is a paused composition aid; during playback it would compete
          * with the actor pass for a thumbnail that is not the playback output. */
-        if (this.session.isPlaying() || !CompPrefs.get().guides)
+        if (this.session.isPlaying())
         {
             return;
         }
