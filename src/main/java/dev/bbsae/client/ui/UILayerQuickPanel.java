@@ -76,6 +76,8 @@ public class UILayerQuickPanel extends UIElement
     private int resizeStartX;
     private int resizeStartWidth;
     private final UiMotion motion = new UiMotion();
+    private float drawerProgress = 1F;
+    private boolean drawerOpen = true;
     private int motionFrames;
 
     private static final class Row
@@ -146,6 +148,43 @@ public class UILayerQuickPanel extends UIElement
         this.add(this.hint);
 
         this.layoutRows(false);
+    }
+
+    /** Starts the right-side drawer slide instead of popping the panel in/out. */
+    public void setDrawerOpen(boolean open)
+    {
+        if (this.drawerOpen == open && this.visible == open)
+        {
+            return;
+        }
+
+        this.drawerOpen = open;
+
+        if (open)
+        {
+            if (!this.visible)
+            {
+                this.drawerProgress = 0F;
+            }
+
+            this.setVisible(true);
+        }
+    }
+
+    public boolean isDrawerOpen()
+    {
+        return this.drawerOpen;
+    }
+
+    @Override
+    public void setVisible(boolean visible)
+    {
+        if (!visible)
+        {
+            this.resizing = false;
+        }
+
+        super.setVisible(visible);
     }
 
     private UICompButton groupKey(String tooltip, Runnable action)
@@ -366,6 +405,28 @@ public class UILayerQuickPanel extends UIElement
     {
         this.syncFields();
         this.applyResize(context);
+
+        float target = this.drawerOpen ? 1F : 0F;
+
+        this.drawerProgress = UiMotion.springStep(this.drawerProgress, target, 260F, 30F, 1F / 60F);
+
+        if (!this.drawerOpen && this.drawerProgress < 0.02F)
+        {
+            this.setVisible(false);
+
+            return;
+        }
+
+        int slideOffset = Math.round((1F - this.drawerProgress) * this.area.w);
+        net.minecraft.client.util.math.MatrixStack stack = context.batcher.getContext().getMatrices();
+
+        stack.push();
+
+        if (slideOffset != 0)
+        {
+            stack.translate(slideOffset, 0F, 0F);
+        }
+
         this.motion.tickFrame();
 
         if (++this.motionFrames >= UICompButton.PRUNE_EVERY)
@@ -383,9 +444,17 @@ public class UILayerQuickPanel extends UIElement
         float intensity = this.motion.intensity();
         int accent = mchorse.bbs_mod.BBSSettings.primaryColor() | 0xFF000000;
 
-        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF11151C);
+        UiGfx.shadow(context.batcher, this.area.x + 2F, this.area.y + 2F,
+            Math.max(0F, this.area.w - 4F), Math.max(0F, this.area.h - 4F), 5F,
+            UiGfx.alpha(0xFF000000, 0.18F));
+        UiGfx.roundedBox(context.batcher, this.area.x, this.area.y, this.area.w, this.area.h,
+            4F, 0xFF11151C);
         UiGfx.gradientV(context.batcher, this.area.x, this.area.y, this.area.w, 42,
             UiGfx.alpha(accent, 0.06F * appear), 0x00FFFFFF);
+        context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 1,
+            UiGfx.alpha(0xFFFFFFFF, 0.045F));
+        UiGfx.gradientV(context.batcher, this.area.x, this.area.ey() - 56, this.area.w, 56,
+            0x00FFFFFF, UiGfx.alpha(0xFF000000, 0.12F));
         context.batcher.box(this.area.x, this.area.y, this.area.x + 1, this.area.ey(), 0xFF2A303A);
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.y + 1, 0xFF2A303A);
 
@@ -451,6 +520,8 @@ public class UILayerQuickPanel extends UIElement
         context.batcher.box(this.area.x, this.area.y + 2, this.area.x + 3, this.area.ey() - 2, 0x334A5566);
 
         super.render(context);
+
+        stack.pop();
     }
 
     /**
@@ -482,6 +553,21 @@ public class UILayerQuickPanel extends UIElement
         }
 
         return super.subMouseClicked(context);
+    }
+
+    @Override
+    protected boolean subMouseReleased(UIContext context)
+    {
+        /* Explicit release ownership: a hidden/overlapped panel or a stuck cached mouse state must
+         * never leave the width drag running after the user lets go. */
+        if (this.resizing && context.mouseButton == 0)
+        {
+            this.resizing = false;
+
+            return true;
+        }
+
+        return super.subMouseReleased(context);
     }
 
     private void applyResize(UIContext context)

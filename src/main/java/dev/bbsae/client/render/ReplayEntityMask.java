@@ -28,6 +28,7 @@ import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL13;
+import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.system.MemoryUtil;
 
@@ -310,6 +311,13 @@ public final class ReplayEntityMask
 
             if (layer.isEntityLayer())
             {
+                /* Independent bbsae model actors are rendered directly with the comp camera and
+                 * a transparent depth target; they must not request a real-world film matte. */
+                if (layer.independent || layer.hasModelForm())
+                {
+                    continue;
+                }
+
                 return true;
             }
 
@@ -356,6 +364,11 @@ public final class ReplayEntityMask
 
             if (layer.isEntityLayer())
             {
+                if (layer.independent || layer.hasModelForm())
+                {
+                    continue;
+                }
+
                 any[0] = true;
 
                 if (layer.entityOcclusion)
@@ -714,12 +727,20 @@ public final class ReplayEntityMask
         boolean previousDepthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
         int previousDepthFunc = GL11.glGetInteger(GL11.GL_DEPTH_FUNC);
         boolean previousBlend = GL11.glIsEnabled(GL11.GL_BLEND);
+        int[] previousBlendSrc = new int[1];
+        int[] previousBlendDst = new int[1];
+        int[] previousBlendSrcAlpha = new int[1];
+        int[] previousBlendDstAlpha = new int[1];
         boolean previousScissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
         boolean previousCull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
         int[] previousColorMask = new int[4];
 
         GL11.glGetIntegerv(GL11.GL_VIEWPORT, previousViewport);
         GL11.glGetIntegerv(GL11.GL_COLOR_WRITEMASK, previousColorMask);
+        GL11.glGetIntegerv(GL14.GL_BLEND_SRC_RGB, previousBlendSrc);
+        GL11.glGetIntegerv(GL14.GL_BLEND_DST_RGB, previousBlendDst);
+        GL11.glGetIntegerv(GL14.GL_BLEND_SRC_ALPHA, previousBlendSrcAlpha);
+        GL11.glGetIntegerv(GL14.GL_BLEND_DST_ALPHA, previousBlendDstAlpha);
 
         boolean queued = FormRenderLast.suspend();
         int rendered = 0;
@@ -731,12 +752,22 @@ public final class ReplayEntityMask
             GlStateManager._viewport(0, 0, target.width, target.height);
             GL30.glDrawBuffer(GL30.GL_COLOR_ATTACHMENT0);
             GL11.glDisable(GL11.GL_SCISSOR_TEST);
-            GL11.glDisable(GL11.GL_BLEND);
+            /* Coverage must respect the form's real alpha. With blending disabled, a transparent
+             * texel still wrote alpha=1 into the mask, so the matte carried the actor's whole
+             * rectangular texture/background. Blending keeps coverage equal to the rendered
+             * silhouette instead of the quad. */
+            GL11.glEnable(GL11.GL_BLEND);
+            GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
+                GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GlStateManager._enableBlend();
             GL11.glDisable(GL11.GL_CULL_FACE);
             /* Raw GL on purpose: the coverage pass depends on these four bits, and a stale
              * GlStateManager cache would silently skip the call that enables them. */
             GL11.glColorMask(true, true, true, true);
-            GL11.glDepthMask(true);
+            /* Coverage is a silhouette, not a depth buffer. Writing depth made a nearer body part
+             * reject the part behind it, which showed up as transparent holes in the extracted
+             * actor. Keep depth *testing* for world occlusion, but never write self depth here. */
+            GL11.glDepthMask(false);
             GL11.glDepthFunc(GL11.GL_LEQUAL);
 
             /* Transparent background: alpha is the matte. */
@@ -852,8 +883,16 @@ public final class ReplayEntityMask
             if (previousDepth) GL11.glEnable(GL11.GL_DEPTH_TEST);
             else GL11.glDisable(GL11.GL_DEPTH_TEST);
 
-            if (previousBlend) GlStateManager._enableBlend();
-            else GlStateManager._disableBlend();
+            if (previousBlend)
+            {
+                GlStateManager._enableBlend();
+                GL14.glBlendFuncSeparate(previousBlendSrc[0], previousBlendDst[0],
+                    previousBlendSrcAlpha[0], previousBlendDstAlpha[0]);
+            }
+            else
+            {
+                GlStateManager._disableBlend();
+            }
 
             if (previousCull) GlStateManager._enableCull();
             else GlStateManager._disableCull();

@@ -240,7 +240,7 @@ public class UICompButton extends UIButton
         {
             case PRIMARY ->
             {
-                int base = BBSSettings.primaryColor() | Colors.A100;
+                int base = CompUi.accent();
                 fill = UiMotion.lerpColor(base, Colors.mulRGB(base, 1.14F), hv);
                 border = Colors.mulRGB(fill, 1.25F);
                 text = 0xFFFFFFFF;
@@ -262,8 +262,8 @@ public class UICompButton extends UIButton
                 /* A settings category, not a primary action: tinted surface + accent rail,
                  * never the full accent fill. */
                 fill = UiMotion.lerpColor(0xFF2A3B4F, 0xFF34495F, hv);
-                border = UiMotion.lerpColor(BBSSettings.primaryColor() | 0x55000000,
-                    BBSSettings.primaryColor() | 0xAA000000, hv);
+                border = UiMotion.lerpColor(CompUi.accent() | 0x55000000,
+                    CompUi.accent() | 0xAA000000, hv);
                 text = 0xFFFFFFFF;
             }
             default ->
@@ -272,7 +272,7 @@ public class UICompButton extends UIButton
                  * accent colour and lifts the fill a little, like AE's list rows. */
                 fill = UiMotion.lerpColor(BBSSettings.raisedSurface(), 0xFF2A3442, hv);
                 border = UiMotion.lerpColor(BBSSettings.dividerColor(),
-                    BBSSettings.primaryColor() | 0xCC000000, hv);
+                    CompUi.accent() | 0xCC000000, hv);
                 text = UiMotion.lerpColor(0xFFD3DBE6, 0xFFFFFFFF, hv);
             }
         }
@@ -299,15 +299,32 @@ public class UICompButton extends UIButton
         {
             UiGfx.shadow(context.batcher, left, top, right - left, bottom - top, 2.5F,
                 UiGfx.alpha(0xFF000000, 0.10F * hv * intensity));
+
+            /* A faint theme-coloured lift under the primary action: the "light" comes from the
+             * user's accent, so it stays native to the BBS theme. */
+            if (this.style == Style.PRIMARY && CompPrefs.get().glow)
+            {
+                UiGfx.shadow(context.batcher, left, top, right - left, bottom - top, 4F,
+                    UiGfx.alpha(CompUi.accent(), 0.075F * hv * intensity));
+            }
         }
 
         if (fill != 0)
         {
-            context.batcher.box(left, top, right, bottom, fill);
+            /* A shallow top-to-bottom value shift reads as a material surface instead of a flat
+             * cartoon rectangle. The hue still comes from the BBS theme accent, never a hard-coded
+             * brand colour. */
+            int topFill = UiMotion.lerpColor(fill, 0xFFFFFFFF, 0.035F);
+            int bottomFill = UiMotion.lerpColor(fill, 0xFF000000, 0.055F);
 
-            /* A 1 px top highlight sells the "raised chip" without a second fill colour. */
+            context.batcher.box(left, top, right - left, bottom - top,
+                topFill, topFill, bottomFill, bottomFill);
+
+            /* A 1 px top highlight and a bottom inner shade sell the raised chip. */
             UiGfx.gradientV(context.batcher, left + 1, top, Math.max(0F, right - left - 2F), 2,
-                UiGfx.alpha(0xFFFFFFFF, 0.05F + 0.05F * hv), 0x00FFFFFF);
+                UiGfx.alpha(0xFFFFFFFF, 0.06F + 0.06F * hv), 0x00FFFFFF);
+            context.batcher.box(left + 1, bottom - 1, right - 1, bottom,
+                UiGfx.alpha(0xFF000000, 0.10F));
         }
 
         if (border != 0)
@@ -323,11 +340,11 @@ public class UICompButton extends UIButton
         else if (this.style == Style.SELECTED)
         {
             context.batcher.box(left, top, left + 2, bottom,
-                BBSSettings.primaryColor() | 0xFF000000);
+                CompUi.accent());
         }
         else if (hv > 0.01F && this.style != Style.GHOST)
         {
-            UiGfx.accentRail(context.batcher, left, top + 1, bottom - top - 2, hv, BBSSettings.primaryColor());
+            UiGfx.accentRail(context.batcher, left, top + 1, bottom - top - 2, hv, CompUi.accent());
         }
 
         FontRenderer font = context.batcher.getFont();

@@ -46,7 +46,8 @@ public final class CompViewControls
         float newYaw = camera.scalarAt("rotationY", camera.rotationY, frame) + yaw;
         float newPitch = Math.max(-89F, Math.min(89F, camera.scalarAt("rotationX", camera.rotationX, frame) + pitch));
 
-        camera.cameraLookAt = false;
+        /* Keep the authored look-at constraint. Forcing a look-at camera to free mode made the
+         * inspector switch camera style and every later dolly recompute a different pivot. */
         camera.rotationY = newYaw;
         camera.rotationX = newPitch;
 
@@ -91,11 +92,22 @@ public final class CompViewControls
             return;
         }
 
-        float distance = Math.max(1F, distance(camera, frame) * factor);
+        float z = camera.scalarAt("cameraZ", camera.cameraZ, frame);
+
+        if (Math.abs(z) < 0.001F)
+        {
+            z = camera.z;
+        }
+
+        float sign = z < 0F ? -1F : 1F;
+        float distance = Math.max(1F, Math.abs(z) * factor);
         float clamped = Math.max(camera.cameraNear + 10F, Math.min(camera.cameraFar - 10F, distance));
 
-        camera.cameraZ = clamped;
-        camera.z = clamped;
+        /* Preserve which side of the subject the camera is on. The old code wrote a positive
+         * cameraZ, so dollying a camera placed behind the comp plane teleported it in front of the
+         * subject — the AE Track Z "flip" bug. */
+        camera.cameraZ = sign * clamped;
+        camera.z = camera.cameraZ;
     }
 
     /** Restores the default framing: centred, 1:1 at the focal distance, looking straight ahead. */

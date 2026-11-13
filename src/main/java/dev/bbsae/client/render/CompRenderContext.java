@@ -22,6 +22,8 @@ public final class CompRenderContext
     public final Camera camera;
     public final SceneDepth depth;
     public final Set<String> stack = new HashSet<>();
+    /** Effects a special pass already rendered (for example the 3D replicator quads). */
+    public final Set<String> consumedEffectIds = new HashSet<>();
 
     /**
      * Editor preview vs export. Editor-only annotations (for example the "empty precomp" text)

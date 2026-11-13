@@ -1242,6 +1242,12 @@ public final class CompRenderer
                         continue;
                     }
 
+                    /* The 3D replicator quads already drew this effect in layer-local space. */
+                    if (effect.id != null && context.consumedEffectIds.remove(effect.id))
+                    {
+                        continue;
+                    }
+
                     CompEffect resolved = layer.resolveEffect(effect, context.frame);
                     /* Effects outside the bake run on the pixels this pass holds. For a
                      * perspective 3D layer that image is already camera-projected, so a
@@ -1713,6 +1719,18 @@ public final class CompRenderer
             float stepX = w / BAKED_CELLS;
             float stepY = h / BAKED_CELLS;
 
+            /* A leading replicator must become real 3D quads here. Running it later on the
+             * projected image is what made "3D repeats" look like a flat 2D tiling: every copy was
+             * a screen-space resample of one plane. */
+            CompEffect replicated = Replicate3D.leading(layer, context);
+            java.util.List<Matrix4f> copies = Replicate3D.transforms(replicated, layer, context, source);
+            boolean hasCopies = !copies.isEmpty();
+
+            if (hasCopies)
+            {
+                context.consumedEffectIds.add(replicated.id);
+            }
+
             /* Extrusion is a geometry operation: stack the flat layer raster along its local Z.
              * The source cache deliberately leaves extrude3d out of the pixel bake; doing it here
              * (instead of flattening a copy into the raster) makes the side volume survive the
@@ -1730,15 +1748,30 @@ public final class CompRenderer
             float sideShade = extrusion == null ? 0F
                 : Math.max(0F, Math.min(1F, extrusion.valueF("shade", 0.35F)));
             int firstSlice = extrudeDepth > 0.5F ? slices : 0;
+            int iterations = hasCopies ? copies.size() : firstSlice + 1;
 
-            for (int slice = firstSlice; slice >= 0; slice--)
+            for (int iteration = 0; iteration < iterations; iteration++)
             {
-                float z = firstSlice == 0 ? 0F : -extrudeDepth * (slice / (float) firstSlice);
+                if (hasCopies)
+                {
+                    stack.peek().getPositionMatrix().set(model).mul(copies.get(iteration));
+                }
+                else
+                {
+                    int slice = firstSlice - iteration;
+                    float z = firstSlice == 0 ? 0F : -extrudeDepth * (slice / (float) firstSlice);
 
-                stack.peek().getPositionMatrix().set(model).translate(0F, 0F, z);
+                    stack.peek().getPositionMatrix().set(model).translate(0F, 0F, z);
+                }
 
-                float shade = firstSlice == 0 ? 1F
-                    : 1F - sideShade * (slice / (float) firstSlice);
+                float shade = 1F;
+
+                if (!hasCopies && firstSlice > 0)
+                {
+                    int slice = firstSlice - iteration;
+                    shade = 1F - sideShade * (slice / (float) firstSlice);
+                }
+
                 int value = Math.max(0, Math.min(255, Math.round(255F * shade)));
                 int tint = 0xFF000000 | (value << 16) | (value << 8) | value;
 
@@ -1770,8 +1803,7 @@ public final class CompRenderer
                     }
                 }
 
-                /* One flush per depth slice keeps the painter order explicit: the back cap and
-                 * walls are composited before the front cap. */
+                /* One flush per copy/slice keeps painter order explicit. */
                 batcher.flush();
             }
         }

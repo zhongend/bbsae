@@ -1250,6 +1250,23 @@ public class UICompSettings extends UIElement
             this.panel.saveSettings();
         });
         this.add(this.row("预览背景", background, 220, "BBS 画面：用当前影片帧做背景"));
+
+        this.add(this.section("独立回放模型"));
+        this.add(this.row("模型像素比例", this.number(settings.modelPixelsPerBlock, 0, 128, (value) ->
+        {
+            settings.modelPixelsPerBlock = (int) Math.round(value);
+            this.panel.saveSettings();
+        }), 160, "0 = 自动（合成高度 × 0.12，限制 8–64）；数值越大模型越清晰、显存/性能开销越高"));
+        this.add(this.row("模型渲染比例", this.number(settings.modelRenderScale, 0.25, 1, (value) ->
+        {
+            settings.modelRenderScale = (float) Math.max(0.25, Math.min(1, value));
+            this.panel.saveSettings();
+        }), 160, "1 = 全分辨率；0.5 = 半分辨率，模型边缘更软但显存/像素填充更省"));
+        this.add(this.row("模型阴影", this.toggle("", settings.modelShadows, (value) ->
+        {
+            settings.modelShadows = value;
+            this.panel.saveSettings();
+        }), 170, "在合成相机里绘制 BBS 模型自阴影；关闭可提升低配机性能"));
     }
 
     private UITrackpad number(double value, double min, double max, java.util.function.DoubleConsumer callback)

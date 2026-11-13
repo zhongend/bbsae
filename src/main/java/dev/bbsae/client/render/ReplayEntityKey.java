@@ -48,6 +48,15 @@ public final class ReplayEntityKey
             return false;
         }
 
+        /* The batcher variant must obey the same frame pairing as the shader path. It used to
+         * accept any existing mask, which re-introduced the "background follows the previous
+         * actor pose" bug whenever the A/B flag was enabled. */
+        if (!ReplayEntityMask.isCurrentFrame()
+            || SceneColor.frameSerial() != ReplayEntityMask.frameSerial())
+        {
+            return false;
+        }
+
         float width;
         float height;
 

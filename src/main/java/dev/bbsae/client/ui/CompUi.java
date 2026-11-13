@@ -3,13 +3,14 @@ package dev.bbsae.client.ui;
 import dev.bbsae.comp.CompProject;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.BBSSettings;
+import mchorse.bbs_mod.utils.colors.Colors;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
-import mchorse.bbs_mod.utils.colors.Colors;
+
 
 import java.util.HashMap;
 import java.util.Map;
@@ -1049,7 +1050,10 @@ public final class CompUi
         context.batcher.box(x, y, x + 1, y + h, BBSSettings.dividerColor());
     }
 
-    /** Accent color used for emphasis lines (not fills). */
+    /**
+     * bbsae follows the BBS theme accent. Do not hard-code a brand colour: the material and motion
+     * should carry the "premium" feel, while hue stays consistent with the rest of BBS.
+     */
     public static int accent()
     {
         return BBSSettings.primaryColor() | Colors.A100;

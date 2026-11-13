@@ -14,6 +14,8 @@ import mchorse.bbs_mod.film.FilmEntityRenderer;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.FormRenderLast;
 import mchorse.bbs_mod.forms.entities.IEntity;
+import mchorse.bbs_mod.forms.entities.StubEntity;
+import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.BufferRenderer;
@@ -57,7 +59,146 @@ public final class ReplayActorPass
      */
     private static float pixelsPerBlock(CompRenderContext context)
     {
+        int custom = context.project == null || context.project.settings == null
+            ? 0
+            : context.project.settings.modelPixelsPerBlock;
+
+        if (custom > 0)
+        {
+            return Math.max(8F, Math.min(128F, custom));
+        }
+
         return Math.max(8F, Math.min(64F, context.height * 0.12F));
+    }
+
+    /**
+     * Independent bbsae model mode: render the layer's BBS form from the composition camera.
+     *
+     * <p>This deliberately does not touch the film/real-world replay system. The form is placed at
+     * the layer origin and drawn into a transparent depth-enabled target, so there is no world
+     * plate, no matte background and no cross-actor depth bleed. The layer's normal transform
+     * channels animate the model exactly like any other bbsae layer.</p>
+     */
+    static GlFramebuffer renderModel(CompLayer layer, CompRenderContext context, Batcher2D batcher)
+    {
+        if (layer == null || context == null || !layer.isEntityLayer())
+        {
+            return null;
+        }
+
+        Form form = layer.modelForm();
+
+        if (form == null)
+        {
+            return null;
+        }
+
+        MinecraftClient client = MinecraftClient.getInstance();
+
+        if (client == null || client.world == null || client.getBufferBuilders() == null)
+        {
+            return null;
+        }
+
+        int width = Math.max(1, context.renderWidth());
+        int height = Math.max(1, context.renderHeight());
+
+        if (context.project != null && context.project.settings != null)
+        {
+            float quality = Math.max(0.25F, Math.min(1F, context.project.settings.modelRenderScale));
+
+            width = Math.max(1, Math.round(width * quality));
+            height = Math.max(1, Math.round(height * quality));
+        }
+
+        GlFramebuffer buffer = target(width, height);
+
+        if (buffer == null)
+        {
+            return null;
+        }
+
+        boolean useCamera = layer.threeD;
+        CompCamera camera = useCamera ? CompScene.camera(context) : null;
+        float pixelsPerBlock = pixelsPerBlock(context);
+        Matrix4f mapping = new Matrix4f(CompScene.world(context, layer))
+            .scale(pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock);
+        Matrix4f modelView = camera == null ? mapping : new Matrix4f(camera.view).mul(mapping);
+        Matrix4f projection = camera == null
+            ? GlStateGuard.ortho(context.width, context.height)
+            : camera.projection;
+
+        MatrixStack modelStack = RenderSystem.getModelViewStack();
+        Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+        Matrix3f previousInverse = new Matrix3f(RenderSystem.getInverseViewRotationMatrix());
+        boolean queued = FormRenderLast.suspend();
+
+        ReplayEntityMask.setCompositeActorPass(true);
+
+        try (GlStateGuard guard = new GlStateGuard())
+        {
+            batcher.flush();
+            buffer.begin(0x00000000);
+
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL11.glDepthFunc(GL11.GL_LEQUAL);
+            GL11.glDepthMask(true);
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            GL11.glDisable(GL11.GL_CULL_FACE);
+
+            modelStack.push();
+            modelStack.peek().getPositionMatrix().set(modelView);
+            RenderSystem.applyModelViewMatrix();
+            RenderSystem.setProjectionMatrix(projection, VertexSorter.BY_Z);
+            RenderSystem.setInverseViewRotationMatrix(new Matrix3f(modelView).invert());
+
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+            RenderSystem.setShaderTexture(2, ReplayModelPass.whiteLightmapId());
+            RenderSystem.setShaderLights(new org.joml.Vector3f(0.2F, -1F, 0.3F),
+                new org.joml.Vector3f(-0.2F, 1F, -0.3F));
+
+            StubEntity entity = new StubEntity(client.world);
+
+            entity.setForm(form);
+            java.util.Map<String, IEntity> entities = java.util.Collections.singletonMap("bbsae_model", entity);
+            MatrixStack stack = new MatrixStack();
+            VertexConsumerProvider consumers = client.getBufferBuilders().getEntityVertexConsumers();
+            Camera synthetic = new SyntheticCamera();
+            FilmControllerContext actor = FilmControllerContext.instance
+                .setup(entities, entity, null, synthetic, stack, consumers, 0F)
+                .shadow(context.project != null && context.project.settings != null
+                    && context.project.settings.modelShadows, 0F)
+                .nameTag("")
+                .relative(false);
+
+            FilmEntityRenderer.renderEntity(actor);
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+        }
+        catch (RuntimeException e)
+        {
+            logFailure(e);
+            releaseTarget();
+
+            return null;
+        }
+        finally
+        {
+            ReplayEntityMask.setCompositeActorPass(false);
+            FormRenderLast.restore(queued);
+
+            RenderSystem.setProjectionMatrix(previousProjection, VertexSorter.BY_Z);
+            RenderSystem.setInverseViewRotationMatrix(previousInverse);
+            modelStack.pop();
+            RenderSystem.applyModelViewMatrix();
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+
+            GlStateManager._depthMask(true);
+            GlStateManager._depthFunc(GL11.GL_LEQUAL);
+            GlStateManager._disableDepthTest();
+            BufferRenderer.resetCurrentVertexBuffer();
+        }
+
+        return buffer;
     }
 
     /**

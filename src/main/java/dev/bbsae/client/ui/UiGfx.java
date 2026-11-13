@@ -77,6 +77,51 @@ public final class UiGfx
     }
 
     /**
+     * Small-radius rounded rectangle built only from batched boxes.
+     *
+     * <p>BBS' {@code dropCircleShadow} cannot be called several times in a row (its builder is left
+     * open), so a circle-based corner crashed the compositor. A 3 px stair step is enough at UI
+     * density and is completely batcher-safe. Use it for opaque surfaces only.</p>
+     */
+    public static void roundedBox(Batcher2D batcher, float x, float y, float w, float h, float radius, int color)
+    {
+        if (w <= 0F || h <= 0F || (color >>> 24) == 0)
+        {
+            return;
+        }
+
+        int r = Math.max(0, Math.min(4, Math.round(radius)));
+
+        if (w < r * 2F || h < r * 2F)
+        {
+            r = 0;
+        }
+
+        if (r == 0)
+        {
+            batcher.box(x, y, x + w, y + h, color);
+
+            return;
+        }
+
+        /* Straight body plus stepped corners. Every call is a normal batched box. */
+        batcher.box(x + r, y, x + w - r, y + h, color);
+        batcher.box(x, y + r, x + w, y + h - r, color);
+
+        for (int i = 0; i < r; i++)
+        {
+            float inset = i;
+            float yTop = r - i - 1F;
+            float yBottom = h - r + i;
+
+            batcher.box(x + inset, y + yTop, x + r, y + yTop + 1F, color);
+            batcher.box(x + w - r, y + yTop, x + w - inset, y + yTop + 1F, color);
+            batcher.box(x + inset, y + yBottom, x + r, y + yBottom + 1F, color);
+            batcher.box(x + w - r, y + yBottom, x + w - inset, y + yBottom + 1F, color);
+        }
+    }
+
+    /**
      * Layered soft shadow. Three translucent bands are enough at UI density; this avoids a blur
      * pass and keeps the per-frame cost proportional to the card perimeter.
      */

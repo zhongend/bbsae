@@ -107,6 +107,10 @@ loom {
             vmArg "-Dbbsae.debugOnlyLayer=" + (project.findProperty("bbsaeOnlyLayer") ?: "")
             vmArg "-Dbbsae.debugCube2D=" + (project.findProperty("bbsaeCube2D") ?: "false")
             vmArg "-Dbbsae.debugFilmId=" + (project.findProperty("bbsaeFilmId") ?: "A2(MAIN)_")
+            vmArg "-Dbbsae.debugFilmTime=" + (project.findProperty("bbsaeFilmTime") ?: "2")
+            vmArg "-Dbbsae.debugEntityStage=" + (project.findProperty("bbsaeEntityStage") ?: "false")
+            vmArg "-Dbbsae.debugOnlyEntityLayer=" + (project.findProperty("bbsaeOnlyEntityLayer") ?: "false")
+            vmArg "-Dbbsae.debugHideWorldPlate=" + (project.findProperty("bbsaeHideWorldPlate") ?: "false")
             vmArg "-Dbbsae.debugOpenEffectLibrary=" + (project.findProperty("bbsaeOpenEffectLibrary") ?: "false")
             vmArg "-Dbbsae.debugGizmo3D=" + (project.findProperty("bbsaeDebugGizmo3D") ?: "false")
             /* Dock-layout diagnostics: logs panel rectangles when a dock flex pass settles. */

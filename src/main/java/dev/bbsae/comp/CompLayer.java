@@ -2,6 +2,8 @@ package dev.bbsae.comp;
 
 import com.google.gson.Gson;
 import mchorse.bbs_mod.data.DataToString;
+import mchorse.bbs_mod.forms.FormUtils;
+import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
 import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
 import mchorse.bbs_mod.utils.keyframes.factories.KeyframeFactories;
@@ -204,6 +206,22 @@ public class CompLayer
     public float entityFeather = 1.5F;
     /** Extra depth tolerance, in blocks, for the "this pixel is the entity" test. */
     public float entityTolerance = 0.08F;
+
+    /**
+     * BBS form serialized as a JSON string. Non-empty turns a replay layer into an independent
+     * bbsae 3D model: it is rendered from the composition camera only, never in the real world.
+     * Empty keeps the legacy film-frame keying mode.
+     */
+    public String formData = "";
+
+    /**
+     * New replay layers are independent bbsae actors by default: no real-world film is sampled.
+     * Old projects (field absent) deserialize as false and keep their film-plate keying.
+     */
+    public boolean independent = false;
+
+    private transient Form modelForm;
+    private transient String modelFormSource;
 
     /** Parenting and matte references (stable layer ids). */
     public String parentId = "";
@@ -2028,6 +2046,47 @@ public class CompLayer
     public boolean isEntityLayer()
     {
         return "replay".equals(this.type);
+    }
+
+    /** The independent bbsae model form, or null for the legacy film-plate mode. */
+    public Form modelForm()
+    {
+        if (this.formData == null || this.formData.isBlank())
+        {
+            this.modelForm = null;
+            this.modelFormSource = this.formData;
+
+            return null;
+        }
+
+        if (this.modelForm == null || !this.formData.equals(this.modelFormSource))
+        {
+            try
+            {
+                this.modelForm = FormUtils.fromData(DataToString.mapFromString(this.formData));
+            }
+            catch (RuntimeException e)
+            {
+                this.modelForm = null;
+            }
+
+            this.modelFormSource = this.formData;
+        }
+
+        return this.modelForm;
+    }
+
+    /** Stores a form for the independent comp-camera model mode; null restores film keying. */
+    public void setModelForm(Form form)
+    {
+        this.modelForm = form;
+        this.formData = form == null ? "" : DataToString.toString(form.toData(), false);
+        this.modelFormSource = this.formData;
+    }
+
+    public boolean hasModelForm()
+    {
+        return this.formData != null && !this.formData.isBlank();
     }
 
     /**

@@ -290,6 +290,13 @@ public class CompProject
         /** Show composition effects when a film is played outside the BBS editors. */
         public boolean showDuringExternalPlayback = true;
 
+        /** 0 = auto (comp height * 0.12, clamped 8..64); otherwise pixels per block. */
+        public int modelPixelsPerBlock = 0;
+        /** Render scale of the independent-model target (0.25..1); lower is faster/softer. */
+        public float modelRenderScale = 1F;
+        /** Whether independent bbsae replay models draw BBS shadows. */
+        public boolean modelShadows = false;
+
         /** 0 = Premiere-style shortcuts, 1 = BBS-style shortcuts. */
         public int shortcutScheme = 0;
 

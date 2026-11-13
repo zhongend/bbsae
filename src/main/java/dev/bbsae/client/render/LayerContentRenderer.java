@@ -280,6 +280,37 @@ final class LayerContentRenderer
      */
     private static void drawReplayEntity(CompLayer layer, CompRenderContext context, Batcher2D batcher, Matrix4f world, Matrix4f projection)
     {
+        /* New bbsae replay layers are independent actors. Until a model is picked there is nothing
+         * to show; they must not fall back to the real-world film plate. */
+        if (layer.independent && !layer.hasModelForm())
+        {
+            if (context.preview)
+            {
+                float x = -layer.width * layer.anchorX;
+                float y = -layer.height * layer.anchorY;
+
+                batcher.outline(x, y, x + layer.width, y + layer.height, 0x6655AAFF);
+                batcher.textShadow("回放模型：请在图层页选择模型", x + 10F, y + 10F, 0xFFFFD27A);
+            }
+
+            return;
+        }
+
+        /* Independent bbsae model mode: the form is drawn from the composition camera into a
+         * transparent depth target. There is no film plate and no matte, so moving the model cannot
+         * reveal a background and self-occlusion is resolved by the depth buffer. */
+        if (layer.hasModelForm())
+        {
+            GlFramebuffer model = ReplayActorPass.renderModel(layer, context, batcher);
+
+            if (model != null)
+            {
+                drawCompositionActors(context, batcher, model);
+
+                return;
+            }
+        }
+
         /* A 3D entity layer is a real model in the composition camera, not a crop of the world
          * frame. The pass maps blocks to comp pixels and applies the comp camera; drawing its
          * result with the normal comp ortho is what makes orbiting the bbsae camera actually orbit

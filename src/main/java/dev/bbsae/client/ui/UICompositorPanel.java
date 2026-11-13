@@ -54,6 +54,9 @@ import mchorse.bbs_mod.ui.framework.elements.buttons.UIToggle;
 import mchorse.bbs_mod.ui.framework.elements.input.UIColor;
 import mchorse.bbs_mod.ui.framework.elements.input.UISliderTrackpad;
 import mchorse.bbs_mod.ui.framework.elements.input.UITrackpad;
+import mchorse.bbs_mod.ui.forms.UIFormPalette;
+import mchorse.bbs_mod.forms.FormUtils;
+import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeEditor;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeSheet;
 import mchorse.bbs_mod.ui.framework.elements.input.text.UITextbox;
@@ -137,6 +140,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIElement timelineHeader;
     private final UIElement effectColumn;
     private final UICompTabBar leftTabs;
+    private UICompReplayList replayBrowser;
     private final UIEffectLibrary effectLibrary;
     private final UIScrollView assetPanel;
     private final UICompPresetBrowser presetBrowser;
@@ -620,10 +624,14 @@ public class UICompositorPanel extends UIDashboardPanel
         this.presetBrowser = new UICompPresetBrowser(this);
         this.presetBrowser.relative(this.effectColumn).x(0).y(22).w(1F).h(1F, -22);
         this.presetBrowser.setVisible(false);
+        this.replayBrowser = new UICompReplayList(this);
+        this.replayBrowser.relative(this.effectColumn).x(0).y(22).w(1F).h(1F, -22);
+        this.replayBrowser.setVisible(false);
 
         this.leftTabs.addTab("效果库");
         this.leftTabs.addTab("素材");
         this.leftTabs.addTab("预设");
+        this.leftTabs.addTab("回放");
         this.leftTabs.onSelect((index) -> this.applyLeftPage(index, true));
         this.leftTabs.active(() -> this.leftPage);
 
@@ -634,7 +642,7 @@ public class UICompositorPanel extends UIDashboardPanel
         effectGallery.tooltip(IKey.constant("打开带预览图的效果库（单击效果即可叠加到当前轨道）"));
 
         this.effectColumn.w(190).h(1F);
-        this.effectColumn.add(this.leftTabs, effectGallery, this.effectLibrary, this.assetPanel, this.presetBrowser);
+        this.effectColumn.add(this.leftTabs, effectGallery, this.effectLibrary, this.assetPanel, this.presetBrowser, this.replayBrowser);
 
         this.preview = new UIElement()
         {
@@ -889,7 +897,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
-                int accent = BBSSettings.primaryColor() | 0xFF000000;
+                int accent = CompUi.accent();
                 int len = 13;
                 float x0 = this.area.x + 4;
                 float y0 = this.area.y + 4;
@@ -9670,6 +9678,95 @@ public class UICompositorPanel extends UIDashboardPanel
                 break;
             }
 
+            case "repeat3d":
+            {
+                this.addLayer("solid");
+
+                CompLayer copy = this.getSelectedLayer();
+
+                if (copy != null)
+                {
+                    copy.threeD = true;
+                    copy.x = this.doc.width / 2F;
+                    copy.y = this.doc.height / 2F;
+                    copy.width = 220F;
+                    copy.height = 140F;
+                    copy.color = 0xFFFF3B30;
+                    copy.rotationY = 35F;
+                    copy.rotationX = 12F;
+                    copy.effects.clear();
+
+                    CompEffect repeat = CompEffectRegistry.create("am_repeat", 1);
+
+                    repeat.put("count", 4D);
+                    repeat.put("offset_x", 260D);
+                    repeat.put("offset_y", 0D);
+                    repeat.put("scale", 0.82D);
+                    copy.effects.add(repeat);
+                    this.refreshInspector();
+                    this.setStatus("验证：真实 3D 重复（4 个带透视的独立平面）");
+                }
+
+                break;
+            }
+
+            case "actorlist":
+            {
+                this.addLayer("replay");
+
+                CompLayer actor = this.getSelectedLayer();
+
+                if (actor != null)
+                {
+                    mchorse.bbs_mod.forms.forms.MobForm form = new mchorse.bbs_mod.forms.forms.MobForm();
+
+                    form.name.set("回放鸡");
+                    form.mobID.set("minecraft:chicken");
+                    actor.setModelForm(form);
+                    actor.threeD = true;
+                    actor.scaleX = 3F;
+                    actor.scaleY = 3F;
+                    actor.scaleZ = 3F;
+                    this.applyLeftPage(3, false);
+                    this.selectLayer(actor);
+                    this.setStatus("验证：bbsae 独立回放列表（左栏「回放」页）");
+                }
+
+                break;
+            }
+
+            case "independent":
+            {
+                /* Verification view for the independent bbsae actor: a BBS MobForm lives only in
+                 * the composition camera, with no film/replay attached. */
+                this.addLayer("replay");
+
+                CompLayer actor = this.getSelectedLayer();
+
+                if (actor != null)
+                {
+                    mchorse.bbs_mod.forms.forms.MobForm form = new mchorse.bbs_mod.forms.forms.MobForm();
+
+                    form.name.set("bbsae chicken");
+                    form.mobID.set("minecraft:chicken");
+                    actor.setModelForm(form);
+                    actor.threeD = true;
+                    actor.name = "独立回放模型";
+                    actor.x = this.doc.width / 2F;
+                    actor.y = this.doc.height / 2F;
+                    actor.z = 0F;
+                    actor.scaleX = 3F;
+                    actor.scaleY = 3F;
+                    actor.scaleZ = 3F;
+                    actor.width = 300F;
+                    actor.height = 300F;
+                    this.refreshInspector();
+                    this.setStatus("验证：独立 bbsae 回放模型（不依赖真实影片）");
+                }
+
+                break;
+            }
+
             case "replay":
                 /* Entity-replay editing page: BBS's own replay timeline/gizmo/model library inside
                  * bbsae's 3D space, as the compositor's second workspace. */
@@ -10537,7 +10634,8 @@ public class UICompositorPanel extends UIDashboardPanel
                 BbsAeClient.openCompositorForFilm(panel, film, film.replays.getList().isEmpty() ? null : film.replays.getList().get(0));
 
                 this.debugView("entity");
-                this.time = Math.min(2F, Math.max(0F, this.doc.duration * 0.25F));
+                this.time = Math.min(Float.parseFloat(System.getProperty("bbsae.debugFilmTime", "2")),
+                    Math.max(0F, this.doc.duration));
 
                 /* The film panel's asynchronous fill can win the dashboard race and leave the
                  * replay properties on screen. Re-assert the compositor once the callback has
@@ -10755,6 +10853,11 @@ public class UICompositorPanel extends UIDashboardPanel
             && (this.inspectorPage == PAGE_COMP || this.inspectorPage == PAGE_OUTPUT))
         {
             this.setInspectorPage(PAGE_EFFECTS);
+        }
+
+        if (this.replayBrowser != null)
+        {
+            this.replayBrowser.refresh();
         }
     }
 
@@ -11787,10 +11890,16 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Left column page (effects / assets / presets), used by the tabs and view-state restore. */
     private void applyLeftPage(int index, boolean animate)
     {
-        this.leftPage = Math.max(0, Math.min(2, index));
+        this.leftPage = Math.max(0, Math.min(3, index));
         this.effectLibrary.setVisible(this.leftPage == 0);
         this.assetPanel.setVisible(this.leftPage == 1);
         this.presetBrowser.setVisible(this.leftPage == 2);
+        this.replayBrowser.setVisible(this.leftPage == 3);
+
+        if (this.leftPage == 3)
+        {
+            this.replayBrowser.refresh();
+        }
 
         if (animate)
         {
@@ -11987,6 +12096,14 @@ public class UICompositorPanel extends UIDashboardPanel
         else
         {
             this.trackTimeline.relative(this.timeline).x(0).y(top).w(stripWidth).h(1F, -top);
+        }
+
+        if (quickWidth > 0)
+        {
+            /* The quick panel owns the right side of the track view only. Letting it extend over
+             * the keyframe drawer covered the bottom tracks and made the drawer unreadable. */
+            this.quickPanel.relative(this.timeline).x(1F, -quickWidth).y(top)
+                .w(quickWidth).h(1F, -top - Math.max(0, shownHeight));
         }
 
         this.keyframeEditor.setVisible(shownHeight > 30);
@@ -13410,7 +13527,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        int accent = BBSSettings.primaryColor() | 0xFF000000;
+        int accent = CompUi.accent();
 
         UiGfx.glow(context.batcher, this.area.x + 40, this.area.y + 10,
             Math.max(90, this.area.w / 7), UiGfx.alpha(accent, 0.035F), 36);
@@ -13776,7 +13893,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.setInspectorPage(Math.max(PAGE_EFFECTS, Math.min(PAGE_OUTPUT, settings.inspectorPage)));
-        this.leftTabs.select(Math.max(0, Math.min(2, settings.leftPage)));
+        this.leftTabs.select(Math.max(0, Math.min(3, settings.leftPage)));
         this.applyLeftPage(settings.leftPage, false);
 
         this.keyframeOpen = settings.keyframeDrawerOpen;
@@ -14398,14 +14515,16 @@ public class UICompositorPanel extends UIDashboardPanel
                 layer.name = "BBS 预览";
                 break;
             case "replay":
-                /* The entity layer is a full-frame plate by definition: it keys the film frame,
-                 * so a 640x324 default would letterbox the world and key a postage stamp. */
+                /* Legacy/matte replay layer: keys the live film frame. Kept separate from the
+                 * bbsae 3D model replay list. */
+                layer.independent = false;
+                layer.threeD = false;
                 layer.width = this.doc.width;
                 layer.height = this.doc.height;
                 layer.imageFit = 0;
                 layer.entityScope = CompLayer.ENTITY_SCOPE_ALL;
                 layer.entityIds = "";
-                layer.name = "回放实体";
+                layer.name = "回放抠像";
                 break;
             case "camera":
                 layer.width = 100F;
@@ -17184,6 +17303,36 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(UI.label(IKey.constant(l.type + " · " + l.id), 16));
         section.fields.add(UI.label(IKey.constant("变换、不透明度、来源与绑定都在本页；效果在「效果」页。"), 14));
 
+        if (l.isEntityLayer())
+        {
+            Form form = l.modelForm();
+            String modelName = form != null ? form.name.get()
+                : (l.independent ? "未选择（独立模型）" : "未选择（影片抠像模式）");
+
+            UICompButton chooseModel = new UICompButton(IKey.constant("回放模型：" + modelName),
+                (button) -> this.chooseModel(l));
+            chooseModel.tooltip(IKey.constant("导入 BBS 模型作为 bbsae 独立 3D 回放；只在合成相机里渲染，真实世界不可见"));
+
+            section.fields.add(this.fieldRow("独立模型", chooseModel));
+
+            if (form != null)
+            {
+                section.fields.add(this.smallButton("清除模型（回到空模型）", () ->
+                {
+                    this.beginAction("清除回放模型");
+                    l.setModelForm(null);
+                    this.refreshInspector();
+                    this.save();
+                }));
+            }
+
+            if (!l.independent)
+            {
+                section.fields.add(this.smallButton("转为独立回放模型（推荐）", () -> this.convertToIndependent(l)));
+                section.fields.add(UI.label(IKey.constant("旧版影片抠像会读取真实影片帧；转为独立模型后只从 bbsae 相机渲染。"), 12));
+            }
+        }
+
         UITextbox name = new UITextbox(64, (text) ->
         {
             /* A rename that never called save() was not undoable and, with auto-save off, never
@@ -17512,6 +17661,116 @@ public class UICompositorPanel extends UIDashboardPanel
 
         panel.addValues(values);
         UIOverlay.addOverlay(this.getContext(), panel, 320, 340);
+    }
+
+    /** Creates a bbsae-only replay model layer and immediately opens the model library. */
+    public void addIndependentReplay()
+    {
+        this.addLayer("replay");
+
+        CompLayer layer = this.getSelectedLayer();
+
+        if (layer != null)
+        {
+            layer.independent = true;
+            layer.threeD = true;
+            layer.name = "回放模型";
+            layer.width = 400F;
+            layer.height = 400F;
+            this.chooseModel(layer);
+        }
+    }
+
+    /** Adds the legacy film-matte replay layer, separate from the model list. */
+    public void addMatteReplay()
+    {
+        this.addLayer("replay");
+        this.setStatus("已新建回放抠像层；它从真实影片帧抠出平面动画，不是 bbsae 3D 模型");
+    }
+
+    public void chooseModelForSelectedReplay()
+    {
+        CompLayer layer = this.getSelectedLayer();
+
+        if (layer == null || !layer.isEntityLayer())
+        {
+            this.setStatus("先选择一个 bbsae 回放模型层");
+            return;
+        }
+
+        this.chooseModel(layer);
+    }
+
+    public void deleteSelectedReplay()
+    {
+        CompLayer layer = this.getSelectedLayer();
+
+        if (layer != null && layer.isEntityLayer())
+        {
+            this.deleteLayer(layer);
+
+            if (this.replayBrowser != null)
+            {
+                this.replayBrowser.refresh();
+            }
+        }
+    }
+
+    /** Converts a legacy film-matte replay layer into a clean comp-camera model layer. */
+    public void convertToIndependent(CompLayer layer)
+    {
+        if (layer == null || !layer.isEntityLayer())
+        {
+            return;
+        }
+
+        UIFormPalette.open(this, false, layer.modelForm(), (form) ->
+        {
+            if (form == null)
+            {
+                return;
+            }
+
+            this.beginAction("转为独立回放模型");
+            layer.independent = true;
+            layer.threeD = true;
+            layer.setModelForm(FormUtils.copy(form));
+            layer.width = Math.max(200F, Math.min(800F, layer.width));
+            layer.height = Math.max(200F, Math.min(800F, layer.height));
+            this.refreshInspector();
+            this.save();
+
+            if (this.replayBrowser != null)
+            {
+                this.replayBrowser.refresh();
+            }
+
+            this.setStatus("已转为独立回放模型；旧影片抠像层不再参与渲染");
+        });
+    }
+
+    /** Opens BBS' model library for the independent bbsae replay actor form. */
+    public void chooseModel(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return;
+        }
+
+        UIFormPalette.open(this, false, layer.modelForm(), (form) ->
+        {
+            this.beginAction("选择回放模型");
+            layer.setModelForm(form == null ? null : FormUtils.copy(form));
+            this.refreshInspector();
+            this.save();
+
+            if (this.replayBrowser != null)
+            {
+                this.replayBrowser.refresh();
+            }
+
+            this.setStatus(form == null ? "已清除回放模型" : "已导入独立回放模型：" + form.name.get());
+        });
     }
 
     public void chooseParent(CompLayer layer)
@@ -21268,13 +21527,38 @@ public class UICompositorPanel extends UIDashboardPanel
          * track's x->time mapping change under the cursor (clips jumped a few pixels on grab).
          * Defer layout changes until the mouse is released. */
         boolean wantQuick = this.selectedLayer != null && !this.renderView && !this.focusMode
-            && this.workspaceMode == WORKSPACE_COMPOSITE
-            && !mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0);
+            && this.workspaceMode == WORKSPACE_COMPOSITE;
 
-        if (this.quickPanel != null && this.quickPanel.isVisible() != wantQuick)
+        /* Only defer the *opening* layout while the mouse is down. Once the panel is open it must
+         * stay open through a drag: hiding it on mouse-down made every trackpad/field edit abort. */
+        if (this.quickPanel != null && !this.quickPanel.isVisible()
+            && mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0))
         {
-            this.quickPanel.setVisible(wantQuick);
-            this.applyLayout();
+            wantQuick = false;
+        }
+
+        if (this.quickPanel != null)
+        {
+            if (wantQuick)
+            {
+                if (!this.quickPanel.isVisible() || !this.quickPanel.isDrawerOpen())
+                {
+                    boolean wasHidden = !this.quickPanel.isVisible();
+
+                    this.quickPanel.setDrawerOpen(true);
+
+                    if (wasHidden)
+                    {
+                        this.applyLayout();
+                    }
+                }
+            }
+            else if (this.quickPanel.isDrawerOpen())
+            {
+                /* Keep the panel visible while it slides out; it hides itself when the animation
+                 * reaches the right edge. */
+                this.quickPanel.setDrawerOpen(false);
+            }
         }
 
         if (this.area.w > 0 && this.area.h > 0
@@ -21501,7 +21785,7 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.header != null && this.header.area.h > 0 && CompPrefs.get().glow)
         {
             float breathe = this.panelMotion.breathe(3.6F);
-            int accent = mchorse.bbs_mod.BBSSettings.primaryColor() | 0xFF000000;
+            int accent = CompUi.accent();
 
             context.batcher.box(this.area.x, this.header.area.ey() - 1, this.area.ex(), this.header.area.ey(),
                 UiGfx.alpha(accent, 0.16F + 0.12F * breathe));
