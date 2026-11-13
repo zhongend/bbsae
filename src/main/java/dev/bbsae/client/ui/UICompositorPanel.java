@@ -766,6 +766,8 @@ public class UICompositorPanel extends UIDashboardPanel
             private int ctStartX;
             private int ctStartY;
             private float ctStartDistance;
+            private float ctStartYaw;
+            private float ctStartPitch;
             private float ctStartRadius;
             private float ctStartZoom = 1F;
             private boolean ctStartLookAt;
@@ -3915,6 +3917,8 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.ctStartY = context.mouseY;
                 this.ctStartEye.set(CompCamera.eyeOf(camera, UICompositorPanel.this.getFrame(), doc.height));
                 this.ctStartZoom = Math.max(0.0001F, view.zoom);
+                this.ctStartYaw = camera.scalarAt("rotationY", camera.rotationY, UICompositorPanel.this.getFrame());
+                this.ctStartPitch = camera.scalarAt("rotationX", camera.rotationX, UICompositorPanel.this.getFrame());
                 this.ctStartLookAt = camera.cameraLookAt;
                 this.ctStartDistance = Math.max(1F, view.distance);
                 this.ctStartRight.set(view.right);
@@ -3983,6 +3987,14 @@ public class UICompositorPanel extends UIDashboardPanel
                              * renderer ignored the pivot and kept the old direction, so drive the
                              * free-camera fields instead. */
                             camera.cameraLookAt = false;
+                            /* Reset to the press-time pose first. Passing the total drag delta to
+                             * an incremental orbit every frame compounded the rotation and made the
+                             * view spin ("一滑动就乱晃"). */
+                            camera.rotationY = this.ctStartYaw;
+                            camera.rotationX = this.ctStartPitch;
+                            camera.cameraZ = this.ctStartEye.z;
+                            camera.z = this.ctStartEye.z;
+                            this.writeTransform(camera, null, null, null, this.ctStartEye.x, this.ctStartEye.y);
                             CompViewControls.orbit(camera, frame, dx * 0.35F, dy * 0.35F);
                             this.writeTransform(camera, null, null, null, camera.x, camera.y);
                             UICompositorPanel.this.setScalar(camera, "rotationY", camera.rotationY);
@@ -4598,28 +4610,9 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
-                boolean wasGizmo = this.dragMode == DRAG_GIZMO;
-                boolean wasMoved = this.gizmoMoved;
-                String gizmoId = this.gizmoLayerId;
-
                 this.dragMode = DRAG_NONE;
                 UICompositorPanel.this.refreshInspector();
                 UICompositorPanel.this.save();
-
-                /* bbsae replay behaves like the BBS replay editor: a gizmo drag on a model writes
-                 * transform keys at the playhead. A plain click (no movement) never creates keys. */
-                if (wasGizmo && wasMoved && UICompositorPanel.this.workspaceMode == WORKSPACE_REPLAY
-                    && gizmoId != null && UICompositorPanel.this.doc != null)
-                {
-                    CompLayer keyed = UICompositorPanel.this.doc.getLayer(gizmoId);
-
-                    if (keyed != null && keyed.independent)
-                    {
-                        keyed.insertTransformKeys(UICompositorPanel.this.getFrame());
-                        UICompositorPanel.this.refreshSheets();
-                        UICompositorPanel.this.setStatus("已为 bbsae 模型写入变换关键帧");
-                    }
-                }
 
                 this.gizmoAxisIndex = -1;
                 this.gizmoMoved = false;
