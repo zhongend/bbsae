@@ -3942,6 +3942,7 @@ public class UICompositorPanel extends UIDashboardPanel
                              * view. Orbiting it on a look-at pivot would move the eye while the
                              * renderer ignored the pivot and kept the old direction, so drive the
                              * free-camera fields instead. */
+                            camera.cameraLookAt = false;
                             CompViewControls.orbit(camera, frame, dx * 0.35F, dy * 0.35F);
                             this.writeTransform(camera, null, null, null, camera.x, camera.y);
                             UICompositorPanel.this.setScalar(camera, "rotationY", camera.rotationY);

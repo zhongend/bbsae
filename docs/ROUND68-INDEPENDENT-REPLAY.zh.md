@@ -112,8 +112,8 @@
 ## 9. 验证
 
 - 全量：**150 suites / 947 tests / 0 failures / 0 errors / 1 skipped**。
-- 候选包：`bbsae-0.99-hotfix13.jar`，已安装到正式 modpack；
-  SHA-256 `8BAB81A9A81F42953FFB363C46948045A35B3FED7D40AC443F1161CCD2B047F9`。
+- 候选包：`bbsae-0.99-hotfix14.jar`，已安装到正式 modpack；
+  SHA-256 `80FF36034705DF57D5F204E8A4EDB53FB87A05A3124074010649FE4C7091A617`。
 - GitHub 大版本提交：`dea7e0c`。
 
 ## 10. 未完成
