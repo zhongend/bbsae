@@ -9,6 +9,8 @@
 - 新增 `ReplayCompositionOverlay`：在回放 3D 视口中显示合成画幅、所有摄像机的眼睛/目标/
   运动路径/视锥角点，以及文字、图片、形状等非模型层的包围框、名称和文字内容。
 - 参考层按 `guides` 开关显示，裁剪在视口内；路径采样点和一次 outline 的包围框保持低开销。
+- 暂停时右上角显示真实合成预览缩略图（文字/图片/效果/linked 模型），播放时让位于 actor pass；
+  含 BBS 实时世界预览层的合成跳过缩略图，保持“虚拟世界”边界。
 - 坐标通过当前回放对应的 CompLayer 与 `ReplaySceneSpace` 锚点映射，不依赖真实世界。
 
 ### 检查器（轨道右侧编辑区）
@@ -33,10 +35,10 @@
 
 ### 验证
 
-- 真机：`docs/verify/round81-replay-guides.png`、`round81-native-layer-settings.png`、
-  `round81-layer-inspector.png`。
+- 真机：`docs/verify/round81-replay-guides.png`、`round81-replay-pip.png`、
+  `round81-native-layer-settings.png`、`round81-layer-inspector.png`。
 - 全量测试：**152 套件 / 951 项测试 / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix39.jar`（3,899,522 bytes，SHA-256 1D5572A4F93F5783332F7255F90F1AD0F0F64B47FFBBBC4D7AEB52BE69901B77）。
+- 本地候选包：`bbsae-0.99-hotfix39.jar`（3,900,898 bytes，SHA-256 608B9956DE2F78E5E15A64266A8B4FC97A8885FF82B8FC729A285977FCD087C7）。
 
 ## 0.99-hotfix38 — 2026-11-13
 

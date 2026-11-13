@@ -21,7 +21,14 @@
 
 因此回放编辑器现在既能看虚拟模型，也能看到合成器中的摄像机和其它元素，便于合成编辑。
 
+暂停时，视口右上角还会显示一个真实的**合成预览缩略图**（`CompRenderer.renderCached`）：它显示
+当前合成相机实际看到的文字、图片/卡片、效果和 linked 回放模型，而不仅是参考框。缩略图只在
+暂停时绘制，避免播放时和回放 actor pass 抢 GPU；含 `bbs` 实时世界预览层的合成会跳过缩略图，
+保证回放编辑器的预览仍然只属于 bbsae 虚拟世界。
+
 ![回放预览合成参考](verify/round81-replay-guides.png)
+
+![回放合成缩略图](verify/round81-replay-pip.png)
 
 ## 2. 合成器检查器（轨道右侧编辑区）的响应优化
 
@@ -80,4 +87,4 @@ BBS 的 `UIReplayPropertiesPanel`（回放右侧原生属性列）里，bbsae �
   “编辑合成图层 / 打开合成器”两个按钮。
 - 图层页：`docs/verify/round81-layer-inspector.png` 中默认折叠高级 section。
 - 全量测试：152 套件 / 951 项 / 0 failures / 0 errors / 1 skipped。
-- 本地候选包：`bbsae-0.99-hotfix39.jar`（3,899,522 bytes，SHA-256 1D5572A4F93F5783332F7255F90F1AD0F0F64B47FFBBBC4D7AEB52BE69901B77）。
+- 本地候选包：`bbsae-0.99-hotfix39.jar`（3,900,898 bytes，SHA-256 608B9956DE2F78E5E15A64266A8B4FC97A8885FF82B8FC729A285977FCD087C7）。
