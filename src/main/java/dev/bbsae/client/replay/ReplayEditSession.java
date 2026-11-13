@@ -550,9 +550,14 @@ public final class ReplayEditSession
         float before = this.playhead();
         float next = before + delta * ReplayTime.TICKS_PER_SECOND;
 
+        /* BBS' RunnerCameraController advances one tick per client tick and stops at the clip
+         * duration; it does not wrap. Wrapping here made the replay loop forever and looked like
+         * the track was not honoring the film end. */
         if (next >= duration)
         {
-            next = next % duration;
+            next = duration;
+            this.playing = false;
+            this.lastPlayNanos = 0L;
         }
 
         this.seek(next);

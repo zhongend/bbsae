@@ -48,7 +48,8 @@
   BBS film panel 隐藏后它的 secretPlay 键位仍在抢 Space/或收不到键”的问题。
 - `ReplayEditSession` 持有 local playhead，`ReplayFilmKeyframes` 的 `getTick/getPlayheadTick`
   直接读它，轨道指针/播放头与 actor 播放一致；
-- `advancePlayback` 不再依赖会被 BBS 隐藏 panel 重置的 runner；
+- `advancePlayback` 不再依赖会被 BBS 隐藏 panel 重置的 runner；到片尾像 BBS
+  `RunnerCameraController` 一样停止，不再无限循环；
 - 播放时指针保持在时间轴可见范围。
 
 ## 5. 验证
@@ -58,4 +59,4 @@
   `REAL TEXT LAYER` 与 comp 图层，同时 bbs 实时世界层被过滤；截图来自带 `bbs` 层的测试工程）。
 - 相机同步：`docs/verify/round83-camera-sync.png`。
 - 播放：`docs/verify/round85-playback.png`（timecode `00:00:02:17`）。
-- 本地候选包：`bbsae-0.99-hotfix42.jar`（3,913,206 bytes，SHA-256 F44783D688A1F86C05EF538835AD367E8585A421A01A9AD11DCCE7F43443A4CD）。
+- 本地候选包：`bbsae-0.99-hotfix42.jar`（3,913,218 bytes，SHA-256 E21E6E3A32741E13E48880F71E45C9FFB6996BB427BA0A421585228055BF2F16）。

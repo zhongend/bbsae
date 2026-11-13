@@ -31,13 +31,13 @@
 - `UIReplayModePanel.update()` 检测 Space 按下沿并驱动回放 transport，文本输入时不拦截；
   不再依赖隐藏 film panel 的 secretPlay 键位。
 - local playhead + `ReplayFilmKeyframes.getTick/getPlayheadTick` 让播放头与 actor 播放同步；
-  播放时保持在时间轴可见范围。
+  播放时保持在时间轴可见范围；到片尾按 BBS 逻辑停止，不再无限循环。
 
 ### 验证
 
 - 全量测试：**154 套件 / 956 项测试 / 0 failures / 0 errors / 1 skipped**（新增 `CompPreviewFilterTest`）。
 - 截图：`docs/verify/round84-free-comp.png`、`round83-camera-sync.png`、`round85-playback.png`。
-- 本地候选包：`bbsae-0.99-hotfix42.jar`（3,913,206 bytes，SHA-256 F44783D688A1F86C05EF538835AD367E8585A421A01A9AD11DCCE7F43443A4CD）。
+- 本地候选包：`bbsae-0.99-hotfix42.jar`（3,913,218 bytes，SHA-256 E21E6E3A32741E13E48880F71E45C9FFB6996BB427BA0A421585228055BF2F16）。
 
 ## 0.99-hotfix41 — 2026-11-13
 
