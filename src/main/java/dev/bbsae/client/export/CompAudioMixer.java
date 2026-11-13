@@ -329,6 +329,11 @@ public final class CompAudioMixer
         }
     }
 
+    public static Wave readWave(Path file) throws Exception
+    {
+        return readWave(file, Files.readAllBytes(file));
+    }
+
     private static Wave readWave(Path file, byte[] bytes) throws Exception
     {
         String name = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);

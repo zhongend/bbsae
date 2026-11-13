@@ -90,6 +90,20 @@ public final class CompVideoFrames
         }
     }
 
+    /**
+     * Warms the first second of a freshly linked clip: frame 0 blocking, the rest queued.
+     * Called from the import UI so the first preview is not a magenta placeholder.
+     */
+    public static void prewarm(String projectId, String externalPath, float fps, int width, int height)
+    {
+        frame(projectId, externalPath, 0F, fps, width, height, true);
+
+        for (int i = 1; i <= 12; i++)
+        {
+            frame(projectId, externalPath, i / Math.max(1F, fps), fps, width, height, false);
+        }
+    }
+
     private static void queue(File source, float sourceTime, float fps, int w, int h, int frame, String key)
     {
         if (!PENDING.add(key))

@@ -59,16 +59,16 @@ world-plate matte 换成 actor-only 图像。
 - 选中音频后可「重新链接外部音频…」，不复制、不重建 clip；
 - 图片新增「链接外部图片…」，`imagePath` 支持 `external:`；
 - 视频新增 `videolink` 层：`external:绝对路径`，预览按需异步抽帧并预取后两帧，
-  导出同步等待；源文件不复制；
+  导入时预热第一秒；导出同步等待；源文件不复制；
 - 帧缓存按路径+mtime+frame+分辨率，最多 96 项；
-- 音频轨道对有 WAV 源的 clip 绘制真实波形（OGG/MP3 无 JDK 解码时只显示条）；
+- 音频轨道使用 BBS 的 WAV/Vorbis 解码器绘制真实波形（WAV/OGG 都支持）；
 - 视频 FFmpeg 命令加 `-nostdin`，避免后台导入等待 stdin。
 
 ## 7. 验证
 
 - 全量：**151 suites / 948 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix21.jar`，已安装到正式 modpack；
-  SHA-256 `2874F7FFBB02D89287B8AEEE09915B51F3E734591A00EAB2A3CE35D3AF0FF039`。
+- 本地候选包：`bbsae-0.99-hotfix22.jar`，已安装到正式 modpack；
+  SHA-256 `FC02F513EDEA60251FC35AE01350E42CEFC4B02921115E316DF2DB4D5033D7DD`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 

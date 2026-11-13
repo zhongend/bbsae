@@ -8144,6 +8144,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshLayers();
         this.refreshInspector();
         this.save();
+        dev.bbsae.client.render.CompVideoFrames.prewarm(this.project.id, layer.imagePath,
+            this.doc.fps, Math.round(layer.width), Math.round(layer.height));
         this.setStatus("已链接外部视频：" + file.getName() + "（按需拆帧，不复制源文件）");
     }
 

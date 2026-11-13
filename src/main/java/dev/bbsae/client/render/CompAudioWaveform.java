@@ -1,8 +1,8 @@
 package dev.bbsae.client.render;
 
-import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioInputStream;
-import javax.sound.sampled.AudioSystem;
+import dev.bbsae.client.export.CompAudioMixer;
+import mchorse.bbs_mod.audio.Wave;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -11,8 +11,8 @@ import java.util.Map;
 /**
  * Small waveform cache for the audio track.
  *
- * <p>Only WAV can be decoded with the JDK's AudioSystem; OGG/MP3 clips simply render without a
- * waveform instead of failing the track. Peaks are cached by path+mtime+bucket count.</p>
+ * <p>Uses BBS' own WAV/Vorbis readers (the same ones the mixer uses), so OGG clips get a waveform
+ * too. Peaks are cached by path+mtime+bucket count.</p>
  */
 public final class CompAudioWaveform
 {
@@ -36,47 +36,39 @@ public final class CompAudioWaveform
             return cached;
         }
 
-        try (AudioInputStream input = AudioSystem.getAudioInputStream(file.toFile()))
+        try
         {
-            AudioFormat format = input.getFormat();
-            int channels = Math.max(1, format.getChannels());
-            int frameSize = Math.max(1, format.getFrameSize());
-            float[] peaks = new float[buckets];
-            byte[] buffer = new byte[8192];
-            int read;
-            long totalFrames = Math.max(1L, input.getFrameLength());
-            long frameIndex = 0L;
+            Wave wave = CompAudioMixer.readWave(file);
 
-            while ((read = input.read(buffer)) > 0)
+            if (wave == null || wave.data == null || wave.data.length == 0)
             {
-                for (int offset = 0; offset + frameSize <= read; offset += frameSize)
+                return null;
+            }
+
+            int channels = Math.max(1, wave.numChannels);
+            int bytes = Math.max(1, wave.bitsPerSample / 8);
+            int frameBytes = Math.max(bytes, wave.blockAlign);
+            int frames = Math.max(1, wave.data.length / frameBytes);
+            float[] peaks = new float[buckets];
+
+            for (int frame = 0; frame < frames; frame++)
+            {
+                int bucket = (int) Math.min(buckets - 1, (long) frame * buckets / frames);
+                float max = 0F;
+
+                for (int channel = 0; channel < channels; channel++)
                 {
-                    int bucket = (int) Math.min(buckets - 1, frameIndex * buckets / totalFrames);
-                    float max = 0F;
+                    int offset = frame * frameBytes + channel * bytes;
 
-                    for (int channel = 0; channel < channels; channel++)
+                    if (offset + bytes > wave.data.length)
                     {
-                        int sampleOffset = offset + channel * Math.max(1, frameSize / channels);
-                        int sample = 0;
-
-                        if (format.getSampleSizeInBits() == 16)
-                        {
-                            int lo = buffer[sampleOffset] & 0xFF;
-                            int hi = buffer[sampleOffset + 1];
-
-                            sample = (short) ((hi << 8) | lo);
-                        }
-                        else if (format.getSampleSizeInBits() == 8)
-                        {
-                            sample = (buffer[sampleOffset] & 0xFF) - 128;
-                        }
-
-                        max = Math.max(max, Math.abs(sample) / 32768F);
+                        break;
                     }
 
-                    peaks[bucket] = Math.max(peaks[bucket], max);
-                    frameIndex++;
+                    max = Math.max(max, Math.abs(sample(wave.data, offset, wave.bitsPerSample)));
                 }
+
+                peaks[bucket] = Math.max(peaks[bucket], max);
             }
 
             CACHE.put(key, peaks);
@@ -87,6 +79,34 @@ public final class CompAudioWaveform
         {
             return null;
         }
+    }
+
+    private static float sample(byte[] data, int offset, int bits)
+    {
+        if (bits == 8)
+        {
+            return ((data[offset] & 0xFF) - 128) / 128F;
+        }
+
+        if (bits == 16)
+        {
+            return (short) ((data[offset + 1] << 8) | (data[offset] & 0xFF)) / 32768F;
+        }
+
+        if (bits == 24)
+        {
+            int value = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8) | (data[offset + 2] << 16);
+            return value / 8388608F;
+        }
+
+        int value = 0;
+
+        for (int i = 0; i < 4 && offset + i < data.length; i++)
+        {
+            value |= (data[offset + i] & 0xFF) << (i * 8);
+        }
+
+        return value / 2147483648F;
     }
 
     private static long mtime(Path file)
