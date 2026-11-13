@@ -29,6 +29,32 @@ public final class CompViewControls
     {}
 
     /**
+     * Absolute orbit for a drag: restore the press-time pose first, then apply the total delta
+     * once. Calling this every frame with the same total delta is idempotent; feeding the total
+     * delta into {@link #orbit} each frame compounds the rotation and makes the camera spin.
+     */
+    public static void orbitFromStart(CompLayer camera, float frame,
+                                      float startYaw, float startPitch,
+                                      float startX, float startY, float startZ,
+                                      float yawDelta, float pitchDelta)
+    {
+        if (camera == null)
+        {
+            return;
+        }
+
+        camera.cameraLookAt = false;
+        camera.rotationY = startYaw;
+        camera.rotationX = startPitch;
+        camera.x = startX;
+        camera.y = startY;
+        camera.cameraZ = startZ;
+        camera.z = startZ;
+
+        orbit(camera, frame, yawDelta, pitchDelta);
+    }
+
+    /**
      * Orbits the eye around the current target by {@code (yawDelta, pitchDelta)} degrees.
      *
      * @param yaw   yaw delta in degrees (positive = turn right)

@@ -3990,12 +3990,8 @@ public class UICompositorPanel extends UIDashboardPanel
                             /* Reset to the press-time pose first. Passing the total drag delta to
                              * an incremental orbit every frame compounded the rotation and made the
                              * view spin ("一滑动就乱晃"). */
-                            camera.rotationY = this.ctStartYaw;
-                            camera.rotationX = this.ctStartPitch;
-                            camera.cameraZ = this.ctStartEye.z;
-                            camera.z = this.ctStartEye.z;
-                            this.writeTransform(camera, null, null, null, this.ctStartEye.x, this.ctStartEye.y);
-                            CompViewControls.orbit(camera, frame, dx * 0.35F, dy * 0.35F);
+                            CompViewControls.orbitFromStart(camera, frame, this.ctStartYaw, this.ctStartPitch,
+                                this.ctStartEye.x, this.ctStartEye.y, this.ctStartEye.z, dx * 0.35F, dy * 0.35F);
                             this.writeTransform(camera, null, null, null, camera.x, camera.y);
                             UICompositorPanel.this.setScalar(camera, "rotationY", camera.rotationY);
                             UICompositorPanel.this.setScalar(camera, "rotationX", camera.rotationX);
