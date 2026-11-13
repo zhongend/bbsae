@@ -973,6 +973,16 @@ public class UICompSettings extends UIElement
 
         this.add(this.row("界面密度", density, 250, "跟随 BBS 会根据 GUI 缩放自动选择"));
 
+        /* Layout lock is a workspace operation, not an experimental developer switch. Keeping it
+         * here makes it discoverable next to the presets and density control it protects. */
+        this.add(this.row("锁定面板布局", this.toggle("", this.panel.isDockLayoutLocked(), (value) ->
+        {
+            this.panel.setDockLayoutLocked(value);
+            this.status(value
+                ? "面板布局已锁定：标题条与分栏线都不再改变布局"
+                : "面板布局已解锁：可以拖动面板标题条/标签和分栏线");
+        }), 170, "锁定后标题条、标签页和分栏线都不能再拖动或改变大小；与顶栏「布局」按钮同一个状态"));
+
         this.add(this.section("预览"));
         if (settings != null)
         {
@@ -1387,15 +1397,6 @@ public class UICompSettings extends UIElement
                 : "已回退到旧版三栏布局：重开合成器面板后生效");
         }), 170, "启用后复用 BBS 原版 UIDockLayout：拖动面板标题条/标签即可拆分或堆叠；"
             + "布局锁与重置在合成器顶栏的「布局」按钮。切换后需重开合成器面板生效"));
-
-        this.add(this.row("锁定面板布局", this.toggle("", this.panel.isDockLayoutLocked(), (value) ->
-        {
-            this.panel.setDockLayoutLocked(value);
-            this.panel.setStatus(value
-                ? "面板布局已锁定：标题条与分栏线都不再改变布局"
-                : "面板布局已解锁：可以拖动面板标题条/标签和分栏线");
-        }), 170, "锁定后标题条、标签页和分栏线都不能再拖动或改变大小；"
-            + "与顶栏「布局」按钮是同一个状态"));
 
         this.add(this.section("渲染"));
 

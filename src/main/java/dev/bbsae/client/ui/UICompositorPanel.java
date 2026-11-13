@@ -11562,6 +11562,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.penTool.forget();
         }
 
+        if (layer != this.selectedLayer)
+        {
+            /* The advanced mask editor belongs to one layer; carrying its expanded state into a
+             * different layer made the panel look like it had reset/changed on its own. */
+            this.maskAdvancedExpanded = false;
+        }
+
         if (layer != null)
         {
             this.selectedAudio = null;
@@ -12157,7 +12164,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshInspector();
         this.refreshSheets();
         this.save();
-        this.setStatus("已把 " + layers.size() + " 个图层合成预渲染：" + precomp.name);
+        this.setStatus("已把 " + layers.size() + " 个图层移入预合成：" + precomp.name
+            + "（右键预合成层可“进入预合成”）");
     }
 
     /** Group under a fresh null so the selection can be transformed as one. */
@@ -12262,8 +12270,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
         row1.w(1F).h(20);
 
-        UIButton precomp = this.smallButton("合成预渲染", this::precomposeSelection);
+        UIButton precomp = this.smallButton("预合成所选", this::precomposeSelection);
         UIButton group = this.smallButton("编组（空对象）", this::groupSelection);
+
+        precomp.tooltip(IKey.constant("把所选图层移入子合成并保留 3D 相机/位置；可 Ctrl+Z 撤销"));
+        group.tooltip(IKey.constant("用一个空对象统一控制所选图层的位移/旋转/缩放"));
 
         precomp.relative(row1).x(0).y(1).w(0.5F, -2).h(18);
         group.relative(row1).x(0.5F, 2).y(1).w(0.5F, -2).h(18);
@@ -15372,6 +15383,13 @@ public class UICompositorPanel extends UIDashboardPanel
         manager.action(Icons.ADD, IKey.constant("添加图层…"), this::showAddLayerMenu);
         manager.action(Icons.COPY, IKey.constant("复制图层"), this::duplicateSelected);
         manager.action(Icons.TRASH, IKey.constant("删除"), this::deleteSelected);
+
+        if (this.selectedLayer != null && "precomp".equals(this.selectedLayer.type)
+            && this.selectedLayer.precompId != null && !this.selectedLayer.precompId.isEmpty())
+        {
+            manager.action(Icons.FILM, IKey.constant("进入预合成"), () -> this.enterPrecomp(this.selectedLayer));
+        }
+
         manager.action(Icons.FILM, IKey.constant("预合成所选图层"), this::precomposeSelected);
         manager.action(Icons.STOPWATCH, IKey.constant("变换关键帧"), () -> this.addTransformKey(true));
         manager.action(Icons.STOPWATCH, IKey.constant("不透明度关键帧"), () -> this.addOpacityKey());
@@ -18789,7 +18807,7 @@ public class UICompositorPanel extends UIDashboardPanel
             /* AM exposes the shape's fill colour on the layer itself. Keep the per-shape colours in
              * the Shape tab for boolean groups, but give the common single-shape layer one obvious
              * colour switch here instead of making the user scroll into the shape list. */
-            section.fields.add(this.colorRow("形状颜色（全部形状）", l.shapes.get(0).fillColor, (color) ->
+            section.fields.add(this.colorRow("全部形状填充色（快捷）", l.shapes.get(0).fillColor, (color) ->
             {
                 for (CompShape shape : l.shapes)
                 {
@@ -20002,6 +20020,21 @@ public class UICompositorPanel extends UIDashboardPanel
 
             section.fields.add(UI.label(IKey.constant("当前：" + (source == null ? "（缺失）" : this.layerLabel(source))
                 + " · " + matteName(layer.trackMatteMode)), 13));
+
+            if (source != null)
+            {
+                /* “用作蒙版” hides the source so its fill does not cover the target. That used
+                 * to make the source effectively unreachable: the panel jumped to the target and
+                 * the only way back was to find a hidden row and toggle its eye. Keep the source
+                 * editable explicitly instead of changing the matte ownership. */
+                section.fields.add(UI.row(
+                    this.smallButton("编辑蒙版来源", () -> this.editMatteSource(source)),
+                    this.smallButton(source.visible ? "隐藏来源" : "显示来源",
+                        () -> this.setMatteSourceVisible(source, !source.visible))
+                ));
+                section.fields.add(UI.label(IKey.constant("编辑完成后用“隐藏并返回目标”恢复合成画面。"), 12));
+            }
+
             section.fields.add(this.smallButton("清除蒙版 / 排除", () ->
             {
                 this.beginAction("清除蒙版");
@@ -20019,6 +20052,26 @@ public class UICompositorPanel extends UIDashboardPanel
         else
         {
             section.fields.add(UI.label(IKey.constant("提示：在时间轴/图层列表选中一个形状层，再按上面的按钮，效果与 AM 的 Mask/Exclude 相同。"), 13));
+        }
+
+        CompLayer matteTarget = this.matteTargetOf(layer);
+
+        if (matteTarget != null)
+        {
+            section.fields.add(UI.label(IKey.constant("这个图层正在作为 " + this.layerLabel(matteTarget)
+                + " 的蒙版来源。"), 13));
+            section.fields.add(UI.row(
+                this.smallButton("返回蒙版目标", () -> this.selectLayer(matteTarget)),
+                this.smallButton("隐藏来源并返回", () ->
+                {
+                    this.beginAction("隐藏蒙版来源");
+                    layer.visible = false;
+                    this.selectLayer(matteTarget);
+                    this.refreshInspector();
+                    this.save();
+                    this.setStatus("蒙版来源已隐藏，已返回目标层");
+                })
+            ));
         }
 
         section.fields.add(this.smallButton(this.maskAdvancedExpanded
@@ -20098,8 +20151,10 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             final CompMask modeMask = mask;
-            UIButton mode = new UICompButton(IKey.constant(maskModeName(mask.mode)), (button) ->
-                this.setMaskMode(modeMask, nextMaskMode(modeMask.mode)));
+            UIButton mode = new UICompButton(IKey.constant("模式：" + maskModeName(mask.mode) + " ▾"),
+                (button) -> this.setMaskMode(modeMask, nextMaskMode(modeMask.mode)));
+
+            mode.tooltip(IKey.constant("左键切换下一种模式；右键选择全部 8 种组合模式"));
 
             mode.context((manager) ->
             {
@@ -23599,6 +23654,56 @@ public class UICompositorPanel extends UIDashboardPanel
      * <p>The shape itself stops being visible (it becomes a guide) — otherwise the fill would cover
      * exactly the region it is supposed to reveal. Toggling its eye brings it back for editing.</p>
      */
+    /** The layer that currently uses {@code source} as its track matte, or null. */
+    private CompLayer matteTargetOf(CompLayer source)
+    {
+        if (this.doc == null || source == null)
+        {
+            return null;
+        }
+
+        for (CompLayer layer : this.doc.layers)
+        {
+            if (layer != null && layer != source && layer.trackMatteEnabled
+                && source.id != null && source.id.equals(layer.trackMatteId))
+            {
+                return layer;
+            }
+        }
+
+        return null;
+    }
+
+    /** Show the shape, select it, and leave the target matte active while editing. */
+    private void editMatteSource(CompLayer source)
+    {
+        if (source == null)
+        {
+            return;
+        }
+
+        this.beginAction("编辑蒙版来源");
+        source.visible = true;
+        this.selectLayer(source);
+        this.refreshInspector();
+        this.save();
+        this.setStatus("正在编辑蒙版来源：" + this.layerLabel(source) + "（编辑完点“隐藏并返回目标”）");
+    }
+
+    private void setMatteSourceVisible(CompLayer source, boolean visible)
+    {
+        if (source == null)
+        {
+            return;
+        }
+
+        this.beginAction(visible ? "显示蒙版来源" : "隐藏蒙版来源");
+        source.visible = visible;
+        this.refreshInspector();
+        this.save();
+        this.setStatus(visible ? "蒙版来源已显示（仅用于检查形状）" : "蒙版来源已隐藏");
+    }
+
     /** Nearest shape layer above {@code layer} (shape-on-top masks the layer below it). */
     private CompLayer nearestShapeAbove(CompLayer layer)
     {
@@ -23654,7 +23759,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshInspector();
         this.save();
         this.setStatus((exclude ? "排除" : "蒙版") + "：" + this.layerLabel(target)
-            + " ← " + this.layerLabel(source) + "（形状层已隐藏，点眼睛可显示）");
+            + " ← " + this.layerLabel(source) + "（已切到目标层；在蒙版页点“编辑蒙版来源”可改形状）");
     }
 
     private static String matteName(int mode)
