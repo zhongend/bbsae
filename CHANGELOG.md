@@ -1,5 +1,29 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix46 — 2026-11-13
+
+3D 环绕预览排查与优化：模型/gizmo 使用真实 orbit 相机；BBS 参考画面增加相机视差，
+不再是屏幕贴图。播放头与暂停模型保持 hotfix45 的行为。
+
+### “3D 预览不是真的 3D？”排查结论
+
+- 自由/绕对象视角的 actor pass 走 `CompViewportCamera.view/projection` 与
+  `ReplayModelPass`，模型、旋转、近大远小、gizmo/pick 都是真实 3D，不是屏幕缩放。
+- 唯一“看起来不 3D”的是 **BBS 世界参考画面**：BBS 捕获的是一张 2D 帧（color + depth），
+  单张透视照片无法还原被遮挡的内部几何；要在 orbit 中看到真正的世界内部，必须用自由相机
+  重新渲染 Minecraft 世界，而不是重投影一张捕获帧。
+- 本轮优化：参考画面按 orbit 相机 `yaw/pitch` 做**视差平移**（限制在视口 12%/10% 内），
+  同时放大 28% 防止平移露黑；背景压暗渐变更深，保证 actor/gizmo 可读。
+- 仍未做“世界重渲染”：它需要独立的世界 pass、实体/BBS 演员 pass 和 Iris 兼容，代价与风险
+  远高于参考背景；当前路线是“真实 3D 演员 + 带视差的 2D 世界参考”。
+
+### 验证
+
+- 全量测试：**155 套件 / 967 项 / 0 failures / 0 errors / 1 skipped**。
+- 真机 `docs/verify/round122-orbit-free.png`：带视差的 BBS 参考画面与 3D 模型同屏。
+- 候选包：`bbsae-0.99-hotfix46.jar`（3,930,401 bytes，SHA-256
+  `2472650F4B2A74330A91E19F3C7ACE9A7AF7EA0047A625C359D54E5BD5E64CAA`）。
+
 ## 0.99-hotfix45 — 2026-11-13
 
 播放头拖动真正修复：根因是两个 `ReplayEditSession` 并存，时间轴写旧 session、面板读新 session。

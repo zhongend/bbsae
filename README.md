@@ -1,10 +1,9 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix45**：回放预览暂停不再丢模型/BBS 预览层；自由/绕对象视角显示 **BBS 参考画面**；
-> 时间轴播放头真正可拖动。播放头根因不是拖动坐标，而是 `build()` 与 `bind()` 各建了一个
-> `ReplayEditSession`：时间轴写旧 session、面板读新 session，所以拖动后指针仍回到 0。
-> 现在首次绑定复用同一个 session，只有真正切换影片才重建时间轴。详见
-> [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix46**：回放预览暂停不再丢模型，时间轴播放头真正可拖动；自由/绕对象视角的
+> BBS 参考画面改为随 orbit 相机 yaw/pitch 产生**视差**的压暗背景，放大留边避免露黑，不再像
+> 一张贴在屏幕上的截图。3D 模型/gizmo 使用真实透视相机；BBS 世界本身是 2D 捕获帧（详见
+> `docs/ROUND86-PAUSE-ORBIT.zh.md` 的“关于真 3D”说明）。详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">

@@ -527,9 +527,9 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     }
 
     /**
-     * BBS world as the free/orbit stage reference. This is what makes the 3D orbit view show the
-     * film picture instead of a black void; it is deliberately dimmed and contained, and it never
-     * participates in the composition's own background (that is the composition plate's job).
+     * Screen-space BBS reference for the free/orbit stage. It is contained, dimmed and shifted by
+     * the orbit camera's yaw/pitch (parallax), so it behaves like a distant backdrop instead of a
+     * glued-on screenshot. It never participates in the composition's own background.
      */
     private boolean drawStageWorld(UIContext context, Area area)
     {
@@ -540,8 +540,17 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             return false;
         }
 
+        CompViewportCamera camera = this.session == null ? null : this.session.camera();
+        float yaw = camera == null ? 0F : camera.yaw;
+        float pitch = camera == null ? 20F : camera.pitch;
+        float parallaxX = Math.max(-area.w * 0.12F, Math.min(area.w * 0.12F, -yaw / 360F * area.w * 0.35F));
+        float parallaxY = Math.max(-area.h * 0.10F, Math.min(area.h * 0.10F, (pitch - 20F) / 90F * area.h * 0.20F));
+        float grow = 0.28F;
         ReplayPreviewLayout.Rect plate = ReplayPreviewLayout.contain(texture.width, texture.height,
-            new ReplayPreviewLayout.Rect(area.x, area.y, area.w, area.h));
+            new ReplayPreviewLayout.Rect(
+                Math.round(area.x - area.w * grow / 2F + parallaxX),
+                Math.round(area.y - area.h * grow / 2F + parallaxY),
+                Math.round(area.w * (1F + grow)), Math.round(area.h * (1F + grow))));
 
         context.batcher.box(area.x, area.y, area.ex(), area.ey(), 0xFF05070A);
         context.batcher.clip(area.x, area.y, area.w, area.h, context);

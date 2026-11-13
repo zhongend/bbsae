@@ -44,6 +44,14 @@
 
 没有绑定 BBS 胶片时保持原渐变舞台，不请求世界帧。
 
+### 关于“真 3D”
+
+actor、gizmo、拾取和轨道相机都是真实透视 3D（`CompViewportCamera` + `ReplayModelPass`）。
+唯一不是“真 3D”的是 BBS 世界参考画面：BBS 捕获的是一张 2D 帧，单张透视照片不可能还原被
+遮挡的内部几何；要让 orbit 看到真实世界内部，必须用自由相机重新渲染 Minecraft 世界。
+本轮先按相机 `yaw/pitch` 给参考画面加视差（限制 12%/10%），并放大 28% 防露黑，让它不再像
+贴在屏幕上的截图；世界重渲染仍列为后续独立任务。
+
 ## 3. 播放头拖动
 
 `ReplayFilmKeyframes.moveNoKeyframes` 先把拖动写回借用的相机编辑器 cursor，回放页读的是
@@ -68,11 +76,12 @@ session 并存**：
 - 真机：
   - `docs/verify/round110-pause-paused.png`、`round112-pause-paused.png`、`round120-pause-paused.png`：
     暂停时模型可见；
-  - `docs/verify/round111-orbit-free.png`：3D 自由视角的 BBS 参考画面；
+  - `docs/verify/round111-orbit-free.png`、`round122-orbit-free.png`：
+    3D 自由视角的 BBS 参考画面（后者带 orbit 视差）；
   - `docs/verify/round113-pause-paused.png`：实体回退后的暂停帧。
 - 播放头真机回归（`-PbbsaeReplayScrub=true`）：
   `before=0.0 after=0.0 moved=false` → `before=0.0 after=2385.5469 moved=true`。
 - 调试像素日志（仅 `-Dbbsae.debugReplayPreview=true`）：
   `Replay preview model-content-*`、`model-blend-*`、`after-models`。
-- 候选包：`bbsae-0.99-hotfix45.jar`（3,930,120 bytes，SHA-256
-  `DCE24A6513A61AAC18C68EC64B0AF6C06C1C5884FC4C69625AF0EC349A811765`）。
+- 候选包：`bbsae-0.99-hotfix46.jar`（3,930,401 bytes，SHA-256
+  `2472650F4B2A74330A91E19F3C7ACE9A7AF7EA0047A625C359D54E5BD5E64CAA`）。
