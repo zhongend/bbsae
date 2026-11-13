@@ -212,6 +212,12 @@ public final class CompViewportRenderer
              * effect. Apply every visible adjustment layer to the finished viewport image — the
              * 3D equivalent of "an adjustment layer covers the camera". */
             applyAdjustments(doc, context, target);
+
+            /* Independent replay models are live BBS forms, not cacheable 2D source rasters, so
+             * drawLayers cannot show them. Render them with the same free camera into their own
+             * depth target and composite that on top, exactly like the composition preview does.
+             * Without this the camera world was empty of the very actors being edited. */
+            drawReplayModels(sceneBatcher, context, doc, camera, width, height, target);
         }
         finally
         {
@@ -228,6 +234,70 @@ public final class CompViewportRenderer
         }
 
         return target;
+    }
+
+    /**
+     * Draws every independent bbsae replay model through the free viewport camera.
+     *
+     * <p>A model layer's source is a live BBS form, so {@link CompLayerSourceCache} deliberately
+     * returns no raster for it. The composition graph has a dedicated actor overlay for exactly
+     * that reason; the 3D workspace needs the same pass, or orbiting the camera world shows the
+     * grid and the 2D layers but not the actor the user is editing.</p>
+     */
+    private static void drawReplayModels(Batcher2D batcher, CompRenderContext context, CompDocument doc,
+                                         CompViewportCamera camera, int width, int height, GlFramebuffer target)
+    {
+        boolean solo = doc.hasSolo();
+
+        for (CompLayer layer : doc.layers)
+        {
+            if (layer == null || !layer.independent || !layer.isEntityLayer() || !layer.hasModelForm()
+                || !layer.visible || !layer.activeAt(context.time) || (solo && !layer.solo))
+            {
+                continue;
+            }
+
+            GlFramebuffer model;
+
+            try
+            {
+                model = ReplayActorPass.renderModel(layer, context, batcher,
+                    camera.view, camera.projection, width, height);
+            }
+            catch (RuntimeException e)
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.warn("3D viewport could not render replay model " + layer.id, e);
+                continue;
+            }
+
+            if (model == null)
+            {
+                continue;
+            }
+
+            /* renderModel blends the form into a transparent target, so its RGB is premultiplied.
+             * The composition path unpremultiplies before compositing; do the same here or the
+             * model's antialiased edges turn dark when the free camera sees it. */
+            GlFramebuffer straight = PassRenderer.unpremultiply(model);
+
+            try
+            {
+                /* unpremultiply() leaves its own target bound and blending off. */
+                target.bindOnly();
+                com.mojang.blaze3d.platform.GlStateManager._enableBlend();
+                org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_BLEND);
+                com.mojang.blaze3d.platform.GlStateManager._blendFunc(
+                    org.lwjgl.opengl.GL11.GL_SRC_ALPHA, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA);
+                LayerContentRenderer.drawFullscreenActors(context, batcher, straight, width, height);
+            }
+            finally
+            {
+                if (straight != model)
+                {
+                    FboPool.release(straight);
+                }
+            }
+        }
     }
 
     /**

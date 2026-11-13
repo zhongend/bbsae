@@ -1,6 +1,8 @@
 package dev.bbsae.client.replay;
 
 import dev.bbsae.BbsAeAddon;
+import mchorse.bbs_mod.api.client.editor.TrackCategories;
+import mchorse.bbs_mod.api.client.editor.TrackCategory;
 import mchorse.bbs_mod.film.Film;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.FormUtils;
@@ -13,16 +15,20 @@ import mchorse.bbs_mod.ui.dashboard.panels.UIDashboardPanel;
 import mchorse.bbs_mod.ui.film.UIFilmPanel;
 import mchorse.bbs_mod.ui.film.replays.UIReplayPropertiesPanel;
 import mchorse.bbs_mod.ui.film.replays.UIReplaysEditor;
+import mchorse.bbs_mod.ui.film.replays.UIReplaysEditorUtils;
 import mchorse.bbs_mod.ui.film.replays.UIReplaysListPanel;
 import mchorse.bbs_mod.ui.film.utils.keyframes.UIFilmKeyframes;
 import mchorse.bbs_mod.ui.forms.UIFormPalette;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
+import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeEditor;
 import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeSheet;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
+import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.ui.utils.keys.KeyAction;
+import mchorse.bbs_mod.utils.Direction;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
@@ -90,6 +96,11 @@ public class UIReplayModePanel extends UIDashboardPanel
     private boolean built;
     private boolean tracksDirty;
     private boolean primed;
+    /** Height of the bottom keyframe strip, recomputed from the page height. */
+    private int timelineHeight = TIMELINE;
+    /** Original replay-editor category filter; null is the "all tracks" view. */
+    private TrackCategory categoryFilter;
+    private UIElement categoryBar;
     /** Logs the first render after an undo/redo to prove whether the page still draws. */
     private boolean logNextRender;
     private boolean lastPlaying;
@@ -153,6 +164,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.header.add(this.title, this.status);
 
         this.add(this.header, this.main);
+        this.buildCategoryBar();
 
         this.onAppear(this::bindFromDashboard);
         this.onDisappear(() ->
@@ -178,6 +190,68 @@ public class UIReplayModePanel extends UIDashboardPanel
     }
 
     /**
+     * The original replay editor's category strip: all tracks plus the same category icons the
+     * film editor uses ({@link TrackCategories}). The default is "all tracks" — the wider view —
+     * and a category narrows the dope sheet exactly like the original tab bar did. This is not a
+     * second track model: the filtering uses {@link UIReplaysEditor#categoryOf(UIKeyframeSheet)},
+     * the original category rule.
+     */
+    private void buildCategoryBar()
+    {
+        this.categoryBar = new UIElement()
+        {
+            @Override
+            public void render(UIContext context)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF10151C);
+                context.batcher.box(this.area.ex() - 1, this.area.y, this.area.ex(), this.area.ey(), 0xFF2A303A);
+                super.render(context);
+            }
+        };
+        this.categoryBar.relative(this).x(0).y(1F, -this.timelineHeight).w(20).h(this.timelineHeight);
+
+        int y = 2;
+        UIIcon all = new UIIcon(Icons.LIST, (button) -> this.setCategoryFilter(null));
+        all.tooltip(IKey.constant("所有轨道（原版回放编辑器视图）"), Direction.RIGHT);
+        all.highlight(() -> this.categoryFilter == null, Direction.LEFT);
+        all.relative(this.categoryBar).x(2).y(y).w(16).h(16);
+        this.categoryBar.add(all);
+        y += 20;
+
+        for (TrackCategory category : TrackCategories.values())
+        {
+            UIIcon button = new UIIcon(category.icon, (clicked) -> this.setCategoryFilter(category));
+            button.tooltip(category.tooltip, Direction.RIGHT);
+            button.highlight(() -> this.categoryFilter == category, Direction.LEFT);
+            button.relative(this.categoryBar).x(2).y(y).w(16).h(16);
+            this.categoryBar.add(button);
+            y += 20;
+        }
+
+        UIIcon collapse = new UIIcon(Icons.COLLAPSE_ALL, (button) ->
+        {
+            if (this.keyframeEditor != null)
+            {
+                boolean expanded = this.keyframeEditor.view.getDopeSheet().hasExpandedSections();
+                this.keyframeEditor.view.getDopeSheet().setAllSectionsExpanded(!expanded);
+            }
+        });
+        collapse.tooltip(IKey.constant("展开 / 收起所有轨道分组"), Direction.RIGHT);
+        collapse.relative(this.categoryBar).x(2).y(1F, -20).w(16).h(16);
+        this.categoryBar.add(collapse);
+
+        this.add(this.categoryBar);
+    }
+
+    private void setCategoryFilter(TrackCategory category)
+    {
+        this.categoryFilter = category;
+        this.tracksDirty = true;
+        this.primed = true;
+        this.ensureTracks();
+    }
+
+    /**
      * Embeds the replay editor as the compositor's second workspace.
      *
      * <p>The default dashboard header is hidden: the compositor's own mode bar provides the
@@ -189,9 +263,61 @@ public class UIReplayModePanel extends UIDashboardPanel
     {
         this.embedded = embedded;
         this.header.setVisible(!embedded);
+        this.timelineHeight = this.preferredTimelineHeight();
         this.main.relative(this).x(0).y(embedded ? 0 : HEADER).w(1F)
-            .h(1F, -(embedded ? 0 : HEADER) - TIMELINE);
+            .h(1F, -(embedded ? 0 : HEADER) - this.timelineHeight);
+        this.repositionKeyframeEditor();
         this.resize();
+    }
+
+    /**
+     * More of the page goes to the dope sheet than the old fixed 216 px did. The full original
+     * replay editor shows every category's tracks at once here, and eight visible rows is not a
+     * timeline an animator can work in. The strip stays proportional so a 1080p page gets a tall
+     * dope sheet while a small window still leaves the 3D viewport usable.
+     */
+    private int preferredTimelineHeight()
+    {
+        int pageHeight = this.area.h > 0 ? this.area.h : 640;
+        int height = Math.round(pageHeight * 0.38F);
+
+        return Math.max(220, Math.min(480, height));
+    }
+
+    private void repositionKeyframeEditor()
+    {
+        if (this.categoryBar != null)
+        {
+            this.categoryBar.relative(this).x(0).y(1F, -this.timelineHeight).w(20).h(this.timelineHeight);
+        }
+
+        if (this.keyframeEditor != null)
+        {
+            this.keyframeEditor.relative(this).x(20).y(1F, -this.timelineHeight)
+                .w(1F, -20).h(this.timelineHeight);
+        }
+    }
+
+    @Override
+    public void resize()
+    {
+        if (this.main == null)
+        {
+            super.resize();
+            return;
+        }
+
+        int height = this.preferredTimelineHeight();
+
+        if (height != this.timelineHeight)
+        {
+            this.timelineHeight = height;
+            this.main.relative(this).x(0).y(this.embedded ? 0 : HEADER).w(1F)
+                .h(1F, -(this.embedded ? 0 : HEADER) - height);
+            this.repositionKeyframeEditor();
+        }
+
+        super.resize();
     }
 
     public boolean isEmbedded()
@@ -217,6 +343,74 @@ public class UIReplayModePanel extends UIDashboardPanel
     public void openModelLibraryFromHost()
     {
         this.openModelLibrary();
+    }
+
+    /**
+     * The original replay editor's "insert frame" (BBS keybind <b>I</b>): write the selected
+     * actor's current position and rotation at the film cursor through the replay's own keyframe
+     * channels, inside one {@code BaseValue.edit} so it is a single undo step.
+     *
+     * <p>With {@code pose} the form's whole pose tracks are keyed as well (BBS does this from its
+     * POSE tab). Both paths operate on the original {@link Replay} data, which is what the visible
+     * actor and the original dope sheet read — not on a parallel bbsae timeline.</p>
+     */
+    public void insertKeyframeFromHost(boolean pose)
+    {
+        if (this.replay == null || this.session == null)
+        {
+            this.setViewportStatus("先选择一条回放，再打关键帧");
+            return;
+        }
+
+        IEntity entity = this.session.entity(this.replay);
+
+        if (entity == null)
+        {
+            this.setViewportStatus("当前回放没有可写入的实体（先在模型库选一个模型）");
+            return;
+        }
+
+        this.session.setPlaying(false);
+        this.session.applyPose(entity, this.replay);
+
+        int tick = (int) Math.floor(this.session.keyframeTick());
+
+        try
+        {
+            if (pose)
+            {
+                mchorse.bbs_mod.ui.film.replays.UIReplaysEditorUtils.insertPoseKeyframesAtTick(
+                    this.replay, tick, new mchorse.bbs_mod.ui.framework.elements.input.items.FoldState<>());
+            }
+            else
+            {
+                List<String> groups = List.of(
+                    mchorse.bbs_mod.film.replays.ReplayKeyframes.GROUP_POSITION,
+                    mchorse.bbs_mod.film.replays.ReplayKeyframes.GROUP_ROTATION
+                );
+
+                mchorse.bbs_mod.settings.values.base.BaseValue.edit(this.replay.keyframes,
+                    (keyframes) -> keyframes.record(tick, entity, groups));
+            }
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.warn("Replay keyframe insertion failed", e);
+            this.setViewportStatus("打关键帧失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+
+            return;
+        }
+
+        this.tracksDirty = true;
+        this.setViewportStatus("已在 tick " + tick + " 写入" + (pose ? "姿态" : "位置/旋转") + "关键帧");
+    }
+
+    private void setViewportStatus(String status)
+    {
+        if (this.viewport != null)
+        {
+            this.viewport.setStatus(status);
+        }
     }
 
     public void openOriginalEditorFromHost()
@@ -674,7 +868,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             IKey.constant("选择一条回放后，这里显示它的关键帧轨道。")
         );
 
-        editor.relative(this).x(0).y(1F, -TIMELINE).w(1F).h(TIMELINE);
+        editor.relative(this).x(20).y(1F, -this.timelineHeight).w(1F, -20).h(this.timelineHeight);
 
         this.keyframeEditor = editor;
         this.tracksDirty = true;
@@ -702,7 +896,17 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.keyframeEditor.view.removeAllSheets();
 
-        for (UIKeyframeSheet sheet : ReplayTrackBuilder.build(this.replay, this.selectedPart))
+        List<UIKeyframeSheet> sheets = ReplayTrackBuilder.build(this.replay, this.selectedPart);
+
+        if (this.categoryFilter != null)
+        {
+            /* Same rule as the original tab bar: the category is derived from the sheet id and
+             * its owner, never from a second local list of "which tracks are pose". */
+            sheets.removeIf((sheet) -> UIReplaysEditor.categoryOf(sheet) != this.categoryFilter);
+            UIReplaysEditorUtils.pruneTree(sheets);
+        }
+
+        for (UIKeyframeSheet sheet : sheets)
         {
             this.keyframeEditor.view.addSheet(sheet);
         }
@@ -1482,6 +1686,15 @@ public class UIReplayModePanel extends UIDashboardPanel
 
                     return true;
                 }
+            }
+
+            if (!Window.isCtrlPressed() && (key == GLFW.GLFW_KEY_I || key == GLFW.GLFW_KEY_K))
+            {
+                /* BBS keys a frame with I; K is accepted as the animation-community spelling of
+                 * the same action. Shift additionally keys the form's pose tracks. */
+                this.insertKeyframeFromHost(Window.isShiftPressed());
+
+                return true;
             }
 
             if (key == GLFW.GLFW_KEY_SPACE)

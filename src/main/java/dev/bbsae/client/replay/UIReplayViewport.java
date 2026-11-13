@@ -160,7 +160,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         String hint = this.gizmoActive
             ? "拖动 gizmo 写回关键帧（Ctrl+Z 撤销）"
-            : "右键环绕 · Shift+右键/中键平移 · 滚轮缩放 · 左键选模型/拖 gizmo";
+            : "右键环绕 · Shift+右键/中键平移 · 滚轮缩放 · 左键选模型/拖 gizmo · I 或 K 打帧";
 
         context.batcher.textCard(hint, x, this.area.ey() - 17, 0xFF777777, 0x00000000);
     }

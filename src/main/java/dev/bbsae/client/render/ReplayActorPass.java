@@ -81,6 +81,22 @@ public final class ReplayActorPass
      */
     static GlFramebuffer renderModel(CompLayer layer, CompRenderContext context, Batcher2D batcher)
     {
+        CompCamera camera = CompScene.camera(context);
+
+        return renderModel(layer, context, batcher,
+            camera == null ? null : camera.view,
+            camera == null ? GlStateGuard.ortho(context.width, context.height) : camera.projection,
+            context.renderWidth(), context.renderHeight());
+    }
+
+    /**
+     * Same independent-model pass with an explicit camera. The 3D workspace calls this with the
+     * free orbit camera so the bbsae actor is visible while the camera world is being navigated;
+     * the composition preview calls the overload above with the composition camera.
+     */
+    static GlFramebuffer renderModel(CompLayer layer, CompRenderContext context, Batcher2D batcher,
+                                     Matrix4f view, Matrix4f projection, int targetWidth, int targetHeight)
+    {
         if (layer == null || context == null || !layer.isEntityLayer())
         {
             return null;
@@ -110,8 +126,8 @@ public final class ReplayActorPass
             return null;
         }
 
-        int width = Math.max(1, context.renderWidth());
-        int height = Math.max(1, context.renderHeight());
+        int width = Math.max(1, targetWidth);
+        int height = Math.max(1, targetHeight);
 
         if (context.project != null && context.project.settings != null)
         {
@@ -128,11 +144,6 @@ public final class ReplayActorPass
             return null;
         }
 
-        /* Independent bbsae actors are 3D by definition, even when the layer was created before
-         * the threeD flag existed. Never fall back to the ortho 2D projection here: that was the
-         * "3D replay looks flattened" bug. */
-        boolean useCamera = true;
-        CompCamera camera = CompScene.camera(context);
         float pixelsPerBlock = pixelsPerBlock(context);
         Matrix4f mapping = new Matrix4f(CompScene.world(context, layer))
             .scale(pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock);
@@ -144,10 +155,10 @@ public final class ReplayActorPass
         {
             mapping.scale(1F, 1F, layer.scaleX);
         }
-        Matrix4f modelView = camera == null ? mapping : new Matrix4f(camera.view).mul(mapping);
-        Matrix4f projection = camera == null
+        Matrix4f modelView = view == null ? mapping : new Matrix4f(view).mul(mapping);
+        Matrix4f targetProjection = projection == null
             ? GlStateGuard.ortho(context.width, context.height)
-            : camera.projection;
+            : projection;
 
         MatrixStack modelStack = RenderSystem.getModelViewStack();
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
@@ -170,7 +181,7 @@ public final class ReplayActorPass
             modelStack.push();
             modelStack.peek().getPositionMatrix().set(modelView);
             RenderSystem.applyModelViewMatrix();
-            RenderSystem.setProjectionMatrix(projection, VertexSorter.BY_Z);
+            RenderSystem.setProjectionMatrix(targetProjection, VertexSorter.BY_Z);
             RenderSystem.setInverseViewRotationMatrix(new Matrix3f(modelView).invert());
 
             RenderSystem.setShaderColor(1F, 1F, 1F, 1F);

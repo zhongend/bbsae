@@ -29,11 +29,20 @@ public final class CompViewControls
     {}
 
     /**
-     * Absolute orbit for a drag: restore the press-time pose first, then apply the total delta
-     * once. Calling this every frame with the same total delta is idempotent; feeding the total
-     * delta into {@link #orbit} each frame compounds the rotation and makes the camera spin.
+     * Absolute orbit around an explicitly captured pivot, for a drag.
+     *
+     * <p>Everything the gesture is derived from is a <b>press-time</b> value: the pivot, the
+     * radius, the yaw and the pitch. The old version read them back through
+     * {@code scalarAt(...)} after writing them, so the first key written by the drag became the
+     * next frame's "start" value and every frame added the total delta again — the camera spun
+     * faster and faster ("拖动预览画面视角激烈变换"). It also used the authored
+     * {@code cameraTarget} of a free/BBS camera, which is a stale point, as the pivot of a
+     * camera that is not aimed at it. Both are fixed by taking the pose as an argument and
+     * computing the eye directly from it; repeating the call with the same total delta is
+     * idempotent even when the layer has keyframes on those channels.</p>
      */
     public static void orbitFromStart(CompLayer camera, float frame,
+                                      org.joml.Vector3f pivot, float radius,
                                       float startYaw, float startPitch,
                                       float startX, float startY, float startZ,
                                       float yawDelta, float pitchDelta)
@@ -43,7 +52,15 @@ public final class CompViewControls
             return;
         }
 
-        camera.cameraLookAt = false;
+        if (pivot == null)
+        {
+            pivot = camera.cameraTarget(frame);
+        }
+
+        float distance = Math.max(1F, radius);
+
+        /* Restore the press-time pose first. The fields, not scalarAt: a channel written by the
+         * previous frame of this very drag must not become the base of the next one. */
         camera.rotationY = startYaw;
         camera.rotationX = startPitch;
         camera.x = startX;
@@ -51,7 +68,24 @@ public final class CompViewControls
         camera.cameraZ = startZ;
         camera.z = startZ;
 
-        orbit(camera, frame, yawDelta, pitchDelta);
+        float newYaw = startYaw + yawDelta;
+        float newPitch = Math.max(-89F, Math.min(89F, startPitch + pitchDelta));
+
+        camera.rotationY = newYaw;
+        camera.rotationX = newPitch;
+
+        float yawRad = (float) Math.toRadians(newYaw);
+        float pitchRad = (float) Math.toRadians(newPitch);
+        float dirX = (float) (Math.sin(yawRad) * Math.cos(pitchRad));
+        float dirY = (float) -Math.sin(pitchRad);
+        float dirZ = (float) (-Math.cos(yawRad) * Math.cos(pitchRad));
+        float eyeX = pivot.x - dirX * distance;
+        float eyeY = pivot.y - dirY * distance;
+        float eyeZ = pivot.z - dirZ * distance;
+
+        writePosition(camera, frame, eyeX, eyeY);
+        camera.cameraZ = eyeZ;
+        camera.z = eyeZ;
     }
 
     /**

@@ -308,6 +308,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private UIIcon replayOrbitViewButton;
     private UIIcon replayFreeViewButton;
     private UIIcon replayKeyframeButton;
+    /** Original replay editor "insert frame" action in the mode bar. */
+    private UIIcon replayKeyButton;
     private int replayViewMode;
     /** Explicit "new camera" action; the only way a camera is created besides the compat switch. */
     private UIIcon createCameraButton;
@@ -572,24 +574,29 @@ public class UICompositorPanel extends UIDashboardPanel
         this.modeTabs.onSelect((index) -> this.switchWorkspace(index == 1 ? WORKSPACE_REPLAY : WORKSPACE_COMPOSITE));
 
         this.replayPlayButton = CompUi.flat("播放", "回放：播放 / 暂停", this::toggleReplayPlayback);
-        this.replayPlayButton.relative(this.modeBar).x(1F, -184).y(2).w(52).h(18);
+        this.replayPlayButton.relative(this.modeBar).x(1F, -206).y(2).w(52).h(18);
         this.replayTimecode = new UILabel(IKey.constant("00:00:00:00"));
         this.replayTimecode.color(0xFFD8DEE9, false);
         this.replayTimecode.labelAnchor(1F, 0.5F);
-        this.replayTimecode.relative(this.modeBar).x(1F, -262).y(2).w(70).h(18);
-        this.replayPrev = CompUi.iconButton(Icons.FRAME_PREV, "回放：上一帧", () -> this.stepFrame(-1));
-        this.replayNext = CompUi.iconButton(Icons.FRAME_NEXT, "回放：下一帧", () -> this.stepFrame(1));
-        this.replayAll = CompUi.iconButton(Icons.MAXIMIZE, "回放：选中第一个 bbsae 模型", this::selectFirstReplayModel);
-        this.replayModels = CompUi.iconButton(Icons.PLAYER, "回放：新建 bbsae 3D 模型", this::addIndependentReplay);
-        this.replayOriginal = CompUi.iconButton(Icons.FILM, "回放：切到 BBS 原版回放编辑", () -> this.replayWorkspace.openOriginalEditorFromHost());
+        this.replayTimecode.relative(this.modeBar).x(1F, -284).y(2).w(70).h(18);
+        this.replayPrev = CompUi.iconButton(Icons.FRAME_PREV, "回放：上一帧", () -> this.replayWorkspace.stepFromHost(-1));
+        this.replayNext = CompUi.iconButton(Icons.FRAME_NEXT, "回放：下一帧", () -> this.replayWorkspace.stepFromHost(1));
+        this.replayAll = CompUi.iconButton(Icons.MAXIMIZE, "回放：框选全部模型", () -> this.replayWorkspace.frameAllFromHost());
+        this.replayModels = CompUi.iconButton(Icons.PLAYER, "回放：BBS 原版模型库", () -> this.replayWorkspace.openModelLibraryFromHost());
+        this.replayOriginal = CompUi.iconButton(Icons.FILM, "回放：切到 BBS 原版影片回放编辑器", () -> this.replayWorkspace.openOriginalEditorFromHost());
+        this.replayKeyButton = CompUi.iconButton(Icons.KEY,
+            "回放：在播放头打位置/旋转关键帧（I / K；Shift+I 同时打姿态）",
+            () -> this.replayWorkspace.insertKeyframeFromHost(false));
         this.replayPrev.relative(this.modeBar).x(1F, -128).y(2).w(18).h(18);
         this.replayNext.relative(this.modeBar).x(1F, -106).y(2).w(18).h(18);
         this.replayAll.relative(this.modeBar).x(1F, -84).y(2).w(18).h(18);
         this.replayModels.relative(this.modeBar).x(1F, -62).y(2).w(18).h(18);
         this.replayOriginal.relative(this.modeBar).x(1F, -40).y(2).w(18).h(18);
+        this.replayKeyButton.relative(this.modeBar).x(1F, -150).y(2).w(18).h(18);
 
         this.modeBar.add(this.modeTabs, this.replayPlayButton, this.replayTimecode,
-            this.replayPrev, this.replayNext, this.replayAll, this.replayModels, this.replayOriginal);
+            this.replayPrev, this.replayNext, this.replayAll, this.replayModels, this.replayOriginal,
+            this.replayKeyButton);
 
         /* Left column: the two panels an editor actually browses from - effects and media.
          * The layer stack lives in the timeline's track headers; keeping a second layer list
@@ -1389,6 +1396,15 @@ public class UICompositorPanel extends UIDashboardPanel
                         else if ("camera".equals(layer.type))
                         {
                             this.renderCameraGizmo(context, renderContext, layer, ox, oy, scale);
+
+                            /* Paths follow the camera being edited as well as the active one:
+                             * selecting a second camera used to hide the only motion path on
+                             * screen, which read as "the path disappeared". */
+                            if (layer == doc.activeCamera(UICompositorPanel.this.time)
+                                || UICompositorPanel.this.selectedLayer == layer)
+                            {
+                                this.renderCameraMotionPath2D(context, layer, ox, oy, scale);
+                            }
                         }
                     }
                 }
@@ -1422,7 +1438,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 CompDocument doc = UICompositorPanel.this.doc;
                 CompLayer active = doc.activeCamera(UICompositorPanel.this.time);
 
-                if (active != layer)
+                if (active != layer && UICompositorPanel.this.selectedLayer != layer)
                 {
                     return;
                 }
@@ -1470,6 +1486,89 @@ public class UICompositorPanel extends UIDashboardPanel
                     + "  " + (camera.perspective ? "透视" : "正交")
                     + "  " + Math.round(camera.zoom * 100F) + "%", cx + 10F, cy - 6F, color);
             }
+
+            /**
+             * Camera motion path in the flat composition view.
+             *
+             * <p>The 3D workspace projected the eye through the free viewport camera, so the path
+             * simply vanished in the 2D/camera view — and that is the view a replay edit spends
+             * most of its time in. The flat path is the eye's X/Y track over the comp rectangle
+             * (the same mapping the camera gizmo already uses); Z is a depth, not a screen
+             * position, so flattening it is the honest 2D projection.</p>
+             */
+            private void renderCameraMotionPath2D(UIContext context, CompLayer layer, float ox, float oy, float scale)
+            {
+                if (!CompPrefs.get().cameraGizmos || UICompositorPanel.this.doc == null)
+                {
+                    return;
+                }
+
+                CompDocument doc = UICompositorPanel.this.doc;
+
+                float fps = Math.max(1F, doc.fps);
+                float from = Math.max(0F, layer.in);
+                float to = Math.min(doc.duration, layer.out > layer.in ? layer.out : doc.duration);
+
+                if (to - from < 1F && doc.duration > 0F)
+                {
+                    from = 0F;
+                    to = doc.duration;
+                }
+
+                if (to <= from)
+                {
+                    return;
+                }
+
+                boolean selected = UICompositorPanel.this.selectedLayer == layer;
+                int pathColor = selected ? 0xCCFFC14D : 0x55FFC14D;
+                int dotColor = selected ? 0xFFFFC14D : 0x99FFC14D;
+                int samples = 48;
+                float lastX = 0F;
+                float lastY = 0F;
+                boolean hasLast = false;
+
+                for (int i = 0; i <= samples; i++)
+                {
+                    float time = from + (to - from) * (i / (float) samples);
+                    org.joml.Vector3f eye = CompCamera.eyeOf(layer, time * fps, doc.height);
+                    float x = this.area.x + ox + eye.x * scale;
+                    float y = this.area.y + oy + eye.y * scale;
+
+                    if (hasLast)
+                    {
+                        this.line(context, lastX, lastY, x, y, pathColor);
+                    }
+
+                    lastX = x;
+                    lastY = y;
+                    hasLast = true;
+                }
+
+                /* Keyframe dots come from the independent axis channels, not a removed shared
+                 * transform channel: a camera can have an X key without a Y key. */
+                java.util.LinkedHashSet<Float> keyTicks = new java.util.LinkedHashSet<>();
+
+                for (Object entry : layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_X).getKeyframes())
+                {
+                    keyTicks.add(((mchorse.bbs_mod.utils.keyframes.Keyframe<?>) entry).getTick());
+                }
+                for (Object entry : layer.axisChannel(dev.bbsae.comp.CompCurves.AXIS_Y).getKeyframes())
+                {
+                    keyTicks.add(((mchorse.bbs_mod.utils.keyframes.Keyframe<?>) entry).getTick());
+                }
+
+                for (float keyTick : keyTicks)
+                {
+                    org.joml.Vector3f eye = CompCamera.eyeOf(layer, keyTick, doc.height);
+                    float x = this.area.x + ox + eye.x * scale;
+                    float y = this.area.y + oy + eye.y * scale;
+
+                    context.batcher.box(x - 3F, y - 3F, x + 3F, y + 3F, 0xFF101014);
+                    context.batcher.box(x - 2F, y - 2F, x + 2F, y + 2F, dotColor);
+                }
+            }
+
 
             /**
              * The 3D workspace overlay: selection outlines, the camera gizmo and the position HUD.
@@ -1574,10 +1673,14 @@ public class UICompositorPanel extends UIDashboardPanel
                     this.renderGizmoModeBar(context);
 
                     CompLayer cameraLayer = doc.activeCamera(UICompositorPanel.this.time);
+                    CompLayer selectedCamera = UICompositorPanel.this.selectedLayer != null
+                        && "camera".equals(UICompositorPanel.this.selectedLayer.type)
+                        ? UICompositorPanel.this.selectedLayer : null;
+                    CompLayer pathCamera = selectedCamera != null ? selectedCamera : cameraLayer;
 
-                    if (cameraLayer != null)
+                    if (pathCamera != null)
                     {
-                        this.renderCameraMotionPath(context, cameraLayer, doc);
+                        this.renderCameraMotionPath(context, pathCamera, doc);
                     }
 
                     /* Every camera layer gets a gizmo, not only the active one: a second camera
@@ -4047,15 +4150,18 @@ public class UICompositorPanel extends UIDashboardPanel
                  * within the same second. */
                 UICompositorPanel.this.beginAction("摄像机工具");
 
-                if (camera.cameraLookAt)
+                if (camera.cameraLookAt && camera.cameraStyle != CompLayer.CAMERA_BBS)
                 {
                     this.ctStartTarget.set(camera.cameraTarget(UICompositorPanel.this.getFrame()));
                 }
                 else
                 {
-                    /* A free camera has no authored pivot, so orbit/dolly use the point at the
-                     * current dolly distance along the view direction — the same pivot the 3D
-                     * viewport orbits around. */
+                    /* A free camera has no authored pivot, and a BBS fly camera ignores its
+                     * look-at target in the renderer even if the stale field says otherwise. The
+                     * pivot in both cases is the point at the current dolly distance along the
+                     * view direction — the same pivot the 3D viewport orbits around. Reading the
+                     * authored target for a BBS camera made the first orbit frame jump the eye
+                     * across the scene. */
                     this.ctStartTarget.set(this.ctStartEye)
                         .add(new org.joml.Vector3f(view.forward).mul(this.ctStartDistance));
                 }
@@ -4109,8 +4215,10 @@ public class UICompositorPanel extends UIDashboardPanel
                             /* Reset to the press-time pose first. Passing the total drag delta to
                              * an incremental orbit every frame compounded the rotation and made the
                              * view spin ("一滑动就乱晃"). */
-                            CompViewControls.orbitFromStart(camera, frame, this.ctStartYaw, this.ctStartPitch,
-                                this.ctStartEye.x, this.ctStartEye.y, this.ctStartEye.z, dx * 0.35F, dy * 0.35F);
+                            CompViewControls.orbitFromStart(camera, frame, this.ctStartTarget,
+                                this.ctStartRadius, this.ctStartYaw, this.ctStartPitch,
+                                this.ctStartEye.x, this.ctStartEye.y, this.ctStartEye.z,
+                                dx * 0.35F, dy * 0.35F);
                             this.writeTransform(camera, null, null, null, camera.x, camera.y);
                             UICompositorPanel.this.setScalar(camera, "rotationY", camera.rotationY);
                             UICompositorPanel.this.setScalar(camera, "rotationX", camera.rotationX);
@@ -6296,10 +6404,13 @@ public class UICompositorPanel extends UIDashboardPanel
         this.switchWorkspace(WORKSPACE_REPLAY);
     }
 
-    /** Replay transport now drives the bbsae composition playhead, not BBS' film cursor. */
+    /** Play/pause of the original replay editor's transport. */
     private void toggleReplayPlayback()
     {
-        this.togglePlay();
+        if (this.replayWorkspace != null)
+        {
+            this.replayWorkspace.togglePlaybackFromHost();
+        }
     }
 
     private void selectFirstReplayModel()
@@ -10273,6 +10384,92 @@ public class UICompositorPanel extends UIDashboardPanel
                 break;
             }
 
+            case "independent3d":
+            {
+                /* The camera world used to show the grid and the 2D layers but not the replay
+                 * actor, because a live form has no cacheable source raster. */
+                this.addLayer("replay");
+
+                CompLayer actor = this.getSelectedLayer();
+
+                if (actor != null)
+                {
+                    mchorse.bbs_mod.forms.forms.MobForm form = new mchorse.bbs_mod.forms.forms.MobForm();
+
+                    form.name.set("bbsae chicken 3D");
+                    form.mobID.set("minecraft:chicken");
+                    actor.setModelForm(form);
+                    actor.independent = true;
+                    actor.threeD = true;
+                    actor.name = "回放鸡（摄像机世界）";
+                    actor.x = this.doc.width / 2F;
+                    actor.y = this.doc.height / 2F;
+                    actor.z = 0F;
+                    actor.scaleX = 3F;
+                    actor.scaleY = 3F;
+                    actor.scaleZ = 3F;
+                    this.selectLayer(actor);
+                    boolean previousFocus = CompPrefs.get().modelFocus;
+                    CompPrefs.get().modelFocus = true;
+                    this.applyModelFocus(actor);
+                    CompPrefs.get().modelFocus = previousFocus;
+                    this.enter3DSpace();
+                    this.setStatus("验证：3D 摄像机世界中的 bbsae 实体回放");
+                }
+
+                break;
+            }
+
+            case "camera2d":
+            {
+                /* A keyed camera in the flat preview, so the motion path is exercised in the
+                 * view it used to disappear from. */
+                if (this.is3DSpace())
+                {
+                    this.exit3DSpace();
+                }
+
+                this.restoreModelFocus();
+                this.cameraPreviewMode = false;
+
+                if (this.project != null && this.project.settings != null)
+                {
+                    this.project.settings.cameraPreviewMode = false;
+                }
+
+                this.addLayer("camera");
+
+                CompLayer camera = this.getSelectedLayer();
+
+                if (camera != null)
+                {
+                    float end = Math.max(1F, this.doc.duration * this.doc.fps);
+                    float[] xs = {this.doc.width * 0.5F, this.doc.width * 0.28F, this.doc.width * 0.72F, this.doc.width * 0.5F};
+                    float[] ys = {this.doc.height * 0.62F, this.doc.height * 0.42F, this.doc.height * 0.5F, this.doc.height * 0.38F};
+
+                    camera.cameraLookAt = false;
+                    camera.cameraStyle = CompLayer.CAMERA_BBS;
+                    camera.rotationY = 0F;
+                    camera.rotationX = 0F;
+                    camera.ensureIndependentAxes();
+
+                    for (int i = 0; i < xs.length; i++)
+                    {
+                        float tick = end * i / (xs.length - 1);
+
+                        camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_X, tick, xs[i]);
+                        camera.insertAxisKey(dev.bbsae.comp.CompCurves.AXIS_Y, tick, ys[i]);
+                        camera.scalarChannel("rotationY").insert(tick, i == 0 ? 0F : (i == 1 ? 25F : (i == 2 ? -20F : 0F)));
+                    }
+
+                    this.selectLayer(camera);
+                    this.time = 0F;
+                    this.setStatus("验证：2D 预览中的摄像机运动路径");
+                }
+
+                break;
+            }
+
             case "replay":
                 /* Entity-replay editing page: BBS's own replay timeline/gizmo/model library inside
                  * bbsae's 3D space, as the compositor's second workspace. */
@@ -13516,8 +13713,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.replayNext.setVisible(replay);
         this.replayAll.setVisible(replay);
         this.replayModels.setVisible(replay);
-        /* bbsae replay is its own workspace; the BBS film replay editor is not exposed here. */
-        this.replayOriginal.setVisible(false);
+        this.replayOriginal.setVisible(replay);
+        this.replayKeyButton.setVisible(replay);
 
         /* The header's transport belongs to the composition. In replay mode it is hidden so there
          * is exactly one play button and one timecode on screen, both owned by the mode bar. */
@@ -13530,9 +13727,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (replay)
         {
-            this.replayPlayButton.label = IKey.constant(this.playing ? "暂停" : "播放");
+            this.replayPlayButton.label = IKey.constant(
+                this.replayWorkspace != null && this.replayWorkspace.isPlayingFromHost() ? "暂停" : "播放");
 
-            int frames = Math.max(0, Math.round(this.time * 20F));
+            float playhead = this.replayWorkspace == null ? 0F : this.replayWorkspace.playheadSeconds();
+            int frames = Math.max(0, Math.round(playhead * 20F));
             int ff = frames % 20;
             int totalSeconds = frames / 20;
             int ss = totalSeconds % 60;
@@ -13544,6 +13743,17 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
+    /**
+     * Switches between the composition editor and the <b>original BBS replay editor</b>.
+     *
+     * <p>This is deliberately not a second, simplified timeline. Replay editing is the one part
+     * of BBS that is already complete: the replay list, the per-replay properties, every curated
+     * channel, every form/bone/pose track, the original keyframe context menus, the original
+     * gizmo and its undo writes. Re-implementing that surface lost tracks and tools, so the
+     * workspace hosts that editor itself. The only thing bbsae replaces is the picture behind it:
+     * {@link UIReplayModePanel}'s viewport is bbsae's own 3D world (actors rendered from the film
+     * into a private framebuffer), not the live Minecraft world.</p>
+     */
     private void switchWorkspace(int mode)
     {
         if (mode == this.workspaceMode)
@@ -13553,9 +13763,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (mode == WORKSPACE_REPLAY)
         {
-            if (this.doc == null)
+            if (this.film == null || this.filmPanel == null)
             {
-                this.setStatus("还没有打开合成，无法进入回放编辑");
+                this.setStatus("没有打开的影片：先在 BBS 影片编辑器打开一个影片，或从合成器绑定影片后再进回放");
                 return;
             }
 
@@ -13569,34 +13779,58 @@ public class UICompositorPanel extends UIDashboardPanel
             this.lastPlayNanos = 0L;
             this.restoreModelFocus();
 
-            if (CompPrefs.get().replayIsolation)
+            try
             {
-                this.isolateReplayLayers();
+                /* The replay panel borrows the dashboard's single film panel, its controller,
+                 * keyframe editor and undo history. appear() is what performs that binding. */
+                this.replayWorkspace.appear();
+                this.replayWorkspace.seekSeconds(this.time);
+            }
+            catch (RuntimeException e)
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.error("Could not open the embedded replay workspace", e);
+                this.workspaceMode = WORKSPACE_COMPOSITE;
+                this.applyLayout();
+                this.setStatus("回放工作区打开失败："
+                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+
+                return;
             }
 
-            /* The replay mode is a bbsae workspace: same preview, camera HUD, text layers and
-             * timeline, with the left column on its own bbsae replay list. It deliberately does
-             * not open BBS' film replay UI or require a real-world film. */
-            this.applyLeftPage(3, true);
-            this.selectFirstReplayModel();
-            this.showBbsReplayTimeline(true);
-            this.replayViewBar.setVisible(true);
-            this.setReplayViewMode(0);
-            this.updatePlayLabel();
+            /* The compositor's preview decorations belong to the composition workspace. The
+             * replay editor supplies its own native gizmo, view bar and transport labels. */
+            this.replayViewBar.setVisible(false);
             this.beginPageMotion(this.workspaceMotion, "mode:replay");
             this.applyLayout();
             this.updateToolbarLabels();
-            this.setStatus("bbsae 回放编辑：3D 模型只存在于合成相机，真实世界不可见");
+            this.setStatus("回放编辑：BBS 原版轨道 / 原版 gizmo / bbsae 虚拟世界预览");
         }
         else
         {
             this.workspaceMode = WORKSPACE_COMPOSITE;
+
+            if (this.replayWorkspace != null)
+            {
+                /* Keep the composition playhead where the replay editor left it: the replay panel
+                 * owns the film cursor while it is visible, and without writing it back the
+                 * timeline jumped to the last composition time on return. */
+                this.time = Math.max(0F, Math.min(this.doc == null ? this.time : this.doc.duration,
+                    this.replayWorkspace.playheadSeconds()));
+
+                try
+                {
+                    this.replayWorkspace.disappear();
+                }
+                catch (RuntimeException e)
+                {
+                    dev.bbsae.BbsAeAddon.LOGGER.warn("Replay workspace failed to disappear cleanly", e);
+                }
+            }
+
             this.restoreReplayLayers();
             this.applyModelFocus(this.selectedLayer);
-            this.showBbsReplayTimeline(false);
             this.replayViewBar.setVisible(false);
             this.beginPageMotion(this.workspaceMotion, "mode:composite");
-            this.applyLeftPage(0, true);
             this.applyLayout();
             this.updateToolbarLabels();
             this.setStatus("已回到合成器");
@@ -13749,6 +13983,36 @@ public class UICompositorPanel extends UIDashboardPanel
     public void update()
     {
         super.update();
+
+        /* The embedded original replay editor owns its own transport, keyframe editor and
+         * borrowed film panel. It must tick with the compositor while it is the visible page. */
+        if (this.workspaceMode == WORKSPACE_REPLAY && this.replayWorkspace != null)
+        {
+            this.replayWorkspace.update();
+            this.updateReplayTransportLabels();
+        }
+    }
+
+    /** Keeps the shared mode bar's play label and timecode live while the film plays. */
+    private void updateReplayTransportLabels()
+    {
+        if (this.replayWorkspace == null)
+        {
+            return;
+        }
+
+        this.replayPlayButton.label = IKey.constant(this.replayWorkspace.isPlayingFromHost() ? "暂停" : "播放");
+
+        float playhead = this.replayWorkspace.playheadSeconds();
+        int frames = Math.max(0, Math.round(playhead * 20F));
+        int ff = frames % 20;
+        int totalSeconds = frames / 20;
+        int ss = totalSeconds % 60;
+        int mm = (totalSeconds / 60) % 60;
+        int hh = totalSeconds / 3600;
+
+        this.replayTimecode.label = IKey.constant(String.format(java.util.Locale.ROOT,
+            "%02d:%02d:%02d:%02d", hh, mm, ss, ff));
     }
 
     /** Dock mode: the dock owns the panel rectangles; the rest of the chrome is positioned here. */
@@ -13761,13 +14025,13 @@ public class UICompositorPanel extends UIDashboardPanel
         this.modeBar.relative(this).x(0).y(24).w(1F).h(MODE_BAR_H);
         this.status.relative(this).x(0).y(1F, -18).w(1F).h(16);
         this.dock.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
-        this.dock.setVisible(!this.renderView);
-        this.dock.setEnabled(!this.renderView);
+        this.dock.setVisible(!this.renderView && !replay);
+        this.dock.setEnabled(!this.renderView && !replay);
         this.renderPanel.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
-        this.renderPanel.setVisible(this.renderView);
+        this.renderPanel.setVisible(this.renderView && !replay);
         this.replayWorkspace.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
-        this.replayWorkspace.setVisible(false);
-        this.replayWorkspace.setEnabled(false);
+        this.replayWorkspace.setVisible(replay);
+        this.replayWorkspace.setEnabled(replay);
         this.layoutModeBar();
 
         /* super.resize() propagates the chrome rectangles; the dock's own flex pass runs in the
@@ -13813,30 +14077,30 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.modeBar.relative(this).x(0).y(24).w(1F).h(MODE_BAR_H);
         this.body.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
-        this.body.setVisible(!this.renderView);
-        this.body.setEnabled(!this.renderView);
+        this.body.setVisible(!this.renderView && !replay);
+        this.body.setEnabled(!this.renderView && !replay);
         boolean quick = this.quickPanel != null && this.quickPanel.isVisible();
         int quickWidth = quick ? CompUi.quickWidth(this.area.w, this.quickPanelWidth) : 0;
 
         this.timeline.relative(this).x(0).y(1F, -(this.timelinePanelHeight + 18))
             .w(1F, -quickWidth).h(this.timelinePanelHeight);
-        this.timeline.setVisible(!this.renderView);
-        this.timeline.setEnabled(!this.renderView);
+        this.timeline.setVisible(!this.renderView && !replay);
+        this.timeline.setEnabled(!this.renderView && !replay);
 
         if (quick)
         {
             this.quickPanel.relative(this).x(1F, -quickWidth).y(1F, -(this.timelinePanelHeight + 18))
                 .w(quickWidth).h(this.timelinePanelHeight);
-            this.quickPanel.setVisible(!this.renderView);
-            this.quickPanel.setEnabled(!this.renderView);
+            this.quickPanel.setVisible(!this.renderView && !replay);
+            this.quickPanel.setEnabled(!this.renderView && !replay);
         }
         this.renderPanel.relative(this).x(0).y(24 + MODE_BAR_H).w(1F)
             .h(this.renderView ? Math.max(1, usableHeight - 24 - 18) : bodyHeight);
-        this.renderPanel.setVisible(this.renderView);
+        this.renderPanel.setVisible(this.renderView && !replay);
         this.replayWorkspace.relative(this).x(0).y(24 + MODE_BAR_H).w(1F)
             .h(1F, -24 - MODE_BAR_H - 18);
-        this.replayWorkspace.setVisible(false);
-        this.replayWorkspace.setEnabled(false);
+        this.replayWorkspace.setVisible(replay);
+        this.replayWorkspace.setEnabled(replay);
         this.layoutModeBar();
 
         if (this.leftHandle != null)

@@ -1,5 +1,58 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix37 — 2026-11-13
+
+回放编辑回归 BBS 原版操作逻辑，并修复相机世界、运动路径与相机拖拽。
+
+### 回放编辑：原版轨道 / 原版 gizmo / 原版 K 帧
+
+- 「回放」工作区重新使用 BBS 原版回放编辑器：`UIReplaysListPanel` 回放列表、
+  `UIReplayPropertiesPanel` 属性、`UIKeyframeEditor` + `UIFilmKeyframes` 时间轴，以及
+  `ReplayTrackBuilder` 根据 `TrackCatalog` 生成的全部轨道（位置/旋转、状态、快捷栏、装备、
+  操作、速度、骨骼、姿态、材质等），不再用 bbsae 自己的简化关键帧列表。
+- 轨道左侧恢复原版分类栏：All / Replay / Form / Pose / IK / Physics，按
+  `UIReplaysEditor.categoryOf` 的原始规则过滤；另加“全部展开/收起”按钮。
+- 回放预览的模型使用 BBS `Gizmo.INSTANCE` 原生 cooler-axes gizmo（和 BBS 影片编辑器同一套
+  绘制和命中路径），不再画 bbsae 自己的 gizmo；预览本身是 bbsae 的虚拟 3D 世界（黑色舞台 +
+  `ReplayModelPass`），不显示真实世界。
+- K 帧：模式栏新增 K 按钮；快捷键 `I`（BBS 原版打帧键）或 `K` 在播放头写入位置/旋转关键帧，
+  `Shift+I` 额外写入姿态轨道；写入走原版 `Replay.keyframes.record` / `BaseValue.edit`，一次
+  拖动/一次打帧对应一次撤销。
+- 回放列表的增删/复制/换模型、属性栏、原版 undo/redo 全部保留。
+
+### 相机世界看见 bbsae 实体回放
+
+- `CompViewportRenderer` 在 3D 工作区完成普通图层后，用自由相机把每个独立 bbsae 回放模型渲染
+  到自己的深度目标，再反预乘并合成到世界画面；因此环绕/自由视角不再只剩网格和卡片。
+- 模型 overlay 与合成预览一样位于普通图层之后；导入模型后不会因为 2D 卡片/背景压在上面而消失。
+- 2D 预览、3D 预览和导出继续共用同一个 `CompRenderer` 模型路径，导出画面不变。
+
+### 摄像机运动路径
+
+- 2D 预览也会绘制当前/所选摄像机的运动路径和关键帧圆点；以前只在 3D 工作区画，切到摄像机
+  视角或回放视角后路径就“消失”了。
+- 3D 工作区对所选摄像机也绘制路径（不再只认 active camera），选择第二台摄像机不会让路径消失。
+- 路径采样使用 `CompCamera.eyeOf` 和原始 x/y/z 关键帧通道，和镜头实际运动一致。
+
+### 摄像机编辑拖拽
+
+- `CompViewControls.orbitFromStart` 改为绝对轨道：以按下时的 pivot、半径、yaw、pitch 为基准，
+  每帧用总位移重新计算 eye；不再把上一帧写入的关键帧读成“起始值”，因此不会越拖越快、乱转。
+- BBS 飞行摄像机忽略陈旧的 `cameraLookAt` 目标点，pivot 始终取按下时视线方向上的点；带关键帧
+  的摄像机也不会在拖拽第一帧跳到旧目标点。
+- 新增 `CompViewControlsOrbitTest`：带旋转关键帧时重复同一总位移仍幂等，且 eye 到 pivot 的半径
+  保持不变。
+
+### 验证
+
+- 全量：**152 套件 / 951 项测试 / 0 failures / 0 errors / 1 skipped**。
+- 真机回放交互脚本（move/undo/redo/form/list）全部通过，`undoRestored=true`。
+- 真机截图：`docs/verify/round79-bbs-replay-restored.png`（原版列表/属性/全轨道/原生 gizmo/
+  bbsae 虚拟世界）、`docs/verify/round79-3d-camera-actors.png`（3D 相机世界中的 bbsae 实体）、
+  `docs/verify/round79-camera-path-2d.png`（2D 摄像机路径）。
+- 本地候选包：`bbsae-0.99-hotfix37.jar`（3,883,663 bytes，SHA-256
+  `B40055E122AC2A9ED8CD2684DFA47E933F991A53F1419A5502F429C0D295737F`）。
+
 ## 0.99 — 2026-11-14
 
 第六轮「假设所有功能都有 bug」：UI 操作逻辑/状态机审计 + 渲染/缓存资源审计的 P0/P1 修复。修掉

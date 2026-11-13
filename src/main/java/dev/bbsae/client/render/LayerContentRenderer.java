@@ -421,6 +421,19 @@ final class LayerContentRenderer
     /** Draws the comp-camera actor pass as a full-composition image (already camera-projected). */
     private static void drawCompositionActors(CompRenderContext context, Batcher2D batcher, GlFramebuffer actors)
     {
+        drawFullscreenActors(context, batcher, actors, context.width, context.height);
+    }
+
+    /**
+     * Blits an already-projected actor target over the whole current render target.
+     *
+     * <p>Package-visible because the 3D workspace renders the same independent actors with the
+     * free orbit camera into its own target; only the rectangle it fills differs. Keeping the
+     * blit here means both views use one depth-off, identity-modelview path.</p>
+     */
+    static void drawFullscreenActors(CompRenderContext context, Batcher2D batcher, GlFramebuffer actors,
+                                     int width, int height)
+    {
         MatrixStack stack = batcher.getContext().getMatrices();
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
         boolean depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
@@ -436,12 +449,12 @@ final class LayerContentRenderer
         try
         {
             stack.peek().getPositionMatrix().identity();
-            RenderSystem.setProjectionMatrix(GlStateGuard.ortho(context.width, context.height),
+            RenderSystem.setProjectionMatrix(GlStateGuard.ortho(width, height),
                 com.mojang.blaze3d.systems.VertexSorter.BY_Z);
             batcher.texturedBox(actors.color.id, 0xFFFFFFFF,
-                0F, 0F, context.width, context.height,
-                0F, context.height, context.width, 0F,
-                context.width, context.height);
+                0F, 0F, width, height,
+                0F, height, width, 0F,
+                width, height);
             batcher.flush();
         }
         finally
