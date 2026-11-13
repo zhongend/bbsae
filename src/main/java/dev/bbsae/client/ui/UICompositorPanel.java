@@ -368,6 +368,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private final List<Runnable> inspectorBindings = new ArrayList<>();
     private final Map<String, Boolean> sectionFolds = new HashMap<>();
     private final LinkedList<String> recentEffects = new LinkedList<>();
+    /** Mask tab: manual pen/path masks are advanced; the AM-style matte buttons are the default. */
+    private boolean maskAdvancedExpanded;
 
     private static final int PAGE_EFFECTS = 0;
     private static final int PAGE_GRADE = 1;
@@ -2135,22 +2137,21 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private int gizmoModeButtonAt(UIContext context)
             {
-                if (!CompPrefs.get().gizmos)
+                if (!CompPrefs.get().gizmos || !CompPrefs.get().gizmoModeBar)
                 {
                     return -1;
                 }
 
-                int x = this.area.x + 8;
-                /* Above the bottom HUD: the top strip belongs to the preview's own toolbar, and
-                 * the first version of this bar was hidden underneath it. */
-                int y = this.area.ey() - 100;
-                int width = 58;
-                int height = 18;
+                int[] bar = CompUi.gizmoModeBarRect(this.area);
+                int width = bar[4];
+                int gap = CompUi.GIZMO_MODE_GAP;
 
                 for (int i = 0; i < 3; i++)
                 {
-                    if (context.mouseX >= x + i * (width + 4) && context.mouseX <= x + i * (width + 4) + width
-                        && context.mouseY >= y && context.mouseY <= y + height)
+                    int bx = bar[0] + i * (width + gap);
+
+                    if (context.mouseX >= bx && context.mouseX <= bx + width
+                        && context.mouseY >= bar[1] && context.mouseY <= bar[1] + bar[3])
                     {
                         return i;
                     }
@@ -2161,23 +2162,29 @@ public class UICompositorPanel extends UIDashboardPanel
 
             private void renderGizmoModeBar(UIContext context)
             {
-                if (!CompPrefs.get().gizmos)
+                if (!CompPrefs.get().gizmos || !CompPrefs.get().gizmoModeBar)
                 {
                     return;
                 }
 
-                String[] labels = {"W 移动", "E 缩放", "R 旋转"};
-                int x = this.area.x + 8;
-                int y = this.area.ey() - 100;
+                String[] full = {"W 移动", "E 缩放", "R 旋转"};
+                String[] compact = {"W", "E", "R"};
+                int[] bar = CompUi.gizmoModeBarRect(this.area);
+                int width = bar[4];
+                int gap = CompUi.GIZMO_MODE_GAP;
+
+                /* A soft backdrop keeps the strip readable over bright footage without hiding it. */
+                context.batcher.box(bar[0] - 4, bar[1] - 3, bar[0] + bar[2] + 4, bar[1] + bar[3] + 3, 0x9910141B);
 
                 for (int i = 0; i < 3; i++)
                 {
-                    int width = 58;
+                    int bx = bar[0] + i * (width + gap);
                     boolean active = this.gizmoMode == i;
                     int fill = active ? 0xFF2F5C9E : 0xDD1A2129;
+                    String label = width >= 48 ? full[i] : compact[i];
 
-                    context.batcher.box(x + i * (width + 4), y, x + i * (width + 4) + width, y + 18, fill);
-                    context.batcher.text(labels[i], x + i * (width + 4) + 5, y + 5,
+                    context.batcher.box(bx, bar[1], bx + width, bar[1] + bar[3], fill);
+                    context.batcher.text(label, bx + 5, bar[1] + 5,
                         active ? 0xFFFFFFFF : 0xFFB8C4D6);
                 }
             }
@@ -14407,6 +14414,27 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
+    /** True when the dock (or the legacy fixed layout) is currently locked. */
+    public boolean isDockLayoutLocked()
+    {
+        return this.dock == null || this.dock.isLocked();
+    }
+
+    /** Settings-page entry point; same state and persistence as the header 「布局」 button. */
+    public void setDockLayoutLocked(boolean locked)
+    {
+        if (this.dock == null)
+        {
+            this.setStatus("当前是旧版固定分栏：没有可锁定的面板布局");
+            return;
+        }
+
+        if (this.dock.isLocked() != locked)
+        {
+            this.toggleDockLock();
+        }
+    }
+
     private void toggleDockLock()
     {
         if (this.dock == null)
@@ -14423,9 +14451,16 @@ public class UICompositorPanel extends UIDashboardPanel
             settings.dockUnlocked = !this.dock.isLocked();
         }
 
-        this.saveUiState();
+        if (this.layoutButton != null)
+        {
+            this.layoutButton.label = IKey.constant(this.dock.isLocked() ? "布局·锁" : "布局·开");
+        }
+
+        /* Persist immediately: the lock used to live only in the debounced UI-state save, so a
+         * crash/close before the debounce fired brought the previous unlocked state back. */
+        this.savePanelLayout();
         this.setStatus(this.dock.isLocked()
-            ? "面板布局已锁定：拖动标题条不会再改变布局"
+            ? "面板布局已锁定：拖动标题条/分栏线都不会再改变布局"
             : "面板布局已解锁：拖动面板标题条/标签即可拆分或堆叠（Esc 取消拖动）");
     }
 
@@ -14822,6 +14857,12 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.dock.locked(!this.dockUnlocked());
+
+            if (this.layoutButton != null)
+            {
+                this.layoutButton.label = IKey.constant(this.dock.isLocked() ? "布局·锁" : "布局·开");
+            }
+
             /* A project switch cancels any transient focus view: keeping the old flag would leave
              * the button/state disagreeing with the restored tree on the next F press. */
             this.focusMode = false;
@@ -18743,6 +18784,25 @@ public class UICompositorPanel extends UIDashboardPanel
         name.setText(l.name);
         section.fields.add(this.fieldRow("名称", name));
 
+        if ("shape".equals(l.type) && l.shapes != null && !l.shapes.isEmpty())
+        {
+            /* AM exposes the shape's fill colour on the layer itself. Keep the per-shape colours in
+             * the Shape tab for boolean groups, but give the common single-shape layer one obvious
+             * colour switch here instead of making the user scroll into the shape list. */
+            section.fields.add(this.colorRow("形状颜色（全部形状）", l.shapes.get(0).fillColor, (color) ->
+            {
+                for (CompShape shape : l.shapes)
+                {
+                    if (shape != null)
+                    {
+                        shape.fillColor = color;
+                    }
+                }
+
+                this.save();
+            }));
+        }
+
         UIToggle visible = new UIToggle(IKey.constant("可见"), l.visible, (toggle) ->
         {
             this.beginAction("图层可见");
@@ -19561,6 +19621,15 @@ public class UICompositorPanel extends UIDashboardPanel
             this.refreshInspector();
             this.save();
         });
+        UIButton square = this.smallButton("正方形", () ->
+        {
+            CompShape shape = CompShape.rect("square_" + (layer.shapes.size() + 1), 0F, 0F, 240F, 240F, 0xFF55AAFF);
+
+            shape.ensureCorners();
+            layer.shapes.add(shape);
+            this.refreshInspector();
+            this.save();
+        });
         UIButton triangle = this.smallButton("三角形", () ->
         {
             CompShape shape = new CompShape("triangle_" + (layer.shapes.size() + 1), CompShape.TRIANGLE);
@@ -19614,11 +19683,12 @@ public class UICompositorPanel extends UIDashboardPanel
         });
 
         rect.relative(create).x(0).y(0).w(0.5F, -2).h(18);
-        triangle.relative(create).x(0.5F, 2).y(0).w(0.5F, -2).h(18);
-        star.relative(create).x(0).y(20).w(0.5F, -2).h(18);
-        polygon.relative(create).x(0.5F, 2).y(20).w(0.5F, -2).h(18);
-        path.relative(create).x(0).y(40).w(1F).h(18);
-        create.add(rect, triangle, star, polygon, path);
+        square.relative(create).x(0.5F, 2).y(0).w(0.5F, -2).h(18);
+        triangle.relative(create).x(0).y(20).w(0.5F, -2).h(18);
+        star.relative(create).x(0.5F, 2).y(20).w(0.5F, -2).h(18);
+        polygon.relative(create).x(0).y(40).w(0.5F, -2).h(18);
+        path.relative(create).x(0.5F, 2).y(40).w(0.5F, -2).h(18);
+        create.add(rect, square, triangle, star, polygon, path);
         section.fields.add(create);
 
         for (CompShape shape : layer.shapes)
@@ -19629,6 +19699,42 @@ public class UICompositorPanel extends UIDashboardPanel
             section.fields.add(this.animatedNumberRow("宽度", layer, CompLayer.shapePath(shape.id, "width"), animValue(layer, CompLayer.shapePath(shape.id, "width"), shape.width), (value) -> shape.width = value.floatValue(), 1F, 5000F));
             section.fields.add(this.animatedNumberRow("高度", layer, CompLayer.shapePath(shape.id, "height"), animValue(layer, CompLayer.shapePath(shape.id, "height"), shape.height), (value) -> shape.height = value.floatValue(), 1F, 5000F));
             section.fields.add(this.animatedNumberRow("旋转", layer, CompLayer.shapePath(shape.id, "rotation"), animValue(layer, CompLayer.shapePath(shape.id, "rotation"), shape.rotation), (value) -> shape.rotation = value.floatValue(), -720F, 720F));
+
+            if (CompShape.RECT.equals(shape.type))
+            {
+                /* Alight Motion's Rectangle exposes one curvature/roundness value. bbsae already
+                 * rasterizes it (`CompShape.roundness`), but the inspector only exposed per-corner
+                 * radii, so a square could not be rounded like AM without editing four values. */
+                section.fields.add(this.animatedNumberRow("曲度 / 圆角", layer,
+                    CompLayer.shapePath(shape.id, "roundness"),
+                    animValue(layer, CompLayer.shapePath(shape.id, "roundness"), shape.roundness),
+                    (value) -> shape.roundness = (float) Math.max(0D, value), 0F, 2000F));
+            }
+
+            if (shape.cornerCount() > 0 && !CompShape.RECT.equals(shape.type))
+            {
+                float current = 0F;
+
+                for (int i = 0; i < shape.cornerCount(); i++)
+                {
+                    current = Math.max(current, shape.corner(i));
+                }
+
+                section.fields.add(this.numberRow("曲度（应用到所有角）", current, 0F, 2000F, false, (value) ->
+                {
+                    float radius = (float) Math.max(0F, value.floatValue());
+
+                    shape.ensureCorners();
+
+                    for (int i = 0; i < shape.corners.size(); i++)
+                    {
+                        shape.corners.set(i, radius);
+                    }
+
+                    this.refreshInspector();
+                    this.save();
+                }));
+            }
 
             if (CompShape.STAR.equals(shape.type))
             {
@@ -19849,6 +19955,73 @@ public class UICompositorPanel extends UIDashboardPanel
         section.remember(this.sectionFolds, "mask", true);
 
         if (layer == null)
+        {
+            return section;
+        }
+
+        /*
+         * Alight Motion's mask model is one gesture: select a shape layer, press Mask or Exclude,
+         * and the layer under it is clipped. bbsae implemented exactly that, but buried it in the
+         * Layer page under the track-matte rows; the Mask tab only offered a long path/point editor.
+         * The simple matte actions therefore live here first, and the manual path editor is folded
+         * away behind an explicit advanced switch.
+         */
+        section.fields.add(UI.label(IKey.constant("蒙版 / 排除（AM 风格）：形状层作用到下方图层"), 14));
+
+        if ("shape".equals(layer.type))
+        {
+            section.fields.add(UI.row(
+                this.smallButton("用作蒙版（交集）", () -> this.applyMatteToBelow(layer, false)),
+                this.smallButton("用作排除（差集）", () -> this.applyMatteToBelow(layer, true))
+            ));
+        }
+        else
+        {
+            CompLayer above = this.nearestShapeAbove(layer);
+
+            if (above != null)
+            {
+                section.fields.add(UI.row(
+                    this.smallButton("上方形状 → 蒙版", () -> this.applyMatteToBelow(above, false)),
+                    this.smallButton("上方形状 → 排除", () -> this.applyMatteToBelow(above, true))
+                ));
+            }
+        }
+
+        if (layer.trackMatteEnabled && layer.trackMatteId != null && !layer.trackMatteId.isEmpty())
+        {
+            CompLayer source = this.doc == null ? null : this.doc.getLayer(layer.trackMatteId);
+
+            section.fields.add(UI.label(IKey.constant("当前：" + (source == null ? "（缺失）" : this.layerLabel(source))
+                + " · " + matteName(layer.trackMatteMode)), 13));
+            section.fields.add(this.smallButton("清除蒙版 / 排除", () ->
+            {
+                this.beginAction("清除蒙版");
+                layer.trackMatteEnabled = false;
+                layer.trackMatteId = "";
+                this.refreshInspector();
+                this.save();
+                this.setStatus("已清除蒙版");
+            }));
+        }
+        else if ("shape".equals(layer.type))
+        {
+            section.fields.add(UI.label(IKey.constant("这个形状层会作为下方图层的蒙版；也可以直接选中下方图层，再从这里选择形状。"), 13));
+        }
+        else
+        {
+            section.fields.add(UI.label(IKey.constant("提示：在时间轴/图层列表选中一个形状层，再按上面的按钮，效果与 AM 的 Mask/Exclude 相同。"), 13));
+        }
+
+        section.fields.add(this.smallButton(this.maskAdvancedExpanded
+            ? "收起手动路径蒙版（高级）"
+            : "手动路径蒙版（高级）", () ->
+        {
+            this.maskAdvancedExpanded = !this.maskAdvancedExpanded;
+            this.refreshInspector();
+        }));
+
+        if (!this.maskAdvancedExpanded)
         {
             return section;
         }
@@ -23414,6 +23587,30 @@ public class UICompositorPanel extends UIDashboardPanel
      * <p>The shape itself stops being visible (it becomes a guide) — otherwise the fill would cover
      * exactly the region it is supposed to reveal. Toggling its eye brings it back for editing.</p>
      */
+    /** Nearest shape layer above {@code layer} (shape-on-top masks the layer below it). */
+    private CompLayer nearestShapeAbove(CompLayer layer)
+    {
+        if (this.doc == null || layer == null)
+        {
+            return null;
+        }
+
+        int index = this.doc.layers.indexOf(layer);
+
+        for (int i = index + 1; i < this.doc.layers.size(); i++)
+        {
+            CompLayer candidate = this.doc.layers.get(i);
+
+            if (candidate != null && "shape".equals(candidate.type) && candidate.visible
+                && candidate != layer)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
     private void applyMatteToBelow(CompLayer source, boolean exclude)
     {
         if (this.doc == null || source == null)

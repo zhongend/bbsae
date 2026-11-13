@@ -105,6 +105,25 @@ public class CompUiTest
     }
 
     @Test
+    public void gizmoModeBarSitsInTheBottomRightAndFitsNarrowPreviews()
+    {
+        mchorse.bbs_mod.ui.utils.Area wide = new mchorse.bbs_mod.ui.utils.Area(0, 0, 1280, 720);
+        int[] bar = CompUi.gizmoModeBarRect(wide);
+
+        assertEquals(1280 - bar[2] - 8, bar[0]);
+        assertEquals(720 - 46, bar[1]);
+        assertTrue(bar[0] + bar[2] <= wide.ex(), "the strip must stay inside the preview");
+        assertEquals(CompUi.GIZMO_MODE_BUTTON_WIDTH, bar[4]);
+
+        mchorse.bbs_mod.ui.utils.Area narrow = new mchorse.bbs_mod.ui.utils.Area(0, 0, 180, 120);
+        int[] compact = CompUi.gizmoModeBarRect(narrow);
+
+        assertTrue(compact[0] >= narrow.x + 8);
+        assertTrue(compact[0] + compact[2] <= narrow.ex(), "narrow preview must not overflow");
+        assertTrue(compact[4] >= 24);
+    }
+
+    @Test
     public void tooltipPrefixLookupHandlesDynamicLabels()
     {
         /* "应用 电影青橙" should reuse the "应用" description and append the preset name. */

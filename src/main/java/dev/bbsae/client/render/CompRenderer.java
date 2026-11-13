@@ -1142,6 +1142,71 @@ public final class CompRenderer
         GL11.glColorMask(true, true, true, true);
         com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
 
+        float opacity = opacityAt(layer, context);
+
+        /*
+         * An independent model is not routed through renderBaked3D, so a repeat effect used to be
+         * ignored entirely. Worse, when a projected repeat fell through the normal effect loop it
+         * resampled the already-projected model target: a flat 2D copy of a 3D actor. Render the
+         * model once per copy transform instead, so every copy is real geometry and follows the
+         * composition camera.
+         */
+        CompEffect replication = context.renderEffects ? Replicate3D.find(layer, context) : null;
+
+        if (replication != null)
+        {
+            java.util.List<Matrix4f> copies = Replicate3D.transforms(replication, layer, context, 0F, 0F);
+
+            if (copies.isEmpty())
+            {
+                return accumulation;
+            }
+
+            float alpha = Math.max(0F, Math.min(1F,
+                replication.valueF("alpha", replication.valueF("amount", 1F))));
+            float copyOpacity = opacity * alpha;
+
+            try
+            {
+                for (Matrix4f copy : copies)
+                {
+                    /* The copy transform is in layer pixels; ReplayActorPass applies it after the
+                     * block→pixel scale, so a rotated/scaled layer does not multiply the repeat
+                     * offset by its own scale. */
+                    context.modelPixelOffset = copy;
+
+                    GlFramebuffer modelContent = ReplayActorPass.renderModel(layer, context, batcher);
+
+                    if (modelContent != null)
+                    {
+                        GlFramebuffer original = modelContent;
+                        boolean straight = false;
+                        GlFramebuffer effected = applyModelPostEffects(layer, context, modelContent);
+
+                        if (effected != modelContent)
+                        {
+                            modelContent = effected;
+                            straight = true;
+                        }
+
+                        accumulation = compositeModelTarget(layer, context, modelContent, accumulation,
+                            copyOpacity, !straight);
+
+                        if (modelContent != original)
+                        {
+                            FboPool.release(modelContent);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                context.modelPixelOffset = null;
+            }
+
+            return accumulation;
+        }
+
         GlFramebuffer modelContent = ReplayActorPass.renderModel(layer, context, batcher);
 
         if (modelContent == null)
@@ -1149,10 +1214,96 @@ public final class CompRenderer
             return accumulation;
         }
 
-        float opacity = opacityAt(layer, context);
-
         debugFboSum("model-content-" + layer.id, modelContent);
 
+        /*
+         * A model's own raster is composition-sized, so screen-space pixel effects such as glitch
+         * can run on it directly. Without this, effects on an independent replay model were
+         * silently dropped (the independent-model branch never entered the per-layer effect loop).
+         * Only source-sampling post effects are applied here: generators would flood the whole
+         * composition instead of the actor.
+         */
+        GlFramebuffer original = modelContent;
+        boolean straight = false;
+        GlFramebuffer effected = applyModelPostEffects(layer, context, modelContent);
+
+        if (effected != modelContent)
+        {
+            modelContent = effected;
+            straight = true;
+        }
+
+        GlFramebuffer result = compositeModelTarget(layer, context, modelContent, accumulation, opacity, !straight);
+
+        if (modelContent != original)
+        {
+            FboPool.release(modelContent);
+        }
+
+        return result;
+    }
+
+    private static GlFramebuffer applyModelPostEffects(CompLayer layer, CompRenderContext context,
+                                                       GlFramebuffer model)
+    {
+        if (model == null || !context.renderEffects || layer.effects == null || layer.effects.isEmpty())
+        {
+            return model;
+        }
+
+        GlFramebuffer current = model;
+
+        for (CompEffect effect : layer.effects)
+        {
+            if (effect == null || !effect.enabled)
+            {
+                continue;
+            }
+
+            String type = effect.type == null ? "" : effect.type;
+
+            /* Glitch is the reported case: its displaced bands must leave the actor/shape edge. */
+            if (!"glitch".equals(type))
+            {
+                continue;
+            }
+
+            CompEffect resolved = layer.resolveEffect(effect, context.frame);
+
+            if (EffectRenderer.isNeutral(resolved, type))
+            {
+                continue;
+            }
+
+            if (current == model)
+            {
+                GlFramebuffer straight = PassRenderer.unpremultiply(model);
+
+                if (straight == null)
+                {
+                    return model;
+                }
+
+                current = straight;
+            }
+
+            GlFramebuffer output = EffectRenderer.apply(layer, resolved, current, context,
+                EffectSpace.identity(context));
+
+            if (output != current)
+            {
+                FboPool.release(current);
+                current = output;
+            }
+        }
+
+        return current;
+    }
+
+    private static GlFramebuffer compositeModelTarget(CompLayer layer, CompRenderContext context,
+                                                      GlFramebuffer modelContent, GlFramebuffer accumulation,
+                                                      float opacity, boolean premultiplied)
+    {
         /*
          * A model is a depth volume, not a plane. When the frame already has the shared per-pixel
          * depth target, composite through the model's own depth so a text/shape plane in front
@@ -1169,7 +1320,7 @@ public final class CompRenderer
             GlFramebuffer previous = accumulation;
 
             accumulation = context.spatialDepth.compositeModel(modelContent, modelContent, previous,
-                layer.blendMode, opacity, true);
+                layer.blendMode, opacity, premultiplied);
             debugFboSum("model-blend-" + layer.id, accumulation);
             FboPool.release(previous);
 
@@ -1180,8 +1331,17 @@ public final class CompRenderer
         {
             GlFramebuffer blended = FboPool.acquire(accumulation.width, accumulation.height);
 
-            PassRenderer.drawIntoPremultiplied(blended, modelContent, accumulation,
-                layer.blendMode, opacity, 0xFFFFFF);
+            if (premultiplied)
+            {
+                PassRenderer.drawIntoPremultiplied(blended, modelContent, accumulation,
+                    layer.blendMode, opacity, 0xFFFFFF);
+            }
+            else
+            {
+                PassRenderer.drawInto(blended, modelContent, accumulation, null,
+                    layer.blendMode, opacity, 0F, 0F, 0xFFFFFF, 0);
+            }
+
             debugFboSum("model-blend-" + layer.id, blended);
             FboPool.release(accumulation);
             accumulation = blended;
@@ -2248,7 +2408,11 @@ public final class CompRenderer
             return false;
         }
 
-        return type.startsWith("depth_") || "shake".equals(type)
+        /* Glitch is a screen-space displacement: on a 3D layer a layer-local bake clips its
+         * displaced bands to the layer raster. Running it after projection lets it use the full
+         * composition-sized frame, so the effect can extend past the shape instead of looking like
+         * a mask. 2D layers already run it on the composition target, so this only changes 3D. */
+        return type.startsWith("depth_") || "shake".equals(type) || "glitch".equals(type)
             || dev.bbsae.comp.AmEffectLibrary.usesComp(type)
             || EffectRenderer.isCompositionSpace(type);
     }

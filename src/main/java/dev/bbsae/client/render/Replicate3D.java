@@ -19,7 +19,15 @@ final class Replicate3D
 {
     private Replicate3D() {}
 
-    /** The leading replicator, or null when the layer has none. */
+    /**
+     * The first replicator in the projected part of the stack, or null.
+     *
+     * <p>The old implementation required the replication to be the <b>first</b> projected effect.
+     * A stack such as {@code shake → repeat} therefore fell back to the composition-space
+     * resampler and the copies became flat screen-space cards again. A transform-only or depth
+     * effect before the replicator can still run after the 3D copies (the replication is consumed
+     * here); the copy geometry itself must be decided before that pass.</p>
+     */
     static CompEffect leading(CompLayer layer, CompRenderContext context)
     {
         if (layer == null || layer.effects == null)
@@ -34,14 +42,40 @@ final class Replicate3D
             return null;
         }
 
-        CompEffect effect = layer.effects.get(first);
+        for (int i = first; i < layer.effects.size(); i++)
+        {
+            CompEffect effect = layer.effects.get(i);
 
-        if (effect == null || !effect.enabled || !EffectRenderer.isReplication(effect.type))
+            if (effect != null && effect.enabled && EffectRenderer.isReplication(effect.type))
+            {
+                return layer.resolveEffect(effect, context.frame);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Any enabled replicator in the layer's stack. Independent replay models are not routed through
+     * {@code CompRenderer.renderBaked3D}, so their repeat has to be found without the projected-effect
+     * split used by flat 3D layers.
+     */
+    static CompEffect find(CompLayer layer, CompRenderContext context)
+    {
+        if (layer == null || layer.effects == null)
         {
             return null;
         }
 
-        return layer.resolveEffect(effect, context.frame);
+        for (CompEffect effect : layer.effects)
+        {
+            if (effect != null && effect.enabled && EffectRenderer.isReplication(effect.type))
+            {
+                return layer.resolveEffect(effect, context.frame);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -51,14 +85,29 @@ final class Replicate3D
     static List<Matrix4f> transforms(CompEffect resolved, CompLayer layer, CompRenderContext context,
                                      CompLayerSourceCache.Entry source)
     {
-        if (resolved == null || layer == null || context == null || source == null)
+        if (source == null)
+        {
+            return Collections.emptyList();
+        }
+
+        return transforms(resolved, layer, context,
+            source.localX + source.localWidth * 0.5F,
+            source.localY + source.localHeight * 0.5F);
+    }
+
+    /**
+     * Same copy math with an explicit layer-local centre. Used by independent replay models: their
+     * pivot is the layer origin, not a cached 2D raster rectangle.
+     */
+    static List<Matrix4f> transforms(CompEffect resolved, CompLayer layer, CompRenderContext context,
+                                     float cx, float cy)
+    {
+        if (resolved == null || layer == null || context == null)
         {
             return Collections.emptyList();
         }
 
         String type = resolved.type;
-        float cx = source.localX + source.localWidth * 0.5F;
-        float cy = source.localY + source.localHeight * 0.5F;
         int count = Math.max(1, Math.min(48, Math.round(resolved.valueF("count", 5F))));
         float alpha = Math.max(0F, Math.min(1F, resolved.valueF("alpha", resolved.valueF("amount", 1F))));
 

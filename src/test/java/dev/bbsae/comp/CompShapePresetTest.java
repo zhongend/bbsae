@@ -89,6 +89,32 @@ public class CompShapePresetTest
         assertEquals(40F, layer.shapeAt(shape, 20F).corner(0), 0.001F);
     }
 
+    /** AM-style single curvature value for a square/rectangle, keyframable like every other field. */
+    @Test
+    public void rectangleRoundnessIsAnimatable()
+    {
+        CompLayer layer = new CompLayer("shape_layer", "Shape", "shape");
+        CompShape shape = CompShape.rect("square", 0F, 0F, 240F, 240F, 0xFFFFFFFF);
+
+        layer.shapes.add(shape);
+
+        String path = CompLayer.shapePath("square", "roundness");
+
+        layer.setKeyframe(path, 0F, 0F);
+        layer.setKeyframe(path, 20F, 48F);
+
+        layer.putScalar(path, 36F);
+        assertEquals(36F, shape.roundness, 0.001F, "the static setter must not clamp curvature to 1 px");
+
+        assertEquals(0F, layer.shapeAt(shape, 0F).roundness, 0.001F);
+        assertEquals(48F, layer.shapeAt(shape, 20F).roundness, 0.001F);
+
+        Shape rounded = ShapeRasterizer.buildShape(layer.shapeAt(shape, 20F));
+
+        assertNotNull(rounded);
+        assertTrue(countCurves(rounded) >= 4, "the four square corners must be rounded");
+    }
+
     @Test
     public void effectPresetAddsTheStackWithUniqueIds()
     {

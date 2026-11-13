@@ -124,7 +124,7 @@ public class EffectPipeline3DConsistencyTest
         for (String type : new String[] {"grid_repeat", "random_repeat", "am_grid_repeat",
             "am_line_repeat", "am_repeat", "am_repeat_radial", "am_repeat_scatter", "am_shape_field",
             "am_glass", "am_light_wrap", "am_displace_map", "am_gradient_displace",
-            "depth_fog", "depth_dof", "shake"})
+            "depth_fog", "depth_dof", "shake", "glitch"})
         {
             assertTrue(CompRenderer.requiresProjectedPass(type), type + " must not be baked");
         }
@@ -135,6 +135,71 @@ public class EffectPipeline3DConsistencyTest
         {
             assertFalse(CompRenderer.requiresProjectedPass(type), type + " belongs in the layer bake");
         }
+    }
+
+    /**
+     * A glitch's displaced bands are allowed to leave the source rectangle. This drives the same
+     * {@link EffectRenderer} pass the projected composition uses (identity space) and proves the
+     * effect is not hard-clipped at the layer box.
+     */
+    @Test
+    public void glitchDisplacesPixelsOutsideTheLayerBox()
+    {
+        Assumptions.assumeTrue(programsAvailable(), "effect programs unavailable");
+
+        CompDocument comp = comp(SIZE, SIZE);
+        CompLayer layer = layer(comp, "layer", "solid");
+
+        layer.width = 24F;
+        layer.height = 24F;
+        layer.x = 48F;
+        layer.y = 48F;
+        comp.addLayer(layer);
+
+        CompProject project = project(comp);
+        CompRenderContext context = new CompRenderContext(project, comp, 0F, null, null, null);
+        GlFramebuffer input = image(SIZE, SIZE, square(36, 36, 24, 0xFFFF0000));
+
+        try
+        {
+            CompEffect effect = new CompEffect("g", "glitch");
+
+            effect.put("amount", 60D);
+            effect.put("bands", 64D);
+            effect.put("seed", 7D);
+            effect.put("speed", 0D);
+
+            GlFramebuffer output = EffectRenderer.apply(layer, effect, input, context, EffectSpace.identity(context));
+            int[] pixels = output.readTopDown();
+            int outside = countAlphaOutside(pixels, SIZE, SIZE, 36, 36, 60, 60);
+
+            assertTrue(outside > 0, "glitch must be able to write outside the layer box, got " + outside);
+
+            if (output != input)
+            {
+                output.delete();
+            }
+        }
+        finally
+        {
+            input.delete();
+        }
+    }
+
+    /**
+     * Glitch must run on the projected composition, not in the layer-local bake: a layer bake can
+     * only write inside its raster/quad, so the displaced bands look clipped exactly at the shape
+     * edge (the reported "glitch behaves like a mask"). Composition space lets it use the whole
+     * frame.
+     */
+    @Test
+    public void glitchRunsOnTheProjectedComposition()
+    {
+        CompEffect glitch = new CompEffect("g", "glitch");
+
+        assertTrue(CompRenderer.requiresProjectedPass("glitch"));
+        assertTrue(CompRenderer.needsCompositionEffect(true, glitch),
+            "a baked glitch must still get a composition-space pass");
     }
 
     /** A 3D layer's effect stack is split once: baked prefix, projected remainder, in draw order. */

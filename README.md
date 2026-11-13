@@ -1,11 +1,11 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix51**：修复环绕/自由视角的线框、文字和 gizmo 与合成画面错位（引导层改用与
-> 渲染器相同的 `CompScene.project` + letterbox plate 映射，并同步回放世界锚点）；回放实体按
-> **模型体积的真实逐片元深度**与文字/形状图层互相遮挡，不再整层穿透；合成器关键帧抽屉改为
-> 单条 frame-aware 标尺（不再叠画第二条、不再重复 `0:00` 标签）；自由/环绕画面加入缓存和
-> 导航期代理分辨率，模型合成去掉一次全屏反预乘。相机视角保持不变。详见
-> [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix52**：修复合成器 3D 模型的重复效果仍是平面 2D 复制（独立模型现在按 copy
+> 变换真实重渲染，普通 3D 层的 repeat 也允许在 chain 中非首位）；故障 Glitch 从图层烘焙移
+> 到投影后合成空间，不再被形状边缘裁成蒙版；gizmo 模式切换条移到预览右下角并可在设置中
+> 关闭；蒙版/排除按钮进入右侧蒙版分栏（AM 风格），手动路径蒙版收进高级选项；新增正方形
+> 与可关键帧的曲度/圆角，修复 roundness 被 clamp 到 1px 的旧 bug；布局锁定同时封住分栏线
+> 拖动，并可在设置中锁定。详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">

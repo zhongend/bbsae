@@ -1062,6 +1062,11 @@ public class UICompSettings extends UIElement
             prefs.gizmos = value;
             CompPrefs.save();
         }), 170, "3D 移动/缩放/旋转箭头与圆环；关闭后仍可用检查器改数值"));
+        this.add(this.row("Gizmo 模式切换条", this.toggle("", prefs.gizmoModeBar, (value) ->
+        {
+            prefs.gizmoModeBar = value;
+            CompPrefs.save();
+        }), 170, "预览右下角的 W 移动 / E 缩放 / R 旋转快捷条；关闭后可继续用快捷键切换"));
         this.add(this.row("Gizmo 不透明度", this.slider(prefs.gizmoOpacity, 0.15F, 1F, (value) ->
         {
             prefs.gizmoOpacity = (float) value;
@@ -1382,6 +1387,15 @@ public class UICompSettings extends UIElement
                 : "已回退到旧版三栏布局：重开合成器面板后生效");
         }), 170, "启用后复用 BBS 原版 UIDockLayout：拖动面板标题条/标签即可拆分或堆叠；"
             + "布局锁与重置在合成器顶栏的「布局」按钮。切换后需重开合成器面板生效"));
+
+        this.add(this.row("锁定面板布局", this.toggle("", this.panel.isDockLayoutLocked(), (value) ->
+        {
+            this.panel.setDockLayoutLocked(value);
+            this.panel.setStatus(value
+                ? "面板布局已锁定：标题条与分栏线都不再改变布局"
+                : "面板布局已解锁：可以拖动面板标题条/标签和分栏线");
+        }), 170, "锁定后标题条、标签页和分栏线都不能再拖动或改变大小；"
+            + "与顶栏「布局」按钮是同一个状态"));
 
         this.add(this.section("渲染"));
 

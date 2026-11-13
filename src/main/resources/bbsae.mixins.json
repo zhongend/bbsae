@@ -5,7 +5,8 @@
   "client": [
     "FilmEntityRendererLightMixin",
     "IrisFinalizeMixin",
-    "TimelineRulerRendererMixin"
+    "TimelineRulerRendererMixin",
+    "UIDockLayoutMixin"
   ],
   "injectors": {
     "defaultRequire": 0

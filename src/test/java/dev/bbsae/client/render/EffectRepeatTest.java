@@ -508,6 +508,42 @@ public class EffectRepeatTest
         return (argb >> 16) & 0xFF;
     }
 
+    /**
+     * Independent replay models are not rendered through renderBaked3D, so their repeat has to be
+     * discovered without the projected-effect split. Its copies are layer-local 3D transforms.
+     */
+    @Test
+    public void independentModelRepeatFindsCopyTransforms()
+    {
+        CompRenderContext context = context();
+        CompLayer model = new CompLayer("model", "Model", "replay");
+
+        model.independent = true;
+        model.replayId = "r1";
+        model.threeD = true;
+        model.effects.add(effect("am_repeat"));
+
+        CompEffect repeat = Replicate3D.find(model, context);
+
+        assertNotNull(repeat, "the model repeat must be found even though there is no baked raster");
+        repeat.put("count", 3D);
+        repeat.put("offset_x", 16D);
+        repeat.put("offset_y", 0D);
+        repeat.put("angle", 0D);
+        repeat.put("scale", 1D);
+        repeat.put("alpha", 1D);
+
+        java.util.List<Matrix4f> copies = Replicate3D.transforms(repeat, model, context, 0F, 0F);
+
+        assertEquals(3, copies.size());
+
+        org.joml.Vector3f first = copies.get(0).getTranslation(new org.joml.Vector3f());
+        org.joml.Vector3f last = copies.get(2).getTranslation(new org.joml.Vector3f());
+
+        assertEquals(-16F, first.x, 0.001F, "first copy must sit one offset left");
+        assertEquals(16F, last.x, 0.001F, "last copy must sit one offset right");
+    }
+
     @Test
     public void repeatEffectsNeverRunInsideTheLayerBake()
     {

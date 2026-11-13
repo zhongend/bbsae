@@ -1,5 +1,64 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix52 — 2026-11-14
+
+3D 模型重复、glitch 范围、gizmo 模式条、布局锁定、蒙版/排除入口、正方形曲度。
+
+### 重复效果应用到 3D 模型
+
+- 根因：独立回放模型走的是 `compositeIndependentModel`，从不进入普通图层的 effect 循环；
+  普通 3D 层又只把“第一个 projected effect 是 replicator”当作 3D 复制，`shake → repeat`
+  这类 chain 会回退成对投影图的平面重采样。
+- 修复：`Replicate3D.find` 找到独立模型链中的 replicator，`Replicate3D.transforms` 的 copy
+  变换经 `CompRenderContext.modelPixelOffset` 在 **块→像素缩放之后**应用，每个 copy 都真实
+  重渲染模型（保持 3D 深度、相机和图层变换）；普通 3D 层的 `leading` 也在 projected 段内
+  查找 replicator，不再要求它是第一个 projected effect。
+
+### Glitch 只存在于图层形状内
+
+- 根因：`glitch` 被当作 layer-local effect 烘焙进 3D 图层栅格，栅格/quad 在形状边缘截断；
+  独立模型的 effect 更是完全被忽略。
+- 修复：`glitch` 归入 `requiresProjectedPass`，在投影后的合成空间执行，可使用整张合成帧，
+  不再在形状边缘被硬裁；独立模型额外应用 `glitch` 后处理（预乘→直通、identity 空间、
+  再合成），使模型上的故障也能越过模型轮廓；并新增“glitch 可写出图层矩形外”的像素测试。
+
+### Gizmo 模式切换条
+
+- 之前固定在 `area.ey() - 100`，短预览里正好横在画面中间。
+- 现在用 `CompUi.gizmoModeBarRect` 锚定到预览右下角，窄预览自动缩短按钮并用 `W/E/R` 简写；
+  新增 `CompPrefs.gizmoModeBar` 开关（设置 → 线框与 Gizmo），关闭后不显示也不吃点击。
+
+### 布局锁定
+
+- 根因：`UIDockLayout` 只隐藏了面板标题拖动条，**分栏线**的 `UIDraggable` 仍会
+  `beginSplitterDrag`/`applySplitterDrag`，所以锁定后仍能改变布局。
+- 修复：新增 `UIDockLayoutMixin`，锁定时分栏 handle 禁用、begin/apply 都拒绝；顶栏「布局」
+  按钮显示锁/开状态并立即 `savePanelLayout()`，设置页也新增「锁定面板布局」开关。
+
+### 蒙版 / 排除（右侧蒙版分栏）
+
+- 蒙版页顶部新增 AM 风格「用作蒙版（交集）」「用作排除（差集）」；对普通图层还会显示
+  「上方形状 → 蒙版/排除」，无需先手动选中形状层。
+- 手动路径蒙版（添加/移除/逐点/羽化/扩展）默认折叠到「手动路径蒙版（高级）」，降低日常
+  蒙版操作复杂度；仍可从图层页的高级轨道遮罩入口进入。
+
+### 形状曲度 / 颜色
+
+- 形状创建行新增「正方形」预设；矩形新增可关键帧的「曲度 / 圆角」；三角/多边形/星形新增
+  「曲度（应用到所有角）」快捷行。
+- 修复 `CompLayer.resolveShapeValues` 与 `putScalar` 对 `roundness` 使用 `clamp01` 的旧 bug：
+  任何 >1px 的曲度都被压成 1px，导致正方形曲度不可用/不可关键帧。
+- 「图层」页给形状层新增「形状颜色（全部形状）」，一次改整层所有形状的填充色。
+
+### 验证
+
+- 全量测试：**161 套件 / 993 项 / 0 failures / 0 errors / 1 skipped**（新增 repeat/model、
+  glitch 分类/越界像素、shape roundness、gizmo bar 几何测试）。
+- 按用户要求**未启动客户端**；请在你的工程中验证 3D 模型重复、glitch 越界、gizmo 条位置/
+  开关、布局锁定、蒙版/排除和正方形曲度，并确认 2D/3D 预览与导出。
+- 候选包：`bbsae-0.99-hotfix52.jar`（3,948,880 bytes，SHA-256
+  `6B296CD5FC9C9650A7AE95A7CA625A3F6836D9A063FB5B4FE8B589654B51D4C1`）。
+
 ## 0.99-hotfix51 — 2026-11-13
 
 环绕/自由视角的引导与 gizmo 对齐、回放实体逐像素深度遮挡、关键帧抽屉单标尺、自由视角缓存。

@@ -8,6 +8,7 @@ import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.utils.UILabel;
+import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.icons.Icon;
 import mchorse.bbs_mod.ui.utils.icons.Icons;
 
@@ -1063,5 +1064,30 @@ public final class CompUi
     public static int mutedText()
     {
         return 0xFF8C96A5;
+    }
+
+    /** Width of one W/E/R button in the preview's compact gizmo mode switcher. */
+    public static final int GIZMO_MODE_BUTTON_WIDTH = 58;
+    /** Gap between the W/E/R buttons. */
+    public static final int GIZMO_MODE_GAP = 4;
+
+    /**
+     * Bottom-right rectangle of the compact gizmo mode switcher.
+     *
+     * <p>It used to be drawn at {@code y = area.ey() - 100}, which in a short preview is the middle
+     * of the picture (and in a tall one floats over the content). Anchoring the strip to the
+     * bottom-right corner keeps it out of the shot and next to the other preview chrome.</p>
+     *
+     * @return {@code {x, y, totalWidth, height}}
+     */
+    public static int[] gizmoModeBarRect(Area area)
+    {
+        int available = Math.max(3 * 24 + 2 * GIZMO_MODE_GAP, area.w - 16 - 2 * GIZMO_MODE_GAP);
+        int width = Math.max(24, Math.min(GIZMO_MODE_BUTTON_WIDTH, available / 3));
+        int total = 3 * width + 2 * GIZMO_MODE_GAP;
+        int x = Math.max(area.x + 8, area.ex() - total - 8);
+        int y = Math.max(area.y + 8, area.ey() - 46);
+
+        return new int[] {x, y, total, 18, width};
     }
 }

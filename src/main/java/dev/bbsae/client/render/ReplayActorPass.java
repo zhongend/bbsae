@@ -160,9 +160,7 @@ public final class ReplayActorPass
             return null;
         }
 
-        float pixelsPerBlock = pixelsPerBlock(context);
-        Matrix4f mapping = new Matrix4f(CompScene.world(context, layer))
-            .scale(pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock);
+        Matrix4f mapping = modelMapping(context, layer, 0F, 0F, 0F);
 
         /* Legacy model layers were created before Z scale was initialized, so a 2×/3× X/Y scale
          * with Z=1 rendered the actor depth-squashed. Treat that exact untouched state as uniform;
@@ -349,10 +347,8 @@ public final class ReplayActorPass
             return null;
         }
 
-        float pixelsPerBlock = pixelsPerBlock(context);
-        Matrix4f mapping = new Matrix4f(CompScene.world(context, layer))
-            .scale(pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock)
-            .translate(-layer.replayAnchorX, -layer.replayAnchorY, -layer.replayAnchorZ);
+        Matrix4f mapping = modelMapping(context, layer, layer.replayAnchorX,
+            layer.replayAnchorY, layer.replayAnchorZ);
 
         if (!layer.hasScalarChannel("scaleZ") && layer.scaleZ == 1F && layer.scaleX != 1F)
         {
@@ -478,12 +474,27 @@ public final class ReplayActorPass
      */
     static Matrix4f actorMapping(CompLayer layer, CompRenderContext context, double cx, double cy, double cz)
     {
-        float pixelsPerBlock = pixelsPerBlock(context);
+        return modelMapping(context, layer, (float) cx, (float) cy, (float) cz);
+    }
 
-        return new Matrix4f(CompScene.world(context, layer))
-            .mul(new Matrix4f()
-                .scale(pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock)
-                .translate((float) -cx, (float) -cy, (float) -cz));
+    /**
+     * Shared model mapping: layer world · block→pixel scale · optional per-copy pixel offset ·
+     * translate(-anchor). The offset is in <b>layer pixels</b>, i.e. after the block scale, which is
+     * where {@code Replicate3D} computes copy transforms.
+     */
+    private static Matrix4f modelMapping(CompRenderContext context, CompLayer layer,
+                                         float anchorX, float anchorY, float anchorZ)
+    {
+        float pixelsPerBlock = pixelsPerBlock(context);
+        Matrix4f mapping = new Matrix4f(CompScene.world(context, layer))
+            .scale(pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock);
+
+        if (context.modelPixelOffset != null)
+        {
+            mapping.mul(context.modelPixelOffset);
+        }
+
+        return mapping.translate(-anchorX, -anchorY, -anchorZ);
     }
     private static GlFramebuffer target;
     private static int targetWidth;

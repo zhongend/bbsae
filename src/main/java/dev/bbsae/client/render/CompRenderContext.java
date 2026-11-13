@@ -103,6 +103,12 @@ public final class CompRenderContext
     public DepthPlaneCompositor spatialDepth;
 
     /**
+     * Per-draw offset applied to an independent replay model after the block→pixel scale, in layer
+     * pixels. Replication sets this to each copy transform; null means the single original.
+     */
+    public org.joml.Matrix4f modelPixelOffset;
+
+    /**
      * True while effects run on a layer-local raster (the 3D bake) rather than on a
      * composition-sized target. Layer-space shaders then address the source in its own 0..1 UVs
      * instead of mapping layer pixels back through the composition.

@@ -719,7 +719,7 @@ public class CompLayer
                     case "y": shape.y = value; return true;
                     case "width": shape.width = value; return true;
                     case "height": shape.height = value; return true;
-                    case "roundness": shape.roundness = clamp01(value); return true;
+                    case "roundness": shape.roundness = Math.max(0F, value); return true;
                     case "rotation": shape.rotation = value; return true;
                     case "trimStart": shape.trimStart = value; return true;
                     case "trimEnd": shape.trimEnd = value; return true;
@@ -1640,7 +1640,10 @@ public class CompLayer
         resolved.y = this.scalarAt(fixed[1], shape.y, frame);
         resolved.width = this.scalarAt(fixed[2], shape.width, frame);
         resolved.height = this.scalarAt(fixed[3], shape.height, frame);
-        resolved.roundness = clamp01(this.scalarAt(fixed[4], shape.roundness, frame));
+        /* Roundness is authored in pixels (the rasterizer passes it to RoundRectangle2D); the old
+         * clamp01() silently turned every keyed value above 1 px into a 1 px corner. That is why a
+         * square's AM-style curvature could not be animated. */
+        resolved.roundness = Math.max(0F, this.scalarAt(fixed[4], shape.roundness, frame));
         resolved.rotation = this.scalarAt(fixed[5], shape.rotation, frame);
         resolved.fillGradientAngle = this.scalarAt(fixed[6], shape.fillGradientAngle, frame);
         resolved.trimStart = this.scalarAt(fixed[7], shape.trimStart, frame);

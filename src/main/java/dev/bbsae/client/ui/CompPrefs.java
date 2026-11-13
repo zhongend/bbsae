@@ -79,6 +79,11 @@ public final class CompPrefs
         /* Overlay wireframes: gizmos, selection boxes, guides and camera frustums. Kept together so
          * "the handles are in the way" has one switch instead of a hunt through the UI. */
         public boolean gizmos = true;
+        /**
+         * Compact W/E/R mode switcher in the 3D preview. It used to be pinned near the middle of
+         * the viewport; it now sits in the bottom-right corner and can be hidden entirely.
+         */
+        public boolean gizmoModeBar = true;
         public float gizmoOpacity = 1F;
         public float gizmoThickness = 1F;
         public boolean selectionBoxes = true;
