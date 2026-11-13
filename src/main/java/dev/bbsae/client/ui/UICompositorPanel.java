@@ -2152,11 +2152,98 @@ public class UICompositorPanel extends UIDashboardPanel
                 return -1;
             }
 
+            /**
+             * Original BBS gizmo visual: BBS {@code Gizmo.INSTANCE} draws its cooler-axes at the
+             * layer origin with the composition camera's projection. This is the same class the
+             * BBS film editor uses, so the replay preview now has the original shape/colors.
+             */
+            private boolean renderBbsNativeGizmo(UIContext context, CompLayer layer,
+                                                 CompRenderContext renderContext,
+                                                 dev.bbsae.client.render.CompViewportCamera camera)
+            {
+                org.joml.Matrix4f previousProjection =
+                    new org.joml.Matrix4f(com.mojang.blaze3d.systems.RenderSystem.getProjectionMatrix());
+                int[] previousViewport = new int[4];
+                org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, previousViewport);
+                boolean pushed = false;
+                boolean ok = false;
+
+                try
+                {
+                    context.batcher.flush();
+
+                    int custom = UICompositorPanel.this.project == null
+                        || UICompositorPanel.this.project.settings == null
+                        ? 0 : UICompositorPanel.this.project.settings.modelPixelsPerBlock;
+                    float pixelsPerBlock = custom > 0
+                        ? Math.max(8F, Math.min(128F, custom))
+                        : Math.max(8F, Math.min(64F, renderContext.height * 0.12F));
+                    org.joml.Matrix4f world = new org.joml.Matrix4f(
+                        dev.bbsae.client.render.CompScene.world(renderContext, layer));
+                    world.scale(pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock);
+
+                    org.joml.Matrix4f modelView = new org.joml.Matrix4f(camera.view).mul(world);
+                    com.mojang.blaze3d.systems.RenderSystem.getModelViewStack().push();
+                    pushed = true;
+                    com.mojang.blaze3d.systems.RenderSystem.getModelViewStack().peek()
+                        .getPositionMatrix().set(modelView);
+                    com.mojang.blaze3d.systems.RenderSystem.applyModelViewMatrix();
+                    com.mojang.blaze3d.systems.RenderSystem.setProjectionMatrix(camera.projection,
+                        com.mojang.blaze3d.systems.VertexSorter.BY_Z);
+
+                    net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
+                    double sx = mc.getWindow().getFramebufferWidth() / (double) mc.getWindow().getWidth();
+                    double sy = mc.getWindow().getFramebufferHeight() / (double) mc.getWindow().getHeight();
+
+                    com.mojang.blaze3d.systems.RenderSystem.viewport(
+                        (int) (this.area.x * sx),
+                        (int) ((mc.getWindow().getHeight() - this.area.ey()) * sy),
+                        (int) (this.area.w * sx),
+                        (int) (this.area.h * sy));
+                    org.lwjgl.opengl.GL11.glClear(org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT);
+
+                    mchorse.bbs_mod.ui.utils.Gizmo.INSTANCE.setViewportHeight(this.area.h);
+                    mchorse.bbs_mod.ui.utils.Gizmo.INSTANCE.render(new MatrixStack());
+                    ok = true;
+                }
+                catch (Throwable error)
+                {
+                    dev.bbsae.BbsAeAddon.LOGGER.warn("BBS native gizmo unavailable: {}", error.getMessage());
+                }
+                finally
+                {
+                    /* Restore the UI projection/viewport even when BBS' gizmo throws mid-draw,
+                     * otherwise the whole preview would render with the 3D camera projection. */
+                    com.mojang.blaze3d.systems.RenderSystem.setProjectionMatrix(previousProjection,
+                        com.mojang.blaze3d.systems.VertexSorter.BY_Z);
+
+                    if (pushed)
+                    {
+                        com.mojang.blaze3d.systems.RenderSystem.getModelViewStack().pop();
+                        com.mojang.blaze3d.systems.RenderSystem.applyModelViewMatrix();
+                    }
+
+                    com.mojang.blaze3d.systems.RenderSystem.viewport(previousViewport[0], previousViewport[1],
+                        previousViewport[2], previousViewport[3]);
+                }
+
+                return ok;
+            }
+
             private void renderViewportTransformGizmo(UIContext context, CompLayer layer,
                                                       CompRenderContext renderContext,
                                                       dev.bbsae.client.render.CompViewportCamera camera)
             {
                 if (!CompPrefs.get().gizmos)
+                {
+                    return;
+                }
+
+                /* In bbsae replay the selected model uses BBS' own gizmo drawing, so the editor
+                 * looks and reads like the original film editor. Interaction stays in bbsae (the
+                 * custom hit test below), but the visual is the original BBS cooler-axes gizmo. */
+                if (UICompositorPanel.this.workspaceMode == WORKSPACE_REPLAY && layer.independent
+                    && this.renderBbsNativeGizmo(context, layer, renderContext, camera))
                 {
                     return;
                 }
