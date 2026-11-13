@@ -1,9 +1,9 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix48**：回放编辑器的**环绕/自由视角改为真正的 3D 合成场景**：文字/形状/图片/
-> BBS 预览层/3D 卡片/模型按合成器的 3D 关系渲染，不再是 2D 平面、线框或 BBS 全屏背景；
-> 相机视角保持不动。合成器关键帧抽屉的标尺按帧/秒正确换算，缩放锚定鼠标位置。
-> 详见 [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix49**：环绕/自由视角现在用**自由相机重新渲染整条合成图**（`CompRenderer` +
+> `CompCamera` override），与相机视角完全同一套图层/文字/形状/BBS 预览层/模型/蒙版/效果，
+> 只是相机不同；不是 2D 卡片、不是线框、也不是 BBS 全屏背景。相机视角保持不动。
+> 另修合成器关键帧抽屉的帧/秒标尺及鼠标锚点缩放。详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">

@@ -69,29 +69,29 @@ session 并存**：
 
 预览帧改为 **dirty 重烘**，失败时保留上一张好帧，不再在暂停瞬间释放成黑屏。
 
-## 5. hotfix48：环绕/自由 = 合成器的真正 3D 场景
+## 5. hotfix49：环绕/自由 = 自由相机重渲染整条合成
 
-- 删除了 hotfix47 的“最终合成截图贴在 3D 卡片上”方案：那仍然是一个 2D 平面。
-- 环绕/自由使用 `CompViewportRenderer`：
-  - 2D 图层走 AE `screenFixedQuad`；
-  - `threeD` 图层/模型经 `CompViewportCamera.viewProjection` 投影，带纹理、深度、效果/蒙版；
-  - BBS 预览层作为被投影的世界平面，不再全屏铺背景；
-  - 模型走 `drawReplayModels`。
-- 自由视角首次进入按 `doc.width × doc.height` 取景整个合成，而不是按原点演员取景。
-- 相机视角保持原 `CompRenderer` 路径不变。
+- hotfix47 的“最终合成截图贴 3D 卡片”仍是 2D；hotfix48 的 `CompViewportRenderer` 源码缓存
+  路径会绕过完整合成图。
+- hotfix49 直接复用相机视角的 `CompRenderer`，只把相机换成自由相机：
+  - `CompCamera.ofFree(...)` 用 orbit eye/target/FOV/roll 构造 `CompCamera`；
+    `CompCameraFreeTest` 验证 view/projection 逐元素一致；
+  - `CompRenderer.renderFrameWithCamera(...)` 通过线程局部 override 让整条图（文字、形状、
+    BBS 预览、模型、蒙版、效果、嵌套合成）都从自由相机渲染；
+  - 相机视角路径保持不变。
+- BBS 预览层在 override 下强制 3D 投影，不再作为全屏背景。
 - 合成器关键帧抽屉：`CompTime.rulerLabel` 处理帧/秒换算，新增测试 `CompTimeRulerTest`。
 
 ## 4. 验证
 
 - 测试工程背景从品红 `-65281` 改为黑 `-16777216`，排除背景色干扰。
-- 全量测试：**156 套件 / 968 项 / 0 failures / 0 errors / 1 skipped**（hotfix48 新增
-  `CompTimeRulerTest`）。
-- hotfix48 **未启动客户端**（按用户要求）；真正 3D 场景请在你的工程里验证：
-  文字、形状、图片、BBS 预览层、3D 卡片和模型在环绕/自由下应与合成器有相同的深度/遮挡
-  关系，而不是 2D 全屏背景或线框。
+- 全量测试：**157 套件 / 969 项 / 0 failures / 0 errors / 1 skipped**（hotfix49 新增
+  `CompCameraFreeTest`）。
+- hotfix49 **未启动客户端**（按用户要求）；请在你的工程里验证：
+  文字、形状、图片、BBS 预览层、3D 卡片和模型在环绕/自由下与合成器有相同的深度/遮挡关系。
 - 历史真机图（hotfix46/47 基线）：
   - `round110/112/120-pause-paused.png`：暂停模型；
-  - `round122-orbit-free.png`：视差参考背景（hotfix48 已改为真正 3D 工作区，此图仅历史）；
+  - `round122-orbit-free.png`：旧参考背景（已被 hotfix49 真正 3D 路径取代，仅历史）；
   - `round113-pause-paused.png`：实体回退暂停帧。
-- 候选包：`bbsae-0.99-hotfix48.jar`（3,931,882 bytes，SHA-256
-  `4378C707E758D2E3FADF95F261DAC989DCEC36572286609F094450DD874C041C`）。
+- 候选包：`bbsae-0.99-hotfix49.jar`（3,933,166 bytes，SHA-256
+  `E3F6168D1ED00E3640761D2C9299DED69D310D890BDB94ABB84A6DF3CAEDA4CF`）。

@@ -742,6 +742,26 @@ public final class CompRenderer
     }
 
     /**
+     * Same frame, rendered through an explicit camera. Used by the replay editor's free/orbit
+     * views: the composition graph (textures, masks, effects, BBS preview, models) is the camera
+     * view's graph, only the view matrix differs.
+     */
+    public static GlFramebuffer renderFrameWithCamera(CompProject project, CompDocument doc, int frame,
+                                                      boolean transparentStage, float scale, CompCamera camera)
+    {
+        CompScene.pushCamera(camera);
+
+        try
+        {
+            return renderFrame(project, doc, frame, transparentStage, scale);
+        }
+        finally
+        {
+            CompScene.popCamera();
+        }
+    }
+
+    /**
      * Renders one frame for the pre-render cache at an explicit pixel size.
      *
      * <p>Same graph, same effects, same masks as the preview — the only difference is the target

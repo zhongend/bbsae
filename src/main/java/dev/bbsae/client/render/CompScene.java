@@ -57,8 +57,34 @@ public final class CompScene
     }
 
     /** The camera of this frame (cached on the context). */
+    /**
+     * Optional camera for one render call. The replay editor's orbit/free views render the same
+     * composition graph from the free camera instead of the shot camera; a thread-local keeps that
+     * override out of every layer call without changing the graph signatures.
+     */
+    private static final ThreadLocal<CompCamera> CAMERA_OVERRIDE = new ThreadLocal<>();
+
+    public static void pushCamera(CompCamera camera)
+    {
+        CAMERA_OVERRIDE.set(camera);
+    }
+
+    public static void popCamera()
+    {
+        CAMERA_OVERRIDE.remove();
+    }
+
     public static CompCamera camera(CompRenderContext ctx)
     {
+        CompCamera override = CAMERA_OVERRIDE.get();
+
+        if (override != null)
+        {
+            ctx.cameraView = override;
+
+            return override;
+        }
+
         if (ctx.cameraView == null)
         {
             ctx.cameraView = CompCamera.of(ctx.comp, ctx.time, ctx.frame);
@@ -339,6 +365,11 @@ public final class CompScene
         }
 
         if (legacy3D(ctx))
+        {
+            return true;
+        }
+
+        if ("bbs".equals(layer.type) && CAMERA_OVERRIDE.get() != null)
         {
             return true;
         }

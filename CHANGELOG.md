@@ -1,5 +1,33 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix49 — 2026-11-13
+
+环绕/自由视角真正重渲染整条合成图；相机视角不动。合成器关键帧抽屉保持 hotfix48 的标尺/缩放
+修复。
+
+### 不再用 2D 卡片或 source-cache 工作区
+
+- hotfix47 的“最终合成截图贴 3D 卡片”是 2D；hotfix48 的 `CompViewportRenderer` 源码缓存
+  路径仍可能把文字/形状/BBS 预览层画成屏幕固定或占位图。
+- 现在环绕/自由直接复用相机视角的 `CompRenderer` 合成图，只替换相机：
+  - 新增 `CompCamera.ofFree(CompViewportCamera, width, height)`，用自由相机的 eye/target/FOV/
+    roll 构造 `CompCamera`，view/projection 与自由相机逐元素一致（`CompCameraFreeTest`）。
+  - 新增 `CompRenderer.renderFrameWithCamera(...)`：在渲染期间通过
+    `CompScene.pushCamera/popCamera` 覆盖相机；所有图层、嵌套合成、蒙版、效果、文字/形状/
+    BBS 预览层、独立模型都走同一套 `CompRenderer`/`LayerContentRenderer` 路径。
+  - 自由/环绕把该帧按合成画幅 letterbox 到视口；相机视角路径完全不变。
+- BBS 预览层在自由相机覆盖下强制按 3D 图层投影，不再作为全屏背景；相机视角仍按原语义。
+- 自由视角首次进入按合成尺寸取景；轨道/自由相机控制不变。
+
+### 验证
+
+- 全量测试：**157 套件 / 969 项 / 0 failures / 0 errors / 1 skipped**
+  （新增 `CompCameraFreeTest`；`CompTimeRulerTest` 继续覆盖标尺换算）。
+- 按用户要求**未启动客户端**；请在你的工程里验证环绕/自由下文字、形状、BBS 预览层、图片和
+  模型与合成器的 3D 关系。
+- 候选包：`bbsae-0.99-hotfix49.jar`（3,933,166 bytes，SHA-256
+  `E3F6168D1ED00E3640761D2C9299DED69D310D890BDB94ABB84A6DF3CAEDA4CF`）。
+
 ## 0.99-hotfix48 — 2026-11-13
 
 回放编辑器的环绕/自由视角改为**真正的 3D 合成场景**；相机视角完全不动。合成器关键帧

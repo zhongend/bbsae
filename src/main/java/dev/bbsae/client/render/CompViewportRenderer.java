@@ -644,11 +644,10 @@ public final class CompViewportRenderer
 
             Matrix4f world = CompScene.world(context, layer);
 
-            /* AE: a 2D layer is screen-fixed. The BBS preview layer is the one exception: it is a
-             * composition-sized world capture, and drawing it screen-fixed in the 3D workspace
-             * made the whole background read as "the BBS preview layer". Project it as a plane at
-             * its layer transform instead, like every other 3D element. */
-            if (!CompScene.cameraAffects(context, layer) && !"bbs".equals(layer.type))
+            /* AE: a 2D layer is screen-fixed. Draw it in composition pixels through the preview
+             * fit, not through the orbit camera: it must not foreshorten, disappear behind the
+             * camera, or change size while the user orbits. */
+            if (!CompScene.cameraAffects(context, layer))
             {
                 RenderSystem.disableDepthTest();
                 RenderSystem.depthMask(false);

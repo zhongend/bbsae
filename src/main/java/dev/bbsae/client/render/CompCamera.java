@@ -300,6 +300,29 @@ public final class CompCamera
             0F, true, true, width, height);
     }
 
+    /**
+     * A composition camera driven by the replay editor's free/orbit camera. The returned camera
+     * uses exactly the orbit eye/target/FOV/roll, so the whole composition graph (2D layers, 3D
+     * layers, masks, effects, BBS preview and models) is rendered from that viewpoint instead of
+     * being composited once from the shot camera and then flattened into a card.
+     */
+    public static CompCamera ofFree(CompViewportCamera free, float width, float height)
+    {
+        if (free == null)
+        {
+            return identity(width, height);
+        }
+
+        free.update();
+
+        float focal = focalFor(free.fov, height);
+
+        return new CompCamera(true, free.fov, free.near, free.far, focal, free.distance,
+            free.position.x, free.position.y, free.position.z,
+            free.target.x, free.target.y, free.target.z,
+            free.roll, true, !free.ortho, width, height);
+    }
+
     public static float focalFor(float fovDegrees, float compHeight)
     {
         return (compHeight * 0.5F) / (float) Math.tan(Math.toRadians(Math.max(1F, Math.min(179F, fovDegrees))) * 0.5D);

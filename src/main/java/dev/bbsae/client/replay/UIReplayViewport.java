@@ -8,7 +8,6 @@ import dev.bbsae.client.render.CompFrameServer;
 import dev.bbsae.client.render.CompRenderCache;
 import dev.bbsae.client.render.CompRenderer;
 import dev.bbsae.client.render.CompViewportCamera;
-import dev.bbsae.client.render.CompViewportRenderer;
 import dev.bbsae.client.render.FboPool;
 import dev.bbsae.client.render.GlFramebuffer;
 import dev.bbsae.client.render.GlTexture;
@@ -515,6 +514,70 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         context.batcher.box(this.windowPlate.x - 4, this.windowPlate.y - 4,
             this.windowPlate.ex() + 4, this.windowPlate.ey() + 4, 0xCC10141B);
         this.renderCompositionPlate(context, project, doc, this.windowPlate, time, "合成预览");
+    }
+
+    /**
+     * Renders the composition through the orbit/free camera. This is not a screenshot of the shot
+     * frame: the full {@link CompRenderer} graph runs with a camera override, so text, shapes,
+     * images, effects, masks, the BBS preview layer and 3D models keep the exact 3D relationships
+     * they have in the compositor. Only the camera differs from camera view.
+     */
+    private boolean drawFreeCompositionView(UIContext context, CompProject project, CompDocument doc)
+    {
+        if (this.session == null || doc.width <= 0F || doc.height <= 0F || this.viewArea.w <= 0 || this.viewArea.h <= 0)
+        {
+            return false;
+        }
+
+        float time = this.session.playhead() / ReplayTime.TICKS_PER_SECOND;
+        int frame = Math.max(0, Math.round(time * Math.max(1F, doc.fps)));
+        float scale = Math.max(0.35F, Math.min(1F, this.viewArea.w / Math.max(1F, doc.width) * 1.25F));
+        GlFramebuffer rendered = null;
+        boolean drawn = false;
+
+        try
+        {
+            this.session.applyAllPoses();
+            CompCamera free = CompCamera.ofFree(this.session.camera(), doc.width, doc.height);
+
+            dev.bbsae.client.render.CompRenderContext.setTargetEdge(
+                Math.max(1, Math.round(Math.max(doc.width, doc.height) * scale)));
+            context.batcher.flush();
+            rendered = CompRenderer.renderFrameWithCamera(project, doc, frame, false, scale, free);
+
+            if (rendered == null)
+            {
+                return false;
+            }
+
+            Area plate = new Area();
+            this.fitPlate(doc, this.viewArea, 0, plate);
+
+            context.batcher.box(this.viewArea.x, this.viewArea.y, this.viewArea.ex(), this.viewArea.ey(), 0xFF0E1116);
+            context.batcher.texturedBox(rendered.color.id, 0xFFFFFFFF,
+                plate.x, plate.y, plate.w, plate.h,
+                0F, rendered.height, rendered.width, 0F, rendered.width, rendered.height);
+            context.batcher.flush();
+            drawn = true;
+        }
+        catch (RuntimeException e)
+        {
+            if (this.compositionErrorMs == 0L || System.currentTimeMillis() - this.compositionErrorMs > 2000L)
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.warn("Replay free-view composition render failed", e);
+            }
+        }
+        finally
+        {
+            dev.bbsae.client.render.CompRenderContext.setTargetEdge(0);
+
+            if (rendered != null)
+            {
+                FboPool.release(rendered);
+            }
+        }
+
+        return drawn;
     }
 
     /** The dark stage under the free/orbit actor pass. */
@@ -1135,15 +1198,8 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             CompProject project = panel == null ? null : panel.getProject();
             CompDocument doc = panel == null ? null : panel.getDocument();
 
-            if (project != null && doc != null)
+            if (project != null && doc != null && this.drawFreeCompositionView(context, project, doc))
             {
-                /* Same composition, real 3D scene: 2D layers stay screen-fixed (AE semantics),
-                 * 3D layers/models are projected through the orbit camera with their textures,
-                 * depth, effects and masks. This is the textured workspace, not a flat card and
-                 * not the old wireframe/model-only stage. */
-                CompViewportRenderer.draw(context.batcher, project, doc, this.session.camera(),
-                    this.session.playhead() / ReplayTime.TICKS_PER_SECOND,
-                    this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
                 drawn = doc.layers == null ? 1 : Math.max(1, doc.layers.size());
             }
             else
@@ -1234,7 +1290,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         String view = cameraView
             ? "相机视角 · 最终合成"
-            : (this.viewMode == VIEW_FREE ? "自由视角 · 虚拟世界" : "绕对象旋转 · 虚拟世界");
+            : (this.viewMode == VIEW_FREE ? "自由视角 · 3D 合成" : "绕对象旋转 · 3D 合成");
 
         context.batcher.textCard("bbsae 回放预览 · " + view, x, y);
 
