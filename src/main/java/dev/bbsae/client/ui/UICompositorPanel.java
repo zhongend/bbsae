@@ -361,6 +361,12 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Throttles the background-export status line shown on the edit page. */
     private long lastExportStatusMs;
     private float lastInspectorTime = Float.NaN;
+    private boolean inspectorRefreshQueued;
+    /** Deferred scroll-to-end request; the new content does not exist until the rebuild. */
+    private boolean inspectorScrollToEnd;
+    /** Test-only: re-select the linked replay after debugPrepare's own deferred selection. */
+    private Replay debugSelectReplay;
+    private int debugSelectDelay;
     private final List<Runnable> inspectorBindings = new ArrayList<>();
     private final Map<String, Boolean> sectionFolds = new HashMap<>();
     private final LinkedList<String> recentEffects = new LinkedList<>();
@@ -395,9 +401,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
     /* One-shot page switch motion (left tabs / inspector page / timeline page). The veil hides the
      * hard cut without animating BBS controls' alpha; see UiPageTransition. */
-    private final UiPageTransition leftPageMotion = new UiPageTransition(0.16F, 6F);
-    private final UiPageTransition inspectorPageMotion = new UiPageTransition(0.16F, 6F);
-    private final UiPageTransition timelinePageMotion = new UiPageTransition(0.18F, 8F);
+    private final UiPageTransition leftPageMotion = new UiPageTransition(0.12F, 4F);
+    private final UiPageTransition inspectorPageMotion = new UiPageTransition(0.10F, 3F);
+    private final UiPageTransition timelinePageMotion = new UiPageTransition(0.12F, 6F);
 
     /* Last size the three-column layout was computed for. The panel is laid out once during bind(),
      * when the dashboard has not given it a real area yet, so the body kept its 160 px floor and a
@@ -12237,6 +12243,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection multiSelectionSection()
     {
         UISection section = new UISection(IKey.constant("多选 · " + this.getSelectionCount() + " 个图层"));
+        section.remember(this.sectionFolds, "multi", true);
 
         section.fields.add(UI.label(IKey.constant("批量操作作用于所选全部图层；单层属性请只选一个。"), 14));
 
@@ -12491,8 +12498,10 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         /* The new effect is appended at the bottom of the stack. Without moving the view the
-         * panel looks unchanged; the status line alone was too far away to notice. */
-        this.inspector.scroll.scrollToEnd();
+         * panel looks unchanged; the status line alone was too far away to notice. The scroll is
+         * applied by rebuildInspector after the deferred rebuild, because scrolling the old
+         * content first would be reset when the new children are laid out. */
+        this.inspectorScrollToEnd = true;
 
         this.save();
         this.setStatus("已添加效果：" + CompEffectRegistry.displayName(type));
@@ -15735,6 +15744,12 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.id, linked == null ? "-" : linked.getId(), this.film.replays.getList().size(),
             CompReplayBridge.isVirtual(linked), linked == null ? "" : linked.label.get());
 
+        /* debugPrepare() at the hook may still select an original film replay on its first
+         * update; re-select the linked virtual replay a few frames later so a screenshot shows
+         * the actual bbsae flow (and so the composition overlay has a selected actor). */
+        this.debugSelectReplay = linked;
+        this.debugSelectDelay = 5;
+
         if (Boolean.getBoolean("bbsae.debugBridgeComposite") && linked != null)
         {
             /* Verification of the second half of the bridge: a keyframe written on the virtual
@@ -16606,8 +16621,29 @@ public class UICompositorPanel extends UIDashboardPanel
 
     /* Inspector */
 
+    /**
+     * Coalesced inspector rebuild.
+     *
+     * <p>Many paths (page switch, layer selection, a property callback, an undo) can request a
+     * rebuild in the same frame. Rebuilding synchronously from each one made the page transition
+     * stutter: the user pressed a tab and the new page was assembled several times before the
+     * first frame was drawn. The request is now a dirty flag; the render loop rebuilds at most
+     * once, right before drawing, so a page switch starts its transition immediately and the
+     * expensive widget construction happens under the transition veil.</p>
+     */
     private void refreshInspector()
     {
+        if (this.buildingInspector)
+        {
+            return;
+        }
+
+        this.inspectorRefreshQueued = true;
+    }
+
+    private void rebuildInspector()
+    {
+        this.inspectorRefreshQueued = false;
         this.buildingInspector = true;
         this.inspector.removeAll();
         this.inspectorBindings.clear();
@@ -16657,6 +16693,12 @@ public class UICompositorPanel extends UIDashboardPanel
         this.buildingInspector = false;
         this.lastInspectorTime = this.time;
         this.updateToolbarLabels();
+
+        if (this.inspectorScrollToEnd)
+        {
+            this.inspectorScrollToEnd = false;
+            this.inspector.scroll.scrollToEnd();
+        }
 
         if (this.curveEditor != null)
         {
@@ -16803,10 +16845,13 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.inspector.add(this.layerSection());
+        /* Common first: transform and opacity are what a layer is edited for most of the time.
+         * The identity/source/parent/matte block is long; putting it before the transform pushed
+         * the actual animation controls below the fold of a 300 px inspector. */
         this.inspector.add(this.motionSection(layer));
-        this.inspector.add(this.motionTemplateSection(layer));
         this.inspector.add(this.opacitySection(layer));
+        this.inspector.add(this.layerSection());
+        this.inspector.add(this.motionTemplateSection(layer));
         this.inspector.add(this.bindingSection(layer));
         this.inspector.add(this.layerMarkerSection(layer));
         this.inspector.add(this.animationPresetSection(layer));
@@ -16838,6 +16883,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection quickStartSection()
     {
         UISection section = new UISection(IKey.constant("快速开始"));
+        section.remember(this.sectionFolds, "quickstart", true);
 
         section.fields.add(UI.label(IKey.constant("① 添加或选择一条轨道"), 16));
         section.fields.add(UI.label(IKey.constant("② 左侧效果库/素材库负责添加；右侧「图层」调运动和不透明度、「效果」编辑效果"), 14));
@@ -17565,6 +17611,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection gradeSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("调色"));
+        section.remember(this.sectionFolds, "grade", true);
 
         if (layer == null)
         {
@@ -18015,6 +18062,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection outputPresetSection()
     {
         UISection section = new UISection(IKey.constant("输出模块"));
+        section.remember(this.sectionFolds, "output", true);
 
         if (this.project == null)
         {
@@ -18104,6 +18152,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection compSection()
     {
         UISection section = new UISection(IKey.constant("合成"));
+        section.remember(this.sectionFolds, "comp", true);
         CompDocument comp = this.doc;
 
         section.fields.add(this.textRow("合成名称", comp.name, (value) ->
@@ -19195,6 +19244,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection bindingSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("绑定 / 跟踪"));
+        section.remember(this.sectionFolds, "binding", false);
 
         if (layer == null)
         {
@@ -19243,6 +19293,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection textSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("文字"));
+        section.remember(this.sectionFolds, "text", true);
         UITextbox text = new UITextbox(2048, (value) ->
         {
             layer.text = value;
@@ -19427,6 +19478,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection textAnimatorSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("文字动画器"));
+        section.remember(this.sectionFolds, "textAnimator", false);
 
         section.fields.add(this.smallButton("添加文字动画器", () ->
         {
@@ -19465,6 +19517,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection shapeSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("形状"));
+        section.remember(this.sectionFolds, "shape", true);
 
         /* Create row: absolute-positioned buttons. BBS's row() divides widths equally and ignores
          * w(), which would squeeze these labels into unreadable slivers. */
@@ -19766,6 +19819,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection maskSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("蒙版"));
+        section.remember(this.sectionFolds, "mask", true);
 
         if (layer == null)
         {
@@ -19867,6 +19921,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection layerMarkerSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("图层标记"));
+        section.remember(this.sectionFolds, "layerMarker", false);
 
         if (layer == null)
         {
@@ -19915,6 +19970,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection animationPresetSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("动画预设"));
+        section.remember(this.sectionFolds, "animationPreset", false);
 
         if (layer == null || this.project == null)
         {
@@ -19960,6 +20016,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection markerSection()
     {
         UISection section = new UISection(IKey.constant("合成标记"));
+        section.remember(this.sectionFolds, "marker", false);
 
         section.fields.add(this.smallButton("在播放头添加标记", () ->
         {
@@ -20004,6 +20061,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private UISection parameterSection()
     {
         UISection section = new UISection(IKey.constant("主属性"));
+        section.remember(this.sectionFolds, "mainProps", true);
 
         section.fields.add(this.smallButton("添加参数", () ->
         {
@@ -22861,6 +22919,23 @@ public class UICompositorPanel extends UIDashboardPanel
     @Override
     public void render(UIContext context)
     {
+        /* Coalesced inspector rebuild: at most one per frame, right before the tree is drawn.
+         * A page switch therefore starts its transition immediately instead of rebuilding the
+         * whole page synchronously in the click handler. */
+        if (this.inspectorRefreshQueued)
+        {
+            this.rebuildInspector();
+        }
+
+        if (this.debugSelectReplay != null && this.workspaceMode == WORKSPACE_REPLAY && --this.debugSelectDelay <= 0)
+        {
+            Replay replay = this.debugSelectReplay;
+
+            this.debugSelectReplay = null;
+            this.replayWorkspace.selectReplay(replay);
+            this.replayWorkspace.frameAllFromHost();
+        }
+
         /* Quick panel changes the timeline width; doing that on the press frame of a drag made the
          * track's x->time mapping change under the cursor (clips jumped a few pixels on grab).
          * Defer layout changes until the mouse is released. */

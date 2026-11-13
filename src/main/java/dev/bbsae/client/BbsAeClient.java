@@ -597,9 +597,42 @@ public class BbsAeClient implements BBSAddonMod
     {
         event.register((filmPanel, replaySupplier) ->
         {
-            UISection section = new UISection(IKey.constant("合成器"));
+            UISection section = new UISection(IKey.constant("bbsae 虚拟回放"));
 
-            UIButton open = new UIButton(IKey.constant("打开影片合成器"), (button) ->
+            section.fields.add(mchorse.bbs_mod.ui.utils.UI.label(
+                IKey.constant("仅存在于 bbsae 合成器；不会渲染进真实世界。"), 13));
+
+            UIButton edit = new UIButton(IKey.constant("编辑合成图层"), (button) ->
+            {
+                Replay replay = replaySupplier.get();
+
+                if (filmPanel.getData() == null || replay == null)
+                {
+                    return;
+                }
+
+                openCompositorForFilm(filmPanel, filmPanel.getData(), replay);
+
+                UICompositorPanel host = compositorPanel;
+
+                if (host != null && host.getDocument() != null)
+                {
+                    for (dev.bbsae.comp.CompLayer layer : host.getDocument().layers)
+                    {
+                        if (layer != null && replay.getId() != null && replay.getId().equals(layer.replayId))
+                        {
+                            host.selectLayer(layer);
+                            break;
+                        }
+                    }
+
+                    /* 2 is the compositor's PAGE_LAYER; the button's purpose is to land on the
+                     * native layer settings that own this virtual replay. */
+                    host.setInspectorPage(2);
+                }
+            });
+
+            UIButton open = new UIButton(IKey.constant("打开合成器"), (button) ->
             {
                 Replay replay = replaySupplier.get();
 
@@ -609,7 +642,7 @@ public class BbsAeClient implements BBSAddonMod
                 }
             });
 
-            section.fields.add(open);
+            section.fields.add(mchorse.bbs_mod.ui.utils.UI.row(edit, open));
 
             return section;
         });

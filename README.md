@@ -1,8 +1,8 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix38**：合成器回放与回放编辑器已打通；回放编辑器只显示 bbsae 虚拟世界回放，
-> 不显示 BBS 影片里的真实世界回放，也不会把虚拟模型画进真实世界。详见
-> [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix39**：回放编辑器现在显示合成画幅、摄像机位置/路径和其他合成元素；合成器
+> 检查器（轨道右侧）改为合并重建并加快页面过渡；图层设置页渐进展开并记住折叠状态。
+> 详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">

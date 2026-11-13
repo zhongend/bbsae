@@ -993,7 +993,11 @@ public class UIReplayModePanel extends UIDashboardPanel
         {
             for (Replay replay : this.film.replays.getList())
             {
-                if (CompReplayBridge.isVirtual(replay))
+                /* Do not fight the label textbox while its replay is selected: prepending the
+                 * zero-width marker on the same frame the user is typing would move the caret.
+                 * Once the selection moves away, the marker is restored, so the row cannot be
+                 * lost permanently. */
+                if (replay != this.replay && CompReplayBridge.isVirtual(replay))
                 {
                     CompReplayBridge.markVirtual(replay);
                 }

@@ -105,6 +105,8 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         int drawn = ReplayModelPass.draw(context.batcher, this.session, this.area.x, this.area.y, this.area.w, this.area.h);
 
+        ReplayCompositionOverlay.render(context, this.session, this.area.x, this.area.y, this.area.w, this.area.h);
+
         this.pick.render(context, this.session, this.area);
 
         if (this.session.canEditPlacement())
