@@ -69,6 +69,16 @@ session 并存**：
 
 预览帧改为 **dirty 重烘**，失败时保留上一张好帧，不再在暂停瞬间释放成黑屏。
 
+## 5. hotfix47：环绕/自由 = 相机同一张合成
+
+- 相机视角保持原样。
+- 环绕/自由不再画 BBS 世界背景或线框，而是把 `CompRenderer.renderFrame` 的最终合成
+  （与相机视角同一帧）作为 3D 平面，经 `CompViewportCamera.viewProjection` 投影；
+  内容、文字、卡片、背景、演员与相机视角逐像素同源，只是相机控制不同。
+- 合成器关键帧抽屉标尺：`TimeUtils` 按 20 ticks/s 解释，而合成器单位是帧（常 60fps），
+  已改为 `tick / fps * 20`（秒制）或直接帧号（帧制）。
+- 缩放锚点：`zoomKeyframeTime(direction, mouseX)` 以鼠标下 tick 为锚点，不再固定中心。
+
 ## 4. 验证
 
 - 测试工程背景从品红 `-65281` 改为黑 `-16777216`，排除背景色干扰。

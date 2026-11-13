@@ -1,5 +1,42 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix47 — 2026-11-13
+
+回放环绕/自由视角与相机视角使用同一张最终合成；相机视角不动。合成器关键帧抽屉修复时间标尺
+与缩放锚点。
+
+### 环绕/自由视角显示相机预览的同一张画面
+
+- 现象：切到环绕模式时整张背景变成 BBS 预览世界；自由/环绕只剩线框/独立模型，没有相机
+  视角里的文字、卡片、合成背景和完整演员。
+- 修复：相机视角保持原 `CompRenderer` 最终合成；环绕/自由改为调用同一个
+  `CompRenderer.renderFrame`，把这一帧作为 **3D 场景中的合成平面**（`Viewport3DRenderer`）
+  通过 `CompViewportCamera` 的 `viewProjection` 投影。画面内容与相机视角逐像素同源，
+  只是相机控制不同。
+- 平面放在自由相机目标处（合成中心），默认缩放到 82% 以保留构图边缘；滚轮/环绕会正常
+  透视缩放。BBS 世界参考背景与 `ReplayModelPass` 线框不再出现在自由/环绕路径。
+- 相机视角、PiP/双窗口和导出路径未改动。
+- 验证：`docs/verify/round128-card-camera.png` / `round128-card-free.png` 同一次启动，
+  相机与自由视角都是同一只鸡和同一张黑底合成，自由视角为透视卡片。
+
+### 合成器关键帧抽屉时间轴
+
+- 根因：`TimelineRulerRenderer` 的格式化函数 `TimeUtils::formatTime` 按 BBS 的
+  **20 ticks/s** 解释传入值，而合成器时间轴的单位是 **帧**（`doc.fps`，常为 60）。
+  60 帧被显示成 3 秒，标尺和顶部时间码因此对不上。
+- 修复：标尺标签改为 `formatKeyframeTick`：秒制时先 `tick / fps * 20` 再交给
+  `TimeUtils`，帧制时直接显示帧号；不再把帧当 BBS tick。
+- 缩放：`zoomKeyframeTime(direction, mouseX)` 以鼠标下的 tick 为锚点，保持该 tick 在
+  屏幕上的相对位置；标题栏箭头退回播放头/中心。Alt+滚轮路径传入 `context.mouseX`。
+  底部轨道时间轴的滚轮原本已使用 `Scale.getAnchorX` 鼠标锚点。
+
+### 验证
+
+- 全量测试：**155 套件 / 967 项 / 0 failures / 0 errors / 1 skipped**。
+- 真机：`round128-card-camera.png`、`round128-card-free.png`。
+- 候选包：`bbsae-0.99-hotfix47.jar`（3,932,178 bytes，SHA-256
+  `3EA7CEB3C893C78694980DA3BB0446CAA30AF5BF44DE24D8A74EF64730F3FDF1`）。
+
 ## 0.99-hotfix46 — 2026-11-13
 
 3D 环绕预览排查与优化：模型/gizmo 使用真实 orbit 相机；BBS 参考画面增加相机视差，

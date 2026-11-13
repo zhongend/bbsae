@@ -490,6 +490,103 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.renderCompositionPlate(context, project, doc, this.windowPlate, time, "合成预览");
     }
 
+    /**
+     * Free/orbit view = the camera preview picture, as a textured composition card in the orbit
+     * camera. The card is the exact {@link CompRenderer} frame (background, cards, text, effects,
+     * actors), so it is visually the camera view's content; only the camera control differs. No
+     * BBS world backdrop and no separate wireframe/model pass are drawn here.
+     */
+    private boolean drawFreeCompositionCard(UIContext context, CompProject project, CompDocument doc)
+    {
+        if (this.session == null || doc.width <= 0 || doc.height <= 0 || this.viewArea.w <= 0 || this.viewArea.h <= 0)
+        {
+            return false;
+        }
+
+        float time = this.session.playhead() / ReplayTime.TICKS_PER_SECOND;
+        int frame = Math.max(0, Math.round(time * Math.max(1, doc.fps)));
+        float scale = Math.min(1F, Math.min(this.viewArea.w * 1.6F / doc.width, this.viewArea.h * 1.6F / doc.height));
+        scale = Math.max(0.25F, scale);
+        int width = Math.max(1, Math.round(doc.width * scale));
+        int height = Math.max(1, Math.round(doc.height * scale));
+        GlFramebuffer composition = null;
+        GlFramebuffer stage = null;
+        boolean drawn = false;
+
+        try
+        {
+            dev.bbsae.client.render.CompRenderContext.setTargetEdge(Math.max(width, height));
+            composition = CompRenderer.renderFrame(project, doc, frame, false, scale);
+
+            if (composition == null)
+            {
+                return false;
+            }
+
+            stage = FboPool.acquire(Math.max(1, this.viewArea.w), Math.max(1, this.viewArea.h));
+            this.session.camera().update();
+
+            if (Boolean.getBoolean("bbsae.debugReplayPreview"))
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.info(
+                    "Replay free card: comp={}x{} frame={} scale={} cameraTarget={},{},{} yaw={} pitch={} dist={}",
+                    composition.width, composition.height, frame, scale,
+                    this.session.camera().target.x, this.session.camera().target.y, this.session.camera().target.z,
+                    this.session.camera().yaw, this.session.camera().pitch, this.session.camera().distance);
+            }
+
+            try (dev.bbsae.client.render.GlStateGuard guard = new dev.bbsae.client.render.GlStateGuard())
+            {
+                stage.begin(0x00000000);
+                float cardWidth = doc.width * 0.82F;
+                float cardHeight = doc.height * 0.82F;
+                Matrix4f world = new Matrix4f().translate(
+                    this.session.camera().target.x - cardWidth / 2F,
+                    this.session.camera().target.y - cardHeight / 2F,
+                    this.session.camera().target.z);
+                dev.bbsae.client.render.Viewport3DRenderer.draw(composition.color,
+                    world, this.session.camera().viewProjection,
+                    0F, 0F, cardWidth, cardHeight, 1F);
+            }
+
+            context.batcher.box(this.viewArea.x, this.viewArea.y, this.viewArea.ex(), this.viewArea.ey(), 0xFF0E1116);
+            context.batcher.texturedBox(stage.color.id, 0xFFFFFFFF,
+                this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h,
+                0F, stage.height, stage.width, 0F, stage.width, stage.height);
+            context.batcher.flush();
+            drawn = true;
+
+            if (Boolean.getBoolean("bbsae.debugReplayPreview"))
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.info("Replay free card drawn: stage={} {}x{}",
+                    stage.id, stage.width, stage.height);
+            }
+        }
+        catch (RuntimeException e)
+        {
+            if (this.compositionErrorMs == 0L || System.currentTimeMillis() - this.compositionErrorMs > 2000L)
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.warn("Replay free-view composition card failed", e);
+            }
+        }
+        finally
+        {
+            dev.bbsae.client.render.CompRenderContext.setTargetEdge(0);
+
+            if (stage != null)
+            {
+                FboPool.release(stage);
+            }
+
+            if (composition != null)
+            {
+                FboPool.release(composition);
+            }
+        }
+
+        return drawn;
+    }
+
     /** The dark stage under the free/orbit actor pass. */
     private void renderStage(UIContext context, Area area)
     {
@@ -1091,9 +1188,21 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         }
         else
         {
-            this.renderStage(context, this.viewArea);
-            drawn = ReplayModelPass.draw(context.batcher, this.session,
-                this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
+            dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+            CompProject project = panel == null ? null : panel.getProject();
+            CompDocument doc = panel == null ? null : panel.getDocument();
+
+            if (project != null && doc != null && this.drawFreeCompositionCard(context, project, doc))
+            {
+                drawn = doc.layers == null ? 1 : Math.max(1, doc.layers.size());
+            }
+            else
+            {
+                this.renderStage(context, this.viewArea);
+                drawn = ReplayModelPass.draw(context.batcher, this.session,
+                    this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
+            }
+
             ReplayCompositionOverlay.render(context, this.session, this.viewArea.x, this.viewArea.y,
                 this.viewArea.w, this.viewArea.h, true);
         }

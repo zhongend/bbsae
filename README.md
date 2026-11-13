@@ -1,9 +1,9 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix46**：回放预览暂停不再丢模型，时间轴播放头真正可拖动；自由/绕对象视角的
-> BBS 参考画面改为随 orbit 相机 yaw/pitch 产生**视差**的压暗背景，放大留边避免露黑，不再像
-> 一张贴在屏幕上的截图。3D 模型/gizmo 使用真实透视相机；BBS 世界本身是 2D 捕获帧（详见
-> `docs/ROUND86-PAUSE-ORBIT.zh.md` 的“关于真 3D”说明）。详见 [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix47**：回放编辑器的**环绕/自由视角改为和相机视角同一张最终合成画面**——
+> 只是相机控制不同；不再把 BBS 世界当整张背景，也不再退回线框/模型-only 舞台。
+> 相机视角保持不动。另修合成器关键帧抽屉的**时间轴标尺按帧/秒错位**，以及缩放锚点：
+> Alt/滚轮缩放现在以**鼠标所在位置**为锚点，不再固定中心。详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">

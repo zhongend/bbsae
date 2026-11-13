@@ -5799,7 +5799,7 @@ public class UICompositorPanel extends UIDashboardPanel
             (int) this.keyframeEditor.view.fromGraphX(this.keyframeEditor.view.graphArea.x),
             this.getDurationTicks(),
             this.keyframeEditor.view::toGraphX,
-            TimeUtils::formatTime
+            this::formatKeyframeTick
         ));
 
         /* Do not replace UIKeyframes' own context menu here. BBS registers the full keyframe
@@ -12547,8 +12547,32 @@ public class UICompositorPanel extends UIDashboardPanel
         this.inspectorTabs.select(inspectorTabForPage(this.inspectorPage));
     }
 
+    /** Ruler labels are compositor frames, not BBS' 20 ticks/s: never pass frames to formatTime. */
+    private String formatKeyframeTick(int tick)
+    {
+        float fps = this.doc == null ? 20F : Math.max(1F, this.doc.fps);
+
+        if (Boolean.TRUE.equals(BBSSettings.editorSeconds.get()))
+        {
+            /* TimeUtils is BBS' 20-ticks-per-second formatter; compositor ticks are frames. */
+            return TimeUtils.formatTime(tick / fps * 20.0D);
+        }
+
+        return String.valueOf(tick);
+    }
+
     /** Time-axis zoom for the keyframe drawer; the title-bar arrows call this. */
     public void zoomKeyframeTime(int direction)
+    {
+        this.zoomKeyframeTime(direction, -1F);
+    }
+
+    /**
+     * Time-axis zoom anchored at the mouse (or the playhead when no mouse is supplied). Keeping
+     * the hovered tick under the cursor is what makes the wheel reach the keyframe the user is
+     * pointing at; the old wrapper always zoomed around the viewport centre.
+     */
+    public void zoomKeyframeTime(int direction, float mouseX)
     {
         if (this.keyframeEditor.view == null)
         {
@@ -12561,12 +12585,24 @@ public class UICompositorPanel extends UIDashboardPanel
         double max = axis.getMaxValue();
         double span = Math.max(1D, max - min);
         double target = span * (direction > 0 ? 0.8D : 1.25D);
+        double anchor = (min + max) * 0.5D;
 
+        if (mouseX >= 0F && this.keyframeEditor.view.graphArea.isInside((int) mouseX,
+            this.keyframeEditor.view.graphArea.my()))
+        {
+            anchor = this.keyframeEditor.view.fromGraphX((int) mouseX);
+        }
+        else if (this.doc != null)
+        {
+            anchor = this.getFrame();
+        }
+
+        anchor = Math.max(0D, Math.min(duration, anchor));
         target = Math.max(2D, Math.min(duration, target));
 
-        double center = (min + max) * 0.5D;
-        double from = center - target * 0.5D;
-        double to = center + target * 0.5D;
+        double ratio = span <= 0.0001D ? 0.5D : Math.max(0D, Math.min(1D, (anchor - min) / span));
+        double from = anchor - target * ratio;
+        double to = from + target;
 
         if (from < 0D)
         {
@@ -12581,6 +12617,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         from = Math.max(0D, from);
+        to = Math.max(from + 1D, Math.min(duration, to));
         axis.view(from, to);
         this.setStatus(String.format(java.util.Locale.ROOT,
             "关键帧时间轴 %s：%.0f–%.0f 帧", direction > 0 ? "放大" : "缩小", from, to));

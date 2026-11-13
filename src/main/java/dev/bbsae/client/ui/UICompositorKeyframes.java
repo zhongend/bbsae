@@ -101,7 +101,7 @@ public class UICompositorKeyframes extends UIKeyframes
                 return super.subMouseScrolled(context);
             }
 
-            this.panel.zoomKeyframeTime(wheel > 0D ? 1 : -1);
+            this.panel.zoomKeyframeTime(wheel > 0D ? 1 : -1, context.mouseX);
 
             return true;
         }
