@@ -19,7 +19,9 @@
 
 - 自由/绕对象视角直接走合成器 `CompViewportRenderer` + `ReplayActorPass`，应用 CompLayer
   的 position/rotation/scale；相机视角走 `CompRenderer` 最终合成。
-- 回放页比例与合成器一致（`modelPixelsPerBlock` 或 `height*0.12`）。
+- 回放页比例与合成器一致（`modelPixelsPerBlock` 或 `height*0.12`），并且视口每帧重新同步：
+  切换工程后不会再沿用上一个工程的 22px/格。真机 dev-effects（1920x1080）显示 `64px/格`，
+  真实文字/渐变 shape/3D card 均可见，截图 `docs/verify/round90-dev-effects.png`。
 
 ### 相机跟随
 
@@ -37,7 +39,7 @@
 
 - 全量测试：**154 套件 / 956 项测试 / 0 failures / 0 errors / 1 skipped**（新增 `CompPreviewFilterTest`）。
 - 截图：`docs/verify/round84-free-comp.png`、`round83-camera-sync.png`、`round85-playback.png`。
-- 本地候选包：`bbsae-0.99-hotfix42.jar`（3,913,218 bytes，SHA-256 E21E6E3A32741E13E48880F71E45C9FFB6996BB427BA0A421585228055BF2F16）。
+- 本地候选包：`bbsae-0.99-hotfix42.jar`（3,913,237 bytes，SHA-256 FC9DB65D3744901CDF1E94362AC1CACB463AE6463397DCA729A1D167F26F1B2A）。
 
 ## 0.99-hotfix41 — 2026-11-13
 

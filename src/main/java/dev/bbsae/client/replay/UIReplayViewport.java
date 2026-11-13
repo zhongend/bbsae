@@ -431,6 +431,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         }
 
         this.updateViewArea();
+        this.session.syncSceneScale();
 
         this.session.camera().setViewport(this.viewArea.w, this.viewArea.h);
         this.session.camera().update();

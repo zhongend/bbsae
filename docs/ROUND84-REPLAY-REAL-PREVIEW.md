@@ -31,7 +31,10 @@
   `CompLayer` 的 position/rotation/scale；
 - 相机视角调用 `CompRenderer` 的最终合成，同样应用图层变换；
 - 回放页不再用自己的 64px/格映射去覆盖合成器比例，`ReplayEditSession.syncSceneScale()` 使用
-  与合成器相同的 `modelPixelsPerBlock`/`height*0.12`。
+  与合成器相同的 `modelPixelsPerBlock`/`height*0.12`，并且**每帧在视口渲染前同步一次**：
+  切换到不同分辨率的工程（如 1920x1080）后不会继续沿用上一个 320x180 工程的 22px/格。
+- 真机对比：dev-effects（1920x1080）从错误的 `22px/格` 变为 `64px/格`，见
+  `docs/verify/round90-dev-effects.png`；控制台另有 `Composition clip found ... project=dev-effects`。
 
 所以合成器里把回放压缩/放大后，回放编辑器显示的是同一套变换。
 
@@ -57,6 +60,8 @@
 - 全量测试：**154 套件 / 956 项 / 0 failures / 0 errors / 1 skipped**（新增 `CompPreviewFilterTest`）。
 - 真实图层预览：`docs/verify/round86-real-layers.png`（回放自由视角里能看到真实
   `REAL TEXT LAYER` 与 comp 图层，同时 bbs 实时世界层被过滤；截图来自带 `bbs` 层的测试工程）。
+- 不同工程/缩放验证：`docs/verify/round90-dev-effects.png`（dev-effects，1920x1080；真实文字
+  `文字效果 Aa 123`、渐变 shape、3D card 与模型；`64px/格`）。
 - 相机同步：`docs/verify/round83-camera-sync.png`。
 - 播放：`docs/verify/round85-playback.png`（timecode `00:00:02:17`）。
-- 本地候选包：`bbsae-0.99-hotfix42.jar`（3,913,218 bytes，SHA-256 E21E6E3A32741E13E48880F71E45C9FFB6996BB427BA0A421585228055BF2F16）。
+- 本地候选包：`bbsae-0.99-hotfix42.jar`（3,913,237 bytes，SHA-256 FC9DB65D3744901CDF1E94362AC1CACB463AE6463397DCA729A1D167F26F1B2A）。
