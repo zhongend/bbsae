@@ -96,7 +96,7 @@ public final class CompPrefs
          * Composition preview inside the replay editor:
          * 0 = off, 1 = subwindow (picture-in-picture), 2 = two windows (3D left, comp right).
          */
-        public int replayCompPreview = 1;
+        public int replayCompPreview = 0;
         /** Link WAV/OGG audio from its original path instead of copying it into the project. */
         public boolean linkExternalAssets = true;
         /** Keep BBS' editor onion skins off while the compositor is open: their ghost frames can
@@ -419,6 +419,6 @@ public final class CompPrefs
     {
         int mode = get().replayCompPreview;
 
-        return mode < 0 || mode > 2 ? 1 : mode;
+        return mode < 0 || mode > 2 ? 0 : mode;
     }
 }

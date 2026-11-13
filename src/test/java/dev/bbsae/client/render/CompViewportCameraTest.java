@@ -125,6 +125,14 @@ public class CompViewportCameraTest
     }
 
     @Test
+    public void replayWorkspaceDefaultsToPerspective()
+    {
+        CompViewportCamera camera = new CompViewportCamera();
+
+        assertTrue(!camera.ortho, "replay viewport must start in perspective");
+    }
+
+    @Test
     public void orthographicKeepsTheScaleAtTheTargetPlane()
     {
         CompViewportCamera perspective = camera();

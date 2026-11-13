@@ -4,6 +4,15 @@
 
 虚拟回放 full-bright、原版预览视角按钮、关键帧面板重叠修复、合成预览模式设置。
 
+### 合成预览同步到回放主画面
+
+- 回放编辑器默认进入**相机视角**：视口直接渲染当前 bbsae 合成画面（文字/图片/效果/linked
+  回放模型），并跳过重复的 replay actor pass；`ReplaySceneSpace.anchor` 对齐 CompLayer，
+  BBS gizmo/pick 仍与合成 actor 重合。
+- 回放相机强制透视 `ortho=false`，不使用正交投影。
+- 独立“合成预览”窗口默认关闭；设置仍可切换 0 关闭 / 1 子窗口 / 2 双窗口。
+
+
 ### 虚拟回放光照
 
 - 根因：BBS `FilmEntityRenderer` 用 actor 的**主世界坐标**采样 sky/block light；bbsae 虚拟回放
@@ -28,7 +37,7 @@
 
 ### 合成预览设置
 
-- `CompPrefs.replayCompPreview`：0 关闭 / 1 子窗口（默认）/ 2 双窗口。
+- `CompPrefs.replayCompPreview`：0 关闭（默认）/ 1 子窗口 / 2 双窗口。
 - 设置页“显示与线索 → 回放编辑器预览”可切换，立即生效并保存。
 - 双窗口：左侧 3D 回放、右侧完整合成预览；子窗口：右上角画中画。两者都跳过含 `bbs` 实时
   世界层的合成，保持虚拟世界预览。
@@ -36,9 +45,10 @@
 ### 验证
 
 - 日志：`Virtual replay full-bright light override active`。
-- 真机：`docs/verify/round82-twowindow.png`。
-- 全量测试：**153 套件 / 953 项测试 / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix40.jar`（3,906,541 bytes，SHA-256 DCF680CA26C44BD19C795CB1D7ADD1B2925A94DC508539731F54A32AD8C13A2C）。
+- 真机：`docs/verify/round83-camera-sync.png`（默认相机视角直接显示合成画面）、
+  `docs/verify/round82-twowindow.png`（可选双窗口）。
+- 全量测试：**153 套件 / 954 项测试 / 0 failures / 0 errors / 1 skipped**。
+- 本地候选包：`bbsae-0.99-hotfix40.jar`（3,907,704 bytes，SHA-256 8DBD2F1B84D9FFEF84D2DF85A24043B72183BE931F9DA8473D06BE77DB51C48F）。
 
 ## 0.99-hotfix39 — 2026-11-13
 

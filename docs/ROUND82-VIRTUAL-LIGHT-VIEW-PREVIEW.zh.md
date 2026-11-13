@@ -41,7 +41,23 @@ int light = LightmapTextureManager.pack(torch, sky);
 
 按钮在双窗口模式下会贴在左侧 3D 窗口右上角，不会浮到右侧合成预览上。
 
-## 3. 关键帧面板重叠修复
+## 3. 合成预览同步到回放编辑主画面
+
+回放编辑器默认进入**相机视角**：视口直接渲染当前 bbsae 合成的真实画面（文字、图片/卡片、
+效果、linked 回放模型），而不是只显示一个黑色 3D 世界。此时：
+
+- 跳过重复的 replay actor pass，因为合成画面里已经包含 linked 虚拟回放；
+- `ReplaySceneSpace.anchor` 对齐到该回放 CompLayer 的合成位置，BBS gizmo/pick 仍与合成里的
+  actor 重合；
+- 相机使用合成相机反推的透视 pose（强制 `ortho=false`），不采用正交投影；
+- 自由视角/绕对象旋转仍显示 3D 世界 actor pass，用于摆位和动画；相机视角用于看最终合成。
+
+因此 bbsae 的合成预览内容已经进入回放编辑主画面；原来的独立“合成预览”小窗口/双窗口默认关闭，
+只在需要并排对照时从设置打开。
+
+![相机视角同步合成画面](verify/round83-camera-sync.png)
+
+## 4. 关键帧面板重叠修复
 
 `preferredTimelineHeight()` 原来固定下限 220px。窗口较矮时，时间轴比整个 body 还高，关键帧
 编辑器从 body 上方开始，压住回放列表/属性面板。现在：
@@ -51,12 +67,12 @@ int light = LightmapTextureManager.pack(torch, sky);
 - 纯函数 `timelineHeightFor(pageHeight, embedded)` 由
   `ReplayTimelineLayoutTest` 覆盖 120–1080px 的窗口高度，断言 timeline 不越过 body。
 
-## 4. 回放合成预览可设置
+## 5. 回放合成预览可设置
 
 `CompPrefs` 新增 `replayCompPreview`：
 
-- `0` 关闭：回放视口只显示 3D 世界；
-- `1` 子窗口：右上角画中画（默认）；
+- `0` 关闭（默认）：主画面已经是合成预览，不再叠加独立预览；
+- `1` 子窗口：右上角画中画；
 - `2` 双窗口：左侧 3D 回放、右侧完整合成预览，中间分隔线。
 
 设置入口：设置 → 显示与线索 → **回放编辑器预览 → 合成预览**。三种模式立即生效并写入
@@ -69,9 +85,10 @@ bbsae 虚拟世界。
 
 ![双窗口合成预览](verify/round82-twowindow.png)
 
-## 5. 验证
+## 6. 验证
 
 - 真机：虚拟回放模型在暗处仍为正常亮度；日志出现 full-bright override active。
-- 真机：双窗口截图左侧 3D + 右上角自由/绕对象/相机三个 BBS 图标，右侧完整合成预览。
-- 全量测试：153 套件 / 953 项 / 0 failures / 0 errors / 1 skipped。
-- 本地候选包：`bbsae-0.99-hotfix40.jar`（3,906,541 bytes，SHA-256 DCF680CA26C44BD19C795CB1D7ADD1B2925A94DC508539731F54A32AD8C13A2C）。
+- 真机：默认相机视角直接显示合成画面（`docs/verify/round83-camera-sync.png`）；双窗口截图
+  左侧 3D + 右上角自由/绕对象/相机三个 BBS 图标，右侧完整合成预览。
+- 全量测试：153 套件 / 954 项 / 0 failures / 0 errors / 1 skipped。
+- 本地候选包：`bbsae-0.99-hotfix40.jar`（3,907,704 bytes，SHA-256 8DBD2F1B84D9FFEF84D2DF85A24043B72183BE931F9DA8473D06BE77DB51C48F）。

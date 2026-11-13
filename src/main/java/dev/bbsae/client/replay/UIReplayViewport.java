@@ -62,11 +62,14 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     private final UIIcon freeView;
     private final UIIcon orbitView;
     private final UIIcon cameraView;
-    private int viewMode = VIEW_FREE;
+    private int viewMode = VIEW_CAMERA;
     private float freeYaw;
     private float freePitch;
     private float freeDistance;
     private final Vector3f freeTarget = new Vector3f();
+    private boolean cameraAnchorSaved;
+    private final Vector3f cameraAnchor = new Vector3f();
+    private boolean freePoseInitialized;
     /** The 3D half of a two-window preview; equals {@link #area} in other modes. */
     private final Area viewArea = new Area();
     private int buttonRight = -1;
@@ -91,6 +94,16 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     public UIReplayViewport(ReplayEditSession session)
     {
         this.session = session;
+
+        if (session != null)
+        {
+            CompViewportCamera camera = session.camera();
+
+            this.freeYaw = camera.yaw;
+            this.freePitch = camera.pitch;
+            this.freeDistance = camera.distance;
+            this.freeTarget.set(camera.target);
+        }
 
         this.noCulling();
 
@@ -121,6 +134,18 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         if (mode == this.viewMode)
         {
             return;
+        }
+
+        if (this.viewMode == VIEW_CAMERA && this.cameraAnchorSaved && this.session != null)
+        {
+            this.session.space().anchor.set(this.cameraAnchor);
+            this.cameraAnchorSaved = false;
+        }
+
+        if (mode == VIEW_CAMERA && this.session != null)
+        {
+            this.cameraAnchor.set(this.session.space().anchor);
+            this.cameraAnchorSaved = true;
         }
 
         if (this.viewMode == VIEW_FREE && this.session != null)
@@ -197,6 +222,14 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             return;
         }
 
+        ReplaySceneSpace sceneSpace = this.session.space();
+
+        if (!this.cameraAnchorSaved)
+        {
+            this.cameraAnchor.set(sceneSpace.anchor);
+            this.cameraAnchorSaved = true;
+        }
+
         float time = this.session.playhead() / ReplayTime.TICKS_PER_SECOND;
         float frame = time * Math.max(1F, doc.fps);
         CompLayer active = doc.activeCamera(time);
@@ -226,6 +259,44 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         camera.far = active.cameraFar;
         camera.ortho = false;
         camera.update();
+
+        /* Align the replay scene with the composition: the layer's comp position is where the
+         * replay's world anchor must land. Without this the composition backdrop and the gizmo
+         * disagree by the actor's world offset. */
+        CompLayer linked = this.linkedLayer(doc, this.session.replay());
+
+        if (linked != null)
+        {
+            ReplaySceneSpace space = this.session.space();
+            float s = space.pixelsPerBlock;
+            float zSign = space.flipZ ? -s : s;
+            mchorse.bbs_mod.utils.pose.Transform transform = linked.transformAt(frame);
+            float layerZ = linked.scalarAt("z", linked.z, frame);
+
+            space.anchor.set(
+                transform.translate.x - s * linked.replayAnchorX,
+                transform.translate.y + s * linked.replayAnchorY,
+                layerZ - zSign * linked.replayAnchorZ
+            );
+        }
+    }
+
+    private CompLayer linkedLayer(CompDocument doc, Replay replay)
+    {
+        if (doc == null || replay == null)
+        {
+            return null;
+        }
+
+        for (CompLayer layer : doc.layers)
+        {
+            if (layer != null && replay.getId() != null && replay.getId().equals(layer.replayId))
+            {
+                return layer;
+            }
+        }
+
+        return null;
     }
 
     private void applyViewMode()
@@ -276,11 +347,26 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.session.camera().setViewport(this.viewArea.w, this.viewArea.h);
         this.session.camera().update();
         this.session.frameIfNeeded(this.viewArea);
+
+        if (!this.freePoseInitialized)
+        {
+            CompViewportCamera free = this.session.camera();
+
+            this.freeYaw = free.yaw;
+            this.freePitch = free.pitch;
+            this.freeDistance = free.distance;
+            this.freeTarget.set(free.target);
+            this.freePoseInitialized = true;
+        }
+
         this.applyViewMode();
         this.session.camera().update();
         this.session.updateVisibility();
 
-        int drawn = ReplayModelPass.draw(context.batcher, this.session, this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
+        boolean compositionBackground = this.renderCompositionBackground(context);
+        int drawn = compositionBackground
+            ? this.session.placeableCount()
+            : ReplayModelPass.draw(context.batcher, this.session, this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
 
         ReplayCompositionOverlay.render(context, this.session, this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
         this.renderCompositionPreview(context);
@@ -375,6 +461,48 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             this.orbitView.resize();
             this.cameraView.resize();
         }
+    }
+
+    /**
+     * Camera mode renders the real bbsae composition behind the actor gizmo. The composition
+     * already contains the linked replay actors, so the replay actor pass is skipped in this mode;
+     * the gizmo and pick pass still read the same actor world position and the scene anchor is
+     * aligned in {@link #lookThroughCompositionCamera()}.
+     */
+    private boolean renderCompositionBackground(UIContext context)
+    {
+        if (this.viewMode != VIEW_CAMERA || this.session == null || !this.compositionPreviewSupported())
+        {
+            return false;
+        }
+
+        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+        CompProject project = panel.getProject();
+        CompDocument doc = panel.getDocument();
+        int px = this.viewArea.x;
+        int py = this.viewArea.y;
+        int pw = this.viewArea.w;
+        int ph = this.viewArea.h;
+
+        context.batcher.clip(px, py, pw, ph, context);
+
+        var stack = context.batcher.getContext().getMatrices();
+
+        stack.push();
+        stack.translate(px, py, 0F);
+
+        try
+        {
+            CompRenderer.renderCached(project, doc, this.session.playhead() / ReplayTime.TICKS_PER_SECOND,
+                1F, pw, ph, 0, true, true, false, context.batcher);
+        }
+        finally
+        {
+            stack.pop();
+            context.batcher.unclip(context);
+        }
+
+        return true;
     }
 
     private void renderCompositionPreview(UIContext context)

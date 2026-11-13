@@ -76,6 +76,10 @@ public final class ReplayEditSession
         this.filmPanel = filmPanel;
         this.film = film;
         this.replay = replay;
+        /* The replay editor is a 3D perspective workspace. CompViewportCamera defaults to
+         * perspective, but older persisted/debug state could have left ortho on; make the contract
+         * explicit so the actor/gizmo projection cannot silently flatten. */
+        this.camera.setOrtho(false);
     }
 
     public UIFilmPanel filmPanel()
