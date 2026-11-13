@@ -50,4 +50,60 @@ public class ReplayFilmKeyframes extends UIFilmKeyframes
 
         return super.getAutoKeyframeTick();
     }
+
+    /**
+     * BBS only starts a ruler/playhead scrub when the graph reports a writable cursor. The base
+     * implementation asks the borrowed camera editor, which can be absent while the film panel is
+     * hidden behind this page. The replay session owns the clock and is always the right answer.
+     */
+    @Override
+    protected boolean hasCursor()
+    {
+        return this.session != null || super.hasCursor();
+    }
+
+    /**
+     * The dope sheet's ruler/playhead drag writes back through {@code editor.setCursor(...)} in
+     * BBS' {@link UIFilmKeyframes}. That delegate is the borrowed film panel's camera editor, and
+     * this page deliberately does not use its cursor: the replay transport owns the clock. The
+     * inherited call therefore moved a cursor nobody reads and the needle snapped back on the next
+     * frame — the "playhead cannot be dragged" bug.
+     *
+     * <p>Override the single scrub entry point instead: stop the replay transport and seek the
+     * replay session's own playhead. Both the initial click and every drag/release event call this
+     * method, so the needle, the 3D viewport and the actor pose all follow the mouse.</p>
+     */
+    @Override
+    protected void moveNoKeyframes(UIContext context)
+    {
+        if (this.session == null)
+        {
+            super.moveNoKeyframes(context);
+
+            return;
+        }
+
+        this.session.setPlaying(false);
+        this.session.seek((float) this.fromGraphX(context.mouseX));
+    }
+
+    /**
+     * Previous/next keyframe shortcuts in BBS also move the film cursor through the camera editor.
+     * Route them to the replay session so the playhead follows the selected keyframe there too.
+     */
+    @Override
+    protected void selectNextKeyframe(int direction)
+    {
+        super.selectNextKeyframe(direction);
+
+        if (this.session != null)
+        {
+            Keyframe selected = this.getGraph().getSelected();
+
+            if (selected != null)
+            {
+                this.session.seek(selected.getTick());
+            }
+        }
+    }
 }

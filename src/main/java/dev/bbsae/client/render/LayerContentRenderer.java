@@ -21,6 +21,7 @@ import net.minecraft.client.util.math.MatrixStack;
 import com.mojang.blaze3d.platform.GlStateManager;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL30;
 import org.joml.Quaternionf;
 
 import java.io.File;
@@ -34,6 +35,8 @@ import java.util.Map;
 /** Draws one layer's content into a transparent composition-sized target. */
 final class LayerContentRenderer
 {
+    private static long lastActorReadback;
+
     private LayerContentRenderer()
     {}
 
@@ -437,18 +440,82 @@ final class LayerContentRenderer
         MatrixStack stack = batcher.getContext().getMatrices();
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
         boolean depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+        boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+        boolean blend = GL11.glIsEnabled(GL11.GL_BLEND);
+        float[] previousColor = RenderSystem.getShaderColor();
 
         /* The model is already depth-resolved inside its own target. Compositing it as a screen
          * quad must not be rejected by the depth buffer a previous 3D card left behind — that was
          * exactly why the actor disappeared as soon as other 3D layers were visible. */
         GlStateManager._disableDepthTest();
         GL11.glDisable(GL11.GL_DEPTH_TEST);
+        /* A paused world/entity layer can leave scissor or a shader modulator from the live frame
+         * behind. Those states made the same model appear while playing and vanish while paused:
+         * the quad was clipped to nothing or multiplied by alpha 0. A composite blit owns these
+         * states explicitly instead of inheriting them from the last layer. */
+        GlStateManager._disableScissorTest();
+        GlStateManager._enableBlend();
+        GlStateManager._blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
+            GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        /* Raw state as well: a paused world pass can leave cull/blend-equation/subtract state
+         * behind. A fullscreen quad then either gets culled or blends to zero, which is exactly
+         * the "actor target has pixels but the composition frame is black" symptom. */
+        GL11.glDisable(GL11.GL_CULL_FACE);
+        GlStateManager._disableCull();
+        org.lwjgl.opengl.GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
+            GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        org.lwjgl.opengl.GL14.glBlendEquation(org.lwjgl.opengl.GL14.GL_FUNC_ADD);
+        /* A paused entity/matte layer can leave a depth-only RGB write mask behind. The actor
+         * target is fine, but the composite blit then writes alpha only: the whole paused frame
+         * reads back as opaque black (alpha 255, RGB 0) and the model vanishes. Restore the real
+         * mask before the quad, then re-sync GlStateManager's cache. */
+        GL11.glColorMask(true, true, true, true);
+        GlStateManager._colorMask(true, true, true, true);
+        RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+
+        if (Boolean.getBoolean("bbsae.debugReplayPreview"))
+        {
+            long now = System.currentTimeMillis();
+
+            if (now - lastActorReadback > 400L)
+            {
+                lastActorReadback = now;
+                int previousFbo = GL30.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
+                byte[] pixels = actors.readRawBytes();
+                long alpha = 0L;
+                long rgb = 0L;
+
+                for (int i = 0; i < pixels.length; i += 4)
+                {
+                    alpha += pixels[i + 3] & 0xFF;
+                    rgb += (pixels[i] & 0xFF) + (pixels[i + 1] & 0xFF) + (pixels[i + 2] & 0xFF);
+                }
+
+                GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, previousFbo);
+
+                dev.bbsae.BbsAeAddon.LOGGER.info(
+                    "Replay preview actor pixels: fbo={} {}x{} alpha={} rgb={}",
+                    actors.id, actors.width, actors.height, alpha, rgb);
+            }
+
+            dev.bbsae.BbsAeAddon.LOGGER.info(
+                "Replay preview actor blit: fbo={} tex={}x{} quad={}x{} blend(before)={} scissor(before)={} color(before)={},{},{},{}",
+                actors.id, actors.width, actors.height, width, height,
+                blend, scissor, previousColor[0], previousColor[1], previousColor[2], previousColor[3]);
+        }
 
         stack.push();
+        MatrixStack modelView = RenderSystem.getModelViewStack();
+
+        modelView.push();
+        modelView.peek().getPositionMatrix().identity();
+        RenderSystem.applyModelViewMatrix();
 
         try
         {
             stack.peek().getPositionMatrix().identity();
+            GL11.glViewport(0, 0, Math.max(1, width), Math.max(1, height));
+            GlStateManager._viewport(0, 0, Math.max(1, width), Math.max(1, height));
             RenderSystem.setProjectionMatrix(GlStateGuard.ortho(width, height),
                 com.mojang.blaze3d.systems.VertexSorter.BY_Z);
             batcher.texturedBox(actors.color.id, 0xFFFFFFFF,
@@ -459,8 +526,16 @@ final class LayerContentRenderer
         }
         finally
         {
+            modelView.pop();
+            RenderSystem.applyModelViewMatrix();
             stack.pop();
             RenderSystem.setProjectionMatrix(previousProjection, com.mojang.blaze3d.systems.VertexSorter.BY_Z);
+            RenderSystem.setShaderColor(previousColor[0], previousColor[1], previousColor[2], previousColor[3]);
+
+            if (scissor)
+            {
+                GlStateManager._enableScissorTest();
+            }
 
             if (depth)
             {

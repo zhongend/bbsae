@@ -120,9 +120,14 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     private int compFrameWidth;
     private int compFrameHeight;
     private boolean compFrameWorldReady;
+    /** True when the cached frame must be baked again, but may still be shown until then. */
+    private boolean previewDirty;
     private String compositionError;
     private long compositionErrorMs;
     private boolean previewWaitingForWorld;
+    /** Readiness snapshot for the cached model frame; see render(). */
+    private int lastEntityCount = -1;
+    private boolean lastBridgeActive;
 
     private ReplayEditSession session;
     private final ReplayPickPass pick = new ReplayPickPass();
@@ -488,7 +493,17 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     /** The dark stage under the free/orbit actor pass. */
     private void renderStage(UIContext context, Area area)
     {
-        context.batcher.gradientVBox(area.x, area.y, area.ex(), area.ey(), 0xFF17202B, 0xFF070A0F);
+        boolean world = this.drawStageWorld(context, area);
+
+        if (!world)
+        {
+            context.batcher.gradientVBox(area.x, area.y, area.ex(), area.ey(), 0xFF17202B, 0xFF070A0F);
+        }
+        else
+        {
+            /* Dim the reference picture so the actor, gizmo and grid stay readable. */
+            context.batcher.gradientVBox(area.x, area.y, area.ex(), area.ey(), 0x33000000, 0x99000000);
+        }
 
         if (CompPrefs.get().guides)
         {
@@ -512,25 +527,77 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     }
 
     /**
-     * One complete preview plate: black letterbox, world frame, composition frame, border and
-     * label. Shared by the camera view and the PiP/two-window panes so all three can never show a
-     * different frame from the same playhead.
+     * BBS world as the free/orbit stage reference. This is what makes the 3D orbit view show the
+     * film picture instead of a black void; it is deliberately dimmed and contained, and it never
+     * participates in the composition's own background (that is the composition plate's job).
+     */
+    private boolean drawStageWorld(UIContext context, Area area)
+    {
+        GlTexture texture = BbsPreviewBridge.texture();
+
+        if (texture == null || texture.width <= 0 || texture.height <= 0)
+        {
+            return false;
+        }
+
+        ReplayPreviewLayout.Rect plate = ReplayPreviewLayout.contain(texture.width, texture.height,
+            new ReplayPreviewLayout.Rect(area.x, area.y, area.w, area.h));
+
+        context.batcher.box(area.x, area.y, area.ex(), area.ey(), 0xFF05070A);
+        context.batcher.clip(area.x, area.y, area.w, area.h, context);
+
+        try
+        {
+            BbsPreviewBridge.drawFrame(context.batcher, 0xB0FFFFFF, plate.x(), plate.y(), plate.w(), plate.h());
+        }
+        finally
+        {
+            context.batcher.unclip(context);
+        }
+
+        context.batcher.textCard("BBS 参考画面", area.x + 8, area.y + area.h - 20, 0xCCDCE8F7, 0x66000000);
+
+        return true;
+    }
+
+    /**
+     * One complete preview plate: the composition's own background (or, only when the project asks
+     * for it, the BBS world backdrop), the composition frame, border and optional label.
      *
-     * @return true when a composition frame was drawn (the world may still be shown without it)
+     * <p>The world frame is <b>not</b> a global background by default. That was the "预览图层充当
+     * 整个背景" bug: a BBS-preview layer is a layer like any other and must only cover its own
+     * rectangle; the rest of the frame is the composition's background. The compositor's explicit
+     * `预览背景 → BBS` setting ({@code previewBackground == 1}) is the only case that puts the world
+     * behind the whole composition, matching the compositor preview.</p>
      */
     private boolean renderCompositionPlate(UIContext context, CompProject project, CompDocument doc,
                                            Area rect, float time, String label)
     {
+        boolean bbsBackdrop = this.usesBbsBackdrop(project);
+        int stage = doc == null ? 0xFF000000 : (bbsBackdrop ? 0xFF000000 : doc.background);
+
         context.batcher.box(rect.x - 1, rect.y - 1, rect.ex() + 1, rect.ey() + 1, 0xFF000000);
+        context.batcher.box(rect.x, rect.y, rect.ex(), rect.ey(), stage);
 
-        boolean world = this.drawWorldBackdrop(context, rect);
-        boolean composition = this.drawCompositionFrame(context, project, doc, rect, time);
+        boolean world = bbsBackdrop && this.drawWorldBackdrop(context, rect);
+        boolean composition = this.drawCompositionFrame(context, project, doc, rect, time, bbsBackdrop);
 
-        if (!world && !composition)
+        if (Boolean.getBoolean("bbsae.debugReplayPreview"))
         {
-            context.batcher.textCard("BBS 预览等待世界帧与合成…", rect.x + 8, rect.y + 24, 0xFFFFB27A, 0xAA140D06);
+            dev.bbsae.BbsAeAddon.LOGGER.info("Replay preview plate: doc={} bbsBackdrop={} world={} composition={} compFrame={} rect={}x{}",
+                doc == null ? "null" : doc.id, bbsBackdrop, world, composition,
+                this.compFrame == null ? "null" : this.compFrame.id, rect.w, rect.h);
         }
-        else if (!world && doc != null && BbsPreviewBridge.needsWorldFrame(doc))
+
+        if (!composition && !world)
+        {
+            String hint = doc == null || doc.layers == null || doc.layers.isEmpty()
+                ? "合成没有可渲染的图层"
+                : (bbsBackdrop ? "BBS 预览等待世界帧…" : "合成预览等待中…");
+
+            context.batcher.textCard(hint, rect.x + 8, rect.y + 24, 0xFFFFB27A, 0xAA140D06);
+        }
+        else if (bbsBackdrop && !world && doc != null && BbsPreviewBridge.needsWorldFrame(doc))
         {
             context.batcher.textCard("BBS 世界帧等待中…", rect.x + 8, rect.y + 24, 0xFFFFD27A, 0x99140D06);
         }
@@ -543,6 +610,26 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         context.batcher.outline(rect.x - 1, rect.y - 1, rect.ex() + 1, rect.ey() + 1, 0xAA4C9AFF);
 
         return composition;
+    }
+
+    /** The project's explicit "BBS world behind the composition" setting. */
+    private boolean usesBbsBackdrop(CompProject project)
+    {
+        return ReplayPreviewLayout.usesBbsBackdrop(project);
+    }
+
+    /** True when the current composition actually samples the live world. */
+    private boolean previewNeedsWorld(CompProject project, CompDocument doc)
+    {
+        return doc != null && (BbsPreviewBridge.needsWorldFrame(doc) || this.usesBbsBackdrop(project));
+    }
+
+    private boolean cameraPreviewNeedsWorld()
+    {
+        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+
+        return this.previewNeedsWorld(panel == null ? null : panel.getProject(),
+            panel == null ? null : panel.getDocument());
     }
 
     /** Draws the captured BBS world frame, contained (letterboxed) inside the composition rect. */
@@ -582,9 +669,13 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
      * empty frame for the rest of the frame. {@link ReplayPreviewLayout#canReuse} encodes that
      * rule; the frame is otherwise reused for every display refresh between two composition
      * frames, which is what keeps playback smooth.</p>
+     *
+     * @param transparentStage true only for the explicit BBS backdrop mode; otherwise the frame
+     *        keeps the composition's own background, so a preview layer cannot become the whole
+     *        background of the replay viewport
      */
     private boolean drawCompositionFrame(UIContext context, CompProject project, CompDocument doc,
-                                         Area rect, float time)
+                                         Area rect, float time, boolean transparentStage)
     {
         if (project == null || doc == null || doc.layers == null || doc.layers.isEmpty()
             || doc.width <= 0 || doc.height <= 0)
@@ -607,7 +698,8 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         int width = Math.max(1, size[0]);
         int height = Math.max(1, size[1]);
         long signature = CompRenderCache.signature(project, doc, frameTime, true, true, 0,
-            width, height, false);
+            width, height, false) ^ (transparentStage ? 0x9E3779B97F4A7C15L : 0L);
+        /* Only a `bbs` / entity layer samples the live world; the stage flag alone does not. */
         boolean liveWorld = BbsPreviewBridge.needsWorldFrame(doc);
         boolean liveDepth = CompRenderer.needsWorldDepth(project, doc);
 
@@ -620,19 +712,35 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         boolean worldReady = (!liveWorld || BbsPreviewBridge.hasUsableWorld())
             && (!liveDepth || BbsPreviewBridge.depthAvailable());
         /*
-         * A world copy taken at a different film time is not a valid backdrop for this frame: the
-         * bbs/entity layer samples it, so baking now would store the wrong time under this frame's
-         * cache key. Wait for the bridge to catch up (one render), then bake. While waiting, an
-         * already-baked frame from the previous frame is drawn instead of flashing the comp away.
+         * A world copy taken at a different film time cannot be trusted for a `bbs`/entity layer,
+         * but it must never block the whole composition: text, cards and independent replay models
+         * do not sample the world. The first real-machine pause audit showed exactly this failure:
+         * pausing left the world time one tick behind, `worldMatches` stayed false, no composition
+         * frame was baked at all and the replay model disappeared. Bake regardless; a frame with a
+         * not-yet-matching world is simply not cacheable and is re-baked as soon as the bridge
+         * catches up.
          */
         boolean worldMatches = (!liveWorld
             || (BbsPreviewBridge.hasUsableWorld() && this.worldMatchesPreviewTime(time)))
             && (!liveDepth || BbsPreviewBridge.depthAvailable());
 
-        if (!ReplayPreviewLayout.canReuse(this.compFrame != null, this.compFrameIndex,
-            this.compFrameSignature, this.compFrameWidth, this.compFrameHeight, frame, signature,
-            width, height, liveWorld || liveDepth, this.compFrameWorldReady) && worldMatches)
+        if (!this.session.isPlaying() && liveWorld && !worldMatches
+            && Boolean.getBoolean("bbsae.debugReplayPreview"))
         {
+            dev.bbsae.BbsAeAddon.LOGGER.info(
+                "Replay preview world mismatch: time={} worldTime={} hasWorld={} depth={} worldReady={}",
+                time, BbsPreviewBridge.worldTimeSeconds(), BbsPreviewBridge.hasUsableWorld(),
+                BbsPreviewBridge.depthAvailable(), worldReady);
+        }
+
+        if (this.previewDirty || !ReplayPreviewLayout.canReuse(this.compFrame != null, this.compFrameIndex,
+            this.compFrameSignature, this.compFrameWidth, this.compFrameHeight, frame, signature,
+            width, height, liveWorld || liveDepth, this.compFrameWorldReady))
+        {
+            /* Pose the virtual actors before the composition graph samples them. The graph also
+             * poses a linked replay for its own draw, but the world/entity paths and form
+             * properties must agree with the frame that is about to be baked. */
+            this.session.applyAllPoses();
             context.batcher.flush();
 
             GlFramebuffer rendered = null;
@@ -644,7 +752,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
             try
             {
-                rendered = CompRenderer.renderFrame(project, doc, frame, true, scale);
+                rendered = CompRenderer.renderFrame(project, doc, frame, transparentStage, scale);
             }
             catch (RuntimeException e)
             {
@@ -660,14 +768,18 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
             if (rendered == null)
             {
-                this.previewWaitingForWorld = false;
-                this.releaseCompFrame();
+                this.previewWaitingForWorld = liveWorld && !worldMatches;
+                this.previewDirty = false;
 
-                return false;
+                /* Keep the last good frame on screen if the paused bake fails transiently. The old
+                 * code released it here, which turned a failed re-bake into a model/comp
+                 * disappearing entirely. */
+                return this.compFrame != null && this.drawCompFrame(context, rect);
             }
 
             this.compositionError = null;
-            this.previewWaitingForWorld = false;
+            this.previewWaitingForWorld = liveWorld && !worldMatches;
+            this.previewDirty = false;
 
             if (this.compFrame != null && this.compFrame != rendered)
             {
@@ -679,22 +791,56 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             this.compFrameIndex = frame;
             this.compFrameWidth = width;
             this.compFrameHeight = height;
-            this.compFrameWorldReady = worldReady;
+            /* Only a frame with a matching world copy (and depth, when needed) may be reused. */
+            this.compFrameWorldReady = worldReady && worldMatches;
+
+            if (Boolean.getBoolean("bbsae.debugReplayPreview"))
+            {
+                int previousFbo = org.lwjgl.opengl.GL30.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
+                byte[] compPixels = rendered.readRawBytes();
+                long alpha = 0L;
+                long rgb = 0L;
+
+                for (int i = 0; i < compPixels.length; i += 4)
+                {
+                    alpha += compPixels[i + 3] & 0xFF;
+                    rgb += (compPixels[i] & 0xFF) + (compPixels[i + 1] & 0xFF) + (compPixels[i + 2] & 0xFF);
+                }
+
+                org.lwjgl.opengl.GL30.glBindFramebuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, previousFbo);
+
+                dev.bbsae.BbsAeAddon.LOGGER.info(
+                    "Replay preview bake: frame={} time={} stageTransparent={} liveWorld={} worldMatches={} fbo={} {}x{} rect={}x{} entities={} alpha={} rgb={}",
+                    frame, time, transparentStage, liveWorld, worldMatches, rendered.id,
+                    rendered.width, rendered.height, rect.w, rect.h,
+                    this.session.entities() == null ? 0 : this.session.entities().size(), alpha, rgb);
+            }
+            else if (Boolean.getBoolean("bbsae.debugReplayPreviewBake"))
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.info(
+                    "Replay preview bake: frame={} time={} stageTransparent={} liveWorld={} worldMatches={} fbo={} {}x{} rect={}x{} entities={}",
+                    frame, time, transparentStage, liveWorld, worldMatches, rendered.id,
+                    rendered.width, rendered.height, rect.w, rect.h,
+                    this.session.entities() == null ? 0 : this.session.entities().size());
+            }
         }
-        else if (this.compFrame == null)
+
+        return this.drawCompFrame(context, rect);
+    }
+
+    /** Blits the cached composition frame (straight-alpha) into the plate rectangle. */
+    private boolean drawCompFrame(UIContext context, Area rect)
+    {
+        if (this.compFrame == null)
         {
-            /* No valid frame yet and the world copy is not at this playhead: draw the world plate
-             * alone and retry next render. */
-            this.previewWaitingForWorld = liveWorld || liveDepth;
             return false;
         }
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        this.previewWaitingForWorld = false;
 
-        /* The frame is a straight-alpha export raster (transparent stage), so it composites over
-         * the world plate exactly like the final BBS overlay does. */
+        /* The frame is a straight-alpha export raster (transparent stage) or an opaque stage with
+         * the document background; both composite the same way. */
         context.batcher.texturedBox(this.compFrame.color.id, 0xFFFFFFFF,
             rect.x, rect.y, rect.w, rect.h,
             0F, this.compFrame.height, this.compFrame.width, 0F,
@@ -728,6 +874,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.compFrameWidth = 0;
         this.compFrameHeight = 0;
         this.compFrameWorldReady = false;
+        this.previewDirty = false;
     }
 
     /** Fits {@code bounds} to the document's aspect; result goes into {@code out}. */
@@ -839,6 +986,34 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.updateViewArea();
         this.session.syncSceneScale();
 
+        /*
+         * Model/camera data becomes available one or two frames after the page opens: the film
+         * panel's controller is created on bind, the bridge attaches on appear, and the runner
+         * context is populated by the first world pass. A frame baked before that has no actors,
+         * and the old cache key (document + time) would happily reuse it until the playhead moved
+         * again — the "model only appears while the camera moves" bug. Invalidate whenever the
+         * readiness snapshot changes, so the first complete frame replaces the empty one.
+         */
+        java.util.Map<String, IEntity> readyEntities = this.session.entities();
+        int entityCount = readyEntities == null ? 0 : readyEntities.size();
+        boolean bridgeActive = BbsPreviewBridge.isActive();
+
+        if (entityCount != this.lastEntityCount || bridgeActive != this.lastBridgeActive
+            || (bridgeActive && BbsPreviewBridge.filmPanel() == null))
+        {
+            this.lastEntityCount = entityCount;
+            this.lastBridgeActive = bridgeActive;
+            this.invalidatePreview();
+        }
+
+        /* A gizmo drag mutates the replay's channels every frame but the document signature does
+         * not change. Without this the paused camera view kept the pre-drag model pose until the
+         * next seek/play. */
+        if (this.gizmoActive)
+        {
+            this.invalidatePreview();
+        }
+
         /* Playback is driven from the render pass (not from the once-per-tick panel update): a
          * 60 fps composition must not step at 20 Hz, and the camera/world pass must sample the
          * same instant as the composition frame drawn below. */
@@ -847,10 +1022,28 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.updateCameraArea();
 
         /* The world copy is a full-framebuffer blit. Only ask for it when a picture in this page
-         * actually samples the world: the camera view, or a PiP/two-window composition preview
-         * that may contain a BBS-preview / entity layer. */
-        boolean needsWorldPicture = this.isCameraPreviewActive()
-            || (this.viewMode != VIEW_CAMERA && this.compPreviewMode() != 0);
+         * actually samples the world: a `bbs`/entity layer, or the explicit BBS backdrop setting.
+         * A normal composition is its own opaque stage and must not silently become a world
+         * background. */
+        boolean needsWorldPicture = false;
+
+        if (this.isCameraPreviewActive() || (this.viewMode != VIEW_CAMERA && this.compPreviewMode() != 0))
+        {
+            dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+            CompProject project = panel == null ? null : panel.getProject();
+            CompDocument doc = panel == null ? null : panel.getDocument();
+
+            needsWorldPicture = this.previewNeedsWorld(project, doc);
+        }
+
+        /* The free/orbit stage shows the BBS world as a dimmed reference behind the actor, the
+         * same picture the 3D editor had before. It is a stage reference only: the composition
+         * plate still uses its own background unless the project explicitly asks for a backdrop. */
+        if (!needsWorldPicture && this.viewMode != VIEW_CAMERA && BbsPreviewBridge.film() != null)
+        {
+            needsWorldPicture = true;
+        }
+
         BbsPreviewBridge.setReplayWorldPreview(needsWorldPicture);
 
         Area interaction = this.isCameraPreviewActive() ? this.cameraArea : this.viewArea;
@@ -986,9 +1179,12 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         if (cameraView)
         {
-            String world = BbsPreviewBridge.hasUsableWorld() ? "BBS 世界帧已就绪" : "BBS 世界帧等待中";
+            boolean needsWorld = this.cameraPreviewNeedsWorld();
+            String mode = needsWorld
+                ? (BbsPreviewBridge.hasUsableWorld() ? "BBS 世界帧已就绪" : "BBS 世界帧等待中")
+                : "合成背景";
 
-            context.batcher.textCard("模型 " + drawn + " 个 · " + world + " · " + selection + cull,
+            context.batcher.textCard("模型 " + drawn + " 个 · " + mode + " · " + selection + cull,
                 x, y + 18, 0xFFDDDDDD, 0x99000000);
         }
         else
@@ -1068,12 +1264,13 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
                 return "合成预览渲染失败：" + error + "（详细堆栈见客户端日志）";
             }
 
-            if (this.previewWaitingForWorld && !BbsPreviewBridge.hasUsableWorld())
+            if (this.previewWaitingForWorld && this.cameraPreviewNeedsWorld()
+                && !BbsPreviewBridge.hasUsableWorld())
             {
                 return "BBS 世界帧尚未捕获：打开影片后会在下一次世界渲染完成";
             }
 
-            if (this.previewWaitingForWorld)
+            if (this.previewWaitingForWorld && this.cameraPreviewNeedsWorld())
             {
                 return "正在同步 BBS 世界帧与合成时间…";
             }
@@ -1208,6 +1405,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             this.gizmo.stop();
             this.gizmoActive = false;
             this.pick.clear();
+            this.invalidatePreview();
         }
 
         return super.subMouseReleased(context);
@@ -1440,6 +1638,12 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.freeDistance = camera.distance;
         this.freeTarget.set(camera.target);
         this.freePoseInitialized = true;
+    }
+
+    /** Marks the cached composition frame stale; the next render re-bakes it. */
+    public void invalidatePreview()
+    {
+        this.previewDirty = true;
     }
 
     public void releasePreview()

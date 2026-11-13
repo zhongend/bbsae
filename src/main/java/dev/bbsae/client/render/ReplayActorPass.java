@@ -297,7 +297,7 @@ public final class ReplayActorPass
             return null;
         }
 
-        IEntity entity = entities == null ? null : entities.get(replay.getId());
+        IEntity entity = BbsPreviewBridge.entity(replay.getId());
 
         if (entity == null)
         {

@@ -79,8 +79,15 @@ public final class GlFramebuffer
     public void bindOnly()
     {
         GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.id);
+        GL11.glViewport(0, 0, this.width, this.height);
         GlStateManager._viewport(0, 0, this.width, this.height);
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
         GlStateManager._disableScissorTest();
+        /* Force the real mask before the cached call: a raw glColorMask(false, ...) from a
+         * depth-only/world pass leaves GlStateManager believing RGB is on. The cached call is then
+         * skipped and every layer clear/draw writes alpha only — the paused preview came out as a
+         * fully opaque black frame (alpha 255, RGB 0) for exactly this reason. */
+        GL11.glColorMask(true, true, true, true);
         GlStateManager._colorMask(true, true, true, true);
     }
 
@@ -103,13 +110,18 @@ public final class GlFramebuffer
     public void begin(int clearColor)
     {
         GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.id);
+        GL11.glViewport(0, 0, this.width, this.height);
         GlStateManager._viewport(0, 0, this.width, this.height);
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
         GlStateManager._disableScissorTest();
         GlStateManager._disableDepthTest();
+        GL11.glDisable(GL11.GL_CULL_FACE);
         GlStateManager._disableCull();
         GL11.glDisable(GL11.GL_STENCIL_TEST);
         GlStateManager._enableBlend();
+        org.lwjgl.opengl.GL14.glBlendEquation(org.lwjgl.opengl.GL14.GL_FUNC_ADD);
         GlStateManager._blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GL11.glColorMask(true, true, true, true);
         GlStateManager._colorMask(true, true, true, true);
         GlStateManager._clearColor(((clearColor >> 16) & 0xFF) / 255F, ((clearColor >> 8) & 0xFF) / 255F, (clearColor & 0xFF) / 255F, ((clearColor >>> 24) & 0xFF) / 255F);
         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);

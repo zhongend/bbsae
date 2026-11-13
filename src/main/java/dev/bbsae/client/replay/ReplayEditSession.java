@@ -67,6 +67,27 @@ public final class ReplayEditSession
     private boolean cullActive;
     /** Optional user-facing filter (the replay editor only shows virtual-world replays). */
     private java.util.function.Predicate<Replay> replayFilter;
+    /**
+     * Called when the paused preview must be re-baked (seek, transport stop, selection/form edit).
+     * The composition preview caches its frame between composition frames; without this hook a
+     * paused viewport kept the pixels from before an actor was posed/loaded, which is the "model
+     * only appears while the camera moves" symptom.
+     */
+    private Runnable previewInvalidator;
+
+    public void setPreviewInvalidator(Runnable invalidator)
+    {
+        this.previewInvalidator = invalidator;
+    }
+
+    /** Drops the cached preview frame; safe to call every frame. */
+    public void invalidatePreview()
+    {
+        if (this.previewInvalidator != null)
+        {
+            this.previewInvalidator.run();
+        }
+    }
 
     public void setReplayFilter(java.util.function.Predicate<Replay> filter)
     {
@@ -468,6 +489,15 @@ public final class ReplayEditSession
         this.localPlayhead = value;
         this.localPlayheadValid = true;
 
+        /* A paused seek is exactly when the cached composition frame can be stale: the frame
+         * index changed but the old pixels (possibly baked before the actor existed) are still
+         * valid by signature. Playback changes the frame every display frame anyway, so only the
+         * paused path needs the explicit invalidation. */
+        if (!this.playing)
+        {
+            this.invalidatePreview();
+        }
+
         /* Drive BBS' runner directly, like the original transport does. UIFilmPanel.setCursor
          * also fires a SEEK packet and can schedule an action restart on every call; at the replay
          * page's per-frame playback cadence that restarts the actors continuously and makes the
@@ -512,6 +542,11 @@ public final class ReplayEditSession
 
         this.playing = playing;
         this.lastPlayNanos = 0L;
+
+        /* Stop is the other stale-frame boundary: the last playback frame can be a partial frame
+         * (world/actor pass mid-flight) and the paused viewport must prove the pose that is on
+         * screen now, not reuse it. */
+        this.invalidatePreview();
     }
 
     public void togglePlaying()
@@ -558,6 +593,7 @@ public final class ReplayEditSession
             next = duration;
             this.playing = false;
             this.lastPlayNanos = 0L;
+            this.invalidatePreview();
         }
 
         this.seek(next);

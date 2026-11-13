@@ -1194,6 +1194,11 @@ public final class CompRenderer
 
                 Matrix4f model = CompScene.model(context, layer);
                 Matrix4f layerProjection = CompScene.projection(context, layer);
+                /* A previous 3D/matte layer may have left a depth-only RGB write mask behind
+                 * (especially when a live-world layer is unavailable). Forcing the mask here
+                 * keeps a paused frame from turning into opaque black. */
+                GL11.glColorMask(true, true, true, true);
+                com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
                 LayerRender rendered = renderLayerContent(layer, context, model, layerProjection, stack, batcher, renderEffects);
                 GlFramebuffer content = rendered == null ? null : rendered.framebuffer;
 
@@ -1395,6 +1400,8 @@ public final class CompRenderer
             /* Final model overlay: the actor is drawn after every normal layer (including 2D cards
              * and the world backdrop). This is the "I imported a model and can see it" contract;
              * its own target still carries depth for self-occlusion. */
+            debugFboSum("before-models", accumulation);
+
             for (CompLayer layer : comp.layers)
             {
                 if (layer == null || !layer.independent || !layer.activeAt(time) || !layer.visible
@@ -1405,6 +1412,48 @@ public final class CompRenderer
 
                 Matrix4f model = CompScene.model(context, layer);
                 Matrix4f layerProjection = CompScene.projection(context, layer);
+                GL11.glColorMask(true, true, true, true);
+                com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
+
+                /*
+                 * Independent models have their own depth-resolved target. Compositing that target
+                 * through the UI batcher inherited the paused world's projection/model-view and
+                 * could draw zero fragments (content alpha 0) even though the actor target was
+                 * full. Use the model pass + composite shader directly; the 2D layer path below
+                 * remains the fallback for legacy independent layers without a form.
+                 */
+                GlFramebuffer modelContent = ReplayActorPass.renderModel(layer, context, batcher);
+
+                if (modelContent != null)
+                {
+                    GlFramebuffer straight = PassRenderer.unpremultiply(modelContent);
+                    GlFramebuffer source = straight == null ? modelContent : straight;
+                    float opacity = opacityAt(layer, context);
+
+                    debugFboSum("model-content-" + layer.id, source);
+
+                    if (opacity > 0.0001F)
+                    {
+                        /* Composite into a target the size of the accumulation, not the model
+                         * target: modelRenderScale can be smaller than the composition and
+                         * PassRenderer.draw would otherwise shrink the whole frame to that size. */
+                        GlFramebuffer blended = FboPool.acquire(accumulation.width, accumulation.height);
+
+                        PassRenderer.drawInto(blended, source, accumulation, null,
+                            layer.blendMode, opacity, 0F, 0F, 0xFFFFFF, 0);
+                        debugFboSum("model-blend-" + layer.id, blended);
+                        FboPool.release(accumulation);
+                        accumulation = blended;
+                    }
+
+                    if (source != modelContent)
+                    {
+                        FboPool.release(source);
+                    }
+
+                    continue;
+                }
+
                 GlFramebuffer content = FboPool.acquire(context.renderWidth(), context.renderHeight());
 
                 content.begin();
@@ -1414,8 +1463,10 @@ public final class CompRenderer
                 {
                     LayerContentRenderer.draw(layer, context, batcher, model, layerProjection);
                     batcher.flush();
+                    debugFboSum("model-content-" + layer.id, content);
 
                     GlFramebuffer straight = PassRenderer.unpremultiply(content);
+                    debugFboSum("model-straight-" + layer.id, straight);
 
                     if (straight != content)
                     {
@@ -1425,10 +1476,17 @@ public final class CompRenderer
 
                     float opacity = opacityAt(layer, context);
 
+                    if (Boolean.getBoolean("bbsae.debugReplayPreview"))
+                    {
+                        dev.bbsae.BbsAeAddon.LOGGER.info("Replay preview model layer: {} opacity={} blend={}",
+                            layer.id, opacity, layer.blendMode);
+                    }
+
                     if (opacity > 0.0001F)
                     {
                         GlFramebuffer blended = PassRenderer.draw(content, accumulation, null,
                             layer.blendMode, opacity, 0F, 0F, 0xFFFFFF);
+                        debugFboSum("model-blend-" + layer.id, blended);
 
                         FboPool.release(content);
                         FboPool.release(accumulation);
@@ -1450,6 +1508,7 @@ public final class CompRenderer
                 }
             }
 
+            debugFboSum("after-models", accumulation);
             batcher.flush();
             BufferRenderer.resetCurrentVertexBuffer();
             completed = true;
@@ -1479,6 +1538,30 @@ public final class CompRenderer
         }
 
         return accumulation;
+    }
+
+    private static void debugFboSum(String tag, GlFramebuffer framebuffer)
+    {
+        if (!Boolean.getBoolean("bbsae.debugReplayPreview") || framebuffer == null)
+        {
+            return;
+        }
+
+        int previous = org.lwjgl.opengl.GL30.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
+        byte[] pixels = framebuffer.readRawBytes();
+        long alpha = 0L;
+        long rgb = 0L;
+
+        for (int i = 0; i < pixels.length; i += 4)
+        {
+            alpha += pixels[i + 3] & 0xFF;
+            rgb += (pixels[i] & 0xFF) + (pixels[i + 1] & 0xFF) + (pixels[i + 2] & 0xFF);
+        }
+
+        org.lwjgl.opengl.GL30.glBindFramebuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, previous);
+
+        dev.bbsae.BbsAeAddon.LOGGER.info("Replay preview {}: fbo={} {}x{} alpha={} rgb={}",
+            tag, framebuffer.id, framebuffer.width, framebuffer.height, alpha, rgb);
     }
 
     /**

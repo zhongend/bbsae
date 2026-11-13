@@ -1,5 +1,67 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix44 — 2026-11-13
+
+回放预览暂停修复：**暂停后模型不再消失**；自由/绕对象视角能看到 **BBS 参考画面**；
+BBS 预览层不再被误当成整张背景；时间轴播放头可拖动。测试工程已去掉品红背景。
+
+### 暂停后模型消失（根因与修复）
+
+- 现象：播放时模型正常，一暂停模型就消失；相机视角只剩合成背景和 gizmo。
+- 逐像素读回证明：暂停帧的 **actor 目标本身有像素**（`alpha=46155, rgb=70459`），但通过
+  `LayerContentRenderer.drawFullscreenActors` 用 UI batcher 画进 content 目标后
+  **content alpha=0、rgb=0**，最终整帧只有不透明黑底（`alpha=320×180×255, rgb=0`）。
+  播放时同一段代码正常——暂停的世界 pass 留下了投影/model-view/视口状态，fullscreen quad
+  被裁掉或变换到屏幕外；这不是缓存/实体缺失。
+- 修复：独立模型不再经过 UI batcher。`CompRenderer` 最终叠加直接调用
+  `ReplayActorPass.renderModel` 得到深度目标，`PassRenderer.unpremultiply` 后
+  `PassRenderer.drawInto` 按 **accumulation 尺寸**合成（模型 `modelRenderScale` 小于合成时
+  不会把整帧缩小）。播放、暂停、导出/AE 走同一条路径。
+- 同时加固 `GlFramebuffer`：绑定目标时强制真实 `glViewport`、关闭 scissor/cull、恢复
+  `glColorMask` 与 `blendEquation(FUNC_ADD)`，避免另一个 pass 的 raw GL 状态把整帧写成
+  “alpha 255 / RGB 0”的透明黑。
+- `BbsPreviewBridge.entities()` 在 runner context 为空（暂停）时回退到
+  `UIFilmController.editorController.getEntities()`，linked 模型不再退回无动画 stub。
+
+### 自由/绕对象视角显示 BBS 参考画面
+
+- 3D 环绕视角原先只有深色渐变舞台，看不到 BBS 画面。现在把捕获的 BBS 世界帧以
+  **contain + 压暗** 的方式画在自由舞台最底层，叠加“BBS 参考画面”标签，再画网格/模型/gizmo。
+- 它只是 3D 舞台的参考背景：**不参与相机视角合成**；相机视角仍然只用合成自己的背景，
+  只有工程显式设置 `previewBackground == 1` 才把世界放到合成后面。
+- 仅当绑定了 BBS 胶片时才请求世界帧；没有胶片时保持原渐变舞台。
+
+### BBS 预览层不再充当整张背景
+
+- `renderCompositionPlate` 先画 `doc.background`，再以 `CompRenderer.renderFrame` 画合成
+  （含 `bbs`/实体层）；世界帧只在显式 BBS 背景设置时铺在合成后面。
+- 预览层按自己的图层矩形/变换绘制，不再被强行拉伸成整个画幅；等待提示也只在显式 BBS
+  背景模式下出现。
+
+### 时间轴播放头可拖动
+
+- 根因：`UIFilmKeyframes.moveNoKeyframes` 把拖动写回借用的相机编辑器 cursor，回放页读的是
+  `ReplayEditSession` 的本地播放头，下一帧就弹回。
+- `ReplayFilmKeyframes` 覆写 `moveNoKeyframes`：暂停播放并 `session.seek(fromGraphX(mouseX))`；
+  `hasCursor()` 在 session 存在时返回 true；上一/下一关键帧也同步 seek。
+- `ReplayEditSession.seek/setPlaying` 在暂停路径 invalidate 预览；预览帧改为 **dirty 重烘**，
+  失败时保留上一张好帧，避免暂停瞬间黑屏。
+
+### 验证
+
+- 测试工程两个合成背景从品红 `-65281` 改为黑 `-16777216`，避免背景色干扰像素判断。
+- 全量测试：**155 套件 / 967 项 / 0 failures / 0 errors / 1 skipped**。
+- 真机：
+  - `docs/verify/round110-pause-paused.png`、`round112-pause-paused.png`：
+    暂停时模型仍在画面中。
+  - `docs/verify/round111-orbit-free.png`：3D 自由视角显示压暗的 BBS 参考画面。
+  - `docs/verify/round113-pause-paused.png`：实体回退后的暂停帧。
+- 逐像素日志（仅 `-Dbbsae.debugReplayPreview=true`）：
+  `Replay preview model-content-* / model-blend-* / after-models`，
+  暂停时 `model-content alpha>0`、`model-blend alpha=全画幅`。
+- 本地候选包：`bbsae-0.99-hotfix44.jar`（3,928,442 bytes，SHA-256
+  `51CA83B55DC56A920FD163CF07408EF13C572CCD8EC198E7B8DC014D08D7939C`）。
+
 ## 0.99-hotfix43 — 2026-11-13
 
 回放编辑器预览重构：**相机视角 = BBS 世界帧 + 最终合成**，自由/绕对象视角 = 干净的虚拟舞台，

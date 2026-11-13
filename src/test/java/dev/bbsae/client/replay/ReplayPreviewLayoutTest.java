@@ -71,6 +71,27 @@ public class ReplayPreviewLayoutTest
     }
 
     @Test
+    public void onlyTheExplicitBbsSettingTurnsTheWorldIntoTheBackground()
+    {
+        /* A BBS-preview layer is a layer. The captured world may only become the plate behind the
+         * whole composition when the project explicitly selects 预览背景 → BBS. This is the
+         * regression pin for "the preview layer is being used as the entire background". */
+        dev.bbsae.comp.CompProject project = new dev.bbsae.comp.CompProject();
+
+        assertFalse(ReplayPreviewLayout.usesBbsBackdrop(project));
+        assertFalse(ReplayPreviewLayout.usesBbsBackdrop(null));
+
+        project.settings.previewBackground = 0;
+        assertFalse(ReplayPreviewLayout.usesBbsBackdrop(project));
+
+        project.settings.previewBackground = 1;
+        assertTrue(ReplayPreviewLayout.usesBbsBackdrop(project));
+
+        project.settings = null;
+        assertFalse(ReplayPreviewLayout.usesBbsBackdrop(project));
+    }
+
+    @Test
     public void canReuseOnlyWhenTheFrameAndRasterMatch()
     {
         assertTrue(ReplayPreviewLayout.canReuse(true, 12, 42L, 960, 540, 12, 42L, 960, 540,

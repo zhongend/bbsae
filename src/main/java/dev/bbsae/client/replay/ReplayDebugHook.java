@@ -253,6 +253,52 @@ public final class ReplayDebugHook
                 });
             }
 
+            /* Optional pause audit: play for a couple of seconds, screenshot, pause, screenshot
+             * again. This is the regression check for "the replay model disappears when playback
+             * pauses" without needing a human to click Play/Space. */
+            String pauseShots = System.getProperty("bbsae.debugReplayPauseShots", "").trim();
+
+            if (!pauseShots.isEmpty())
+            {
+                final int[] pauseTick = {0};
+
+                ClientTickEvents.END_CLIENT_TICK.register((client) ->
+                {
+                    if (client.player == null)
+                    {
+                        return;
+                    }
+
+                    pauseTick[0] += 1;
+
+                    if (pauseTick[0] == 40)
+                    {
+                        panel.togglePlaybackFromHost();
+                        BbsAeAddon.LOGGER.info("Replay pause audit: started playback at {}s playing={}",
+                            panel.playheadSeconds(), panel.isPlayingFromHost());
+                    }
+                    else if (pauseTick[0] == 90)
+                    {
+                        BbsAeAddon.LOGGER.info("Replay pause audit: playing screenshot '{}' at {}s",
+                            pauseShots + "-playing", panel.playheadSeconds());
+                        BbsAeClient.debugScreenshot(pauseShots + "-playing", false);
+                    }
+                    else if (pauseTick[0] == 100)
+                    {
+                        panel.togglePlaybackFromHost();
+                        BbsAeAddon.LOGGER.info("Replay pause audit: paused at {}s playing={}",
+                            panel.playheadSeconds(), panel.isPlayingFromHost());
+                    }
+                    else if (pauseTick[0] == 115)
+                    {
+                        BbsAeAddon.LOGGER.info("Replay pause audit: paused screenshot '{}' at {}s",
+                            pauseShots + "-paused", panel.playheadSeconds());
+                        BbsAeClient.debugScreenshot(pauseShots + "-paused",
+                            Boolean.getBoolean("bbsae.debugQuitAfterShot"));
+                    }
+                });
+            }
+
             /* The scripted interaction run (P6) rides on the same verification hook: it performs
              * the gizmo-write/undo/form/library/list interactions and screenshots each state. */
             if (ReplayInteractionScript.isEnabled())

@@ -463,7 +463,17 @@ public class UIReplayModePanel extends UIDashboardPanel
         }
 
         this.tracksDirty = true;
+        this.viewportInvalidate();
         this.setViewportStatus("已在 tick " + tick + " 写入" + (pose ? "姿态" : "位置/旋转") + "关键帧");
+    }
+
+    /** Drops the cached 3D preview after an edit that changes what the camera frame must show. */
+    private void viewportInvalidate()
+    {
+        if (this.viewport != null)
+        {
+            this.viewport.invalidatePreview();
+        }
     }
 
     private void setViewportStatus(String status)
@@ -583,6 +593,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         {
             this.session = new ReplayEditSession(panel, film, replay);
             this.session.setReplayFilter(CompReplayBridge::isVirtual);
+            this.session.setPreviewInvalidator(this.viewport::invalidatePreview);
             this.viewport.setSession(this.session);
         }
 
@@ -727,6 +738,7 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.viewport = new UIReplayViewport(this.session);
         this.viewport.setPickHandler(this::selectReplayFromIndex);
+        this.session.setPreviewInvalidator(this.viewport::invalidatePreview);
 
         this.replaysList.relative(this.main).x(0).y(0).w(LIST_WIDTH).h(1F);
         this.viewport.relative(this.main).x(LIST_WIDTH).y(0).w(1F, -LIST_WIDTH - PROPS_WIDTH).h(1F);
@@ -897,6 +909,7 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         if (this.viewport != null)
         {
+            this.viewport.invalidatePreview();
             this.viewport.setStatus(this.replay == null ? "未选择回放" : "已选择 " + this.replay.getName());
         }
     }
@@ -1060,6 +1073,13 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.ensureTracks();
         this.applyDebugSetup();
         this.refreshStatus();
+
+        /* Dragging a keyframe/value edits the replay without seeking the playhead; the cached
+         * camera frame must follow the edit instead of waiting for the next scrub. */
+        if (this.keyframeEditor != null && this.keyframeEditor.view.isInteracting())
+        {
+            this.viewportInvalidate();
+        }
 
         super.render(context);
     }
@@ -1372,6 +1392,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.debugSelectIndex(selectedIndex);
         this.rebuildKeyframeEditor();
         this.tracksDirty = true;
+        this.viewportInvalidate();
     }
 
     /** Undo through BBS's original film history (Ctrl+Z in the replay editor). */
@@ -1759,6 +1780,7 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         if (this.viewport != null)
         {
+            this.viewport.invalidatePreview();
             this.viewport.setStatus("模型已应用");
         }
     }

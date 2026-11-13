@@ -1,6 +1,7 @@
 package dev.bbsae.client.replay;
 
 import dev.bbsae.comp.CompDocument;
+import dev.bbsae.comp.CompProject;
 
 /**
  * Pure geometry for the replay editor's camera preview.
@@ -29,6 +30,16 @@ public final class ReplayPreviewLayout
 
     private ReplayPreviewLayout()
     {}
+
+    /**
+     * Whether the project explicitly asked for the BBS world behind the whole composition
+     * ({@code 预览背景 → BBS}). This is the only mode in which the captured world may become the
+     * viewport background; a `bbs` layer is still a normal layer inside the composition.
+     */
+    public static boolean usesBbsBackdrop(CompProject project)
+    {
+        return project != null && project.settings != null && project.settings.previewBackground == 1;
+    }
 
     /** A screen-space rectangle. Integer because the UI batcher clips on whole pixels. */
     public record Rect(int x, int y, int w, int h)

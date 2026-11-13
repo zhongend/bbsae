@@ -147,15 +147,75 @@ public final class BbsPreviewBridge
      */
     public static java.util.Map<String, mchorse.bbs_mod.forms.entities.IEntity> entities()
     {
-        if (filmPanel == null || filmPanel.getRunner() == null || filmPanel.getRunner().getContext() == null)
+        if (filmPanel == null)
         {
             return java.util.Collections.emptyMap();
         }
 
-        java.util.Map<String, mchorse.bbs_mod.forms.entities.IEntity> entities =
-            filmPanel.getRunner().getContext().entities;
+        if (filmPanel.getRunner() != null && filmPanel.getRunner().getContext() != null)
+        {
+            java.util.Map<String, mchorse.bbs_mod.forms.entities.IEntity> entities =
+                filmPanel.getRunner().getContext().entities;
 
-        return entities == null ? java.util.Collections.emptyMap() : entities;
+            if (entities != null && !entities.isEmpty())
+            {
+                return entities;
+            }
+        }
+
+        /*
+         * The runner context is filled while the camera runner is running. A paused replay editor
+         * has no running runner, so that map can be empty even though the film's editor controller
+         * still owns every actor. Falling through to it is what keeps linked compositor models
+         * visible while the playhead is parked (the "model only appears while the camera moves"
+         * bug); the old path had to build a stub and the stub pass did not reproduce the actor's
+         * live form/pose state.
+         */
+        UIFilmController controller = filmPanel.getController();
+
+        if (controller != null && controller.editorController != null)
+        {
+            java.util.Map<String, mchorse.bbs_mod.forms.entities.IEntity> editor =
+                controller.editorController.getEntities();
+
+            if (editor != null && !editor.isEmpty())
+            {
+                return editor;
+            }
+        }
+
+        return java.util.Collections.emptyMap();
+    }
+
+    /** One entity by replay id, from the runner context or the paused editor controller. */
+    public static mchorse.bbs_mod.forms.entities.IEntity entity(String replayId)
+    {
+        if (replayId == null)
+        {
+            return null;
+        }
+
+        mchorse.bbs_mod.forms.entities.IEntity entity = entities().get(replayId);
+
+        if (entity != null)
+        {
+            return entity;
+        }
+
+        UIFilmController controller = filmPanel == null ? null : filmPanel.getController();
+
+        if (controller != null && controller.editorController != null)
+        {
+            java.util.Map<String, mchorse.bbs_mod.forms.entities.IEntity> editor =
+                controller.editorController.getEntities();
+
+            if (editor != null)
+            {
+                return editor.get(replayId);
+            }
+        }
+
+        return null;
     }
 
     /** Called from the compositor's {@code onAppear}; the film panel has already left editing. */
