@@ -100,6 +100,8 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     private boolean freePoseEstablished;
     /** The 3D half of a two-window preview; equals {@link #area} in other modes. */
     private final Area viewArea = new Area();
+    /** Composition rectangle inside the free/orbit view when a comp is rendered there. */
+    private final Area freePlate = new Area();
     /**
      * The composition rectangle inside the camera view. Its aspect is the document's, so the
      * composition is never stretched and the gizmo/pick projection uses the same rectangle the
@@ -550,8 +552,13 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
                 return false;
             }
 
-            Area plate = new Area();
-            this.fitPlate(doc, this.viewArea, 0, plate);
+            Area plate = this.freePlate;
+
+            if (plate.w <= 0 || plate.h <= 0)
+            {
+                plate = new Area();
+                this.fitPlate(doc, this.viewArea, 0, plate);
+            }
 
             context.batcher.box(this.viewArea.x, this.viewArea.y, this.viewArea.ex(), this.viewArea.ey(), 0xFF0E1116);
             context.batcher.texturedBox(rendered.color.id, 0xFFFFFFFF,
@@ -1145,7 +1152,26 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         BbsPreviewBridge.setReplayWorldPreview(needsWorldPicture);
 
-        Area interaction = this.isCameraPreviewActive() ? this.cameraArea : this.viewArea;
+        CompDocument freeDoc = null;
+
+        if (this.viewMode != VIEW_CAMERA)
+        {
+            dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+            freeDoc = panel == null ? null : panel.getDocument();
+
+            if (freeDoc != null)
+            {
+                this.fitPlate(freeDoc, this.viewArea, 0, this.freePlate);
+            }
+            else
+            {
+                this.freePlate.copy(this.viewArea);
+            }
+        }
+
+        boolean freeComposition = this.viewMode != VIEW_CAMERA && freeDoc != null;
+        Area interaction = this.isCameraPreviewActive() ? this.cameraArea
+            : (freeComposition ? this.freePlate : this.viewArea);
 
         this.session.camera().setViewport(interaction.w, interaction.h);
         this.session.frameIfNeeded(this.viewArea);
@@ -1209,8 +1235,8 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
                     this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
             }
 
-            ReplayCompositionOverlay.render(context, this.session, this.viewArea.x, this.viewArea.y,
-                this.viewArea.w, this.viewArea.h, true);
+            ReplayCompositionOverlay.render(context, this.session, interaction.x, interaction.y,
+                interaction.w, interaction.h, true);
         }
 
         this.renderCompositionWindow(context);
@@ -1545,9 +1571,10 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         }
 
         CompViewportCamera camera = this.session.camera();
+        Area interaction = this.interactionArea();
 
-        camera.setViewport(this.viewArea.w, this.viewArea.h);
-        camera.zoomAt(context.mouseX - this.viewArea.x, context.mouseY - this.viewArea.y, (float) context.mouseWheel);
+        camera.setViewport(interaction.w, interaction.h);
+        camera.zoomAt(context.mouseX - interaction.x, context.mouseY - interaction.y, (float) context.mouseWheel);
 
         return true;
     }
@@ -1679,7 +1706,17 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     /** The screen rectangle the 3D interaction/gizmo belongs to this frame. */
     private Area interactionArea()
     {
-        return this.isCameraPreviewActive() ? this.cameraArea : this.viewArea;
+        if (this.isCameraPreviewActive())
+        {
+            return this.cameraArea;
+        }
+
+        if (this.viewMode != VIEW_CAMERA && this.freePlate.w > 0 && this.compositionPreviewSupported())
+        {
+            return this.freePlate;
+        }
+
+        return this.viewArea;
     }
 
     @Override

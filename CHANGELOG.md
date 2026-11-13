@@ -1,5 +1,48 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix50 — 2026-11-13
+
+环绕/自由视角真正重渲染整条合成图；模型按图层顺序遮挡；线框 UI 与 letterbox 画面对齐；
+关键帧抽屉标尺按 BBS tick 单位适配。
+
+### 环绕/自由：自由相机渲染完整合成图
+
+- 新增 `CompCamera.ofFree(...)` + `CompRenderer.renderFrameWithCamera(...)`：用自由相机的
+  eye/target/FOV/roll 构造 `CompCamera`，通过 `CompScene` 相机 override 让整条
+  `CompRenderer` 合成图（文字、形状、图片、BBS 预览层、模型、蒙版、效果、嵌套合成）从
+  自由相机重新渲染。
+- 不再把最终截图贴在 3D 卡片上，也不再用 `CompViewportRenderer` 的源码缓存占位图。
+- BBS 预览层在 override 下强制按 3D 投影，不再作为全屏背景；相机视角路径不变。
+- 自由视角的 comp 画面按 `freePlate` letterbox；相机 viewport 也设为 `freePlate`，
+  因此 gizmo/pick/`ReplayCompositionOverlay` 的投影与画面像素对齐。
+
+### 模型遮挡文字/形状
+
+- 根因：`CompRenderer` 把 independent 模型被强制排在所有普通图层之后画，模型永远覆盖
+  文字/形状层，造成“穿透到顶层”。
+- 修复：`orderLayers` 不再把模型拆到末尾；模型按 `planeDepth` 与 3D 图层一起排序，并按
+  栈顺序与共面图层 tie。普通渲染循环在模型的位置直接调用
+  `ReplayActorPass.renderModel` + `PassRenderer.drawInto` 合成；删除最终 model overlay。
+- 这样文字/形状在模型前方时遮住模型，模型在前方时覆盖文字/形状；2D 图层仍按合成器栈顺序
+  遮挡。
+
+### 关键帧抽屉标尺乱码
+
+- `TimelineRulerRenderer` 的步长表固定按 BBS 20 ticks/s；合成器轴单位是帧，直接把帧交给
+  它导致秒制步长错位、标签重叠。
+- 现在给标尺传入 **BBS tick**：起点/时长按 `*20` 换算，`toGraphX` 按 `fps/20` 映射回帧，
+  标签秒制用 `TimeUtils.formatTime(bbsTick)`、帧制用帧号；步长与标签同一单位，不再乱码/
+  重叠。
+- `CompTime.rulerLabel` 仍保留并有单元测试。
+
+### 验证
+
+- 全量测试：**157 套件 / 969 项 / 0 failures / 0 errors / 1 skipped**。
+- 按用户要求**未启动客户端**；请在你的工程里测试模型与文字/形状的前后遮挡、自由/环绕线框
+  对齐、以及关键帧抽屉标尺。
+- 候选包：`bbsae-0.99-hotfix50.jar`（3,933,133 bytes，SHA-256
+  `1690EA7143029D9550E101A9C17288F85B35E3CF0C653BDC94FF0A41B439D274`）。
+
 ## 0.99-hotfix49 — 2026-11-13
 
 环绕/自由视角真正重渲染整条合成图；相机视角不动。合成器关键帧抽屉保持 hotfix48 的标尺/缩放

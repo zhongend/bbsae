@@ -407,7 +407,8 @@ public final class CompScene
             return false;
         }
 
-        return layer.threeD || (legacy3D(ctx) && spatial(ctx));
+        return layer.threeD || "bbs".equals(layer.type) && CAMERA_OVERRIDE.get() != null
+            || (legacy3D(ctx) && spatial(ctx));
     }
 
     public static boolean usePerspective(CompRenderContext ctx, CompLayer layer)
@@ -423,6 +424,14 @@ public final class CompScene
              * through the camera as soon as the frame became spatial, whether or not the layer's
              * own 3D switch was on. Old projects can still be opened with exactly that look. */
             return spatial(ctx) || (layer.threeD && camera(ctx).perspective);
+        }
+
+        /* The BBS preview layer is a composition-sized world capture. In the shot camera it is
+         * normally a screen-fixed backdrop; in the free/orbit composition render it must be a
+         * projected plane, otherwise the whole workspace background is that layer again. */
+        if ("bbs".equals(layer.type) && CAMERA_OVERRIDE.get() != null)
+        {
+            return camera(ctx).perspective;
         }
 
         /* AE mode: the 3D switch is the only thing that opts a layer into perspective. */

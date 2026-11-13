@@ -5792,14 +5792,25 @@ public class UICompositorPanel extends UIDashboardPanel
             IKey.constant("没有关键帧"),
             IKey.constant("先选中轨道，再点秒表或在播放头添加关键帧。")
         );
-        this.keyframeEditor.view.rulerRenderer((context) -> TimelineRulerRenderer.render(
-            context,
-            this.keyframeEditor.view.graphArea,
-            (int) this.keyframeEditor.view.fromGraphX(this.keyframeEditor.view.graphArea.x),
-            this.getDurationTicks(),
-            this.keyframeEditor.view::toGraphX,
-            this::formatKeyframeTick
-        ));
+        this.keyframeEditor.view.rulerRenderer((context) ->
+        {
+            /* TimelineRulerRenderer's step tables are BBS 20-ticks/second. Feed it that unit so
+             * the seconds steps are really one second apart, and map back to compositor frames for
+             * x and the label. Passing raw frames made 60 fps labels overlap/garbled. */
+            float fps = this.doc == null ? 20F : Math.max(1F, this.doc.fps);
+            boolean seconds = Boolean.TRUE.equals(BBSSettings.editorSeconds.get());
+            double bbsPerFrame = 20D / fps;
+            double framesPerBbs = fps / 20D;
+            mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframes view = this.keyframeEditor.view;
+            int startBbs = (int) Math.round(view.fromGraphX(view.graphArea.x) * bbsPerFrame);
+            int durationBbs = Math.max(1, Math.round((this.doc == null ? 0F : this.doc.duration) * 20F));
+
+            TimelineRulerRenderer.render(context, view.graphArea, startBbs, durationBbs,
+                (bbsTick) -> view.toGraphX(bbsTick * framesPerBbs),
+                (bbsTick) -> seconds
+                    ? mchorse.bbs_mod.camera.utils.TimeUtils.formatTime(bbsTick)
+                    : String.valueOf(Math.round(bbsTick * framesPerBbs)));
+        });
 
         /* Do not replace UIKeyframes' own context menu here. BBS registers the full keyframe
          * toolkit (copy/paste, keyframe style, track style, loops, presets) in its constructor;
@@ -12544,15 +12555,6 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         this.inspectorPage = Math.max(PAGE_EFFECTS, Math.min(PAGE_OUTPUT, page));
         this.inspectorTabs.select(inspectorTabForPage(this.inspectorPage));
-    }
-
-    /** Ruler labels are compositor frames, not BBS' 20 ticks/s: never pass frames to formatTime. */
-    private String formatKeyframeTick(int tick)
-    {
-        float fps = this.doc == null ? 20F : Math.max(1F, this.doc.fps);
-
-        return dev.bbsae.comp.CompTime.rulerLabel(tick, fps,
-            Boolean.TRUE.equals(BBSSettings.editorSeconds.get()));
     }
 
     /** Time-axis zoom for the keyframe drawer; the title-bar arrows call this. */

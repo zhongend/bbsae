@@ -1113,6 +1113,45 @@ public final class CompRenderer
      * geometry too (shared depth target, perspective projection) plus the debug kill switch; the
      * preview/export flags never enter it.
      */
+    /** Composite one independent model target at its place in the layer order. */
+    private static GlFramebuffer compositeIndependentModel(CompLayer layer, CompRenderContext context,
+                                                            Batcher2D batcher, GlFramebuffer accumulation)
+    {
+        GL11.glColorMask(true, true, true, true);
+        com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
+
+        GlFramebuffer modelContent = ReplayActorPass.renderModel(layer, context, batcher);
+
+        if (modelContent == null)
+        {
+            return accumulation;
+        }
+
+        GlFramebuffer straight = PassRenderer.unpremultiply(modelContent);
+        GlFramebuffer source = straight == null ? modelContent : straight;
+        float opacity = opacityAt(layer, context);
+
+        debugFboSum("model-content-" + layer.id, source);
+
+        if (opacity > 0.0001F)
+        {
+            GlFramebuffer blended = FboPool.acquire(accumulation.width, accumulation.height);
+
+            PassRenderer.drawInto(blended, source, accumulation, null,
+                layer.blendMode, opacity, 0F, 0F, 0xFFFFFF, 0);
+            debugFboSum("model-blend-" + layer.id, blended);
+            FboPool.release(accumulation);
+            accumulation = blended;
+        }
+
+        if (source != modelContent)
+        {
+            FboPool.release(source);
+        }
+
+        return accumulation;
+    }
+
     static boolean perPixelDepthLayer(CompRenderContext context, CompLayer layer)
     {
         return context.spatialDepth != null
@@ -1180,13 +1219,6 @@ public final class CompRenderer
             for (CompLayer layer : orderLayers(comp, context))
             {
                 /* Camera layers drive the view; they have no pixels of their own. */
-                /* Independent bbsae models are composited by the dedicated overlay pass after all
-                 * normal layers, so a 2D card/background can never hide the actor being edited. */
-                if (layer.independent)
-                {
-                    continue;
-                }
-
                 if (!CompPreviewFilter.visible(layer))
                 {
                     continue;
@@ -1209,6 +1241,17 @@ public final class CompRenderer
                     {
                         accumulation = applyAdjustment(layer, accumulation, context, stack, batcher, renderMasks);
                     }
+                    continue;
+                }
+
+                /* Independent bbsae models are depth targets, but they are ordinary layers in the
+                 * composition order. Composite them here, not in a final overlay: text/shape/3D
+                 * cards above the model must occlude it, and a model above them must cover them.
+                 * The old final overlay made every model draw on top of every layer. */
+                if (layer.independent)
+                {
+                    accumulation = compositeIndependentModel(layer, context, batcher, accumulation);
+
                     continue;
                 }
 
@@ -1417,117 +1460,6 @@ public final class CompRenderer
                 }
             }
 
-            /* Final model overlay: the actor is drawn after every normal layer (including 2D cards
-             * and the world backdrop). This is the "I imported a model and can see it" contract;
-             * its own target still carries depth for self-occlusion. */
-            debugFboSum("before-models", accumulation);
-
-            for (CompLayer layer : comp.layers)
-            {
-                if (layer == null || !layer.independent || !layer.activeAt(time) || !layer.visible
-                    || (solo && !layer.solo))
-                {
-                    continue;
-                }
-
-                Matrix4f model = CompScene.model(context, layer);
-                Matrix4f layerProjection = CompScene.projection(context, layer);
-                GL11.glColorMask(true, true, true, true);
-                com.mojang.blaze3d.platform.GlStateManager._colorMask(true, true, true, true);
-
-                /*
-                 * Independent models have their own depth-resolved target. Compositing that target
-                 * through the UI batcher inherited the paused world's projection/model-view and
-                 * could draw zero fragments (content alpha 0) even though the actor target was
-                 * full. Use the model pass + composite shader directly; the 2D layer path below
-                 * remains the fallback for legacy independent layers without a form.
-                 */
-                GlFramebuffer modelContent = ReplayActorPass.renderModel(layer, context, batcher);
-
-                if (modelContent != null)
-                {
-                    GlFramebuffer straight = PassRenderer.unpremultiply(modelContent);
-                    GlFramebuffer source = straight == null ? modelContent : straight;
-                    float opacity = opacityAt(layer, context);
-
-                    debugFboSum("model-content-" + layer.id, source);
-
-                    if (opacity > 0.0001F)
-                    {
-                        /* Composite into a target the size of the accumulation, not the model
-                         * target: modelRenderScale can be smaller than the composition and
-                         * PassRenderer.draw would otherwise shrink the whole frame to that size. */
-                        GlFramebuffer blended = FboPool.acquire(accumulation.width, accumulation.height);
-
-                        PassRenderer.drawInto(blended, source, accumulation, null,
-                            layer.blendMode, opacity, 0F, 0F, 0xFFFFFF, 0);
-                        debugFboSum("model-blend-" + layer.id, blended);
-                        FboPool.release(accumulation);
-                        accumulation = blended;
-                    }
-
-                    if (source != modelContent)
-                    {
-                        FboPool.release(source);
-                    }
-
-                    continue;
-                }
-
-                GlFramebuffer content = FboPool.acquire(context.renderWidth(), context.renderHeight());
-
-                content.begin();
-                BufferRenderer.resetCurrentVertexBuffer();
-
-                try
-                {
-                    LayerContentRenderer.draw(layer, context, batcher, model, layerProjection);
-                    batcher.flush();
-                    debugFboSum("model-content-" + layer.id, content);
-
-                    GlFramebuffer straight = PassRenderer.unpremultiply(content);
-                    debugFboSum("model-straight-" + layer.id, straight);
-
-                    if (straight != content)
-                    {
-                        FboPool.release(content);
-                        content = straight;
-                    }
-
-                    float opacity = opacityAt(layer, context);
-
-                    if (Boolean.getBoolean("bbsae.debugReplayPreview"))
-                    {
-                        dev.bbsae.BbsAeAddon.LOGGER.info("Replay preview model layer: {} opacity={} blend={}",
-                            layer.id, opacity, layer.blendMode);
-                    }
-
-                    if (opacity > 0.0001F)
-                    {
-                        GlFramebuffer blended = PassRenderer.draw(content, accumulation, null,
-                            layer.blendMode, opacity, 0F, 0F, 0xFFFFFF);
-                        debugFboSum("model-blend-" + layer.id, blended);
-
-                        FboPool.release(content);
-                        FboPool.release(accumulation);
-                        accumulation = blended;
-                    }
-                    else
-                    {
-                        FboPool.release(content);
-                    }
-                }
-                catch (RuntimeException | Error e)
-                {
-                    if (!content.pooled)
-                    {
-                        FboPool.release(content);
-                    }
-
-                    throw e;
-                }
-            }
-
             debugFboSum("after-models", accumulation);
             batcher.flush();
             BufferRenderer.resetCurrentVertexBuffer();
@@ -1660,28 +1592,10 @@ public final class CompRenderer
             start = i + 1;
         }
 
-        /* Independent bbsae replay models are the subject being edited, not just another plane in
-         * the stack. Draw them after regular 2D/3D layers so a card/text plane cannot hide the
-         * model the user just imported; their own transparent depth target still resolves
-         * self-occlusion. */
-        List<CompLayer> normal = new ArrayList<>(order.size());
-        List<CompLayer> models = new ArrayList<>();
-
-        for (CompLayer layer : order)
-        {
-            if (layer.independent)
-            {
-                models.add(layer);
-            }
-            else
-            {
-                normal.add(layer);
-            }
-        }
-
-        normal.addAll(models);
-
-        return normal;
+        /* Independent models are ordinary layers in the composition stack: keeping them in the
+         * same 3D sort run is what lets a text/shape plane in front occlude them, and a model in
+         * front cover the plane. The old split forced every model to the top. */
+        return order;
     }
 
     private static void sortSegment(List<CompLayer> order, int start, int end, CompRenderContext context)
@@ -1698,9 +1612,9 @@ public final class CompRenderer
                 return depth;
             }
 
-            /* A coplanar bbsae replay model is the subject the user is editing; keep it above a
-             * decorative card/text plane with the same depth instead of letting stack order hide it. */
-            return Boolean.compare(a.independent, b.independent);
+            /* Coplanar layers tie: stable sort keeps the composition stack order, so a model does
+             * not jump above a text/shape layer that is stacked over it. */
+            return 0;
         });
     }
 

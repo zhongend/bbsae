@@ -69,18 +69,18 @@ session 并存**：
 
 预览帧改为 **dirty 重烘**，失败时保留上一张好帧，不再在暂停瞬间释放成黑屏。
 
-## 5. hotfix49：环绕/自由 = 自由相机重渲染整条合成
+## 5. hotfix50：自由相机完整合成 + 模型遮挡 + 线框对齐
 
-- hotfix47 的“最终合成截图贴 3D 卡片”仍是 2D；hotfix48 的 `CompViewportRenderer` 源码缓存
-  路径会绕过完整合成图。
-- hotfix49 直接复用相机视角的 `CompRenderer`，只把相机换成自由相机：
-  - `CompCamera.ofFree(...)` 用 orbit eye/target/FOV/roll 构造 `CompCamera`；
-    `CompCameraFreeTest` 验证 view/projection 逐元素一致；
-  - `CompRenderer.renderFrameWithCamera(...)` 通过线程局部 override 让整条图（文字、形状、
-    BBS 预览、模型、蒙版、效果、嵌套合成）都从自由相机渲染；
-  - 相机视角路径保持不变。
-- BBS 预览层在 override 下强制 3D 投影，不再作为全屏背景。
-- 合成器关键帧抽屉：`CompTime.rulerLabel` 处理帧/秒换算，新增测试 `CompTimeRulerTest`。
+- `CompCamera.ofFree` + `CompRenderer.renderFrameWithCamera`：用自由相机重渲染整条
+  `CompRenderer` 图，文字/形状/图片/BBS 预览/模型/蒙版/效果/嵌套合成全部是同一条路径。
+- 自由视角按 `freePlate` letterbox，相机 viewport 也设为 `freePlate`，gizmo、pick、
+  `ReplayCompositionOverlay` 与画面像素对齐。
+- 模型不再被强制放到所有图层之后：`orderLayers` 保留排序，普通循环在模型位置渲染并合成；
+  文字/形状在模型前方会遮挡模型，反之模型覆盖文字/形状。
+- BBS 预览层在自由相机 override 下强制 3D 投影，不再全屏铺背景。
+- 关键帧抽屉标尺改为 BBS tick 单位适配：步长、`toGraphX`、标签同一单位，修复秒制错位/重叠
+  乱码。
+- 相机视角保持原路径不变。
 
 ## 4. 验证
 
@@ -93,5 +93,5 @@ session 并存**：
   - `round110/112/120-pause-paused.png`：暂停模型；
   - `round122-orbit-free.png`：旧参考背景（已被 hotfix49 真正 3D 路径取代，仅历史）；
   - `round113-pause-paused.png`：实体回退暂停帧。
-- 候选包：`bbsae-0.99-hotfix49.jar`（3,933,166 bytes，SHA-256
-  `E3F6168D1ED00E3640761D2C9299DED69D310D890BDB94ABB84A6DF3CAEDA4CF`）。
+- 候选包：`bbsae-0.99-hotfix50.jar`（3,933,133 bytes，SHA-256
+  `1690EA7143029D9550E101A9C17288F85B35E3CF0C653BDC94FF0A41B439D274`）。
