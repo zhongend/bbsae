@@ -1156,11 +1156,52 @@ public class UICompTrackTimeline extends UIElement
                     context.batcher.textShadow(clip.name + (clip.muted ? "（静音）" : ""),
                         left + 4, barY + (barH - 8) / 2, selected ? 0xFFFFFFFF : 0xFFCFE9DA);
                 }
+
+                drawAudioWaveform(context, clip, left, right, barY, barH, selected);
             }
         }
         finally
         {
             context.batcher.unclip(context);
+        }
+    }
+
+    private void drawAudioWaveform(UIContext context, dev.bbsae.comp.CompAudio clip,
+                                   int left, int right, int barY, int barH, boolean selected)
+    {
+        if (clip.muted || right - left < 8 || this.panel.getProject() == null)
+        {
+            return;
+        }
+
+        try
+        {
+            java.nio.file.Path file = dev.bbsae.client.export.CompAudioMixer
+                .resolver(dev.bbsae.comp.CompStore.assetRoot(this.panel.getProject().id))
+                .apply(clip.path);
+
+            int buckets = Math.max(8, Math.min(240, right - left));
+            float[] peaks = dev.bbsae.client.render.CompAudioWaveform.peaks(file, buckets);
+
+            if (peaks == null)
+            {
+                return;
+            }
+
+            int mid = barY + barH / 2;
+            int color = selected ? 0x66E9FFF2 : 0x44CFE9DA;
+
+            for (int i = 0; i < peaks.length; i++)
+            {
+                int x = left + i * (right - left) / peaks.length;
+                int half = Math.max(1, Math.round(peaks[i] * (barH - 4) * 0.5F));
+
+                context.batcher.box(x, mid - half, x + 1, mid + half, color);
+            }
+        }
+        catch (RuntimeException ignored)
+        {
+            /* A missing/unsupported source only loses the waveform, never the track. */
         }
     }
 

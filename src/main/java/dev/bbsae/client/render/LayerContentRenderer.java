@@ -134,7 +134,8 @@ final class LayerContentRenderer
             float sourceTime = layer.sourceTimeAt(context.time, context.frame);
             java.nio.file.Path frame = CompVideoFrames.frame(context.project.id, path, sourceTime,
                 Math.max(1F, context.comp.fps),
-                Math.max(2, Math.round(layer.width)), Math.max(2, Math.round(layer.height)));
+                Math.max(2, Math.round(layer.width)), Math.max(2, Math.round(layer.height)),
+                !context.preview);
 
             path = frame == null ? null : frame.toAbsolutePath().toString();
         }
