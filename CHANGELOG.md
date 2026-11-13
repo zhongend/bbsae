@@ -1,5 +1,32 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix45 — 2026-11-13
+
+播放头拖动真正修复：根因是两个 `ReplayEditSession` 并存，时间轴写旧 session、面板读新 session。
+暂停模型与 3D 环绕 BBS 参考画面保持 hotfix44 的行为。
+
+### 播放头拖不动（真正的根因）
+
+- 先前的 `ReplayFilmKeyframes.moveNoKeyframes` 覆写是对的：调试日志确认拖动确实进入
+  `moveNoKeyframes`，`graphTick=2385.5`，`session=true`；
+- 但紧接着读回 `before=0.0 after=0.0`，播放头没有变化；
+- 根因：`UIReplayModePanel.build()` 创建了一个 `ReplayEditSession` 并据此构建时间轴；
+  `bind()` 在首次绑定时因为 `filmChanged` 又创建了第二个 session，并让 viewport 使用第二个。
+  时间轴仍持有第一个 session，拖动 seek 写进旧 session，面板/指针读新 session，于是永远回到 0。
+- 修复：首次 `bind()` 复用 `build()` 的 session；只有**真正切换影片**（`filmChanged && !builtNow`）
+  才创建新 session，并在 `selectReplay` 后重建时间轴，保证时间轴、viewport、面板三者同一实例。
+- 真机回归（`-PbbsaeReplayScrub=true`）：
+  - 修复前：`Replay scrub: moveNoKeyframes x=700 graphTick=2385.5 session=true`，
+    `before=0.0 after=0.0 moved=false`；
+  - 修复后：`before=0.0 after=2385.5469 moved=true`。
+
+### 验证
+
+- 全量测试：**155 套件 / 967 项 / 0 failures / 0 errors / 1 skipped**。
+- 真机 `round120-pause-paused.png`：session 修复后暂停模型仍可见。
+- 候选包：`bbsae-0.99-hotfix45.jar`（3,930,120 bytes，SHA-256
+  `DCE24A6513A61AAC18C68EC64B0AF6C06C1C5884FC4C69625AF0EC349A811765`）。
+
 ## 0.99-hotfix44 — 2026-11-13
 
 回放预览暂停修复：**暂停后模型不再消失**；自由/绕对象视角能看到 **BBS 参考画面**；

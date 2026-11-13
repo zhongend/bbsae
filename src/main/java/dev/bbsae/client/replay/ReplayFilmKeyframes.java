@@ -76,6 +76,12 @@ public class ReplayFilmKeyframes extends UIFilmKeyframes
     @Override
     protected void moveNoKeyframes(UIContext context)
     {
+        if (Boolean.getBoolean("bbsae.debugReplayScrub"))
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.info("Replay scrub: moveNoKeyframes x={} graphTick={} session={}",
+                context.mouseX, this.fromGraphX(context.mouseX), this.session != null);
+        }
+
         if (this.session == null)
         {
             super.moveNoKeyframes(context);
@@ -85,6 +91,27 @@ public class ReplayFilmKeyframes extends UIFilmKeyframes
 
         this.session.setPlaying(false);
         this.session.seek((float) this.fromGraphX(context.mouseX));
+    }
+
+    /** Test-only: call the exact scrub handler without needing a real mouse coordinate. */
+    public void debugScrub(int mouseX)
+    {
+        UIContext context = new UIContext(mchorse.bbs_mod.BBSModClient.getDashboard());
+
+        context.mouseX = mouseX;
+        this.moveNoKeyframes(context);
+    }
+
+    /** Test-only access to the ruler's state. */
+    public boolean debugHasCursor()
+    {
+        return this.hasCursor();
+    }
+
+    /** Test-only access to the graph-to-tick mapping. */
+    public float debugGraphTick(int mouseX)
+    {
+        return (float) this.fromGraphX(mouseX);
     }
 
     /**

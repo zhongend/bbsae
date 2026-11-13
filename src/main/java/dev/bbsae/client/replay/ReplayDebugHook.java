@@ -253,6 +253,32 @@ public final class ReplayDebugHook
                 });
             }
 
+            /* Optional playhead scrub audit: dispatch a real click into the ruler and check that
+             * the replay session's playhead actually moved. */
+            if (Boolean.getBoolean("bbsae.debugReplayScrub"))
+            {
+                final int[] scrubTick = {0};
+
+                ClientTickEvents.END_CLIENT_TICK.register((client) ->
+                {
+                    if (client.player == null)
+                    {
+                        return;
+                    }
+
+                    scrubTick[0] += 1;
+
+                    if (scrubTick[0] == 70)
+                    {
+                        BbsAeAddon.LOGGER.info("Replay scrub audit: result={}", panel.debugScrubTimeline());
+                    }
+                    else if (scrubTick[0] == 100)
+                    {
+                        client.scheduleStop();
+                    }
+                });
+            }
+
             /* Optional pause audit: play for a couple of seconds, screenshot, pause, screenshot
              * again. This is the regression check for "the replay model disappears when playback
              * pauses" without needing a human to click Play/Space. */

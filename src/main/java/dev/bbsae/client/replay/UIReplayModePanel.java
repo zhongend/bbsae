@@ -415,9 +415,62 @@ public class UIReplayModePanel extends UIDashboardPanel
      * POSE tab). Both paths operate on the original {@link Replay} data, which is what the visible
      * actor and the original dope sheet read — not on a parallel bbsae timeline.</p>
      */
-    public void insertKeyframeFromHost(boolean pose)
+    /**
+     * Test-only mouse scrub: dispatches a real UI click at the ruler's middle and verifies that
+     * the replay session playhead moved. Enabled by {@code -Dbbsae.debugReplayScrub=true}; this is
+     * the regression check for the "playhead cannot be dragged" bug.
+     */
+    public boolean debugScrubTimeline()
     {
-        if (this.replay == null || this.session == null)
+        if (this.keyframeEditor == null || this.session == null)
+        {
+            return false;
+        }
+
+        mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframes view = this.keyframeEditor.view;
+        UIContext context = new UIContext(mchorse.bbs_mod.BBSModClient.getDashboard());
+
+        int absoluteX = 0;
+        int absoluteY = 0;
+
+        for (mchorse.bbs_mod.ui.framework.elements.UIElement element = view; element != null; element = element.getParent())
+        {
+            absoluteX += element.area.x;
+            absoluteY += element.area.y;
+        }
+
+        context.mouseX = 700;
+        context.mouseY = 650;
+        context.mouseButton = 0;
+
+        ReplayFilmKeyframes debugView = view instanceof ReplayFilmKeyframes ? (ReplayFilmKeyframes) view : null;
+
+        dev.bbsae.BbsAeAddon.LOGGER.info(
+            "Replay scrub audit: area={},{} {}x{} absolute={},{} graph={},{} {}x{} hasCursor={} graphTick={}",
+            view.area.x, view.area.y, view.area.w, view.area.h, absoluteX, absoluteY,
+            view.graphArea.x, view.graphArea.y, view.graphArea.w, view.graphArea.h,
+            debugView != null && debugView.debugHasCursor(),
+            debugView == null ? -1F : debugView.debugGraphTick(context.mouseX));
+
+        float before = this.session.playhead();
+
+        if (debugView != null)
+        {
+            debugView.debugScrub(context.mouseX);
+        }
+
+        float after = this.session.playhead();
+
+        boolean moved = Math.abs(after - before) > 0.01F;
+
+        dev.bbsae.BbsAeAddon.LOGGER.info(
+            "Replay scrub audit: before={} after={} moved={}", before, after, moved);
+
+        return moved;
+    }
+
+    public void insertKeyframeFromHost(boolean pose)
+    {        if (this.replay == null || this.session == null)
         {
             this.setViewportStatus("先选择一条回放，再打关键帧");
             return;
@@ -584,17 +637,27 @@ public class UIReplayModePanel extends UIDashboardPanel
             this.selectedPart = "";
         }
 
+        boolean builtNow = !this.built;
+
         if (!this.built)
         {
             this.build(panel);
         }
 
-        if (this.session == null || filmChanged)
+        boolean replacedSession = false;
+
+        /*
+         * build() has just created a session for this film. Replacing it here was the playhead-drag
+         * bug: the timeline held the build() session while the panel read a second one, so a scrub
+         * wrote the old session and the needle stayed at 0. Only replace on a real film switch.
+         */
+        if (this.session == null || (filmChanged && !builtNow))
         {
             this.session = new ReplayEditSession(panel, film, replay);
             this.session.setReplayFilter(CompReplayBridge::isVirtual);
             this.session.setPreviewInvalidator(this.viewport::invalidatePreview);
             this.viewport.setSession(this.session);
+            replacedSession = true;
         }
 
         this.session.syncSceneScale();
@@ -610,6 +673,13 @@ public class UIReplayModePanel extends UIDashboardPanel
             : this.firstReplay(film);
 
         this.selectReplay(initial);
+
+        if (replacedSession)
+        {
+            /* The timeline was built against the old session; rebuild it for the new film. */
+            this.rebuildKeyframeEditor();
+            this.tracksDirty = true;
+        }
 
         this.knownOrder.clear();
         this.knownOrder.addAll(film.replays.getList());

@@ -98,6 +98,7 @@ loom {
             vmArg "-Dbbsae.debugReplayViewShots=" + (project.findProperty("bbsaeReplayViewShots") ?: "")
             vmArg "-Dbbsae.debugReplayPauseShots=" + (project.findProperty("bbsaeReplayPauseShots") ?: "")
             vmArg "-Dbbsae.debugReplayPreview=" + (project.findProperty("bbsaeReplayPreviewDebug") ?: "false")
+            vmArg "-Dbbsae.debugReplayScrub=" + (project.findProperty("bbsaeReplayScrub") ?: "false")
             vmArg "-Dbbsae.replayInteractionScript.disable=" + (project.findProperty("bbsaeReplayScriptOff") ?: "false")
             /* Font verification sheet (see BbsAeClient.saveFontSheet):
              *   ./gradlew runClientView -PbbsaeFontShot=fontsheet -PbbsaeFontShotFont=timesbd.ttf

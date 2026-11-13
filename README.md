@@ -1,10 +1,10 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix44**：回放预览暂停不再丢模型/BBS 预览层——暂停帧的独立模型改走
-> 深度目标 + 合成 shader，不再被暂停世界留下的投影/视口状态裁成 0 像素；模型在播放与暂停
-> 都保持可见。自由/绕对象视角新增 **BBS 参考画面**（压暗、contain，作为 3D 舞台背景，
-> 不再是黑屏），相机视角仍只把世界当普通图层、不再强行铺满背景。顺带修复时间轴播放头可拖动。
-> 详见 [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix45**：回放预览暂停不再丢模型/BBS 预览层；自由/绕对象视角显示 **BBS 参考画面**；
+> 时间轴播放头真正可拖动。播放头根因不是拖动坐标，而是 `build()` 与 `bind()` 各建了一个
+> `ReplayEditSession`：时间轴写旧 session、面板读新 session，所以拖动后指针仍回到 0。
+> 现在首次绑定复用同一个 session，只有真正切换影片才重建时间轴。详见
+> [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">

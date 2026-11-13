@@ -46,12 +46,18 @@
 
 ## 3. 播放头拖动
 
-`UIFilmKeyframes.moveNoKeyframes` 把拖动写回借用的相机编辑器 cursor，而回放页读的是
-`ReplayEditSession` 的本地播放头，所以下一帧就弹回。`ReplayFilmKeyframes` 覆写：
+`ReplayFilmKeyframes.moveNoKeyframes` 先把拖动写回借用的相机编辑器 cursor，回放页读的是
+`ReplayEditSession` 的本地播放头，所以下一帧就弹回。覆写 `hasCursor()` 和
+`moveNoKeyframes` 后，调试日志证明拖动确实进入 handler，但播放头仍然 0——真正根因是**两个
+session 并存**：
 
-- `hasCursor()`：session 存在即 true；
-- `moveNoKeyframes`：暂停播放并 `session.seek(fromGraphX(mouseX))`；
-- 上一/下一关键帧同步 seek。
+- `UIReplayModePanel.build()` 创建 session 并据此构建时间轴；
+- 首次 `bind()` 因 `filmChanged` 又创建第二个 session，viewport 用第二个；
+- 时间轴持有第一个，拖动 seek 写旧 session，面板/指针读新 session，所以永远回到 0。
+
+修复：首次绑定复用 `build()` 的 session；只有真正切换影片才创建新 session，并在
+`selectReplay` 后重建时间轴。真机 `-PbbsaeReplayScrub=true` 修复前后：
+`before=0.0 after=0.0` → `before=0.0 after=2385.5469 moved=true`。
 
 预览帧改为 **dirty 重烘**，失败时保留上一张好帧，不再在暂停瞬间释放成黑屏。
 
@@ -60,10 +66,13 @@
 - 测试工程背景从品红 `-65281` 改为黑 `-16777216`，排除背景色干扰。
 - 全量测试：**155 套件 / 967 项 / 0 failures / 0 errors / 1 skipped**。
 - 真机：
-  - `docs/verify/round110-pause-paused.png`、`round112-pause-paused.png`：暂停时模型可见；
+  - `docs/verify/round110-pause-paused.png`、`round112-pause-paused.png`、`round120-pause-paused.png`：
+    暂停时模型可见；
   - `docs/verify/round111-orbit-free.png`：3D 自由视角的 BBS 参考画面；
   - `docs/verify/round113-pause-paused.png`：实体回退后的暂停帧。
+- 播放头真机回归（`-PbbsaeReplayScrub=true`）：
+  `before=0.0 after=0.0 moved=false` → `before=0.0 after=2385.5469 moved=true`。
 - 调试像素日志（仅 `-Dbbsae.debugReplayPreview=true`）：
   `Replay preview model-content-*`、`model-blend-*`、`after-models`。
-- 候选包：`bbsae-0.99-hotfix44.jar`（3,928,442 bytes，SHA-256
-  `51CA83B55DC56A920FD163CF07408EF13C572CCD8EC198E7B8DC014D08D7939C`）。
+- 候选包：`bbsae-0.99-hotfix45.jar`（3,930,120 bytes，SHA-256
+  `DCE24A6513A61AAC18C68EC64B0AF6C06C1C5884FC4C69625AF0EC349A811765`）。
