@@ -14286,6 +14286,48 @@ public class UICompositorPanel extends UIDashboardPanel
         );
     }
 
+    /** Links an external image without copying it into the project (AE/Premiere style). */
+    private void linkExternalImage(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return;
+        }
+
+        NativeFileDialog.pickFile(
+            "链接外部图片",
+            new String[] {"png", "jpg", "jpeg", "gif"},
+            (file) ->
+            {
+                if (file == null || !file.isFile())
+                {
+                    return;
+                }
+
+                layer.imagePath = "external:" + file.getAbsoluteFile();
+
+                try
+                {
+                    java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(file);
+
+                    if (image != null && layer.width > 0F)
+                    {
+                        layer.height = layer.width * image.getHeight() / Math.max(1F, image.getWidth());
+                    }
+                }
+                catch (Exception ignored)
+                {
+                    /* The texture loader will report a missing/corrupt image; dimensions are optional. */
+                }
+
+                this.refreshInspector();
+                this.save();
+                this.setStatus("已链接外部图片：" + file.getName() + "（不复制到工程）");
+            },
+            () -> this.openImageBrowser(layer)
+        );
+    }
+
     /** Fallback path: the in-game browser, used when the OS dialog cannot be shown. */
     private void openImageBrowser(CompLayer layer)
     {
@@ -17225,7 +17267,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         NativeFileDialog.pickFile(
             "导入音频",
-            new String[] {"wav", "ogg"},
+            new String[] {"wav", "ogg", "mp3", "flac", "m4a"},
             (file) ->
             {
                 if (file != null && file.isFile())
@@ -17247,7 +17289,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.importBrowser = new UIImportBrowser(
             "导入音频",
-            new String[] {"wav", "ogg"},
+            new String[] {"wav", "ogg", "mp3", "flac", "m4a"},
             (file) ->
             {
                 if (file != null && file.isFile())
@@ -17302,18 +17344,44 @@ public class UICompositorPanel extends UIDashboardPanel
 
             java.nio.file.Files.createDirectories(folder);
 
-            String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
-            java.nio.file.Path target = folder.resolve(name);
+            String rawName = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+            String lower = rawName.toLowerCase(java.util.Locale.ROOT);
+            boolean direct = lower.endsWith(".wav") || lower.endsWith(".ogg");
+            boolean link = direct && CompPrefs.get().linkExternalAssets;
+            java.nio.file.Path target;
+            String storedPath;
 
-            if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
+            if (link)
             {
-                java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                target = file.toPath().toAbsolutePath();
+                storedPath = "external:" + target;
+            }
+            else if (direct)
+            {
+                target = folder.resolve(rawName);
+
+                if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
+                {
+                    java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+
+                storedPath = "audio/" + rawName;
+            }
+            else
+            {
+                String base = rawName.lastIndexOf('.') > 0
+                    ? rawName.substring(0, rawName.lastIndexOf('.')) : rawName;
+
+                target = folder.resolve(base + ".wav");
+                convertAudioToWav(file, target);
+                storedPath = "audio/" + target.getFileName();
             }
 
+            String name = target.getFileName().toString();
             dev.bbsae.comp.CompAudio clip = new dev.bbsae.comp.CompAudio(
                 "audio_" + (this.doc.audio.size() + 1),
                 name,
-                "audio/" + name
+                storedPath
             );
 
             clip.start = this.time;
@@ -17333,12 +17401,45 @@ public class UICompositorPanel extends UIDashboardPanel
             dev.bbsae.client.audio.CompAudioPlayer.invalidate();
             this.refreshInspector();
             this.save();
-            this.setStatus("已导入音频：" + name + "（入点 " + String.format(java.util.Locale.ROOT, "%.2fs", clip.start) + "）");
+            this.setStatus("已导入音频：" + name + (link ? "（外部链接）" : "（已复制/转换）")
+                + " · 入点 " + String.format(java.util.Locale.ROOT, "%.2fs", clip.start));
         }
         catch (Exception e)
         {
             dev.bbsae.BbsAeAddon.LOGGER.error("Could not import audio {}", file, e);
             this.notifyError("音频导入失败：" + e.getMessage());
+        }
+    }
+
+    /** Converts MP3/FLAC/M4A to WAV so the mixer's WAV/OGG decoder can read it. */
+    private static void convertAudioToWav(java.io.File source, java.nio.file.Path target) throws Exception
+    {
+        String ffmpeg = mchorse.bbs_mod.utils.FFMpegUtils.getFFMPEG();
+
+        if (ffmpeg == null || ffmpeg.isBlank())
+        {
+            throw new IllegalStateException("找不到 FFmpeg；请安装 FFmpeg 或改用 WAV/OGG");
+        }
+
+        java.nio.file.Files.createDirectories(target.getParent());
+
+        ProcessBuilder builder = new ProcessBuilder(ffmpeg, "-y", "-nostdin", "-i", source.getAbsolutePath(),
+            "-vn", "-ac", "2", "-ar", "48000", target.toAbsolutePath().toString());
+
+        builder.redirectErrorStream(true);
+        builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+
+        Process process = builder.start();
+
+        if (!process.waitFor(120, java.util.concurrent.TimeUnit.SECONDS))
+        {
+            process.destroyForcibly();
+            throw new IllegalStateException("FFmpeg 转换超时");
+        }
+
+        if (process.exitValue() != 0 || !java.nio.file.Files.isRegularFile(target))
+        {
+            throw new IllegalStateException("FFmpeg 无法转换该音频（exit " + process.exitValue() + "）");
         }
     }
 
@@ -17660,6 +17761,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             section.fields.add(this.textRow("序列".equals(l.type) ? "图片序列 (%04d)" : "图片路径", l.imagePath, (text) -> l.imagePath = text));
             section.fields.add(this.smallButton("导入图片…", () -> this.importImage(l)));
+            section.fields.add(this.smallButton("链接外部图片…", () -> this.linkExternalImage(l)));
             section.fields.add(this.numberRow("图片适配（0 包含 1 覆盖 2 拉伸）", l.imageFit, 0, 2, true, (value) -> l.imageFit = value.intValue()));
 
             UICompButton textureFilter = new UICompButton(IKey.constant(this.layerFilterLabel(l)), (button) ->

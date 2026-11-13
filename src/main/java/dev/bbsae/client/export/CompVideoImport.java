@@ -148,6 +148,7 @@ public final class CompVideoImport
 
         args.add(ffmpeg);
         args.add("-y");
+        args.add("-nostdin");
         args.add("-i");
         args.add(file.getAbsolutePath());
         args.add("-vf");
@@ -210,7 +211,7 @@ public final class CompVideoImport
      */
     private static int[] probe(String ffmpeg, File file, int maxWidth, int maxHeight) throws Exception
     {
-        ProcessBuilder builder = new ProcessBuilder(ffmpeg, "-hide_banner", "-i", file.getAbsolutePath());
+        ProcessBuilder builder = new ProcessBuilder(ffmpeg, "-nostdin", "-hide_banner", "-i", file.getAbsolutePath());
 
         builder.redirectErrorStream(true);
 

@@ -54,6 +54,27 @@ public final class ImageTextureCache
             return 0L;
         }
 
+        if (path.startsWith("external:"))
+        {
+            Path external = Path.of(path.substring("external:".length()));
+
+            if (!Files.isRegularFile(external))
+            {
+                return 0L;
+            }
+
+            try
+            {
+                return external.toAbsolutePath().toString().hashCode() * 31L
+                    + Files.getLastModifiedTime(external).toMillis() * 31L
+                    + Files.size(external);
+            }
+            catch (Exception e)
+            {
+                return 0L;
+            }
+        }
+
         if (path.indexOf(':') > 0 && !path.startsWith("/") && !path.contains("\\"))
         {
             return path.hashCode() * 31L + 0x5DEECE66DL;
@@ -227,6 +248,11 @@ public final class ImageTextureCache
     {
         try
         {
+            if (path.startsWith("external:"))
+            {
+                return Path.of(path.substring("external:".length()));
+            }
+
             Path raw = Path.of(path);
 
             if (raw.isAbsolute())

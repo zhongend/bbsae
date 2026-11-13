@@ -548,6 +548,18 @@ public final class CompAudioMixer
     {
         return (path) ->
         {
+            if (path.startsWith("external:"))
+            {
+                return Path.of(path.substring("external:".length()));
+            }
+
+            Path direct = Path.of(path);
+
+            if (direct.isAbsolute())
+            {
+                return direct;
+            }
+
             String relative = path.startsWith("assets/") ? path.substring("assets/".length()) : path;
 
             return assetRoot.resolve(relative);

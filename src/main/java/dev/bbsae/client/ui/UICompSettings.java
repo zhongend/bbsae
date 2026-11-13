@@ -1249,6 +1249,11 @@ public class UICompSettings extends UIElement
             settings.previewAudio = value;
             this.panel.saveSettings();
         }), 170, "AE 模式下试听音轨"));
+        this.add(this.row("链接外部素材", this.toggle("", CompPrefs.get().linkExternalAssets, (value) ->
+        {
+            CompPrefs.get().linkExternalAssets = value;
+            CompPrefs.save();
+        }), 170, "WAV/OGG 音频直接引用原文件而不复制；关闭后导入会复制到工程 assets/audio"));
 
         UIElement background = this.segmented(new String[] {"合成底色", "BBS 画面"},
             settings.previewBackground, (value) ->

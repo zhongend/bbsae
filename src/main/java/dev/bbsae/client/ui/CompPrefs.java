@@ -88,6 +88,8 @@ public final class CompPrefs
         public boolean previewHints = true;
         /** Contextual tips for multi-selection / precomp / empty states. */
         public boolean contextHints = true;
+        /** Link WAV/OGG audio from its original path instead of copying it into the project. */
+        public boolean linkExternalAssets = true;
         /** Keep BBS' editor onion skins off while the compositor is open: their ghost frames can
          * bleed into the camera preview and read as duplicated shapes/text. */
         public boolean suppressOnionSkin = true;

@@ -50,12 +50,21 @@ world-plate matte 换成 actor-only 图像。
 - 状态栏提示「已多选 N 个图层 · 可预合成 / 合并 / 删除」；
 - 设置 → 显示新增「上下文操作提示」开关。
 
-## 6. 验证
+## 6. 素材导入与外部链接
+
+- 音频现在支持 WAV / OGG / MP3 / FLAC / M4A；
+- WAV/OGG 默认 **external:绝对路径** 链接，不复制；设置「链接外部素材」可关闭；
+- MP3/FLAC/M4A 用 FFmpeg 转 48k 双声道 WAV（mixer 只解 WAV/OGG）；
+- 外部音频路径在预览、混音、导出三处共用同一个 resolver；
+- 图片新增「链接外部图片…」，`imagePath` 支持 `external:`；
+- 视频 FFmpeg 命令加 `-nostdin`，避免后台导入等待 stdin。
+
+## 7. 验证
 
 - 全量：**151 suites / 948 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix17.jar`，已安装到正式 modpack；
-  SHA-256 `1BBDF88222FAE809239CC5AC7176258606C86955CD6738DDE83F579E1409B184`。
-- 本地提交：`077e244`（回放工作区/多选）；本轮 actor-only/清理尚未提交。
+- 本地候选包：`bbsae-0.99-hotfix18.jar`，已安装到正式 modpack；
+  SHA-256 `710AFEBF30D14A80078EDD20340124BCA519795D30772986E4F50E42BB7CA11E`。
+- 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 
 ## 7. 仍未完成
