@@ -1,5 +1,41 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix48 — 2026-11-13
+
+回放编辑器的环绕/自由视角改为**真正的 3D 合成场景**；相机视角完全不动。合成器关键帧
+抽屉标尺与缩放继续修复。
+
+### 环绕/自由 = 合成器的 3D 场景，不是 2D 平面
+
+- 删除了 hotfix47 的“把最终合成截图贴在 3D 卡片上”方案。那只是把一张 2D 画面放进 3D
+  空间，文字/形状/BBS 预览层仍然没有合成器里的深度关系。
+- 环绕/自由改回 `CompViewportRenderer` 的真正 3D 工作区：
+  - 每个 2D 图层用 BBS 原版 `screenFixedQuad`（AE 2D 语义）；
+  - 每个 `threeD` 图层/模型通过 `CompViewportCamera.viewProjection` 投影，带纹理、深度、
+    效果、蒙版和父子变换；
+  - BBS 预览层不再按 2D 全屏背景绘制，而是作为**被投影的世界平面**放进 3D 场景；
+  - 独立模型仍走 `drawReplayModels`，与合成器中的关系一致。
+- 自由视角首次进入时 `ReplayEditSession.frameComposition(doc.width, doc.height)` 取景整个
+  合成平面，而不是在原点 frame 演员；否则 320×180 的图层会被相机放到屏幕右侧。
+- 相机视角保持原 `CompRenderer.renderFrame` 路径，未改动；导出/AE 未改动。
+- 不再绘制 BBS 世界参考背景或独立线框舞台（无合成时才保留旧 fallback）。
+
+### 合成器关键帧抽屉标尺
+
+- 新增 `CompTime.rulerLabel(frame, fps, seconds)`：帧制显示帧号，秒制按帧率换算为
+  `秒.百分秒`；不再把帧直接交给 BBS 的 20-tick 格式化器。
+- `UICompositorPanel.formatKeyframeTick` 使用该函数；标尺与顶部时间码使用同一时间基准。
+- 缩放 `zoomKeyframeTime(direction, mouseX)` 继续以鼠标下 tick 为锚点。
+
+### 验证
+
+- 全量测试：**155 套件 / 968 项 / 0 failures / 0 errors / 1 skipped**（新增
+  `CompTimeRulerTest`）。
+- 本轮遵照用户要求**未启动客户端**；上一轮真机图仅作为相机视角未变的基线，不作为本轮
+  3D 场景的视觉验证。请用你的工程测试文字、形状、BBS 预览层和模型在环绕/自由下的 3D 关系。
+- 候选包：`bbsae-0.99-hotfix48.jar`（3,931,882 bytes，SHA-256
+  `4378C707E758D2E3FADF95F261DAC989DCEC36572286609F094450DD874C041C`）。
+
 ## 0.99-hotfix47 — 2026-11-13
 
 回放环绕/自由视角与相机视角使用同一张最终合成；相机视角不动。合成器关键帧抽屉修复时间标尺

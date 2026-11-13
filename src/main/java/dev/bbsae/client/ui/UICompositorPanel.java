@@ -36,7 +36,6 @@ import dev.bbsae.comp.CompositionClip;
 import dev.bbsae.client.render.CompRenderContext;
 import dev.bbsae.client.ui.CompInput;
 import mchorse.bbs_mod.BBSSettings;
-import mchorse.bbs_mod.camera.utils.TimeUtils;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
@@ -12552,13 +12551,8 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         float fps = this.doc == null ? 20F : Math.max(1F, this.doc.fps);
 
-        if (Boolean.TRUE.equals(BBSSettings.editorSeconds.get()))
-        {
-            /* TimeUtils is BBS' 20-ticks-per-second formatter; compositor ticks are frames. */
-            return TimeUtils.formatTime(tick / fps * 20.0D);
-        }
-
-        return String.valueOf(tick);
+        return dev.bbsae.comp.CompTime.rulerLabel(tick, fps,
+            Boolean.TRUE.equals(BBSSettings.editorSeconds.get()));
     }
 
     /** Time-axis zoom for the keyframe drawer; the title-bar arrows call this. */

@@ -8,6 +8,7 @@ import dev.bbsae.client.render.CompFrameServer;
 import dev.bbsae.client.render.CompRenderCache;
 import dev.bbsae.client.render.CompRenderer;
 import dev.bbsae.client.render.CompViewportCamera;
+import dev.bbsae.client.render.CompViewportRenderer;
 import dev.bbsae.client.render.FboPool;
 import dev.bbsae.client.render.GlFramebuffer;
 import dev.bbsae.client.render.GlTexture;
@@ -54,12 +55,12 @@ import java.util.function.IntConsumer;
  * editor shows is a frame, not a screen recording of the game. The composition frame is cached per
  * composition frame/document/raster; a parked playhead costs one textured quad per display frame.</p>
  *
- * <h2>Free / orbit views — the virtual stage</h2>
- * <p>Navigating a composition painted into 3D space looked like an exploded shot: every card and
- * text layer became a giant plane floating around the actor. These views are now a clean dark
- * stage: a subtle grid, the film's replay models through BBS' own {@code FilmEntityRenderer}, and
- * {@link ReplayCompositionOverlay}'s lightweight guides (composition frame, cameras, layer centres).
- * The final composition is one click away in camera view or in the PiP/two-window preview.</p>
+ * <h2>Free / orbit views — the same composition in 3D</h2>
+ * <p>These views render the composition through {@link CompViewportRenderer}: every 2D layer keeps
+ * its AE screen-fixed plane, every 3D layer/model is projected through the free camera with its
+ * texture, effects, masks and depth, and the BBS-preview layer is a projected world plane instead
+ * of a full-screen background. The content is the same composition as camera view; only the camera
+ * control differs. {@link ReplayCompositionOverlay} adds optional alignment guides on top.</p>
  *
  * <h2>Interaction</h2>
  * <p>BBS' gizmo is a singleton whose visual is drawn in the UI pass and whose handles are picked
@@ -246,7 +247,21 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             if (!this.freePoseEstablished)
             {
                 this.freePoseEstablished = true;
-                this.session.frameAll();
+
+                dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+                CompDocument doc = panel == null ? null : panel.getDocument();
+
+                if (doc != null && doc.width > 0F && doc.height > 0F)
+                {
+                    /* The free view is the composition workspace, so frame the composition
+                     * plane instead of the actor bounds. Framing the actors at the world origin
+                     * put a 320x180 composition entirely off to the right of the camera. */
+                    this.session.frameComposition(doc.width, doc.height);
+                }
+                else
+                {
+                    this.session.frameAll();
+                }
             }
         }
 
@@ -283,6 +298,18 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         if (entity == null)
         {
+            /* No actor to orbit: keep the composition itself in view instead of parking the
+             * camera at the world origin, which put every 3D comp layer off to one side. */
+            dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+            CompDocument doc = panel == null ? null : panel.getDocument();
+
+            if (doc != null && doc.width > 0F && doc.height > 0F && !this.freePoseEstablished)
+            {
+                this.freePoseEstablished = true;
+                this.session.frameComposition(doc.width, doc.height);
+                this.syncFreePoseFromCamera();
+            }
+
             return;
         }
 
@@ -488,103 +515,6 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         context.batcher.box(this.windowPlate.x - 4, this.windowPlate.y - 4,
             this.windowPlate.ex() + 4, this.windowPlate.ey() + 4, 0xCC10141B);
         this.renderCompositionPlate(context, project, doc, this.windowPlate, time, "合成预览");
-    }
-
-    /**
-     * Free/orbit view = the camera preview picture, as a textured composition card in the orbit
-     * camera. The card is the exact {@link CompRenderer} frame (background, cards, text, effects,
-     * actors), so it is visually the camera view's content; only the camera control differs. No
-     * BBS world backdrop and no separate wireframe/model pass are drawn here.
-     */
-    private boolean drawFreeCompositionCard(UIContext context, CompProject project, CompDocument doc)
-    {
-        if (this.session == null || doc.width <= 0 || doc.height <= 0 || this.viewArea.w <= 0 || this.viewArea.h <= 0)
-        {
-            return false;
-        }
-
-        float time = this.session.playhead() / ReplayTime.TICKS_PER_SECOND;
-        int frame = Math.max(0, Math.round(time * Math.max(1, doc.fps)));
-        float scale = Math.min(1F, Math.min(this.viewArea.w * 1.6F / doc.width, this.viewArea.h * 1.6F / doc.height));
-        scale = Math.max(0.25F, scale);
-        int width = Math.max(1, Math.round(doc.width * scale));
-        int height = Math.max(1, Math.round(doc.height * scale));
-        GlFramebuffer composition = null;
-        GlFramebuffer stage = null;
-        boolean drawn = false;
-
-        try
-        {
-            dev.bbsae.client.render.CompRenderContext.setTargetEdge(Math.max(width, height));
-            composition = CompRenderer.renderFrame(project, doc, frame, false, scale);
-
-            if (composition == null)
-            {
-                return false;
-            }
-
-            stage = FboPool.acquire(Math.max(1, this.viewArea.w), Math.max(1, this.viewArea.h));
-            this.session.camera().update();
-
-            if (Boolean.getBoolean("bbsae.debugReplayPreview"))
-            {
-                dev.bbsae.BbsAeAddon.LOGGER.info(
-                    "Replay free card: comp={}x{} frame={} scale={} cameraTarget={},{},{} yaw={} pitch={} dist={}",
-                    composition.width, composition.height, frame, scale,
-                    this.session.camera().target.x, this.session.camera().target.y, this.session.camera().target.z,
-                    this.session.camera().yaw, this.session.camera().pitch, this.session.camera().distance);
-            }
-
-            try (dev.bbsae.client.render.GlStateGuard guard = new dev.bbsae.client.render.GlStateGuard())
-            {
-                stage.begin(0x00000000);
-                float cardWidth = doc.width * 0.82F;
-                float cardHeight = doc.height * 0.82F;
-                Matrix4f world = new Matrix4f().translate(
-                    this.session.camera().target.x - cardWidth / 2F,
-                    this.session.camera().target.y - cardHeight / 2F,
-                    this.session.camera().target.z);
-                dev.bbsae.client.render.Viewport3DRenderer.draw(composition.color,
-                    world, this.session.camera().viewProjection,
-                    0F, 0F, cardWidth, cardHeight, 1F);
-            }
-
-            context.batcher.box(this.viewArea.x, this.viewArea.y, this.viewArea.ex(), this.viewArea.ey(), 0xFF0E1116);
-            context.batcher.texturedBox(stage.color.id, 0xFFFFFFFF,
-                this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h,
-                0F, stage.height, stage.width, 0F, stage.width, stage.height);
-            context.batcher.flush();
-            drawn = true;
-
-            if (Boolean.getBoolean("bbsae.debugReplayPreview"))
-            {
-                dev.bbsae.BbsAeAddon.LOGGER.info("Replay free card drawn: stage={} {}x{}",
-                    stage.id, stage.width, stage.height);
-            }
-        }
-        catch (RuntimeException e)
-        {
-            if (this.compositionErrorMs == 0L || System.currentTimeMillis() - this.compositionErrorMs > 2000L)
-            {
-                dev.bbsae.BbsAeAddon.LOGGER.warn("Replay free-view composition card failed", e);
-            }
-        }
-        finally
-        {
-            dev.bbsae.client.render.CompRenderContext.setTargetEdge(0);
-
-            if (stage != null)
-            {
-                FboPool.release(stage);
-            }
-
-            if (composition != null)
-            {
-                FboPool.release(composition);
-            }
-        }
-
-        return drawn;
     }
 
     /** The dark stage under the free/orbit actor pass. */
@@ -1157,6 +1087,19 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.session.camera().setViewport(interaction.w, interaction.h);
         this.session.frameIfNeeded(this.viewArea);
 
+        if (this.viewMode == VIEW_FREE && !this.freePoseEstablished)
+        {
+            dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+            CompDocument doc = panel == null ? null : panel.getDocument();
+
+            if (doc != null && doc.width > 0F && doc.height > 0F)
+            {
+                this.freePoseEstablished = true;
+                this.session.frameComposition(doc.width, doc.height);
+                this.syncFreePoseFromCamera();
+            }
+        }
+
         if (!this.freePoseInitialized)
         {
             CompViewportCamera free = this.session.camera();
@@ -1192,8 +1135,15 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             CompProject project = panel == null ? null : panel.getProject();
             CompDocument doc = panel == null ? null : panel.getDocument();
 
-            if (project != null && doc != null && this.drawFreeCompositionCard(context, project, doc))
+            if (project != null && doc != null)
             {
+                /* Same composition, real 3D scene: 2D layers stay screen-fixed (AE semantics),
+                 * 3D layers/models are projected through the orbit camera with their textures,
+                 * depth, effects and masks. This is the textured workspace, not a flat card and
+                 * not the old wireframe/model-only stage. */
+                CompViewportRenderer.draw(context.batcher, project, doc, this.session.camera(),
+                    this.session.playhead() / ReplayTime.TICKS_PER_SECOND,
+                    this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
                 drawn = doc.layers == null ? 1 : Math.max(1, doc.layers.size());
             }
             else

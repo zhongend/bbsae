@@ -69,29 +69,29 @@ session 并存**：
 
 预览帧改为 **dirty 重烘**，失败时保留上一张好帧，不再在暂停瞬间释放成黑屏。
 
-## 5. hotfix47：环绕/自由 = 相机同一张合成
+## 5. hotfix48：环绕/自由 = 合成器的真正 3D 场景
 
-- 相机视角保持原样。
-- 环绕/自由不再画 BBS 世界背景或线框，而是把 `CompRenderer.renderFrame` 的最终合成
-  （与相机视角同一帧）作为 3D 平面，经 `CompViewportCamera.viewProjection` 投影；
-  内容、文字、卡片、背景、演员与相机视角逐像素同源，只是相机控制不同。
-- 合成器关键帧抽屉标尺：`TimeUtils` 按 20 ticks/s 解释，而合成器单位是帧（常 60fps），
-  已改为 `tick / fps * 20`（秒制）或直接帧号（帧制）。
-- 缩放锚点：`zoomKeyframeTime(direction, mouseX)` 以鼠标下 tick 为锚点，不再固定中心。
+- 删除了 hotfix47 的“最终合成截图贴在 3D 卡片上”方案：那仍然是一个 2D 平面。
+- 环绕/自由使用 `CompViewportRenderer`：
+  - 2D 图层走 AE `screenFixedQuad`；
+  - `threeD` 图层/模型经 `CompViewportCamera.viewProjection` 投影，带纹理、深度、效果/蒙版；
+  - BBS 预览层作为被投影的世界平面，不再全屏铺背景；
+  - 模型走 `drawReplayModels`。
+- 自由视角首次进入按 `doc.width × doc.height` 取景整个合成，而不是按原点演员取景。
+- 相机视角保持原 `CompRenderer` 路径不变。
+- 合成器关键帧抽屉：`CompTime.rulerLabel` 处理帧/秒换算，新增测试 `CompTimeRulerTest`。
 
 ## 4. 验证
 
 - 测试工程背景从品红 `-65281` 改为黑 `-16777216`，排除背景色干扰。
-- 全量测试：**155 套件 / 967 项 / 0 failures / 0 errors / 1 skipped**。
-- 真机：
-  - `docs/verify/round110-pause-paused.png`、`round112-pause-paused.png`、`round120-pause-paused.png`：
-    暂停时模型可见；
-  - `docs/verify/round111-orbit-free.png`、`round122-orbit-free.png`：
-    3D 自由视角的 BBS 参考画面（后者带 orbit 视差）；
-  - `docs/verify/round113-pause-paused.png`：实体回退后的暂停帧。
-- 播放头真机回归（`-PbbsaeReplayScrub=true`）：
-  `before=0.0 after=0.0 moved=false` → `before=0.0 after=2385.5469 moved=true`。
-- 调试像素日志（仅 `-Dbbsae.debugReplayPreview=true`）：
-  `Replay preview model-content-*`、`model-blend-*`、`after-models`。
-- 候选包：`bbsae-0.99-hotfix46.jar`（3,930,401 bytes，SHA-256
-  `2472650F4B2A74330A91E19F3C7ACE9A7AF7EA0047A625C359D54E5BD5E64CAA`）。
+- 全量测试：**156 套件 / 968 项 / 0 failures / 0 errors / 1 skipped**（hotfix48 新增
+  `CompTimeRulerTest`）。
+- hotfix48 **未启动客户端**（按用户要求）；真正 3D 场景请在你的工程里验证：
+  文字、形状、图片、BBS 预览层、3D 卡片和模型在环绕/自由下应与合成器有相同的深度/遮挡
+  关系，而不是 2D 全屏背景或线框。
+- 历史真机图（hotfix46/47 基线）：
+  - `round110/112/120-pause-paused.png`：暂停模型；
+  - `round122-orbit-free.png`：视差参考背景（hotfix48 已改为真正 3D 工作区，此图仅历史）；
+  - `round113-pause-paused.png`：实体回退暂停帧。
+- 候选包：`bbsae-0.99-hotfix48.jar`（3,931,882 bytes，SHA-256
+  `4378C707E758D2E3FADF95F261DAC989DCEC36572286609F094450DD874C041C`）。

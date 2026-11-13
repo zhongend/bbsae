@@ -730,6 +730,26 @@ public final class ReplayEditSession
      * regardless of where in the world the film was shot, and it is cheap enough to run once per
      * selection change.</p>
      */
+    /** Frames the whole composition plane, not just the selected actor. */
+    public void frameComposition(float width, float height)
+    {
+        if (width <= 0F || height <= 0F)
+        {
+            return;
+        }
+
+        CompViewportCamera camera = this.camera();
+
+        camera.target.set(width / 2F, height / 2F, 0F);
+        camera.distance = Math.max(64F, Math.max(width, height) * 0.65F);
+        camera.yaw = 0F;
+        camera.pitch = 20F;
+        camera.roll = 0F;
+        camera.ortho = false;
+        camera.update();
+        this.framed = true;
+    }
+
     public void frameAll()
     {
         Map<String, IEntity> entities = this.entities();

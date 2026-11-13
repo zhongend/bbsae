@@ -54,6 +54,25 @@ public final class CompTime
         return String.format("%.2fs / f%d", seconds, Math.round(seconds * fps));
     }
 
+    /**
+     * Timeline ruler label for a compositor frame. The compositor axis is in frames, while BBS'
+     * {@code TimeUtils} assumes 20 ticks/second; using that formatter directly showed 60 frames as
+     * three seconds at 60 fps. This helper is the single tested conversion.
+     */
+    public static String rulerLabel(int frame, float fps, boolean seconds)
+    {
+        if (!seconds)
+        {
+            return String.valueOf(frame);
+        }
+
+        long millis = Math.max(0L, Math.round(frame / Math.max(1F, fps) * 1000F));
+        long whole = millis / 1000L;
+        int hundredths = (int) ((millis % 1000L) / 10L);
+
+        return whole + "." + String.format(java.util.Locale.ROOT, "%02d", hundredths);
+    }
+
     public static float clamp(float value, float min, float max)
     {
         return Math.max(min, Math.min(max, value));
