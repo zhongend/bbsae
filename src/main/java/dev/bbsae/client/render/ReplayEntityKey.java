@@ -3,6 +3,7 @@ package dev.bbsae.client.render;
 import com.mojang.blaze3d.platform.GlStateManager;
 import dev.bbsae.client.overlay.BbsPreviewBridge;
 import dev.bbsae.comp.CompLayer;
+import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 
@@ -106,6 +107,56 @@ public final class ReplayEntityKey
         org.lwjgl.opengl.GL14.glBlendFuncSeparate(
             org.lwjgl.opengl.GL11.GL_SRC_ALPHA, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA,
             org.lwjgl.opengl.GL11.GL_ONE, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA);
+
+        return true;
+    }
+
+    /**
+     * Draws the actor-only color image captured by the coverage pass.
+     *
+     * <p>This is the replacement for the world-plate matte: the coverage target already contains
+     * only the selected actors (transparent elsewhere, world-occluded where a block is in front).
+     * Drawing it directly removes the background entirely — there is no world color to leak and no
+     * mask multiplication to get out of sync with the actor's motion.</p>
+     */
+    public static boolean drawActors(CompLayer layer, CompRenderContext context, Batcher2D batcher)
+    {
+        int mask = ReplayEntityMask.texture(layer.entityOcclusion);
+
+        if (mask == 0 || !ReplayEntityMask.isCurrentFrame()
+            || SceneColor.frameSerial() != ReplayEntityMask.frameSerial())
+        {
+            return false;
+        }
+
+        int maskWidth = Math.max(1, ReplayEntityMask.width());
+        int maskHeight = Math.max(1, ReplayEntityMask.height());
+        float width;
+        float height;
+
+        if (layer.imageFit == 2)
+        {
+            width = Math.max(1F, layer.width);
+            height = Math.max(1F, layer.height);
+        }
+        else
+        {
+            float scale = layer.imageFit == 1
+                ? Math.max(layer.width / maskWidth, layer.height / maskHeight)
+                : Math.min(layer.width / maskWidth, layer.height / maskHeight);
+
+            width = maskWidth * scale;
+            height = maskHeight * scale;
+        }
+
+        float x = -width * layer.anchorX;
+        float y = -height * layer.anchorY;
+
+        batcher.texturedBox(mask, layer.color | 0xFFFFFFFF,
+            x, y, width, height,
+            0F, maskHeight, maskWidth, 0F,
+            maskWidth, maskHeight);
+        batcher.flush();
 
         return true;
     }

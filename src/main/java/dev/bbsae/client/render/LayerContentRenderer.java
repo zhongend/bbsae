@@ -374,6 +374,13 @@ final class LayerContentRenderer
          * composition's 2D ortho matrix: the actor's screen position already comes from the world
          * camera, so baking the layer's z/rotationX/Y on top of it would move the matte away from
          * the actor it was extracted from. */
+        /* Actor-only image: the coverage pass now carries the actors' own RGB with transparent
+         * elsewhere. This replaces the world-plate matte entirely, so no background can leak. */
+        if (ReplayEntityKey.drawActors(layer, context, batcher))
+        {
+            return;
+        }
+
         Matrix4f matteWorld = layer.threeD ? CompScene.world(context, layer) : world;
         Matrix4f matteProjection = layer.threeD ? GlStateGuard.ortho(context.width, context.height) : projection;
 
