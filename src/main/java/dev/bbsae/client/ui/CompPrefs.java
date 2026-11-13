@@ -88,6 +88,8 @@ public final class CompPrefs
         public boolean previewHints = true;
         /** Contextual tips for multi-selection / precomp / empty states. */
         public boolean contextHints = true;
+        /** When selecting an independent 3D model, temporarily hide decorative layers. */
+        public boolean modelFocus = true;
         /** Link WAV/OGG audio from its original path instead of copying it into the project. */
         public boolean linkExternalAssets = true;
         /** Keep BBS' editor onion skins off while the compositor is open: their ghost frames can

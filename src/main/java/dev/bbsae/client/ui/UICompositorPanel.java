@@ -136,6 +136,8 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Layer visibility saved on entry to bbsae replay mode, restored on exit. */
     private final java.util.Map<String, Boolean> replayVisibility = new java.util.LinkedHashMap<>();
     private boolean replayIsolated;
+    private final java.util.Map<String, Boolean> modelFocusVisibility = new java.util.LinkedHashMap<>();
+    private boolean modelFocusActive;
     private static final int MODE_BAR_H = 22;
     private static final int WORKSPACE_COMPOSITE = 0;
     private static final int WORKSPACE_REPLAY = 1;
@@ -6179,6 +6181,86 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshLayers();
     }
 
+    /**
+     * Focus mode for a selected bbsae model: hide decorative planes temporarily so the imported
+     * actor is actually visible in the normal composite preview too. Selecting a non-model layer
+     * restores the original visibility. Can be disabled in Settings.
+     */
+    private void applyModelFocus(CompLayer selected)
+    {
+        if (this.replayIsolated || !CompPrefs.get().modelFocus || selected == null
+            || !selected.independent || this.doc == null)
+        {
+            return;
+        }
+
+        if (this.modelFocusActive)
+        {
+            return;
+        }
+
+        this.modelFocusVisibility.clear();
+
+        for (CompLayer layer : this.doc.layers)
+        {
+            if (layer == null)
+            {
+                continue;
+            }
+
+            this.modelFocusVisibility.put(layer.id, layer.visible);
+            layer.visible = layer.independent || "camera".equals(layer.type) || "text".equals(layer.type);
+        }
+
+        this.modelFocusActive = true;
+        this.refreshLayers();
+
+        if (CompPrefs.get().contextHints)
+        {
+            this.setStatus("模型焦点：已隐藏装饰图层；选择其他图层或关闭设置「模型焦点」可恢复");
+        }
+    }
+
+    /** Settings entry: turning focus off immediately restores the authored visibility. */
+    public void setModelFocusEnabled(boolean enabled)
+    {
+        CompPrefs.get().modelFocus = enabled;
+        CompPrefs.save();
+
+        if (!enabled)
+        {
+            this.restoreModelFocus();
+        }
+        else
+        {
+            this.applyModelFocus(this.selectedLayer);
+        }
+    }
+
+    private void restoreModelFocus()
+    {
+        if (!this.modelFocusActive)
+        {
+            return;
+        }
+        if (this.doc != null)
+        {
+            for (CompLayer layer : this.doc.layers)
+            {
+                Boolean visible = layer == null ? null : this.modelFocusVisibility.get(layer.id);
+
+                if (visible != null)
+                {
+                    layer.visible = visible;
+                }
+            }
+        }
+
+        this.modelFocusVisibility.clear();
+        this.modelFocusActive = false;
+        this.refreshLayers();
+    }
+
     public UIReplayModePanel replayWorkspacePanel()
     {
         return this.replayWorkspace;
@@ -9151,16 +9233,39 @@ public class UICompositorPanel extends UIDashboardPanel
          * selection back (the fields were only filled by savePanelLayout on close). */
         this.writeEditorViewState();
 
-        if (this.project != null && !CompStore.saveChecked(this.project))
-        {
-            /* Writing the file can fail (disk full, read-only, locked). "Saved" was previously
-             * printed unconditionally, so the user kept editing into a file that never changed. */
-            String error = CompStore.lastSaveError();
-            String message = "保存失败：" + (error == null || error.isBlank() ? "未知原因" : error);
+        /* Replay isolation / model focus are transient editor views. Writing them to disk made a
+         * project open with the actor's card hidden after a save in focus mode. Restore authored
+         * visibility for the write, then re-apply the focus view afterwards. */
+        boolean wasReplay = this.replayIsolated;
+        boolean wasModelFocus = this.modelFocusActive;
 
-            dev.bbsae.BbsAeAddon.LOGGER.error(message);
-            this.notifyError(message);
-            this.setStatus(message);
+        this.restoreReplayLayers();
+        this.restoreModelFocus();
+
+        try
+        {
+            if (this.project != null && !CompStore.saveChecked(this.project))
+            {
+                /* Writing the file can fail (disk full, read-only, locked). "Saved" was previously
+                 * printed unconditionally, so the user kept editing into a file that never changed. */
+                String error = CompStore.lastSaveError();
+                String message = "保存失败：" + (error == null || error.isBlank() ? "未知原因" : error);
+
+                dev.bbsae.BbsAeAddon.LOGGER.error(message);
+                this.notifyError(message);
+                this.setStatus(message);
+            }
+        }
+        finally
+        {
+            if (wasReplay)
+            {
+                this.isolateReplayLayers();
+            }
+            else if (wasModelFocus)
+            {
+                this.applyModelFocus(this.selectedLayer);
+            }
         }
     }
 
@@ -9871,6 +9976,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     actor.setModelForm(form);
                     actor.independent = true;
+                    actor.independent = true;
                     actor.threeD = true;
                     actor.name = "bbsae 回放鸡";
                     actor.x = this.doc.width / 2F;
@@ -9900,6 +10006,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     form.name.set("回放鸡");
                     form.mobID.set("minecraft:chicken");
                     actor.setModelForm(form);
+                    actor.independent = true;
                     actor.threeD = true;
                     actor.scaleX = 3F;
                     actor.scaleY = 3F;
@@ -9927,6 +10034,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     form.name.set("bbsae chicken");
                     form.mobID.set("minecraft:chicken");
                     actor.setModelForm(form);
+                    actor.independent = true;
                     actor.threeD = true;
                     actor.name = "独立回放模型";
                     actor.x = this.doc.width / 2F;
@@ -9937,6 +10045,8 @@ public class UICompositorPanel extends UIDashboardPanel
                     actor.scaleZ = 3F;
                     actor.width = 300F;
                     actor.height = 300F;
+                    this.selectLayer(actor);
+                    this.applyModelFocus(actor);
                     this.refreshInspector();
                     this.setStatus("验证：独立 bbsae 回放模型（不依赖真实影片）");
                 }
@@ -11200,6 +11310,15 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.setStatus("已多选 " + this.selectedIds.size()
                     + " 个图层 · 可预合成 / 合并 / 删除；检查器已切到「图层」");
             }
+        }
+
+        if (primary != null && primary.independent)
+        {
+            this.applyModelFocus(primary);
+        }
+        else
+        {
+            this.restoreModelFocus();
         }
 
         this.refreshInspector();
@@ -13222,6 +13341,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.workspaceMode = WORKSPACE_REPLAY;
             this.playing = false;
             this.lastPlayNanos = 0L;
+            this.restoreModelFocus();
             this.isolateReplayLayers();
 
             /* The replay mode is a bbsae workspace: same preview, camera HUD, text layers and
@@ -13239,6 +13359,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.workspaceMode = WORKSPACE_COMPOSITE;
             this.restoreReplayLayers();
+            this.applyModelFocus(this.selectedLayer);
             this.beginPageMotion(this.workspaceMotion, "mode:composite");
             this.applyLeftPage(0, true);
             this.applyLayout();
@@ -18000,6 +18121,8 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.scaleX = 2F;
             layer.scaleY = 2F;
             layer.scaleZ = 2F;
+            this.selectLayer(layer);
+            this.applyModelFocus(layer);
             this.chooseModel(layer);
         }
     }
@@ -18060,6 +18183,8 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.setModelForm(FormUtils.copy(form));
             layer.width = Math.max(200F, Math.min(800F, layer.width));
             layer.height = Math.max(200F, Math.min(800F, layer.height));
+            this.selectLayer(layer);
+            this.applyModelFocus(layer);
             this.refreshInspector();
             this.save();
 

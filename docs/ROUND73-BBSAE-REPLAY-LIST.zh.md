@@ -25,7 +25,11 @@ world-plate matte 换成 actor-only 图像。
 - 源缓存跳过 independent 模型层，模型每帧直接渲染；
 - 合成阶段增加最终模型 overlay，模型在所有普通图层之后合成；
 - 回放模式隔离装饰性卡片/背景，避免模型被上层卡片盖住；
-- 新模型默认 240×240、scale 2。
+- 新模型默认 240×240、scale 2；
+- **模型焦点**（默认开启）：选中 bbsae 模型时临时隐藏装饰卡片/背景，只保留模型、文字、相机，
+  普通合成预览也能直接看到模型；取消选择或关闭设置即恢复。
+
+普通合成模型焦点真机截图：`docs/verify/round75-normal-model-focus.png`。
 
 ## 3. 回放抠像：actor-only 新方案
 
@@ -67,8 +71,8 @@ world-plate matte 换成 actor-only 图像。
 ## 7. 验证
 
 - 全量：**151 suites / 948 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix24.jar`，已安装到正式 modpack；
-  SHA-256 `29B7410377949663B1760437A2A060B8D81A01CEA8F4B49525D210F9B8C99D09`。
+- 本地候选包：`bbsae-0.99-hotfix25.jar`，已安装到正式 modpack；
+  SHA-256 `A88CD35EC74B87F1D993B03EADDAFDE5F44B13DEEDEBD08FA6440F22E24DA03D`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 

@@ -1103,6 +1103,10 @@ public class UICompSettings extends UIElement
             prefs.contextHints = value;
             CompPrefs.save();
         }), 170, "多选、预合成、空状态等场景的操作提示；关闭后少打扰"));
+        this.add(this.row("模型焦点", this.toggle("", prefs.modelFocus, (value) ->
+        {
+            this.panel.setModelFocusEnabled(value);
+        }), 170, "选中 bbsae 3D 模型时临时隐藏装饰图层，确保模型在普通预览里也可见"));
         this.add(this.row("关闭 BBS 洋葱皮残影", this.toggle("", prefs.suppressOnionSkin, (value) ->
         {
             prefs.suppressOnionSkin = value;
