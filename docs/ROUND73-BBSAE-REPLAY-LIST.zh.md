@@ -52,6 +52,7 @@ world-plate matte 换成 actor-only 图像。
 ## 5. 多选提示
 
 - 多选后自动切到检查器「图层」页；
+- 预览左下角显示常驻多选提示条：「多选 N 个图层 · 预合成 / 编组 / 对齐 / 删除」；
 - 状态栏提示「已多选 N 个图层 · 可预合成 / 合并 / 删除」；
 - 设置 → 显示新增「上下文操作提示」开关。
 
@@ -72,8 +73,8 @@ world-plate matte 换成 actor-only 图像。
 ## 7. 验证
 
 - 全量：**152 suites / 950 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix26.jar`，已安装到正式 modpack；
-  SHA-256 `1AAC05FF890BD00AEF0EA327868EB69FBEEC10661A7F5355CD79E0D665CAC8C6`。
+- 本地候选包：`bbsae-0.99-hotfix27.jar`，已安装到正式 modpack；
+  SHA-256 `2BE41F2817E2AFD67034CBF23032507EC0C84797B1D94C9ADAAB6C687EEEC07C`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 

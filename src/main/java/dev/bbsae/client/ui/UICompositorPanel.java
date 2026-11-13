@@ -1093,6 +1093,19 @@ public class UICompositorPanel extends UIDashboardPanel
                     }
                 }
 
+                if (CompPrefs.get().contextHints && UICompositorPanel.this.selectedIds.size() > 1)
+                {
+                    String hint = "多选 " + UICompositorPanel.this.selectedIds.size()
+                        + " 个图层 · 预合成 / 编组 / 对齐 / 删除 → 检查器「图层」页";
+                    int width = Math.min(this.area.w - 16, context.batcher.getFont().getWidth(hint) + 16);
+                    int bx = this.area.x + 8;
+                    int by = this.area.ey() - 30;
+
+                    context.batcher.box(bx, by, bx + width, by + 20, 0xEE1B2430);
+                    context.batcher.outline(bx, by, bx + width, by + 20, 0xCCFFC14D);
+                    context.batcher.textShadow(hint, bx + 8, by + 6, 0xFFFFE1A8);
+                }
+
                 if (UICompositorPanel.this.project != null && UICompositorPanel.this.doc != null)
                 {
                     /* Keep the BBS camera on the composition playhead even while the panel is
