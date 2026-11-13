@@ -44,7 +44,8 @@ world-plate matte 换成 actor-only 图像。
 
 ## 4. 摄像机按钮
 
-- 预览框右侧「看穿摄像机」按钮隐藏；
+- 预览框「看穿摄像机」按钮隐藏；
+- 摄像机工具不会在预览工具栏/右侧按钮区误启动 orbit/Track；
 - 改为「设置 → 显示 → 看穿摄像机」；
 - 数字键盘 0 仍可用。
 
@@ -71,8 +72,8 @@ world-plate matte 换成 actor-only 图像。
 ## 7. 验证
 
 - 全量：**152 suites / 950 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix25.jar`，已安装到正式 modpack；
-  SHA-256 `A88CD35EC74B87F1D993B03EADDAFDE5F44B13DEEDEBD08FA6440F22E24DA03D`。
+- 本地候选包：`bbsae-0.99-hotfix26.jar`，已安装到正式 modpack；
+  SHA-256 `1AAC05FF890BD00AEF0EA327868EB69FBEEC10661A7F5355CD79E0D665CAC8C6`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 

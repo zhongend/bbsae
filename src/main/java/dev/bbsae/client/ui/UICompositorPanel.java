@@ -3839,8 +3839,12 @@ public class UICompositorPanel extends UIDashboardPanel
                 boolean middle = Window.isMouseButtonPressed(2);
                 boolean right = Window.isMouseButtonPressed(1);
                 boolean inside = this.area.isInside(context);
+                boolean overControls = UICompositorPanel.this.previewBar.isVisible()
+                    && UICompositorPanel.this.previewBar.area.isInside(context);
+                boolean overRightRail = context.mouseX >= this.area.ex() - 104
+                    && context.mouseY <= this.area.y + 34;
 
-                if (this.ctMode == CT_NONE && inside)
+                if (this.ctMode == CT_NONE && inside && !overControls && !overRightRail)
                 {
                     if ((left && !this.ctLeftWasDown) || (middle && !this.ctMiddleWasDown)
                         || (right && !this.ctRightWasDown))
