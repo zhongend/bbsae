@@ -5138,7 +5138,9 @@ public class UICompositorPanel extends UIDashboardPanel
                     {
                         /* Ctrl: dolly the shot towards/away from its target. */
                         float z = shot.scalarAt("cameraZ", shot.cameraZ, UICompositorPanel.this.getFrame());
-                        float next = z * (float) Math.pow(0.9D, viewportWheel);
+                        float sign = z < 0F ? -1F : 1F;
+                        float next = sign * Math.max(shot.cameraNear + 10F, Math.min(shot.cameraFar - 10F,
+                            Math.abs(z) * (float) Math.pow(0.9D, viewportWheel)));
 
                         shot.cameraZ = next;
                         shot.z = next;
@@ -5197,9 +5199,12 @@ public class UICompositorPanel extends UIDashboardPanel
                         z = UICompositorPanel.this.defaultCameraZ();
                     }
 
-                    /* Dolly towards the comp on a forward scroll (smaller distance = closer). */
-                    float value = Math.max(camera.cameraNear + 10F, Math.min(camera.cameraFar - 10F,
-                        z - (float) wheel * Math.max(20F, z * 0.08F)));
+                    /* Dolly towards the comp on a forward scroll (smaller magnitude = closer).
+                     * Preserve the sign: a camera behind the comp plane must not flip in front. */
+                    float sign = z < 0F ? -1F : 1F;
+                    float magnitude = Math.max(camera.cameraNear + 10F, Math.min(camera.cameraFar - 10F,
+                        Math.abs(z) - (float) wheel * Math.max(20F, Math.abs(z) * 0.08F)));
+                    float value = sign * magnitude;
 
                     camera.cameraZ = value;
                     camera.z = value;
@@ -16130,12 +16135,20 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.animatedNumberRow("位置 Y", layer, "y", transform.translate.y, this::setTransformY, -100000F, 100000F));
         section.fields.add(this.animatedNumberRow("距离 Z", layer, "cameraZ", distance, (value) ->
         {
-            float next = Math.max(1F, value.floatValue());
+            float next = Math.max(-1000000F, Math.min(1000000F, value.floatValue()));
+
+            /* AE cameras may sit on either side of the subject. The old Math.max(1, value) made a
+             * negative Z impossible to type, so a camera behind the comp plane snapped in front of
+             * it on the first edit. Keep a harmless minimum magnitude but preserve the sign. */
+            if (Math.abs(next) < 1F)
+            {
+                next = next < 0F ? -1F : 1F;
+            }
 
             layer.cameraZ = next;
             layer.z = next;
             this.setScalar(layer, "cameraZ", next);
-        }, 1F, 1000000F));
+        }, -1000000F, 1000000F));
         section.fields.add(this.animatedNumberRow("视场 FOV", layer, "cameraFov", fov, (value) ->
         {
             layer.cameraFov = Math.max(1F, Math.min(179F, value.floatValue()));

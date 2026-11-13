@@ -85,6 +85,7 @@
 ## 6. AE 摄像机
 
 - `CompViewControls.dolly` 保留 `cameraZ` 的符号：负 Z 相机 dolly 后仍在后方；
+- 摄像机「距离 Z」输入和滚轮不再强制正整数，负侧可直接编辑；
 - near/far clamp 对负侧同样生效；
 - `orbit` 不再把 look-at 摄像机强制改成 free camera，目标点不变；
 - 回归测试：`CompViewControlsCameraZTest`、`CompViewControlsOrbitTest`。
@@ -111,9 +112,9 @@
 
 ## 9. 验证
 
-- 全量：**150 suites / 947 tests / 0 failures / 0 errors / 1 skipped**。
-- 候选包：`bbsae-0.99-hotfix14.jar`，已安装到正式 modpack；
-  SHA-256 `80FF36034705DF57D5F204E8A4EDB53FB87A05A3124074010649FE4C7091A617`。
+- 全量：**151 suites / 948 tests / 0 failures / 0 errors / 1 skipped**。
+- 候选包：`bbsae-0.99-hotfix15.jar`，已安装到正式 modpack；
+  SHA-256 `77706773C08E9297B3F8778B1FB5EB2C61108863C0B4D39C23E55F948D149047`。
 - GitHub 大版本提交：`dea7e0c`。
 
 ## 10. 未完成
