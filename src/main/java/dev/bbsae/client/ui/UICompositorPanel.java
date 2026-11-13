@@ -780,6 +780,7 @@ public class UICompositorPanel extends UIDashboardPanel
             /* 3D translate gizmo drag. Axis direction and pixels-per-unit are captured when the
              * drag starts so the layer follows the pointer even while the camera moves. */
             private int gizmoAxisIndex = -1;
+            private boolean gizmoMoved;
             private String gizmoLayerId;
             private int gizmoStartMouseX;
             private int gizmoStartMouseY;
@@ -2274,6 +2275,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
 
                 this.gizmoAxisIndex = axis;
+                this.gizmoMoved = false;
                 this.gizmoLayerId = layer.id;
                 this.gizmoStartMouseX = context.mouseX;
                 this.gizmoStartMouseY = context.mouseY;
@@ -2326,6 +2328,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     return;
                 }
+
+                this.gizmoMoved = true;
 
                 if (this.gizmoMode == GIZMO_SCALE)
                 {
@@ -4594,11 +4598,31 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
+                boolean wasGizmo = this.dragMode == DRAG_GIZMO;
+                boolean wasMoved = this.gizmoMoved;
+                String gizmoId = this.gizmoLayerId;
+
                 this.dragMode = DRAG_NONE;
                 UICompositorPanel.this.refreshInspector();
                 UICompositorPanel.this.save();
-            
+
+                /* bbsae replay behaves like the BBS replay editor: a gizmo drag on a model writes
+                 * transform keys at the playhead. A plain click (no movement) never creates keys. */
+                if (wasGizmo && wasMoved && UICompositorPanel.this.workspaceMode == WORKSPACE_REPLAY
+                    && gizmoId != null && UICompositorPanel.this.doc != null)
+                {
+                    CompLayer keyed = UICompositorPanel.this.doc.getLayer(gizmoId);
+
+                    if (keyed != null && keyed.independent)
+                    {
+                        keyed.insertTransformKeys(UICompositorPanel.this.getFrame());
+                        UICompositorPanel.this.refreshSheets();
+                        UICompositorPanel.this.setStatus("已为 bbsae 模型写入变换关键帧");
+                    }
+                }
+
                 this.gizmoAxisIndex = -1;
+                this.gizmoMoved = false;
                 this.gizmoLayerId = null;
             }
 
@@ -13386,7 +13410,11 @@ public class UICompositorPanel extends UIDashboardPanel
             this.playing = false;
             this.lastPlayNanos = 0L;
             this.restoreModelFocus();
-            this.isolateReplayLayers();
+
+            if (CompPrefs.get().replayIsolation)
+            {
+                this.isolateReplayLayers();
+            }
 
             /* The replay mode is a bbsae workspace: same preview, camera HUD, text layers and
              * timeline, with the left column on its own bbsae replay list. It deliberately does

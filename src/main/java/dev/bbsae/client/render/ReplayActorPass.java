@@ -128,11 +128,22 @@ public final class ReplayActorPass
             return null;
         }
 
-        boolean useCamera = layer.threeD;
-        CompCamera camera = useCamera ? CompScene.camera(context) : null;
+        /* Independent bbsae actors are 3D by definition, even when the layer was created before
+         * the threeD flag existed. Never fall back to the ortho 2D projection here: that was the
+         * "3D replay looks flattened" bug. */
+        boolean useCamera = true;
+        CompCamera camera = CompScene.camera(context);
         float pixelsPerBlock = pixelsPerBlock(context);
         Matrix4f mapping = new Matrix4f(CompScene.world(context, layer))
             .scale(pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock);
+
+        /* Legacy model layers were created before Z scale was initialized, so a 2×/3× X/Y scale
+         * with Z=1 rendered the actor depth-squashed. Treat that exact untouched state as uniform;
+         * an authored scaleZ channel always wins. */
+        if (!layer.hasScalarChannel("scaleZ") && layer.scaleZ == 1F && layer.scaleX != 1F)
+        {
+            mapping.scale(1F, 1F, layer.scaleX);
+        }
         Matrix4f modelView = camera == null ? mapping : new Matrix4f(camera.view).mul(mapping);
         Matrix4f projection = camera == null
             ? GlStateGuard.ortho(context.width, context.height)

@@ -1106,7 +1106,12 @@ public class UICompSettings extends UIElement
         this.add(this.row("模型焦点", this.toggle("", prefs.modelFocus, (value) ->
         {
             this.panel.setModelFocusEnabled(value);
-        }), 170, "选中 bbsae 3D 模型时临时隐藏装饰图层，确保模型在普通预览里也可见"));
+        }), 170, "选中 bbsae 3D 模型时临时隐藏装饰图层；默认关闭，避免影响多图层操作"));
+        this.add(this.row("回放隔离图层", this.toggle("", prefs.replayIsolation, (value) ->
+        {
+            prefs.replayIsolation = value;
+            CompPrefs.save();
+        }), 170, "进入回放模式时只显示模型/文字/摄像机；默认关闭，保留完整合成"));
         this.add(this.row("关闭 BBS 洋葱皮残影", this.toggle("", prefs.suppressOnionSkin, (value) ->
         {
             prefs.suppressOnionSkin = value;
