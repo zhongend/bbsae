@@ -4,6 +4,7 @@ import dev.bbsae.client.BbsAeClient;
 import dev.bbsae.client.render.CompCamera;
 import dev.bbsae.client.render.CompRenderer;
 import dev.bbsae.client.render.CompViewportCamera;
+import dev.bbsae.client.render.CompViewportRenderer;
 import dev.bbsae.client.ui.CompPrefs;
 import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompProject;
@@ -94,6 +95,17 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     public UIReplayViewport(ReplayEditSession session)
     {
         this.session = session;
+
+        String initialView = System.getProperty("bbsae.replayViewMode", "camera").trim().toLowerCase(java.util.Locale.ROOT);
+
+        if ("free".equals(initialView))
+        {
+            this.viewMode = VIEW_FREE;
+        }
+        else if ("orbit".equals(initialView))
+        {
+            this.viewMode = VIEW_ORBIT;
+        }
 
         if (session != null)
         {
@@ -299,6 +311,72 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         return null;
     }
 
+    /**
+     * Draws the real bbsae composition scene (text, cards, triangles, effects, linked replay
+     * actors) through the free/orbit camera. This is the compositor's own
+     * {@link CompViewportRenderer}, so the replay editor and the compositor cannot disagree about
+     * geometry. Only the replay actor is interactive in this page; the other layers are read-only.
+     */
+    private boolean renderCompositionScene3D(UIContext context)
+    {
+        if (this.viewMode == VIEW_CAMERA || this.session == null || !this.compositionPreviewSupported())
+        {
+            return false;
+        }
+
+        dev.bbsae.client.ui.UICompositorPanel panel = BbsAeClient.compositorPanel();
+        CompProject project = panel.getProject();
+        CompDocument doc = panel.getDocument();
+
+        this.alignSpaceToLinkedLayer(doc, this.session.playhead() / ReplayTime.TICKS_PER_SECOND);
+
+        CompViewportRenderer.draw(context.batcher, project, doc, this.session.camera(),
+            this.session.playhead() / ReplayTime.TICKS_PER_SECOND,
+            this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
+
+        return true;
+    }
+
+    /**
+     * Align the replay world with the linked CompLayer without moving the actor on screen.
+     *
+     * <p>The compositor renders the actor at the layer's comp position; the replay editor maps the
+     * actor's world anchor through {@link ReplaySceneSpace}. Setting the anchor so that the world
+     * anchor lands on the layer, then shifting the orbit target by the same delta, keeps the actor
+     * under the cursor and puts the composition's other layers in the same coordinate system.</p>
+     */
+    private void alignSpaceToLinkedLayer(CompDocument doc, float time)
+    {
+        CompLayer linked = this.linkedLayer(doc, this.session.replay());
+
+        if (linked == null)
+        {
+            return;
+        }
+
+        float frame = time * Math.max(1F, doc.fps);
+        ReplaySceneSpace space = this.session.space();
+        float s = space.pixelsPerBlock;
+        float zSign = space.flipZ ? -s : s;
+        mchorse.bbs_mod.utils.pose.Transform transform = linked.transformAt(frame);
+        float layerZ = linked.scalarAt("z", linked.z, frame);
+        Vector3f goal = new Vector3f(transform.translate.x, transform.translate.y, layerZ);
+        Vector3f old = space.toComp(linked.replayAnchorX, linked.replayAnchorY, linked.replayAnchorZ);
+        Vector3f delta = new Vector3f(goal).sub(old);
+
+        space.anchor.set(
+            goal.x - s * linked.replayAnchorX,
+            goal.y + s * linked.replayAnchorY,
+            goal.z - zSign * linked.replayAnchorZ
+        );
+
+        if (delta.lengthSquared() > 0.000001F)
+        {
+            this.session.camera().target.add(delta);
+            this.session.camera().update();
+        }
+    }
+
     private void applyViewMode()
     {
         if (this.viewMode == VIEW_ORBIT)
@@ -361,10 +439,13 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         this.applyViewMode();
         this.session.camera().update();
+
+        boolean composition3D = this.renderCompositionScene3D(context);
+
         this.session.updateVisibility();
 
-        boolean compositionBackground = this.renderCompositionBackground(context);
-        int drawn = compositionBackground
+        boolean compositionBackground = !composition3D && this.renderCompositionBackground(context);
+        int drawn = composition3D || compositionBackground
             ? this.session.placeableCount()
             : ReplayModelPass.draw(context.batcher, this.session, this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
 

@@ -5,6 +5,7 @@ import dev.bbsae.client.BbsAeClient;
 import dev.bbsae.client.render.CompViewportCamera;
 import dev.bbsae.comp.CompDocument;
 import dev.bbsae.comp.CompProject;
+import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.camera.Camera;
 import mchorse.bbs_mod.film.BaseFilmController;
@@ -53,6 +54,10 @@ public final class ReplayEditSession
     private boolean framed;
     private boolean playing;
     private long lastPlayNanos;
+    private int debugAdvance;
+    /** The replay page owns its transport; the borrowed film runner may be rewritten by BBS. */
+    private float localPlayhead;
+    private boolean localPlayheadValid;
 
     /* Per-frame visibility (frustum culling for big films); recomputed by the viewport before the
      * model and pick passes so both draw the same set. */
@@ -84,6 +89,11 @@ public final class ReplayEditSession
          * explicit so the actor/gizmo projection cannot silently flatten. */
         this.camera.setOrtho(false);
         this.syncSceneScale();
+
+        if (filmPanel != null && filmPanel.getRunner() != null && filmPanel.getRunner().isRunning())
+        {
+            filmPanel.getRunner().setPlaying(false);
+        }
     }
 
     /**
@@ -417,19 +427,24 @@ public final class ReplayEditSession
     /** Whole ticks of the playhead; the original keyframe editor's cursor. */
     public int tick()
     {
-        return this.filmPanel.getCursor();
+        return (int) Math.floor(this.playhead());
     }
 
     /** Film tick plus the sub-tick fraction, exactly what the actor pass samples. */
     public float playhead()
     {
+        if (this.localPlayheadValid)
+        {
+            return this.localPlayhead;
+        }
+
         return this.filmPanel.getCursor(0F);
     }
 
     /** Where authoring writes land (respects BBS' "snap to ticks" setting, like the original). */
     public float keyframeTick()
     {
-        return this.filmPanel.getKeyframeCursor(0F);
+        return BBSSettings.editorSnapToTicks.get() ? Math.round(this.playhead()) : this.playhead();
     }
 
     /** Sub-tick phase inside the playhead, used by the actor renderer. */
@@ -449,6 +464,9 @@ public final class ReplayEditSession
     public void seek(float ticks)
     {
         float value = ReplayTime.clampTick(ticks, this.durationTicks());
+
+        this.localPlayhead = value;
+        this.localPlayheadValid = true;
 
         /* Drive BBS' runner directly, like the original transport does. UIFilmPanel.setCursor
          * also fires a SEEK packet and can schedule an action restart on every call; at the replay
@@ -478,6 +496,20 @@ public final class ReplayEditSession
 
     public void setPlaying(boolean playing)
     {
+        /* The borrowed film panel may still have its own runner playing from the film editor. If
+         * it is left running, its update and our manual cursor fight each other and the runner
+         * rewinds to 0 at the clip end. The replay page owns the transport while it is open. */
+        if (playing && this.filmPanel.getRunner() != null && this.filmPanel.getRunner().isRunning())
+        {
+            this.filmPanel.getRunner().setPlaying(false);
+        }
+
+        if (playing && !this.localPlayheadValid)
+        {
+            this.localPlayhead = this.filmPanel.getCursor(0F);
+            this.localPlayheadValid = true;
+        }
+
         this.playing = playing;
         this.lastPlayNanos = 0L;
     }
@@ -515,7 +547,8 @@ public final class ReplayEditSession
         this.lastPlayNanos = now;
 
         int duration = this.durationTicks();
-        float next = this.playhead() + delta * ReplayTime.TICKS_PER_SECOND;
+        float before = this.playhead();
+        float next = before + delta * ReplayTime.TICKS_PER_SECOND;
 
         if (next >= duration)
         {
@@ -523,6 +556,16 @@ public final class ReplayEditSession
         }
 
         this.seek(next);
+        this.debugAdvance += 1;
+
+        if (Boolean.getBoolean("bbsae.debugReplayPlayback") && (this.debugAdvance % 10 == 0))
+        {
+            BbsAeAddon.LOGGER.info("Replay advance #{}: delta={}s before={} next={} after={} ticks={} running={} duration={}",
+                this.debugAdvance, delta, before, next, this.playhead(),
+                this.filmPanel.getRunner() == null ? -1 : this.filmPanel.getRunner().ticks,
+                this.filmPanel.getRunner() != null && this.filmPanel.getRunner().isRunning(),
+                duration);
+        }
     }
 
     /* ------------------------------------------------------------ pose */

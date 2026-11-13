@@ -17,14 +17,19 @@
 
 - 默认相机视角直接渲染 bbsae 合成画面（文字/图片/卡片/效果/linked 模型），不只是线框；
   scene anchor 对齐 CompLayer，原生 gizmo/pick 与合成 actor 重合。
+- 自由/绕对象视角直接调用合成器的 `CompViewportRenderer`：三角形、文字、图片、卡片和模型
+  走同一套合成代码，回放页只让回放模型可交互，其他元素只读。
 - 三个 BBS 预览按钮保留；自由/绕对象模式用于 actor 编辑；不引入合成器的摄像机/钢笔工具栏。
 - 独立合成预览默认关闭，设置中可切子窗口/双窗口。
 
 ### 轨道播放与编辑
 
-- `ReplayEditSession.seek()` 直接写 `filmPanel.getRunner().setCursor()`，绕过
-  `UIFilmPanel.setCursor()` 每帧发送 SEEK/触发 restart 的副作用；轨道播放不再被不断重启。
-- 播放开始和播放中把时间轴 playhead 保持在可见范围（`shiftIntoMiddle`），不再“跑出屏幕像冻结”。
+- 旧实现每帧调用 `UIFilmPanel.setCursor()`，但 BBS 隐藏 panel 的 runner 会被重置/rewind；实测
+  3 秒只前进约 0.14 秒。现在 `ReplayEditSession` 持有自己的 local playhead，
+  `playhead/tick/keyframeTick/advancePlayback` 全部使用它；`seek` 只把值同步给 runner。
+- 回放时间轴改用 `ReplayFilmKeyframes`，`getTick/getPlayheadTick` 直接读 local playhead；
+  播放头与 actor 播放同步，不再跑出可见范围（`shiftIntoMiddle`）。
+- 真机日志：60 个 client tick（3s）后 local playhead 2.86s；截图 timecode `00:00:02:17`。
 
 ### 关键帧数值面板重叠
 
@@ -36,8 +41,9 @@
 ### 验证
 
 - 全量测试：**153 套件 / 954 项测试 / 0 failures / 0 errors / 1 skipped**。
-- 真机：`docs/verify/round83-camera-sync.png`、`docs/verify/round82-twowindow.png`。
-- 本地候选包：`bbsae-0.99-hotfix41.jar`（3,908,419 bytes，SHA-256 C76AC4964B560DCC462F6FB6701190873993CE4F0228DF2745229258CA175B27）。
+- 真机：`docs/verify/round83-camera-sync.png`、`docs/verify/round84-free-comp.png`、
+  `docs/verify/round85-playback.png`、`docs/verify/round82-twowindow.png`。
+- 本地候选包：`bbsae-0.99-hotfix41.jar`（3,911,584 bytes，SHA-256 75E0336942CB8F1324C9EE7BB1168C140D09038D385E5224BD908ABB8A46C446）。
 
 ## 0.99-hotfix40 — 2026-11-13
 

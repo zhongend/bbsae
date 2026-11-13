@@ -25,27 +25,30 @@
 
 - 默认视角为 **相机视角**：`CompRenderer.renderCached` 直接把当前 bbsae 合成画面渲染到回放视口，
   能看到文字、图片、卡片、效果和 linked 回放模型，而不只是参考线。
-- `ReplaySceneSpace.anchor` 对齐到对应 CompLayer，BBS 原生 gizmo/pick 和合成里的 actor 重合。
-- 自由视角/绕对象旋转仍保留 3D actor 编辑；三个 BBS 预览按钮（PLANE / ORBIT / FRUSTUM）保留。
+- 自由视角/绕对象旋转直接调用**合成器的 `CompViewportRenderer`**（不是另写一套线框/模型 pass）：
+  三角形、文字、图片、卡片和 linked 模型全部通过同一条合成代码渲染；回放编辑页只让回放模型
+  可交互，其他元素只读。
+- `ReplaySceneSpace.anchor` 对齐到对应 CompLayer，并在对齐时同步平移视角 target，BBS 原生
+  gizmo/pick 和合成里的 actor 保持重合。
+- 三个 BBS 预览按钮（PLANE / ORBIT / FRUSTUM）保留；不引入合成器的摄像机/钢笔工具栏。
 - 独立“合成预览”窗口默认关闭；设置仍可切换关闭 / 子窗口 / 双窗口。
 
 ## 3. 轨道播放和编辑
 
 ### 3.1 播放
 
-旧实现每帧调用 `UIFilmPanel.setCursor()`。这个方法除了移动 runner，还会：
+旧实现每帧调用 `UIFilmPanel.setCursor()`，而这个 panel 的 runner 在隐藏/暂停/重启路径中会被 BBS
+重置到 0；实测 3 秒只前进约 0.14 秒。现在：
 
-- 每个 UI 帧发送 `ActionState.SEEK`；
-- 在 `editorRestartOnSeek` 开启时把 `restartPending` 置位；
-- 重置 flight edit / last position。
+- `ReplayEditSession` 自己保存 **local playhead**，`playhead()/tick()/keyframeTick()` 都读它；
+- `advancePlayback()` 只累加 local playhead，不再依赖易被外部改写的 runner；
+- `seek()` 仍同步 runner（给 BBS 内部读取），但不再把 runner 当作播放时钟；
+- 时间轴用 `ReplayFilmKeyframes` 覆盖 `getTick/getPlayheadTick`，直接读 local playhead，所以
+  轨道播放头与 actor 播放同步；
+- 播放开始/播放中把时间轴 `shiftIntoMiddle` 到当前 tick，playhead 不会跑出可见范围。
 
-以每帧播放的节奏调用它，会让 actor actions 不断重启，轨道看起来不走。现在
-`ReplayEditSession.seek()` 直接写 **`filmPanel.getRunner().setCursor(value)`**：
-runner 是 keyframe editor、controller、所有 ICursor 的共同时间源；不再触发每帧 SEEK/restart。
-`UIFilmPanel` 没有 runner 时才回退到 `setCursor`。
-
-播放开始时把时间轴 `shiftIntoMiddle` 到当前 tick；播放中每帧保持 playhead 在可见范围，避免
-playhead 跑出屏幕而看起来“冻结”。
+真机日志：开始 0s，60 个 client tick（3s）后 local playhead 为 **2.86s**，单调前进；
+`screenshot` 顶部 timecode 为 `00:00:02:17`。
 
 ### 3.2 编辑与数值面板重叠
 
@@ -74,5 +77,8 @@ editor.target(this.replayProperties);
 
 - 全量测试：153 套件 / 954 项 / 0 failures / 0 errors / 1 skipped。
 - 回放相机视角同步合成画面截图：`docs/verify/round83-camera-sync.png`。
+- 自由视角直接使用 CompViewportRenderer 的实际合成元素截图：`docs/verify/round84-free-comp.png`。
+- 播放验证截图：`docs/verify/round85-playback.png`（timecode `00:00:02:17`；日志 3 秒前进
+  2.86 秒）。
 - 双窗口可选模式截图：`docs/verify/round82-twowindow.png`。
-- 本地候选包：`bbsae-0.99-hotfix41.jar`（3,908,419 bytes，SHA-256 C76AC4964B560DCC462F6FB6701190873993CE4F0228DF2745229258CA175B27）。
+- 本地候选包：`bbsae-0.99-hotfix41.jar`（3,911,584 bytes，SHA-256 75E0336942CB8F1324C9EE7BB1168C140D09038D385E5224BD908ABB8A46C446）。

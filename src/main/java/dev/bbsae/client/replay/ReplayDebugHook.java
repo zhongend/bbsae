@@ -219,6 +219,33 @@ public final class ReplayDebugHook
             {
                 ReplayInteractionScript.start(panel);
             }
+
+            /* Playback regression check: start the replay transport, let it run for a second of
+             * wall time, then log the cursor. This catches the old "seek every frame restarts the
+             * action" bug without needing a human to click play. */
+            if (Boolean.getBoolean("bbsae.debugReplayPlayback") && panel != null)
+            {
+                final UIReplayModePanel playbackPanel = panel;
+                final int[] after = {0};
+
+                ClientTickEvents.END_CLIENT_TICK.register((client) ->
+                {
+                    after[0] += 1;
+
+                    if (after[0] == 20)
+                    {
+                        BbsAeAddon.LOGGER.info("Replay playback check: start at {}s",
+                            playbackPanel.playheadSeconds());
+                        playbackPanel.togglePlaybackFromHost();
+                    }
+                    else if (after[0] == 80)
+                    {
+                        BbsAeAddon.LOGGER.info("Replay playback check: after 60 ticks at {}s playing={}",
+                            playbackPanel.playheadSeconds(), playbackPanel.isPlayingFromHost());
+                        playbackPanel.togglePlaybackFromHost();
+                    }
+                });
+            }
         }
 
         /* Optional composition-camera audit: add a 3D replay layer to the film's comp and switch

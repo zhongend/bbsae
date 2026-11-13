@@ -1,6 +1,7 @@
 package dev.bbsae.client.replay;
 
 import dev.bbsae.BbsAeAddon;
+import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.api.client.editor.TrackCategories;
 import mchorse.bbs_mod.api.client.editor.TrackCategory;
 import mchorse.bbs_mod.film.Film;
@@ -104,6 +105,8 @@ public class UIReplayModePanel extends UIDashboardPanel
     /** Logs the first render after an undo/redo to prove whether the page still draws. */
     private boolean logNextRender;
     private boolean lastPlaying;
+    private boolean previousEditorRewind = true;
+    private boolean previousRestartOnSeek;
     /** Re-entrancy guard for {@link #applySelection(Replay, boolean)}; see the method's comment. */
     private boolean selectingReplay;
     /** The replay list as it looked last frame, for identity-preserving selection across edits. */
@@ -166,13 +169,27 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.add(this.header, this.main);
         this.buildCategoryBar();
 
-        this.onAppear(this::bindFromDashboard);
+        this.onAppear(() ->
+        {
+            /* The borrowed film panel must not rewind its runner to 0 while the replay page owns
+             * the transport, and per-frame seek must not restart actions. Both are editor-global
+             * settings; save and restore them around the replay page. */
+            this.previousEditorRewind = BBSSettings.editorRewind.get();
+            this.previousRestartOnSeek = BBSSettings.editorRestartOnSeek.get();
+            BBSSettings.editorRewind.set(false);
+            BBSSettings.editorRestartOnSeek.set(false);
+
+            this.bindFromDashboard();
+        });
         this.onDisappear(() ->
         {
             if (this.session != null)
             {
                 this.session.setPlaying(false);
             }
+
+            BBSSettings.editorRewind.set(this.previousEditorRewind);
+            BBSSettings.editorRestartOnSeek.set(this.previousRestartOnSeek);
 
             /* Leaving the page hands the film panel back before the dashboard reparents it. */
             this.detachBorrowedFilmPanel();
@@ -866,7 +883,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         }
 
         UIKeyframeEditor editor = new UIKeyframeEditor(
-            (callback) -> new UIFilmKeyframes(this.filmPanel.cameraEditor, callback).absolute()
+            (callback) -> new ReplayFilmKeyframes(this.filmPanel.cameraEditor, callback, this.session).absolute()
         );
 
         /* No target: the keyframe editor keeps its 140 px properties strip inside the timeline.
