@@ -252,7 +252,7 @@ public final class CompViewportRenderer
         for (CompLayer layer : doc.layers)
         {
             if (layer == null || !layer.independent || !layer.isEntityLayer() || !layer.hasModelForm()
-                || !layer.visible || !layer.activeAt(context.time) || (solo && !layer.solo))
+                || !layer.visible || !CompPreviewFilter.visible(layer) || !layer.activeAt(context.time) || (solo && !layer.solo))
             {
                 continue;
             }
@@ -315,7 +315,7 @@ public final class CompViewportRenderer
 
         for (CompLayer layer : doc.layers)
         {
-            if (layer == null || !layer.visible || !"adjustment".equals(layer.type) || !layer.activeAt(context.time))
+            if (layer == null || !layer.visible || !CompPreviewFilter.visible(layer) || !"adjustment".equals(layer.type) || !layer.activeAt(context.time))
             {
                 continue;
             }
@@ -439,7 +439,7 @@ public final class CompViewportRenderer
 
         for (CompLayer layer : doc.layers)
         {
-            if (layer == null || !layer.visible || "camera".equals(layer.type) || "null".equals(layer.type))
+            if (layer == null || !layer.visible || !CompPreviewFilter.visible(layer) || "camera".equals(layer.type) || "null".equals(layer.type))
             {
                 continue;
             }
@@ -533,7 +533,7 @@ public final class CompViewportRenderer
 
         for (CompLayer layer : doc.layers)
         {
-            if (layer == null || !layer.visible || !layer.activeAt(context.time))
+            if (layer == null || !layer.visible || !CompPreviewFilter.visible(layer) || !layer.activeAt(context.time))
             {
                 continue;
             }
@@ -623,6 +623,11 @@ public final class CompViewportRenderer
 
         for (CompLayer layer : order)
         {
+            if (!CompPreviewFilter.visible(layer))
+            {
+                continue;
+            }
+
             CompLayerSourceCache.Entry source = CompLayerSourceCache.get(layer, context, batcher);
 
             if (source == null)
@@ -1184,7 +1189,7 @@ public final class CompViewportRenderer
 
         for (CompLayer layer : context.comp.layers)
         {
-            if (layer == null || !layer.visible || !layer.activeAt(context.time) || "camera".equals(layer.type))
+            if (layer == null || !layer.visible || !CompPreviewFilter.visible(layer) || !layer.activeAt(context.time) || "camera".equals(layer.type))
             {
                 continue;
             }

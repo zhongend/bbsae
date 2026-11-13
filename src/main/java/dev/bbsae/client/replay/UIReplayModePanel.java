@@ -21,6 +21,7 @@ import mchorse.bbs_mod.ui.film.replays.UIReplaysListPanel;
 import mchorse.bbs_mod.ui.film.utils.keyframes.UIFilmKeyframes;
 import mchorse.bbs_mod.ui.forms.UIFormPalette;
 import mchorse.bbs_mod.ui.framework.UIContext;
+import mchorse.bbs_mod.ui.framework.elements.IFocusedUIElement;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIButton;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
@@ -107,6 +108,7 @@ public class UIReplayModePanel extends UIDashboardPanel
     private boolean lastPlaying;
     private boolean previousEditorRewind = true;
     private boolean previousRestartOnSeek;
+    private boolean spaceWasDown;
     /** Re-entrancy guard for {@link #applySelection(Replay, boolean)}; see the method's comment. */
     private boolean selectingReplay;
     /** The replay list as it looked last frame, for identity-preserving selection across edits. */
@@ -178,6 +180,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             this.previousRestartOnSeek = BBSSettings.editorRestartOnSeek.get();
             BBSSettings.editorRewind.set(false);
             BBSSettings.editorRestartOnSeek.set(false);
+            this.spaceWasDown = Window.isKeyPressed(GLFW.GLFW_KEY_SPACE);
 
             this.bindFromDashboard();
         });
@@ -972,6 +975,21 @@ public class UIReplayModePanel extends UIDashboardPanel
          * moment to add a root child (adding during render would mutate the root's children while
          * it iterates them). */
         this.attachBorrowedFilmPanel();
+
+        /* Space is BBS' play/pause key. The borrowed film panel's own space binding can still be
+         * active while it is hidden, and the compositor panel is the focused panel now, so relying
+         * on subKeyPressed alone missed presses. Poll the physical key while this page is active;
+         * text fields keep the key for typing. A physical press edge prevents repeats. */
+        boolean spaceDown = Window.isKeyPressed(GLFW.GLFW_KEY_SPACE);
+        UIContext inputContext = this.getContext();
+        boolean typing = inputContext != null && inputContext.activeElement instanceof IFocusedUIElement;
+
+        if (spaceDown && !this.spaceWasDown && !typing)
+        {
+            this.togglePlayback();
+        }
+
+        this.spaceWasDown = spaceDown;
 
         super.update();
 
@@ -1809,13 +1827,6 @@ public class UIReplayModePanel extends UIDashboardPanel
                 /* BBS keys a frame with I; K is accepted as the animation-community spelling of
                  * the same action. Shift additionally keys the form's pose tracks. */
                 this.insertKeyframeFromHost(Window.isShiftPressed());
-
-                return true;
-            }
-
-            if (key == GLFW.GLFW_KEY_SPACE)
-            {
-                this.togglePlayback();
 
                 return true;
             }

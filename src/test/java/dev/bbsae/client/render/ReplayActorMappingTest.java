@@ -44,6 +44,27 @@ public class ReplayActorMappingTest
         assertEquals(38F, oneBlock.y, 0.001F);
     }
 
+    @Test
+    public void layerScaleCompressesTheActorExactlyLikeTheCompositor()
+    {
+        CompLayer layer = layer();
+        CompRenderContext context = context();
+
+        layer.scaleX = 2F;
+        layer.scaleY = 2F;
+        layer.scaleZ = 2F;
+
+        Matrix4f mapping = ReplayActorPass.actorMapping(layer, context, 10D, 20D, 30D);
+        Vector3f anchor = mapping.transformPosition(new Vector3f(10F, 20F, 30F));
+        Vector3f oneBlock = mapping.transformPosition(new Vector3f(11F, 21F, 31F));
+
+        /* 12 px/block * 2 = 24 px; Y is inverted and Z keeps the sign. Diffing against the
+         * anchor keeps the assertion independent of the layer's placement. */
+        assertEquals(24F, oneBlock.x - anchor.x, 0.001F);
+        assertEquals(-24F, oneBlock.y - anchor.y, 0.001F);
+        assertEquals(24F, oneBlock.z - anchor.z, 0.001F);
+    }
+
     private static CompLayer layer()
     {
         CompLayer layer = new CompLayer("replay", "Replay", "replay");

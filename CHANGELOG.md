@@ -1,5 +1,44 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix42 — 2026-11-13
+
+回放预览真实图层/文字显示、相机跟随、缩放同步、空格播放与轨道指针。
+
+### 真实图层预览
+
+- 根因：合成里只要存在 `bbs` 实时世界层，回放页就整个跳过合成预览，退回 actor + 线框。
+- 新增 `CompPreviewFilter` thread-local 渲染过滤器：回放页渲染合成时只过滤 `bbs` 层，
+  `CompRenderer`/`CompViewportRenderer` 的所有图层、文字、图片、三角形、特效和 linked 模型
+  都正常渲染；不修改工程 `visible`，不污染合成器缓存。
+- 有过滤器时 `CompRenderer` 不复用 pre-render/内容缓存，避免显示带真实世界的旧帧；真实合成
+  画面已显示时不再叠图层边框/名称（否则文字会像重复出现），只保留相机/frame 参考线。
+- 真机（带 `bbs` 层的测试工程）：回放自由视角可见真实 `REAL TEXT LAYER` 和 comp 图层，
+  同时真实世界被过滤，截图 `docs/verify/round86-real-layers.png`。
+
+### 模型压缩/缩放同步
+
+- 自由/绕对象视角直接走合成器 `CompViewportRenderer` + `ReplayActorPass`，应用 CompLayer
+  的 position/rotation/scale；相机视角走 `CompRenderer` 最终合成。
+- 回放页比例与合成器一致（`modelPixelsPerBlock` 或 `height*0.12`）。
+
+### 相机跟随
+
+- 相机视角直接显示 active composition camera 的最终合成帧（含关键帧 eye/target/FOV），
+  因此镜头会跟随摄像机动，不再退回静态 actor pass。
+
+### 空格与轨道指针
+
+- `UIReplayModePanel.update()` 检测 Space 按下沿并驱动回放 transport，文本输入时不拦截；
+  不再依赖隐藏 film panel 的 secretPlay 键位。
+- local playhead + `ReplayFilmKeyframes.getTick/getPlayheadTick` 让播放头与 actor 播放同步；
+  播放时保持在时间轴可见范围。
+
+### 验证
+
+- 全量测试：**154 套件 / 956 项测试 / 0 failures / 0 errors / 1 skipped**（新增 `CompPreviewFilterTest`）。
+- 截图：`docs/verify/round84-free-comp.png`、`round83-camera-sync.png`、`round85-playback.png`。
+- 本地候选包：`bbsae-0.99-hotfix42.jar`（3,913,206 bytes，SHA-256 F44783D688A1F86C05EF538835AD367E8585A421A01A9AD11DCCE7F43443A4CD）。
+
 ## 0.99-hotfix41 — 2026-11-13
 
 回放预览与合成器精确同步；修复轨道播放/编辑与 K pose 数值面板重叠。

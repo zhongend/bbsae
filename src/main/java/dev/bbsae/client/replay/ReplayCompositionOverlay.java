@@ -38,6 +38,17 @@ public final class ReplayCompositionOverlay
 
     public static void render(UIContext context, ReplayEditSession session, int x, int y, int width, int height)
     {
+        render(context, session, x, y, width, height, true);
+    }
+
+    /**
+     * @param showLayerBoxes true for the pure guide view. When the real composition scene/final
+     *        frame is already drawn, its layer labels and bounding boxes are redundant (and read
+     *        like duplicated text), so only the camera/comp-frame guides are kept.
+     */
+    public static void render(UIContext context, ReplayEditSession session, int x, int y, int width, int height,
+                              boolean showLayerBoxes)
+    {
         if (context == null || session == null || width < 32 || height < 32 || !CompPrefs.get().guides)
         {
             return;
@@ -76,7 +87,11 @@ public final class ReplayCompositionOverlay
         {
             renderCompFrame(context, camera, doc, offset, x, y);
             renderCameras(context, camera, doc, offset, frame, time, x, y);
-            renderLayers(context, camera, doc, offset, frame, x, y);
+
+            if (showLayerBoxes)
+            {
+                renderLayers(context, camera, doc, offset, frame, x, y);
+            }
         }
         finally
         {
@@ -232,7 +247,7 @@ public final class ReplayCompositionOverlay
         {
             if (layer == null || !layer.visible || "camera".equals(layer.type)
                 || "adjustment".equals(layer.type) || "null".equals(layer.type)
-                || layer.independent)
+                || "bbs".equals(layer.type) || layer.independent)
             {
                 continue;
             }

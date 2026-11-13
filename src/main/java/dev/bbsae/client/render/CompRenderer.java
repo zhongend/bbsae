@@ -111,19 +111,25 @@ public final class CompRenderer
 
         /* The entity matte is a per-frame product of the world render. Normally the
          * AFTER_ENTITIES pass already produced it; this only renders when the frame has not been
-         * masked yet (the first frame after opening a project or changing the selection). */
-        dev.bbsae.client.render.ReplayEntityMask.ensureCurrent(project, doc);
+         * masked yet (the first frame after opening a project or changing the selection). The
+         * replay preview filters the live-world layer out, so capturing the world actor mask there
+         * would only waste a world pass (and can never be drawn). */
+        if (!CompPreviewFilter.active())
+        {
+            dev.bbsae.client.render.ReplayEntityMask.ensureCurrent(project, doc);
+        }
 
         float fps = Math.max(1F, doc.fps);
         /* Clamped like every other frame lookup: past the composition's end the green bar and the
          * AE preview must agree instead of the cache silently missing. */
         int frameIndex = frameIndex(doc, time);
         float scale = previewScale(doc, frameWidth, frameHeight, fit);
+        boolean filtered = CompPreviewFilter.active();
 
         /* 1. Green frames: the whole point of the pre-render cache. Only when the A/B switches are
          * on, because a cached frame always contains effects and masks; otherwise the 效果/蒙版
          * toggles would do nothing while the playhead sits on a green frame. */
-        GlTexture cached = (renderEffects && renderMasks) ? CompPrecache.texture(project, doc, frameIndex) : null;
+        GlTexture cached = (renderEffects && renderMasks && !filtered) ? CompPrecache.texture(project, doc, frameIndex) : null;
 
         /* The cached frame is only accepted when it was rendered at least at the requested preview
          * scale (same rule as the AE path). The pre-render is capped at 1280x720; a larger panel
@@ -143,7 +149,7 @@ public final class CompRenderer
 
         /* 2. A curve edit outside the playhead's segment cannot change this frame. Reuse the
          *    pixels instead of hashing the document and re-running the graph. */
-        if (!liveWorld && CompRenderCache.reuseForTime(time, frameIndex))
+        if (!filtered && !liveWorld && CompRenderCache.reuseForTime(time, frameIndex))
         {
             blit(batcher, CompRenderCache.get(), doc, alpha, frameWidth, frameHeight, fit);
 
@@ -152,7 +158,7 @@ public final class CompRenderer
 
         long signature = CompRenderCache.signature(project, doc, time, renderEffects, renderMasks, fit, Math.round(frameWidth), Math.round(frameHeight), cameraOverlays) ^ ((long) Math.round(scale * 1000F) << 48);
 
-        if (!cameraOverlays && !liveWorld && CompRenderCache.matches(signature, doc, doc.width, doc.height))
+        if (!filtered && !cameraOverlays && !liveWorld && CompRenderCache.matches(signature, doc, doc.width, doc.height))
         {
             blit(batcher, CompRenderCache.get(), doc, alpha, frameWidth, frameHeight, fit);
 
@@ -182,7 +188,7 @@ public final class CompRenderer
 
         /* The cache owns this framebuffer now; releasing it here would hand a live texture back to
          * the pool and the next layer would draw over the cached frame. */
-        if (!liveWorld)
+        if (!filtered && !liveWorld)
         {
             CompRenderCache.put(composition, signature, doc, doc.width, doc.height, frameIndex);
             blit(batcher, composition, doc, alpha, frameWidth, frameHeight, fit);
@@ -1156,6 +1162,11 @@ public final class CompRenderer
                 /* Independent bbsae models are composited by the dedicated overlay pass after all
                  * normal layers, so a 2D card/background can never hide the actor being edited. */
                 if (layer.independent)
+                {
+                    continue;
+                }
+
+                if (!CompPreviewFilter.visible(layer))
                 {
                     continue;
                 }

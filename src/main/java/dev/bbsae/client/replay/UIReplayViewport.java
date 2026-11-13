@@ -2,6 +2,7 @@ package dev.bbsae.client.replay;
 
 import dev.bbsae.client.BbsAeClient;
 import dev.bbsae.client.render.CompCamera;
+import dev.bbsae.client.render.CompPreviewFilter;
 import dev.bbsae.client.render.CompRenderer;
 import dev.bbsae.client.render.CompViewportCamera;
 import dev.bbsae.client.render.CompViewportRenderer;
@@ -330,9 +331,18 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
         this.alignSpaceToLinkedLayer(doc, this.session.playhead() / ReplayTime.TICKS_PER_SECOND);
 
-        CompViewportRenderer.draw(context.batcher, project, doc, this.session.camera(),
-            this.session.playhead() / ReplayTime.TICKS_PER_SECOND,
-            this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
+        CompPreviewFilter.push((layer) -> layer == null || !"bbs".equals(layer.type));
+
+        try
+        {
+            CompViewportRenderer.draw(context.batcher, project, doc, this.session.camera(),
+                this.session.playhead() / ReplayTime.TICKS_PER_SECOND,
+                this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
+        }
+        finally
+        {
+            CompPreviewFilter.pop();
+        }
 
         return true;
     }
@@ -449,7 +459,8 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             ? this.session.placeableCount()
             : ReplayModelPass.draw(context.batcher, this.session, this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
 
-        ReplayCompositionOverlay.render(context, this.session, this.viewArea.x, this.viewArea.y, this.viewArea.w, this.viewArea.h);
+        ReplayCompositionOverlay.render(context, this.session, this.viewArea.x, this.viewArea.y,
+            this.viewArea.w, this.viewArea.h, !composition3D && !compositionBackground);
         this.renderCompositionPreview(context);
 
         this.pick.render(context, this.session, this.viewArea);
@@ -505,14 +516,6 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             || doc.width <= 0 || doc.height <= 0)
         {
             return false;
-        }
-
-        for (CompLayer layer : doc.layers)
-        {
-            if (layer != null && "bbs".equals(layer.type))
-            {
-                return false;
-            }
         }
 
         return true;
@@ -572,6 +575,8 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         stack.push();
         stack.translate(px, py, 0F);
 
+        CompPreviewFilter.push((layer) -> layer == null || !"bbs".equals(layer.type));
+
         try
         {
             CompRenderer.renderCached(project, doc, this.session.playhead() / ReplayTime.TICKS_PER_SECOND,
@@ -579,6 +584,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         }
         finally
         {
+            CompPreviewFilter.pop();
             stack.pop();
             context.batcher.unclip(context);
         }
@@ -647,12 +653,15 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         stack.push();
         stack.translate(px, py, 0F);
 
+        CompPreviewFilter.push((layer) -> layer == null || !"bbs".equals(layer.type));
+
         try
         {
             CompRenderer.renderCached(project, doc, time, 1F, pw, ph, 0, true, true, false, context.batcher);
         }
         finally
         {
+            CompPreviewFilter.pop();
             stack.pop();
             context.batcher.unclip(context);
         }
