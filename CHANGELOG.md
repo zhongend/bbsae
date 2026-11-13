@@ -7,6 +7,19 @@ Esc「假取消」、离开页面临杀导出、导出中编辑混版、右键�
 违约、Mask/Shape 跨合成串键、图片/字体内容身份、显存无字节预算、绿帧写盘竞态、预渲染巨栅格等。
 全量 **145 个测试套件 / 929 项测试全绿（1 skipped）**（0.98 基线 142/905）。
 
+### bbsae 回放工作区 / actor-only 抠像 / 外部素材
+
+- 「回放」改为 bbsae 自己的 dock 工作区：模型、文字、相机 HUD、时间轴同屏，不再打开 BBS
+  原生影片回放列表；
+- 模型焦点：选中 bbsae 模型时临时隐藏装饰卡片，普通合成预览也能直接看到模型；
+- 抠像改为 actor-only 图像：coverage target 直接提供 actor RGB/alpha，不再采样世界颜色；
+- 外部素材：WAV/OGG 音频、图片、视频 `videolink` 默认链接原文件；视频按需异步抽帧并预热；
+- 视频支持 MP4/MOV/MKV/WebM/AVI/M4V，音频支持 WAV/OGG/MP3/FLAC/M4A；
+- 音频轨道绘制 WAV/OGG 波形，支持重新链接外部音频；
+- 摄像机：负 Z 输入、滚轮保号、orbit look-at、工具栏误触保护、3px 死区；
+- 多选：自动切图层页、预览常驻提示、上下文提示开关；
+- 全量 **152 套件 / 950 项测试全绿（1 skipped）**；候选包 `bbsae-0.99-hotfix28.jar`。
+
 ### 独立回放模型 / 3D 重复 / 抠像（0.99 后续）
 
 - **bbsae 独立回放模型**：replay 图层可保存 BBS Form，`independent=true` 时用 `StubEntity`
