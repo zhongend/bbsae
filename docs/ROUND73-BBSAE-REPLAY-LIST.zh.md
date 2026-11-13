@@ -33,7 +33,10 @@ world-plate matte 换成 actor-only 图像。
 - 回放模式选中 bbsae 模型时直接调用 BBS `Gizmo.INSTANCE` 绘制原生 cooler-axes gizmo，
   外观与 BBS 影片编辑器一致；点击/拖动仍由 bbsae 的命中测试处理；
 - 原生 gizmo 绘制后恢复投影矩阵、视口、深度/混合状态，避免一次绘制污染整个 UI；
-- 截图：`docs/verify/round76-bbs-native-gizmo.png`。
+- 回放模式底部不再显示合成器 `UICompTrackTimeline` 的剪辑轨道，而是把 BBS 自己的
+  `UIKeyframeEditor` 全尺寸放入时间轴，显示所选 bbsae 模型的位置/旋转/缩放等关键帧行；
+- BBS 时间轴绘制期间不重新按“关键帧抽屉”布局，避免被重新挂回抽屉而隐藏；
+- 截图：`docs/verify/round76-bbs-native-gizmo.png`、`docs/verify/round77-bbs-replay-timeline.png`。
 - **模型焦点/回放隔离默认关闭**：选择 3D 回放图层不再自动隐藏其他图层。
 - **模型焦点**（可选，默认关闭）：开启后选中 bbsae 模型时临时隐藏装饰卡片/背景，只保留模型、
   文字、相机，普通合成预览也能直接看到模型；取消选择或关闭设置即恢复。
@@ -86,8 +89,8 @@ world-plate matte 换成 actor-only 图像。
 ## 7. 验证
 
 - 全量：**152 suites / 951 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix34.jar`，已安装到正式 modpack；
-  SHA-256 `D9010C283D6011DEB210EC32641CD2D02751ADD8211E7BF059AF859CD27B198E`。
+- 本地候选包：`bbsae-0.99-hotfix35.jar`，已安装到正式 modpack；
+  SHA-256 `F9028C6D33FDB9BB1DD12831980C8ADDDCB06934ABF4DDF1E5EC7BDE0F6B89F7`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 

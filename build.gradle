@@ -76,6 +76,7 @@ loom {
             client()
             vmArg "-Dbbsae.debugPreview=true"
             vmArg "-Dbbsae.debugView=" + (project.findProperty("bbsaeView") ?: "curve")
+            vmArg "-Dbbsae.debugReplayWorkspace=" + (project.findProperty("bbsaeReplayWorkspace") ?: "false")
             vmArg "-Dbbsae.debugCurve=true"
             vmArg "-Dbbsae.debugEncoder=true"
             vmArg "-Dbbsae.debugEncoderAe=" + (project.findProperty("bbsaeEncoder") ?: "false")

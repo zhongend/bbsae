@@ -165,6 +165,9 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIIcon keyframeRowUp;
     private final UIIcon keyframeRowDown;
     private final UICompTrackTimeline trackTimeline;
+    /** Original BBS replay keyframe editor, shown instead of compositor tracks in replay mode. */
+    private mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeEditor bbsReplayTimeline;
+    private boolean bbsReplayTimelineDirty;
     private final UIElement keyframeDrawer;
     private final UILabel keyframeTitle;
     private final UICompButton keyframeCurve;
@@ -9527,6 +9530,14 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        if (this.workspaceMode == WORKSPACE_REPLAY)
+        {
+            this.trackTimeline.setVisible(false);
+            this.curveEditor.setVisible(false);
+
+            return;
+        }
+
         boolean tracks = this.timelinePage == 0;
 
         this.trackTimeline.setVisible(tracks);
@@ -10028,6 +10039,12 @@ public class UICompositorPanel extends UIDashboardPanel
 
             case "filmreplay":
                 this.debugOpenFilm(System.getProperty("bbsae.debugFilmId", "A2(MAIN)_"));
+
+                if (Boolean.getBoolean("bbsae.debugReplayWorkspace"))
+                {
+                    this.switchWorkspace(WORKSPACE_REPLAY);
+                }
+
                 return;
 
             case "quick":
@@ -12493,6 +12510,13 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* In replay mode UIKeyframeEditor is the whole bottom timeline, not a drawer. Re-laying
+         * it out as a drawer would reparent it back and hide the BBS replay tracks. */
+        if (this.workspaceMode == WORKSPACE_REPLAY)
+        {
+            return;
+        }
+
         /* The curve editor owns the whole strip; the keyframe drawer belongs to the track view. */
         int quickWidth = this.dock != null && this.quickPanel != null && this.quickPanel.isVisible()
             ? Math.max(0, CompUi.quickWidth(this.timeline.area.w, this.quickPanelWidth))
@@ -13520,6 +13544,7 @@ public class UICompositorPanel extends UIDashboardPanel
              * not open BBS' film replay UI or require a real-world film. */
             this.applyLeftPage(3, true);
             this.selectFirstReplayModel();
+            this.showBbsReplayTimeline(true);
             this.updatePlayLabel();
             this.beginPageMotion(this.workspaceMotion, "mode:replay");
             this.applyLayout();
@@ -13531,6 +13556,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.workspaceMode = WORKSPACE_COMPOSITE;
             this.restoreReplayLayers();
             this.applyModelFocus(this.selectedLayer);
+            this.showBbsReplayTimeline(false);
             this.beginPageMotion(this.workspaceMotion, "mode:composite");
             this.applyLeftPage(0, true);
             this.applyLayout();
@@ -13539,6 +13565,109 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.invalidatePlayheadUi();
+    }
+
+    /**
+     * Replay mode must show BBS' replay keyframe tracks, not the compositor's layer timeline.
+     * We build the same {@code UIKeyframeEditor} + {@code UIFilmKeyframes} pair the BBS replay
+     * editor uses, and give it the replay's real track sheets.
+     */
+    private void showBbsReplayTimeline(boolean show)
+    {
+        if (this.keyframeEditor == null)
+        {
+            return;
+        }
+
+        if (show)
+        {
+            this.timelineHeader.setVisible(false);
+            this.trackTimeline.setVisible(false);
+            this.curveEditor.setVisible(false);
+            this.keyframeDrawer.setVisible(false);
+            this.keyframeHandle.setVisible(false);
+
+            /* Reuse BBS' own UIKeyframeEditor widget (the same timeline the replay editor uses),
+             * but feed it the bbsae model's channels. This is the "BBS replay timeline + bbsae
+             * model" combination: keyframe rows, ruler, dope sheet and context menus are BBS',
+             * the data is the selected model layer's transform keys. */
+            this.keyframeEditor.removeFromParent();
+            this.keyframeEditor.relative(this.timeline).x(0).y(0).w(1F).h(1F);
+            this.timeline.add(this.keyframeEditor);
+            this.keyframeEditor.setVisible(true);
+            this.refreshSheets();
+            this.timeline.invalidateLayout();
+            this.keyframeEditor.resize();
+            this.keyframeEditor.view.resize();
+        }
+        else
+        {
+            this.keyframeEditor.removeFromParent();
+            this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(1F, -22);
+            this.keyframeDrawer.add(this.keyframeEditor);
+            this.keyframeEditor.setVisible(true);
+
+            this.timelineHeader.setVisible(true);
+            this.trackTimeline.setVisible(true);
+            this.keyframeHandle.setVisible(true);
+            this.trackTimeline.resize();
+        }
+    }
+
+    private void ensureBbsReplayTimeline()
+    {
+        if (this.bbsReplayTimeline != null || this.timeline == null)
+        {
+            return;
+        }
+
+        if (this.filmPanel == null)
+        {
+            this.filmPanel = this.dashboard == null ? null
+                : this.dashboard.getPanel(mchorse.bbs_mod.ui.film.UIFilmPanel.class);
+        }
+
+        if (this.filmPanel == null || this.film == null)
+        {
+            return;
+        }
+
+        mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeEditor editor =
+            new mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeEditor(
+                (callback) -> new mchorse.bbs_mod.ui.film.utils.keyframes.UIFilmKeyframes(
+                    this.filmPanel.cameraEditor, callback).absolute());
+
+        editor.setUndoId("bbsae_replay_keyframe_editor");
+        editor.setEmptyState(() -> IKey.constant(""));
+        editor.view.duration(() -> this.film.camera.calculateDuration());
+        editor.view.getDopeSheet().setEmptyState(
+            IKey.constant("没有回放轨道"),
+            IKey.constant("在左侧选择回放后，这里显示 BBS 原版的位置/旋转/姿态关键帧轨道。")
+        );
+        editor.relative(this.timeline).x(0).y(0).w(1F).h(1F);
+        editor.setVisible(false);
+        this.timeline.add(editor);
+        this.bbsReplayTimeline = editor;
+    }
+
+    private void rebuildBbsReplayTracks()
+    {
+        if (this.bbsReplayTimeline == null || this.replay == null)
+        {
+            return;
+        }
+
+        this.bbsReplayTimeline.view.removeAllSheets();
+
+        for (mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeSheet sheet
+            : dev.bbsae.client.replay.ReplayTrackBuilder.build(this.replay, ""))
+        {
+            this.bbsReplayTimeline.view.addSheet(sheet);
+        }
+
+        this.bbsReplayTimeline.resize();
+        this.bbsReplayTimeline.view.resize();
+        this.bbsReplayTimeline.view.resetView();
     }
 
     private void invalidatePlayheadUi()
