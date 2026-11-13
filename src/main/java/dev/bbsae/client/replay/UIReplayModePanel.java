@@ -138,7 +138,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.main = new UIElement();
         this.main.relative(this).x(0).y(HEADER).w(1F).h(1F, -HEADER - TIMELINE);
 
-        this.title = new UILabel(IKey.constant("实体回放"));
+        this.title = new UILabel(IKey.constant("bbsae 虚拟回放"));
         this.title.color(0xFFFFFFFF, false);
         this.title.relative(this.header).x(10).y(0).w(104).h(HEADER);
 
@@ -521,6 +521,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         if (this.session == null || filmChanged)
         {
             this.session = new ReplayEditSession(panel, film, replay);
+            this.session.setReplayFilter(CompReplayBridge::isVirtual);
             this.viewport.setSession(this.session);
         }
 
@@ -531,7 +532,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         /* A replay handed in by the film editor may belong to the previous film (the original
          * replay editor keeps its selection when a new film is filled). Only trust it when it is
          * in this film by identity. */
-        Replay initial = ReplayListOps.containsIdentical(film.replays.getList(), replay)
+        Replay initial = CompReplayBridge.isVirtual(replay) && ReplayListOps.containsIdentical(film.replays.getList(), replay)
             ? replay
             : this.firstReplay(film);
 
@@ -630,6 +631,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.built = true;
 
         this.session = new ReplayEditSession(panel, this.film, this.replay);
+        this.session.setReplayFilter(CompReplayBridge::isVirtual);
 
         this.replaysList = new UIReplaysListPanel(
             panel,
@@ -707,7 +709,8 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         for (Replay candidate : replays)
         {
-            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get())
+                || !CompReplayBridge.isVirtual(candidate))
             {
                 continue;
             }
@@ -726,12 +729,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             }
         }
 
-        if (enabledFallback != null)
-        {
-            return enabledFallback;
-        }
-
-        return replays.isEmpty() ? null : replays.get(0);
+        return enabledFallback;
     }
 
     private void selectReplayFromIndex(int index)
@@ -788,8 +786,17 @@ public class UIReplayModePanel extends UIDashboardPanel
             Replay effective = replay;
 
             if (effective != null && this.film != null
-                && !ReplayListOps.containsIdentical(this.film.replays.getList(), effective))
+                && (!ReplayListOps.containsIdentical(this.film.replays.getList(), effective)
+                    || !CompReplayBridge.isVirtual(effective)))
             {
+                if (Boolean.getBoolean("bbsae.debugReplayBridge"))
+                {
+                    BbsAeAddon.LOGGER.info("Replay selection rejected: virtual={} inFilm={} label='{}'",
+                        CompReplayBridge.isVirtual(effective),
+                        ReplayListOps.containsIdentical(this.film.replays.getList(), effective),
+                        effective.label.get());
+                }
+
                 effective = null;
             }
 
@@ -957,11 +964,45 @@ public class UIReplayModePanel extends UIDashboardPanel
         }
 
         this.checkReplayListChanged();
+        this.applyVirtualReplayFilter();
         this.ensureTracks();
         this.applyDebugSetup();
         this.refreshStatus();
 
         super.render(context);
+    }
+
+    /**
+     * Restricts the list to replays created by bbsae's virtual world.
+     *
+     * <p>The embedded editor borrows the film's replay list because that is the original BBS
+     * editor widget, but the real film's recorded actors are not part of bbsae's virtual scene.
+     * {@link CompReplayBridge#VIRTUAL_MARKER} is a zero-width prefix on virtual replays; the
+     * original list's own text filter therefore hides every real-world replay without changing
+     * the BBS list class. Search and "add" are disabled while this filter is active: a search
+     * would replace the marker, and a replay added here would not be a bbsae virtual actor.</p>
+     */
+    private void applyVirtualReplayFilter()
+    {
+        if (this.replaysList == null)
+        {
+            return;
+        }
+
+        if (this.film != null)
+        {
+            for (Replay replay : this.film.replays.getList())
+            {
+                if (CompReplayBridge.isVirtual(replay))
+                {
+                    CompReplayBridge.markVirtual(replay);
+                }
+            }
+        }
+
+        this.replaysList.replays.filter(CompReplayBridge.VIRTUAL_MARKER);
+        this.replaysList.search.setEnabled(false);
+        this.replaysList.addReplay.setVisible(false);
     }
 
     /**
@@ -1036,12 +1077,30 @@ public class UIReplayModePanel extends UIDashboardPanel
     {
         if (this.filmPanel == null || this.film == null)
         {
-            return "没有打开的影片：先在影片编辑器打开一个影片，或从合成器点「实体回放」"
+            return "没有打开的影片：先在影片编辑器打开一个影片，或从合成器点「回放」"
                 + "（调试可用 -Dbbsae.debugReplayFilm=<影片 id>）";
         }
 
-        int count = this.film.replays.getList().size();
-        int index = ReplayListOps.indexOfIdentical(this.film.replays.getList(), this.replay);
+        int count = this.session == null ? 0 : this.session.replayCount();
+        int index = -1;
+
+        for (Replay candidate : this.film.replays.getList())
+        {
+            if (CompReplayBridge.isVirtual(candidate))
+            {
+                index += 1;
+
+                if (candidate == this.replay)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (this.replay == null)
+        {
+            index = -1;
+        }
         int tick = this.session == null ? 0 : this.session.tick();
         int duration = this.session == null ? 0 : this.session.durationTicks();
         String base = "影片 " + this.film.getId()
@@ -1051,7 +1110,7 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         if (count == 0)
         {
-            return base + " · 没有回放：点「原版回放编辑」在 BBS 原版编辑器里添加回放";
+            return base + " · 没有虚拟回放：回到合成器点「＋模型」添加 bbsae 回放";
         }
 
         if (this.replay == null)

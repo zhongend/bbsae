@@ -10,6 +10,7 @@ import dev.bbsae.client.render.CompViewportCamera;
 import dev.bbsae.client.render.CompViewportRenderer;
 import dev.bbsae.client.render.ImageTextureCache;
 import dev.bbsae.client.render.TextureFilter;
+import dev.bbsae.client.replay.CompReplayBridge;
 import dev.bbsae.client.replay.UIReplayModePanel;
 import dev.bbsae.comp.CompBinding;
 import dev.bbsae.comp.CompAnimationPreset;
@@ -36,6 +37,7 @@ import dev.bbsae.client.render.CompRenderContext;
 import dev.bbsae.client.ui.CompInput;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.utils.TimeUtils;
+import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.settings.values.ui.EditorLayoutNode;
@@ -317,6 +319,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private UIIcon cameraSettingsButton;
     /** Switches to the entity-replay editing page (BBS's own replay timeline + gizmo + models). */
     private UIIcon replayModeButton;
+    /** Replay ids that existed when the replay workspace was entered, for new-replay import. */
+    private final java.util.Set<String> replayIdsBeforeEdit = new java.util.HashSet<>();
     private UIIcon precompBack;
     private final UILabel compPath;
     private final java.util.ArrayDeque<PrecompReturn> precompStack = new java.util.ArrayDeque<>();
@@ -6658,6 +6662,12 @@ public class UICompositorPanel extends UIDashboardPanel
             this.doc.duration = Math.max(this.doc.duration, duration);
             this.doc.workAreaOut = Math.max(this.doc.workAreaOut, duration);
             normalizeWorkArea(this.doc);
+
+            /* A linked replay may have been re-formed in the BBS film editor while this project
+             * was closed. The replay is the shared record, so bring the layer's cached form back
+             * in line before the first preview frame. */
+            CompReplayBridge.syncLayersFromReplays(film, this.doc);
+            CompReplayBridge.setVirtualEnabled(film, false);
         }
 
         if (this.trackTimeline != null)
@@ -13718,7 +13728,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         /* The header's transport belongs to the composition. In replay mode it is hidden so there
          * is exactly one play button and one timecode on screen, both owned by the mode bar. */
-        this.title.label = IKey.constant(replay ? "BBS 合成器 · 回放" : "BBS 合成器");
+        this.title.label = IKey.constant(replay ? "BBS 合成器 · 虚拟回放" : "BBS 合成器");
         this.play.setVisible(!replay);
         this.prevFrame.setVisible(!replay);
         this.nextFrame.setVisible(!replay);
@@ -13779,12 +13789,51 @@ public class UICompositorPanel extends UIDashboardPanel
             this.lastPlayNanos = 0L;
             this.restoreModelFocus();
 
+            /* A bbsae model is a view of a BBS replay. Link every independent model layer to a
+             * real {@code Film.replays} entry before the editor binds: this is what makes a model
+             * added in the compositor show up in the replay list instead of "no replay". */
+            int linked = CompReplayBridge.ensureAll(this.film, this.doc);
+
+            if (linked > 0)
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.info("Replay bridge: {} bbsae model layer(s) linked to film replays", linked);
+            }
+
+            /* Virtual replays are disabled in the real film so BBS' world pass never draws the
+             * bbsae actors into the live world. They are enabled for the editor's own virtual
+             * viewport and ignored by the composition's linked-model pass. */
+            CompReplayBridge.setVirtualEnabled(this.film, true);
+            this.refreshFilmEntities();
+
+            this.replayIdsBeforeEdit.clear();
+
+            for (Replay filmReplay : this.film.replays.getList())
+            {
+                this.replayIdsBeforeEdit.add(filmReplay.getId());
+            }
+
             try
             {
                 /* The replay panel borrows the dashboard's single film panel, its controller,
                  * keyframe editor and undo history. appear() is what performs that binding. */
                 this.replayWorkspace.appear();
                 this.replayWorkspace.seekSeconds(this.time);
+
+                /* Select the replay behind the comp layer the user came from. Without this the
+                 * editor opens on the film's first replay and the model just added looks absent
+                 * even though its row exists in the list. */
+                Replay selectedReplay = CompReplayBridge.find(this.film, this.selectedLayer);
+
+                if (selectedReplay != null)
+                {
+                    this.replayWorkspace.selectReplay(selectedReplay);
+
+                    /* The linked actor can be outside the camera framing the editor inherited
+                     * from the previously selected film replay. Frame the world once on entry so
+                     * the model just added in the compositor is actually on screen, not a gizmo
+                     * arc at the edge. */
+                    this.replayWorkspace.frameAllFromHost();
+                }
             }
             catch (RuntimeException e)
             {
@@ -13803,7 +13852,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.beginPageMotion(this.workspaceMotion, "mode:replay");
             this.applyLayout();
             this.updateToolbarLabels();
-            this.setStatus("回放编辑：BBS 原版轨道 / 原版 gizmo / bbsae 虚拟世界预览");
+            this.setStatus("虚拟回放编辑：仅显示 bbsae 模型；BBS 原版轨道 / 原生 gizmo / 虚拟世界预览");
         }
         else
         {
@@ -13829,6 +13878,15 @@ public class UICompositorPanel extends UIDashboardPanel
 
             this.restoreReplayLayers();
             this.applyModelFocus(this.selectedLayer);
+
+            /* Forms chosen in the replay editor are part of the same actor record; copy them back
+             * so the layer library, thumbnails and the unlinked fallback agree with the editor. */
+            CompReplayBridge.syncLayersFromReplays(this.film, this.doc);
+            this.importNewReplaysFromEditor();
+            CompReplayBridge.setVirtualEnabled(this.film, false);
+            this.refreshLayers();
+            this.refreshInspector();
+
             this.replayViewBar.setVisible(false);
             this.beginPageMotion(this.workspaceMotion, "mode:composite");
             this.applyLayout();
@@ -15599,6 +15657,202 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshInspector();
         this.refreshSheets();
         this.save();
+    }
+
+    /**
+     * Debug-only: creates an independent bbsae replay model in the composition, then switches to
+     * the replay workspace. This is the exact user flow "add a replay in the compositor → open the
+     * replay editor"; it exists so the link can be verified without a real mouse/keyboard.
+     */
+    public void debugBridgeCompReplay()
+    {
+        if (this.doc == null || this.film == null)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.warn("Bridge debug: no film/composition bound (film={}, doc={})",
+                this.film, this.doc);
+
+            return;
+        }
+
+        if (this.workspaceMode == WORKSPACE_REPLAY)
+        {
+            this.switchWorkspace(WORKSPACE_COMPOSITE);
+        }
+
+        this.addLayer("replay");
+
+        CompLayer layer = this.getSelectedLayer();
+
+        if (layer == null || !layer.isEntityLayer())
+        {
+            return;
+        }
+
+        mchorse.bbs_mod.forms.forms.MobForm form = new mchorse.bbs_mod.forms.forms.MobForm();
+
+        form.name.set("bridge chicken");
+        form.mobID.set("minecraft:chicken");
+        layer.setModelForm(form);
+        layer.independent = true;
+        layer.threeD = true;
+        layer.name = "合成器回放（桥接）";
+        layer.width = 300F;
+        layer.height = 300F;
+        layer.scaleX = 3F;
+        layer.scaleY = 3F;
+        layer.scaleZ = 3F;
+        layer.x = this.doc.width / 2F;
+        layer.y = this.doc.height / 2F;
+        layer.z = 0F;
+
+        Replay linked = CompReplayBridge.ensure(this.film, this.doc, layer);
+
+        if (Boolean.getBoolean("bbsae.debugBridgeComposite"))
+        {
+            for (CompLayer other : this.doc.layers)
+            {
+                if (other != null && other != layer && other.independent)
+                {
+                    other.visible = false;
+                }
+            }
+        }
+
+        this.selectLayer(layer);
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.save();
+
+        this.switchWorkspace(WORKSPACE_REPLAY);
+
+        if (linked != null)
+        {
+            this.replayWorkspace.selectReplay(linked);
+        }
+
+        dev.bbsae.BbsAeAddon.LOGGER.info("Bridge debug: layer={} replay={} filmReplays={} virtual={} label='{}'",
+            layer.id, linked == null ? "-" : linked.getId(), this.film.replays.getList().size(),
+            CompReplayBridge.isVirtual(linked), linked == null ? "" : linked.label.get());
+
+        if (Boolean.getBoolean("bbsae.debugBridgeComposite") && linked != null)
+        {
+            /* Verification of the second half of the bridge: a keyframe written on the virtual
+             * replay must move the model in the composition, without any layer-channel copy. */
+            linked.keyframes.x.insert(0F, 2D);
+            this.switchWorkspace(WORKSPACE_COMPOSITE);
+            this.setStatus("桥接验证：虚拟回放的 x=2 关键帧应把合成画面里的模型右移 2 格");
+        }
+    }
+
+    /**
+     * Rebuilds the film controller's actor entities after the replay list changed.
+     *
+     * <p>{@link CompReplayBridge} can add a {@code Replay} while the compositor is the visible
+     * dashboard panel. The BBS runner's entity map was built for the previous replay list, so
+     * without this the linked-model pass falls back to the static layer form until the user
+     * reopens the film editor. {@code createEntities()} is the original controller entry point and
+     * repopulates both the editor controller and the runner context.</p>
+     */
+    private void refreshFilmEntities()
+    {
+        if (this.filmPanel == null || this.filmPanel.getController() == null)
+        {
+            return;
+        }
+
+        try
+        {
+            this.filmPanel.getController().createEntities();
+        }
+        catch (RuntimeException e)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.warn("Could not rebuild film entities after replay linking", e);
+        }
+    }
+
+    /**
+     * Imports replays added while the replay workspace was open.
+     *
+     * <p>The comp→replay direction is handled by {@link CompReplayBridge#ensureAll}; this is the
+     * reverse: a replay added from the replay editor's own list gets a linked bbsae layer in the
+     * composition, so returning to the compositor shows it instead of silently dropping it. Only
+     * replays that appeared during this editor visit are imported — opening a film with existing
+     * replays must not flood the compositor with layers for actors the user never added here.</p>
+     */
+    private int importNewReplaysFromEditor()
+    {
+        if (this.film == null || this.doc == null || this.replayIdsBeforeEdit.isEmpty())
+        {
+            return 0;
+        }
+
+        java.util.Set<String> linked = new java.util.HashSet<>();
+
+        for (CompLayer layer : this.doc.layers)
+        {
+            if (layer != null && layer.hasLinkedReplay())
+            {
+                linked.add(layer.replayId);
+            }
+        }
+
+        int imported = 0;
+        CompLayer last = null;
+
+        for (Replay replay : this.film.replays.getList())
+        {
+            if (this.replayIdsBeforeEdit.contains(replay.getId()) || linked.contains(replay.getId()))
+            {
+                continue;
+            }
+
+            CompReplayBridge.markVirtual(replay);
+            CompLayer layer = new CompLayer("replay", CompReplayBridge.displayName(replay), "replay");
+
+            layer.independent = true;
+            layer.threeD = true;
+            layer.width = 240F;
+            layer.height = 240F;
+            layer.scaleX = 2F;
+            layer.scaleY = 2F;
+            layer.scaleZ = 2F;
+            layer.x = this.doc.width / 2F;
+            layer.y = this.doc.height / 2F;
+            layer.z = 0F;
+            layer.in = 0F;
+            layer.out = this.doc.duration;
+            layer.replayId = replay.getId();
+            layer.replayAnchorX = ((Number) replay.keyframes.x.interpolate(0F)).floatValue();
+            layer.replayAnchorY = ((Number) replay.keyframes.y.interpolate(0F)).floatValue();
+            layer.replayAnchorZ = ((Number) replay.keyframes.z.interpolate(0F)).floatValue();
+
+            if (replay.form.get() != null)
+            {
+                layer.setModelForm(FormUtils.copy(replay.form.get()));
+            }
+
+            this.doc.addLayer(layer);
+            linked.add(replay.getId());
+            last = layer;
+            imported += 1;
+        }
+
+        if (imported > 0)
+        {
+            if (last != null)
+            {
+                this.selectLayer(last);
+            }
+
+            this.refreshLayers();
+            this.refreshInspector();
+            this.refreshSheets();
+            this.save();
+            this.setStatus("已把回放编辑器中新增的 " + imported + " 个回放同步到合成器");
+        }
+
+        return imported;
     }
 
     /**
@@ -18752,6 +19006,12 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.scaleZ = 2F;
             this.selectLayer(layer);
             this.applyModelFocus(layer);
+
+            /* The comp actor and the replay editor must be the same record. Link immediately,
+             * before the model palette returns: an empty model still deserves a replay slot, and
+             * the palette callback will fill its form. */
+            CompReplayBridge.ensure(this.film, this.doc, layer);
+
             this.chooseModel(layer);
         }
     }
@@ -18812,6 +19072,11 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.setModelForm(FormUtils.copy(form));
             layer.width = Math.max(200F, Math.min(800F, layer.width));
             layer.height = Math.max(200F, Math.min(800F, layer.height));
+
+            Replay linked = CompReplayBridge.ensure(this.film, this.doc, layer);
+            CompReplayBridge.syncFormToReplay(layer, linked);
+            this.refreshFilmEntities();
+
             this.selectLayer(layer);
             this.applyModelFocus(layer);
             this.refreshInspector();
@@ -18838,6 +19103,11 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.beginAction("选择回放模型");
             layer.setModelForm(form == null ? null : FormUtils.copy(form));
+
+            Replay linked = CompReplayBridge.ensure(this.film, this.doc, layer);
+            CompReplayBridge.syncFormToReplay(layer, linked);
+            this.refreshFilmEntities();
+
             this.refreshInspector();
             this.save();
 

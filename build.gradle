@@ -90,6 +90,9 @@ loom {
             vmArg "-Dbbsae.debugShotEachView=" + (project.findProperty("bbsaeShotEachView") ?: "false")
             vmArg "-Dbbsae.debugShotPrefix=" + (project.findProperty("bbsaeShotPrefix") ?: "round31-")
             vmArg "-Dbbsae.debugReplayComp=" + (project.findProperty("bbsaeReplayComp") ?: "false")
+            vmArg "-Dbbsae.debugBridgeCompReplay=" + (project.findProperty("bbsaeBridgeCompReplay") ?: "false")
+            vmArg "-Dbbsae.debugBridgeComposite=" + (project.findProperty("bbsaeBridgeComposite") ?: "false")
+            vmArg "-Dbbsae.debugReplayBridge=" + (project.findProperty("bbsaeDebugReplayBridge") ?: "false")
             vmArg "-Dbbsae.replayInteractionScript.disable=" + (project.findProperty("bbsaeReplayScriptOff") ?: "false")
             /* Font verification sheet (see BbsAeClient.saveFontSheet):
              *   ./gradlew runClientView -PbbsaeFontShot=fontsheet -PbbsaeFontShotFont=timesbd.ttf

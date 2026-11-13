@@ -1,7 +1,7 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix37**：回放编辑恢复 BBS 原版轨道 / 原生 gizmo / I·K 打帧；3D 相机世界显示
-> bbsae 实体回放；2D/3D 摄像机运动路径恢复；摄像机拖拽改为绝对轨道，不再乱转。详见
+> **0.99-hotfix38**：合成器回放与回放编辑器已打通；回放编辑器只显示 bbsae 虚拟世界回放，
+> 不显示 BBS 影片里的真实世界回放，也不会把虚拟模型画进真实世界。详见
 > [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">

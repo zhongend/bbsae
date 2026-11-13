@@ -1,5 +1,43 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix38 — 2026-11-13
+
+打通 bbsae 合成器回放与回放编辑器，并把回放编辑器隔离为**只显示虚拟世界回放**。
+
+### 合成器 ↔ 回放编辑器
+
+- `CompLayer` 新增 `replayId` / `replayAnchor*`；新增 `CompReplayBridge` 为每个独立 bbsae
+  回放模型建立唯一、稳定的 BBS `Replay` 链接。
+- 「＋模型」、模型库换模型、从合成器切到回放时都会自动 ensure 链接；因此合成器添加的回放
+  会出现在回放编辑器列表，不再提示“没有检测到回放”。
+- 切到回放时自动选中当前模型对应的 Replay 并框选全部；从回放返回时把编辑器里改过的 form
+  同步回 CompLayer。
+- 回放编辑器新增的回放（如果通过原版入口创建）在返回合成器时会补成 linked CompLayer。
+
+### 回放编辑器只显示虚拟世界
+
+- 虚拟回放 label 带零宽标记；回放列表面板用原版 `UIReplayList` 的自带文本过滤只保留虚拟回放，
+  BBS 影片里的真实世界回放（donkey 等）不再出现在列表。
+- `ReplayEditSession` 增加 replay filter：模型 pass、拾取、frameAll、placeableCount 全部只处理
+  虚拟回放；真实回放不会被画进 bbsae 的虚拟预览。
+- 原版列表的搜索/“+”在 bbsae 回放工作区禁用（虚拟回放从合成器「＋模型」创建）。
+
+### 不污染真实世界
+
+- 虚拟回放默认 `enabled=false`，BBS world pass 不会把 bbsae 模型画进真实世界；进入 bbsae
+  回放编辑器时临时启用，退出后关闭。
+- 合成器 linked-model pass 直接使用虚拟 Replay 的 keyframes/properties 渲染；没有 controller
+  实体时用私有 `StubEntity` 按 keyframes 摆姿势，因此真实世界与合成器各取所需。
+
+### 验证
+
+- 真机 flow：合成器添加独立 chicken 回放 → 回放编辑器日志
+  `Bridge debug ... virtual=true`，左侧只有虚拟回放，无真实影片回放。
+- 合成器侧验证：虚拟回放 x 关键帧驱动 linked-model pass。
+- 全量测试：**152 套件 / 951 项测试 / 0 failures / 0 errors / 1 skipped**。
+- 本地候选包：`bbsae-0.99-hotfix38.jar`（3,892,486 bytes，SHA-256
+  `18B2FB31184DB0DF84C4A26AE1A35731E3D5D01D7E32C7556EE8E5337EF8BF97`）。
+
 ## 0.99-hotfix37 — 2026-11-13
 
 回放编辑回归 BBS 原版操作逻辑，并修复相机世界、运动路径与相机拖拽。

@@ -13,6 +13,7 @@ import mchorse.bbs_mod.film.FilmControllerContext;
 import mchorse.bbs_mod.film.FilmEntityRenderer;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.FormRenderLast;
+import mchorse.bbs_mod.forms.FormUtils;
 import mchorse.bbs_mod.forms.entities.IEntity;
 import mchorse.bbs_mod.forms.entities.StubEntity;
 import mchorse.bbs_mod.forms.forms.Form;
@@ -100,6 +101,21 @@ public final class ReplayActorPass
         if (layer == null || context == null || !layer.isEntityLayer())
         {
             return null;
+        }
+
+        /* A bbsae replay added in the compositor is linked to a real BBS replay. Render that
+         * replay so the replay editor's K-frames, pose, form properties and model library are
+         * the same data the composition sees. Only an unlinked/legacy layer falls back to the
+         * standalone layer form below. */
+        if (layer.hasLinkedReplay())
+        {
+            GlFramebuffer linked = renderLinkedModel(layer, context, batcher, view, projection,
+                targetWidth, targetHeight);
+
+            if (linked != null)
+            {
+                return linked;
+            }
         }
 
         Form form = layer.modelForm();
@@ -210,6 +226,220 @@ public final class ReplayActorPass
             {
                 dev.bbsae.BbsAeAddon.LOGGER.info("bbsae model: draw call {} form={} at {}x{}",
                     layer.id, form.getClass().getSimpleName(), width, height);
+            }
+        }
+        catch (RuntimeException e)
+        {
+            logFailure(e);
+            releaseTarget();
+
+            return null;
+        }
+        finally
+        {
+            ReplayEntityMask.setCompositeActorPass(false);
+            FormRenderLast.restore(queued);
+
+            RenderSystem.setProjectionMatrix(previousProjection, VertexSorter.BY_Z);
+            RenderSystem.setInverseViewRotationMatrix(previousInverse);
+            modelStack.pop();
+            RenderSystem.applyModelViewMatrix();
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+
+            GlStateManager._depthMask(true);
+            GlStateManager._depthFunc(GL11.GL_LEQUAL);
+            GlStateManager._disableDepthTest();
+            BufferRenderer.resetCurrentVertexBuffer();
+        }
+
+        return buffer;
+    }
+
+    /**
+     * Draws the film replay a bbsae model layer is linked to, through the same composition/free
+     * camera as the layer itself.
+     *
+     * <p>This is the second half of the comp↔replay bridge: {@code CompReplayBridge} makes the
+     * replay the shared record, and this pass renders that record instead of the layer's frozen
+     * {@code formData}. A K-frame written by the replay editor is therefore visible in the
+     * composition immediately, without copying keyframe channels between two timelines.</p>
+     *
+     * <p>The replay world position is anchored at {@code layer.replayAnchor*}; the layer's own
+     * transform remains the whole-actor placement. Moving the replay offsets the actor by blocks
+     * mapped through the composition's pixels-per-block, exactly like moving a film actor.</p>
+     *
+     * @return null when there is no live film/entity for the link, so the caller can fall back to
+     *         the layer form instead of hiding the model.
+     */
+    private static GlFramebuffer renderLinkedModel(CompLayer layer, CompRenderContext context,
+                                                    Batcher2D batcher, Matrix4f view, Matrix4f projection,
+                                                    int targetWidth, int targetHeight)
+    {
+        Film film = BbsPreviewBridge.film();
+        Map<String, IEntity> entities = BbsPreviewBridge.entities();
+
+        if (film == null)
+        {
+            return null;
+        }
+
+        Replay replay = film.replays.getById(layer.replayId);
+
+        if (replay == null)
+        {
+            return null;
+        }
+
+        MinecraftClient client = MinecraftClient.getInstance();
+
+        if (client == null || client.world == null || client.getBufferBuilders() == null)
+        {
+            return null;
+        }
+
+        IEntity entity = entities == null ? null : entities.get(replay.getId());
+
+        if (entity == null)
+        {
+            /* A virtual replay is disabled in the real film outside the replay editor, so the
+             * controller deliberately has no entity for it (BaseFilmController.createEntities
+             * skips disabled replays). The composition still needs to draw it: build a private
+             * stub and pose it from the replay's own keyframes. This is also what keeps bbsae's
+             * actors out of the live world while their animation stays live in the comp. */
+            Form replayForm = replay.form.get();
+
+            if (replayForm == null)
+            {
+                replayForm = layer.modelForm();
+            }
+
+            if (replayForm == null)
+            {
+                return null;
+            }
+
+            StubEntity stub = new StubEntity(client.world);
+
+            stub.setForm(FormUtils.copy(replayForm));
+            entities = java.util.Collections.<String, IEntity>singletonMap("bbsae_linked", stub);
+            entity = stub;
+        }
+
+        if (entity.getForm() == null)
+        {
+            return null;
+        }
+
+        int width = Math.max(1, targetWidth);
+
+        int height = Math.max(1, targetHeight);
+
+        if (context.project != null && context.project.settings != null)
+        {
+            float quality = Math.max(0.25F, Math.min(1F, context.project.settings.modelRenderScale));
+
+            width = Math.max(1, Math.round(width * quality));
+            height = Math.max(1, Math.round(height * quality));
+        }
+
+        GlFramebuffer buffer = modelTarget(layer, width, height);
+
+        if (buffer == null)
+        {
+            return null;
+        }
+
+        float pixelsPerBlock = pixelsPerBlock(context);
+        Matrix4f mapping = new Matrix4f(CompScene.world(context, layer))
+            .scale(pixelsPerBlock, -pixelsPerBlock, pixelsPerBlock)
+            .translate(-layer.replayAnchorX, -layer.replayAnchorY, -layer.replayAnchorZ);
+
+        if (!layer.hasScalarChannel("scaleZ") && layer.scaleZ == 1F && layer.scaleX != 1F)
+        {
+            mapping.scale(1F, 1F, layer.scaleX);
+        }
+
+        Matrix4f modelView = view == null ? mapping : new Matrix4f(view).mul(mapping);
+        Matrix4f targetProjection = projection == null
+            ? GlStateGuard.ortho(context.width, context.height)
+            : projection;
+
+        float playhead = context.time * ReplayTime.TICKS_PER_SECOND;
+        int tick = (int) Math.floor(playhead);
+        float transition = playhead - tick;
+        float at = replay.getTick(tick) + transition;
+
+        try
+        {
+            replay.keyframes.apply(at, entity);
+            entity.setPrevX(entity.getX());
+            entity.setPrevY(entity.getY());
+            entity.setPrevZ(entity.getZ());
+            entity.setPrevYaw(entity.getYaw());
+            entity.setPrevHeadYaw(entity.getHeadYaw());
+            entity.setPrevBodyYaw(entity.getBodyYaw());
+            entity.setPrevPitch(entity.getPitch());
+
+            if (entity.getForm() != null)
+            {
+                replay.properties.applyProperties(entity.getForm(), at);
+            }
+
+            mchorse.bbs_mod.forms.renderers.utils.RenderFrame.invalidate();
+        }
+        catch (RuntimeException e)
+        {
+            logFailure(e);
+
+            return null;
+        }
+
+        MatrixStack modelStack = RenderSystem.getModelViewStack();
+        Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+        Matrix3f previousInverse = new Matrix3f(RenderSystem.getInverseViewRotationMatrix());
+        boolean queued = FormRenderLast.suspend();
+
+        ReplayEntityMask.setCompositeActorPass(true);
+
+        try (GlStateGuard guard = new GlStateGuard())
+        {
+            batcher.flush();
+            buffer.begin(0x00000000);
+
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL11.glDepthFunc(GL11.GL_LEQUAL);
+            GL11.glDepthMask(true);
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            GL11.glDisable(GL11.GL_CULL_FACE);
+
+            modelStack.push();
+            modelStack.peek().getPositionMatrix().set(modelView);
+            RenderSystem.applyModelViewMatrix();
+            RenderSystem.setProjectionMatrix(targetProjection, VertexSorter.BY_Z);
+            RenderSystem.setInverseViewRotationMatrix(new Matrix3f(modelView).invert());
+
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+            RenderSystem.setShaderTexture(2, ReplayModelPass.whiteLightmapId());
+            RenderSystem.setShaderLights(new org.joml.Vector3f(0.2F, -1F, 0.3F),
+                new org.joml.Vector3f(-0.2F, 1F, -0.3F));
+
+            MatrixStack stack = new MatrixStack();
+            VertexConsumerProvider consumers = client.getBufferBuilders().getEntityVertexConsumers();
+            Camera synthetic = new SyntheticCamera();
+            FilmControllerContext actor = FilmControllerContext.instance
+                .setup(entities, entity, replay, synthetic, stack, consumers, transition)
+                .shadow(context.project != null && context.project.settings != null
+                    && context.project.settings.modelShadows, 0F)
+                .nameTag("")
+                .relative(false);
+
+            FilmEntityRenderer.renderEntity(actor);
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+
+            if (Boolean.getBoolean("bbsae.debugModelLog"))
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.info("bbsae linked model: layer={} replay={} tick={} at {}x{}",
+                    layer.id, replay.getId(), String.format(java.util.Locale.ROOT, "%.2f", at), width, height);
             }
         }
         catch (RuntimeException e)

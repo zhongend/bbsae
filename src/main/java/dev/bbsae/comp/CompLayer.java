@@ -220,6 +220,28 @@ public class CompLayer
      */
     public boolean independent = false;
 
+    /**
+     * Stable BBS film replay id this bbsae model is linked to.
+     *
+     * <p>An independent bbsae model is a view of a real BBS replay: the replay editor owns the
+     * track data and the compositor renders the replay actor through its composition camera. The
+     * id is persisted with the layer, so reopening a project or switching workspaces finds the
+     * same replay. Empty means "not linked yet" and the legacy layer-form fallback is used.</p>
+     */
+    public String replayId = "";
+
+    /**
+     * World-space origin of the linked replay inside the layer.
+     *
+     * <p>The replay actor's world position is mapped to composition pixels by
+     * {@code pixelsPerBlock}; subtracting this anchor makes the actor start at the layer's own
+     * position instead of the film's world origin. Moving the replay then offsets the model by
+     * the same number of blocks in composition space.</p>
+     */
+    public float replayAnchorX = 0F;
+    public float replayAnchorY = 0F;
+    public float replayAnchorZ = 0F;
+
     private transient Form modelForm;
     private transient String modelFormSource;
 
@@ -2087,6 +2109,12 @@ public class CompLayer
     public boolean hasModelForm()
     {
         return this.formData != null && !this.formData.isBlank();
+    }
+
+    /** True when this independent model is a view of a BBS film replay. */
+    public boolean hasLinkedReplay()
+    {
+        return this.replayId != null && !this.replayId.isBlank();
     }
 
     /**

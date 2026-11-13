@@ -131,7 +131,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         int replays = this.session.replayCount();
         int placeable = this.session.placeableCount();
 
-        context.batcher.textCard("实体回放 · 3D 空间", x, y);
+        context.batcher.textCard("bbsae 虚拟回放 · 3D 空间", x, y);
 
         String selection = this.session.replay() == null
             ? "未选择回放"

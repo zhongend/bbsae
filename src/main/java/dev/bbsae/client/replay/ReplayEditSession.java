@@ -57,6 +57,19 @@ public final class ReplayEditSession
     private int visibleCount;
     private int culledCount;
     private boolean cullActive;
+    /** Optional user-facing filter (the replay editor only shows virtual-world replays). */
+    private java.util.function.Predicate<Replay> replayFilter;
+
+    public void setReplayFilter(java.util.function.Predicate<Replay> filter)
+    {
+        this.replayFilter = filter;
+        this.visible = new boolean[0];
+    }
+
+    public boolean isAllowed(Replay replay)
+    {
+        return this.replayFilter == null || this.replayFilter.test(replay);
+    }
 
     public ReplayEditSession(UIFilmPanel filmPanel, Film film, Replay replay)
     {
@@ -184,6 +197,7 @@ public final class ReplayEditSession
         if (!this.cullActive)
         {
             this.visible = ReplayCulling.allVisible(count);
+            this.applyReplayFilter(replays);
 
             return;
         }
@@ -202,8 +216,30 @@ public final class ReplayEditSession
 
         this.visible = ReplayCulling.visible(viewProjection, positions,
             ReplayCalibration.cullRadius(), this.replayIndex(this.replay));
+        this.applyReplayFilter(replays);
+    }
+
+    /** Hides replays excluded by the editor's virtual-world filter from every 3D pass. */
+    private void applyReplayFilter(List<Replay> replays)
+    {
+        if (this.replayFilter == null)
+        {
+            this.visibleCount = ReplayCulling.countVisible(this.visible);
+            this.culledCount = replays.size() - this.visibleCount;
+
+            return;
+        }
+
+        for (int i = 0; i < this.visible.length && i < replays.size(); i++)
+        {
+            if (!this.replayFilter.test(replays.get(i)))
+            {
+                this.visible[i] = false;
+            }
+        }
+
         this.visibleCount = ReplayCulling.countVisible(this.visible);
-        this.culledCount = count - this.visibleCount;
+        this.culledCount = replays.size() - this.visibleCount;
     }
 
     /** True when the replay at the list index should be processed this frame (defaults to true). */
@@ -219,7 +255,22 @@ public final class ReplayEditSession
 
     public int replayCount()
     {
-        return this.film.replays.getList().size();
+        if (this.replayFilter == null)
+        {
+            return this.film.replays.getList().size();
+        }
+
+        int count = 0;
+
+        for (Replay replay : this.film.replays.getList())
+        {
+            if (this.isAllowed(replay))
+            {
+                count += 1;
+            }
+        }
+
+        return count;
     }
 
     /** Enabled replays that have a live entity with a form — what the 3D pass can draw at all. */
@@ -236,7 +287,8 @@ public final class ReplayEditSession
 
         for (Replay candidate : this.film.replays.getList())
         {
-            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get())
+                || !this.isAllowed(candidate))
             {
                 continue;
             }
@@ -467,7 +519,8 @@ public final class ReplayEditSession
 
         for (Replay candidate : this.film.replays.getList())
         {
-            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get())
+                || !this.isAllowed(candidate))
             {
                 continue;
             }
@@ -563,7 +616,8 @@ public final class ReplayEditSession
 
         for (Replay candidate : this.film.replays.getList())
         {
-            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+            if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get())
+                || !this.isAllowed(candidate))
             {
                 continue;
             }
@@ -580,7 +634,8 @@ public final class ReplayEditSession
         {
             for (Replay candidate : this.film.replays.getList())
             {
-                if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get()))
+                if (candidate == null || !Boolean.TRUE.equals(candidate.enabled.get())
+                    || !this.isAllowed(candidate))
                 {
                     continue;
                 }

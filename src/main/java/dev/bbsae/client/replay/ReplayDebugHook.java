@@ -232,6 +232,13 @@ public final class ReplayDebugHook
             host.debugReplayEntityLayer3D();
         }
 
+        /* Optional comp→replay bridge audit: add a bbsae model in the composition and switch to
+         * the replay editor. Test-only; enabled by an explicit property. */
+        if (Boolean.getBoolean("bbsae.debugBridgeCompReplay") && BbsAeClient.compositorPanel() != null)
+        {
+            BbsAeClient.compositorPanel().debugBridgeCompReplay();
+        }
+
         BbsAeAddon.LOGGER.info("Replay debug hook: opened film='{}' replays={} panel={}",
             film.getId(), film.replays.getList().size(), panel != null);
 
