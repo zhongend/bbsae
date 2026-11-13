@@ -1084,6 +1084,10 @@ public class UICompSettings extends UIElement
             prefs.cameraGizmos = value;
             CompPrefs.save();
         }), 170, "2D/3D 摄像机图标、目标十字与视锥"));
+        this.add(this.row("看穿摄像机", this.toggle("", this.panel.isCameraPreviewMode(), (value) ->
+        {
+            this.panel.setCameraPreviewMode(value);
+        }), 170, "预览使用最终摄像机画面；数字键盘 0 也可以切换"));
         this.add(this.row("安全区与参考线", this.toggle("", prefs.guides, (value) ->
         {
             prefs.guides = value;
@@ -1094,6 +1098,11 @@ public class UICompSettings extends UIElement
             prefs.previewHints = value;
             CompPrefs.save();
         }), 170, "预览里的模式/摄像机 HUD、分辨率条和看穿提示；关闭后画面更干净"));
+        this.add(this.row("上下文操作提示", this.toggle("", prefs.contextHints, (value) ->
+        {
+            prefs.contextHints = value;
+            CompPrefs.save();
+        }), 170, "多选、预合成、空状态等场景的操作提示；关闭后少打扰"));
         this.add(this.row("关闭 BBS 洋葱皮残影", this.toggle("", prefs.suppressOnionSkin, (value) ->
         {
             prefs.suppressOnionSkin = value;

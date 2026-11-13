@@ -133,6 +133,9 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIReplayModePanel replayWorkspace;
     private final UiPageTransition workspaceMotion = new UiPageTransition(0.22F, 6F);
     private int workspaceMode;
+    /** Layer visibility saved on entry to bbsae replay mode, restored on exit. */
+    private final java.util.Map<String, Boolean> replayVisibility = new java.util.LinkedHashMap<>();
+    private boolean replayIsolated;
     private static final int MODE_BAR_H = 22;
     private static final int WORKSPACE_COMPOSITE = 0;
     private static final int WORKSPACE_REPLAY = 1;
@@ -557,16 +560,16 @@ public class UICompositorPanel extends UIDashboardPanel
         this.modeTabs.active(() -> this.workspaceMode);
         this.modeTabs.onSelect((index) -> this.switchWorkspace(index == 1 ? WORKSPACE_REPLAY : WORKSPACE_COMPOSITE));
 
-        this.replayPlayButton = CompUi.flat("播放", "回放：播放 / 暂停", () -> this.replayWorkspace.togglePlaybackFromHost());
+        this.replayPlayButton = CompUi.flat("播放", "回放：播放 / 暂停", this::toggleReplayPlayback);
         this.replayPlayButton.relative(this.modeBar).x(1F, -184).y(2).w(52).h(18);
         this.replayTimecode = new UILabel(IKey.constant("00:00:00:00"));
         this.replayTimecode.color(0xFFD8DEE9, false);
         this.replayTimecode.labelAnchor(1F, 0.5F);
         this.replayTimecode.relative(this.modeBar).x(1F, -262).y(2).w(70).h(18);
-        this.replayPrev = CompUi.iconButton(Icons.FRAME_PREV, "回放：上一帧", () -> this.replayWorkspace.stepFromHost(-1));
-        this.replayNext = CompUi.iconButton(Icons.FRAME_NEXT, "回放：下一帧", () -> this.replayWorkspace.stepFromHost(1));
-        this.replayAll = CompUi.iconButton(Icons.MAXIMIZE, "回放：框选全部模型", () -> this.replayWorkspace.frameAllFromHost());
-        this.replayModels = CompUi.iconButton(Icons.PLAYER, "回放：打开模型库", () -> this.replayWorkspace.openModelLibraryFromHost());
+        this.replayPrev = CompUi.iconButton(Icons.FRAME_PREV, "回放：上一帧", () -> this.stepFrame(-1));
+        this.replayNext = CompUi.iconButton(Icons.FRAME_NEXT, "回放：下一帧", () -> this.stepFrame(1));
+        this.replayAll = CompUi.iconButton(Icons.MAXIMIZE, "回放：选中第一个 bbsae 模型", this::selectFirstReplayModel);
+        this.replayModels = CompUi.iconButton(Icons.PLAYER, "回放：新建 bbsae 3D 模型", this::addIndependentReplay);
         this.replayOriginal = CompUi.iconButton(Icons.FILM, "回放：切到 BBS 原版回放编辑", () -> this.replayWorkspace.openOriginalEditorFromHost());
         this.replayPrev.relative(this.modeBar).x(1F, -128).y(2).w(18).h(18);
         this.replayNext.relative(this.modeBar).x(1F, -106).y(2).w(18).h(18);
@@ -5361,7 +5364,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.cameraViewButton.relative(this.preview).x(1F, -28).y(6).w(20).h(20);
         this.cameraViewButton.tooltip(IKey.constant("看穿摄像机（最终画面）/ 回到自由视图；数字键盘 0 同效"));
-        this.preview.add(this.cameraViewButton);
+        /* Camera look-through lives in Settings → Project now. The preview keeps only creation
+         * and 3D navigation; the mode switch is not an everyday button. */
+        this.cameraViewButton.setVisible(false);
 
         /* One-click 3D workspace: live Minecraft frame as the virtual stage, a real perspective
          * camera, a ground grid and the camera selected for navigation. */
@@ -6084,9 +6089,94 @@ public class UICompositorPanel extends UIDashboardPanel
         this.switchWorkspace(WORKSPACE_REPLAY);
     }
 
+    /** Replay transport now drives the bbsae composition playhead, not BBS' film cursor. */
+    private void toggleReplayPlayback()
+    {
+        this.togglePlay();
+    }
+
+    private void selectFirstReplayModel()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        for (CompLayer layer : this.doc.layers)
+        {
+            if (layer != null && layer.isEntityLayer() && layer.independent)
+            {
+                this.selectLayer(layer);
+                this.setStatus("已选中 bbsae 3D 模型：" + this.layerLabel(layer));
+
+                return;
+            }
+        }
+
+        this.setStatus("当前合成还没有 bbsae 3D 模型；点「＋模型」或左栏「回放」页新建");
+    }
+
     public void openCompositeWorkspace()
     {
         this.switchWorkspace(WORKSPACE_COMPOSITE);
+    }
+
+    /**
+     * Replay mode is an actor-editing view: keep the bbsae models, the authored text and the
+     * camera, and temporarily hide decorative composite planes/backdrops. This is both an
+     * intentional focus mode and the guarantee that the model being edited is never hidden under
+     * a card that was authored above it.
+     */
+    private void isolateReplayLayers()
+    {
+        if (this.replayIsolated || this.doc == null)
+        {
+            return;
+        }
+
+        this.replayVisibility.clear();
+
+        for (CompLayer layer : this.doc.layers)
+        {
+            if (layer == null)
+            {
+                continue;
+            }
+
+            this.replayVisibility.put(layer.id, layer.visible);
+
+            boolean keep = layer.independent || "camera".equals(layer.type) || "text".equals(layer.type);
+
+            layer.visible = keep;
+        }
+
+        this.replayIsolated = true;
+        this.refreshLayers();
+    }
+
+    private void restoreReplayLayers()
+    {
+        if (!this.replayIsolated)
+        {
+            return;
+        }
+
+        if (this.doc != null)
+        {
+            for (CompLayer layer : this.doc.layers)
+            {
+                Boolean visible = layer == null ? null : this.replayVisibility.get(layer.id);
+
+                if (visible != null)
+                {
+                    layer.visible = visible;
+                }
+            }
+        }
+
+        this.replayVisibility.clear();
+        this.replayIsolated = false;
+        this.refreshLayers();
     }
 
     public UIReplayModePanel replayWorkspacePanel()
@@ -9716,6 +9806,34 @@ public class UICompositorPanel extends UIDashboardPanel
                 break;
             }
 
+            case "bbsaemode":
+            {
+                this.addLayer("replay");
+
+                CompLayer actor = this.getSelectedLayer();
+
+                if (actor != null)
+                {
+                    mchorse.bbs_mod.forms.forms.MobForm form = new mchorse.bbs_mod.forms.forms.MobForm();
+
+                    actor.setModelForm(form);
+                    actor.independent = true;
+                    actor.threeD = true;
+                    actor.name = "bbsae 回放鸡";
+                    actor.x = this.doc.width / 2F;
+                    actor.y = this.doc.height / 2F;
+                    actor.scaleX = 3F;
+                    actor.scaleY = 3F;
+                    actor.scaleZ = 3F;
+                    actor.z = 300F;
+                    this.selectLayer(actor);
+                }
+
+                this.switchWorkspace(WORKSPACE_REPLAY);
+                this.setStatus("验证：bbsae 自己的回放模式（无 BBS 影片回放列表）");
+                break;
+            }
+
             case "actorlist":
             {
                 this.addLayer("replay");
@@ -11012,6 +11130,23 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.effectLibrary != null)
         {
             this.effectLibrary.refreshStatus();
+        }
+
+        /* Multi-selection is a different editing mode: show the layer page immediately, because
+         * precomp/merge/parent operations live there. The hint explains what the selection is for
+         * instead of only highlighting rows. */
+        if (this.selectedIds.size() > 1)
+        {
+            if (this.inspectorPage != PAGE_LAYER)
+            {
+                this.setInspectorPage(PAGE_LAYER);
+            }
+
+            if (CompPrefs.get().contextHints)
+            {
+                this.setStatus("已多选 " + this.selectedIds.size()
+                    + " 个图层 · 可预合成 / 合并 / 删除；检查器已切到「图层」");
+            }
         }
 
         this.refreshInspector();
@@ -12983,7 +13118,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.replayNext.setVisible(replay);
         this.replayAll.setVisible(replay);
         this.replayModels.setVisible(replay);
-        this.replayOriginal.setVisible(replay);
+        /* bbsae replay is its own workspace; the BBS film replay editor is not exposed here. */
+        this.replayOriginal.setVisible(false);
 
         /* The header's transport belongs to the composition. In replay mode it is hidden so there
          * is exactly one play button and one timecode on screen, both owned by the mode bar. */
@@ -12996,9 +13132,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (replay)
         {
-            this.replayPlayButton.label = IKey.constant(this.replayWorkspace.isPlayingFromHost() ? "暂停" : "播放");
+            this.replayPlayButton.label = IKey.constant(this.playing ? "暂停" : "播放");
 
-            int frames = Math.max(0, Math.round(this.replayWorkspace.playheadSeconds() * 20F));
+            int frames = Math.max(0, Math.round(this.time * 20F));
             int ff = frames % 20;
             int totalSeconds = frames / 20;
             int ss = totalSeconds % 60;
@@ -13019,10 +13155,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (mode == WORKSPACE_REPLAY)
         {
-            if (this.film == null || this.filmPanel == null)
+            if (this.doc == null)
             {
-                this.setStatus("没有打开的影片：先从 BBS 影片编辑器打开合成器，或点上方「回放」前先绑定影片");
-
+                this.setStatus("还没有打开合成，无法进入回放编辑");
                 return;
             }
 
@@ -13032,57 +13167,33 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.workspaceMode = WORKSPACE_REPLAY;
+            this.playing = false;
+            this.lastPlayNanos = 0L;
+            this.isolateReplayLayers();
 
-            try
-            {
-                this.replayWorkspace.appear();
-                this.replayWorkspace.seekSeconds(this.time);
-            }
-            catch (RuntimeException e)
-            {
-                /* A malformed film or a BBS panel that refuses to build must not take the whole
-                 * compositor down. Stay in the composition workspace and surface the reason. */
-                dev.bbsae.BbsAeAddon.LOGGER.error("Could not open the embedded replay workspace", e);
-                this.workspaceMode = WORKSPACE_COMPOSITE;
-                this.applyLayout();
-                this.setStatus("回放工作区打开失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
-
-                return;
-            }
-
+            /* The replay mode is a bbsae workspace: same preview, camera HUD, text layers and
+             * timeline, with the left column on its own bbsae replay list. It deliberately does
+             * not open BBS' film replay UI or require a real-world film. */
+            this.applyLeftPage(3, true);
+            this.selectFirstReplayModel();
+            this.updatePlayLabel();
             this.beginPageMotion(this.workspaceMotion, "mode:replay");
+            this.applyLayout();
+            this.updateToolbarLabels();
+            this.setStatus("bbsae 回放编辑：3D 模型只存在于合成相机，真实世界不可见");
         }
         else
         {
             this.workspaceMode = WORKSPACE_COMPOSITE;
-
-            if (this.replayWorkspace != null)
-            {
-                /* Keep the comp playhead where the replay editor left it. The replay panel owns
-                 * the film cursor while it is visible; without writing it back the timeline jumped
-                 * to the last comp time as soon as the user returned. */
-                this.time = Math.max(0F, Math.min(this.doc == null ? this.time : this.doc.duration,
-                    this.replayWorkspace.playheadSeconds()));
-
-                try
-                {
-                    this.replayWorkspace.disappear();
-                }
-                catch (RuntimeException e)
-                {
-                    dev.bbsae.BbsAeAddon.LOGGER.warn("Replay workspace failed to disappear cleanly", e);
-                }
-
-                this.invalidatePlayheadUi();
-                this.beginPageMotion(this.workspaceMotion, "mode:composite");
-            }
+            this.restoreReplayLayers();
+            this.beginPageMotion(this.workspaceMotion, "mode:composite");
+            this.applyLeftPage(0, true);
+            this.applyLayout();
+            this.updateToolbarLabels();
+            this.setStatus("已回到合成器");
         }
 
-        this.applyLayout();
-        this.updateToolbarLabels();
-        this.setStatus(this.workspaceMode == WORKSPACE_REPLAY
-            ? "回放编辑：上方「合成 / 回放」可随时切回合成器"
-            : "已回到合成器");
+        this.invalidatePlayheadUi();
     }
 
     private void invalidatePlayheadUi()
@@ -13099,11 +13210,6 @@ public class UICompositorPanel extends UIDashboardPanel
     public void update()
     {
         super.update();
-
-        if (this.workspaceMode == WORKSPACE_REPLAY && this.replayWorkspace != null)
-        {
-            this.replayWorkspace.update();
-        }
     }
 
     /** Dock mode: the dock owns the panel rectangles; the rest of the chrome is positioned here. */
@@ -13116,13 +13222,13 @@ public class UICompositorPanel extends UIDashboardPanel
         this.modeBar.relative(this).x(0).y(24).w(1F).h(MODE_BAR_H);
         this.status.relative(this).x(0).y(1F, -18).w(1F).h(16);
         this.dock.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
-        this.dock.setVisible(!this.renderView && !replay);
-        this.dock.setEnabled(!this.renderView && !replay);
+        this.dock.setVisible(!this.renderView);
+        this.dock.setEnabled(!this.renderView);
         this.renderPanel.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
-        this.renderPanel.setVisible(this.renderView && !replay);
+        this.renderPanel.setVisible(this.renderView);
         this.replayWorkspace.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
-        this.replayWorkspace.setVisible(replay);
-        this.replayWorkspace.setEnabled(replay);
+        this.replayWorkspace.setVisible(false);
+        this.replayWorkspace.setEnabled(false);
         this.layoutModeBar();
 
         /* super.resize() propagates the chrome rectangles; the dock's own flex pass runs in the
@@ -13168,30 +13274,30 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.modeBar.relative(this).x(0).y(24).w(1F).h(MODE_BAR_H);
         this.body.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
-        this.body.setVisible(!replay && !this.renderView);
-        this.body.setEnabled(!replay && !this.renderView);
+        this.body.setVisible(!this.renderView);
+        this.body.setEnabled(!this.renderView);
         boolean quick = this.quickPanel != null && this.quickPanel.isVisible();
         int quickWidth = quick ? CompUi.quickWidth(this.area.w, this.quickPanelWidth) : 0;
 
         this.timeline.relative(this).x(0).y(1F, -(this.timelinePanelHeight + 18))
             .w(1F, -quickWidth).h(this.timelinePanelHeight);
-        this.timeline.setVisible(!replay && !this.renderView);
-        this.timeline.setEnabled(!replay && !this.renderView);
+        this.timeline.setVisible(!this.renderView);
+        this.timeline.setEnabled(!this.renderView);
 
         if (quick)
         {
             this.quickPanel.relative(this).x(1F, -quickWidth).y(1F, -(this.timelinePanelHeight + 18))
                 .w(quickWidth).h(this.timelinePanelHeight);
-            this.quickPanel.setVisible(!replay && !this.renderView);
-            this.quickPanel.setEnabled(!replay && !this.renderView);
+            this.quickPanel.setVisible(!this.renderView);
+            this.quickPanel.setEnabled(!this.renderView);
         }
         this.renderPanel.relative(this).x(0).y(24 + MODE_BAR_H).w(1F)
             .h(this.renderView ? Math.max(1, usableHeight - 24 - 18) : bodyHeight);
-        this.renderPanel.setVisible(this.renderView && !replay);
+        this.renderPanel.setVisible(this.renderView);
         this.replayWorkspace.relative(this).x(0).y(24 + MODE_BAR_H).w(1F)
             .h(1F, -24 - MODE_BAR_H - 18);
-        this.replayWorkspace.setVisible(replay);
-        this.replayWorkspace.setEnabled(replay);
+        this.replayWorkspace.setVisible(false);
+        this.replayWorkspace.setEnabled(false);
         this.layoutModeBar();
 
         if (this.leftHandle != null)
@@ -13705,7 +13811,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private void applyPreviewRail(CompUi.PreviewRailLayout rail)
     {
         UIIcon[] icons = {
-            this.cameraViewButton, this.space3DButton, this.cameraToolButton, this.createCameraButton,
+            this.space3DButton, this.cameraToolButton, this.createCameraButton,
             this.cameraSettingsButton, this.penButton, this.replayModeButton
         };
 
@@ -15169,6 +15275,20 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /** Blender's numpad 0: look through the composition camera, or back to the free view. */
+    public boolean isCameraPreviewMode()
+    {
+        return this.cameraPreviewMode;
+    }
+
+    /** Settings entry for the look-through toggle (the preview button was removed). */
+    public void setCameraPreviewMode(boolean value)
+    {
+        if (value != this.cameraPreviewMode)
+        {
+            this.toggleViewportLookThrough();
+        }
+    }
+
     private void toggleViewportLookThrough()
     {
         if (this.doc != null && this.doc.activeCamera(this.time) == null)
@@ -17689,8 +17809,11 @@ public class UICompositorPanel extends UIDashboardPanel
             layer.independent = true;
             layer.threeD = true;
             layer.name = "回放模型";
-            layer.width = 400F;
-            layer.height = 400F;
+            layer.width = 240F;
+            layer.height = 240F;
+            layer.scaleX = 2F;
+            layer.scaleY = 2F;
+            layer.scaleZ = 2F;
             this.chooseModel(layer);
         }
     }
@@ -21476,15 +21599,6 @@ public class UICompositorPanel extends UIDashboardPanel
     @Override
     public void startRenderFrame(float tickDelta)
     {
-        if (this.workspaceMode == WORKSPACE_REPLAY)
-        {
-            /* The replay workspace owns its own 3D viewport; driving the film camera/compositor
-             * playhead here would fight its session cursor. */
-            this.lastPlayNanos = 0L;
-
-            return;
-        }
-
         if (!this.playing || this.doc == null || this.renderView)
         {
             this.lastPlayNanos = 0L;
@@ -21629,17 +21743,6 @@ public class UICompositorPanel extends UIDashboardPanel
 
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF0E1116);
         this.renderShellAtmosphere(context);
-
-        if (this.workspaceMode == WORKSPACE_REPLAY)
-        {
-            /* The replay workspace owns its own 3D viewport and timeline. Do not run the
-             * composition's prime/reconcile/precache/save paths while it is visible: they would
-             * rebuild the hidden timeline and advance the film camera behind the replay editor. */
-            this.layoutModeBar();
-            super.render(context);
-
-            return;
-        }
 
         this.primeTimeline();
         this.reconcileTimelinePage();

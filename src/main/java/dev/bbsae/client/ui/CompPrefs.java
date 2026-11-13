@@ -86,6 +86,8 @@ public final class CompPrefs
         public boolean guides = true;
         /** Preview HUD text (mode/pose/camera readouts and the resolution strip). */
         public boolean previewHints = true;
+        /** Contextual tips for multi-selection / precomp / empty states. */
+        public boolean contextHints = true;
         /** Keep BBS' editor onion skins off while the compositor is open: their ghost frames can
          * bleed into the camera preview and read as duplicated shapes/text. */
         public boolean suppressOnionSkin = true;

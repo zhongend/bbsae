@@ -1153,6 +1153,13 @@ public final class CompRenderer
             for (CompLayer layer : orderLayers(comp, context))
             {
                 /* Camera layers drive the view; they have no pixels of their own. */
+                /* Independent bbsae models are composited by the dedicated overlay pass after all
+                 * normal layers, so a 2D card/background can never hide the actor being edited. */
+                if (layer.independent)
+                {
+                    continue;
+                }
+
                 if (!layer.activeAt(time) || (layer.guide && exportDepth > 0)
                     || "null".equals(layer.type) || "camera".equals(layer.type))
                 {
@@ -1373,6 +1380,64 @@ public final class CompRenderer
                 }
             }
 
+            /* Final model overlay: the actor is drawn after every normal layer (including 2D cards
+             * and the world backdrop). This is the "I imported a model and can see it" contract;
+             * its own target still carries depth for self-occlusion. */
+            for (CompLayer layer : comp.layers)
+            {
+                if (layer == null || !layer.independent || !layer.activeAt(time) || !layer.visible
+                    || (solo && !layer.solo))
+                {
+                    continue;
+                }
+
+                Matrix4f model = CompScene.model(context, layer);
+                Matrix4f layerProjection = CompScene.projection(context, layer);
+                GlFramebuffer content = FboPool.acquire(context.renderWidth(), context.renderHeight());
+
+                content.begin();
+                BufferRenderer.resetCurrentVertexBuffer();
+
+                try
+                {
+                    LayerContentRenderer.draw(layer, context, batcher, model, layerProjection);
+                    batcher.flush();
+
+                    GlFramebuffer straight = PassRenderer.unpremultiply(content);
+
+                    if (straight != content)
+                    {
+                        FboPool.release(content);
+                        content = straight;
+                    }
+
+                    float opacity = opacityAt(layer, context);
+
+                    if (opacity > 0.0001F)
+                    {
+                        GlFramebuffer blended = PassRenderer.draw(content, accumulation, null,
+                            layer.blendMode, opacity, 0F, 0F, 0xFFFFFF);
+
+                        FboPool.release(content);
+                        FboPool.release(accumulation);
+                        accumulation = blended;
+                    }
+                    else
+                    {
+                        FboPool.release(content);
+                    }
+                }
+                catch (RuntimeException | Error e)
+                {
+                    if (!content.pooled)
+                    {
+                        FboPool.release(content);
+                    }
+
+                    throw e;
+                }
+            }
+
             batcher.flush();
             BufferRenderer.resetCurrentVertexBuffer();
             completed = true;
@@ -1480,7 +1545,28 @@ public final class CompRenderer
             start = i + 1;
         }
 
-        return order;
+        /* Independent bbsae replay models are the subject being edited, not just another plane in
+         * the stack. Draw them after regular 2D/3D layers so a card/text plane cannot hide the
+         * model the user just imported; their own transparent depth target still resolves
+         * self-occlusion. */
+        List<CompLayer> normal = new ArrayList<>(order.size());
+        List<CompLayer> models = new ArrayList<>();
+
+        for (CompLayer layer : order)
+        {
+            if (layer.independent)
+            {
+                models.add(layer);
+            }
+            else
+            {
+                normal.add(layer);
+            }
+        }
+
+        normal.addAll(models);
+
+        return normal;
     }
 
     private static void sortSegment(List<CompLayer> order, int start, int end, CompRenderContext context)
@@ -1488,8 +1574,19 @@ public final class CompRenderer
         /* Ascending depth = far first. CompScene caches the value for this frame, so the comparator
          * does a map lookup instead of rebuilding two matrices per comparison. The sort is stable,
          * so coplanar layers keep their stack order. */
-        order.subList(start, end).sort((a, b) -> Float.compare(
-            CompScene.planeDepth(context, a), CompScene.planeDepth(context, b)));
+        order.subList(start, end).sort((a, b) ->
+        {
+            int depth = Float.compare(CompScene.planeDepth(context, a), CompScene.planeDepth(context, b));
+
+            if (depth != 0)
+            {
+                return depth;
+            }
+
+            /* A coplanar bbsae replay model is the subject the user is editing; keep it above a
+             * decorative card/text plane with the same depth instead of letting stack order hide it. */
+            return Boolean.compare(a.independent, b.independent);
+        });
     }
 
     /**

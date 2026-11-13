@@ -18,7 +18,9 @@ import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
+import com.mojang.blaze3d.platform.GlStateManager;
 import org.joml.Matrix4f;
+import org.lwjgl.opengl.GL11;
 import org.joml.Quaternionf;
 
 import java.io.File;
@@ -403,6 +405,13 @@ final class LayerContentRenderer
     {
         MatrixStack stack = batcher.getContext().getMatrices();
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+        boolean depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+
+        /* The model is already depth-resolved inside its own target. Compositing it as a screen
+         * quad must not be rejected by the depth buffer a previous 3D card left behind — that was
+         * exactly why the actor disappeared as soon as other 3D layers were visible. */
+        GlStateManager._disableDepthTest();
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
 
         stack.push();
 
@@ -421,6 +430,12 @@ final class LayerContentRenderer
         {
             stack.pop();
             RenderSystem.setProjectionMatrix(previousProjection, com.mojang.blaze3d.systems.VertexSorter.BY_Z);
+
+            if (depth)
+            {
+                GlStateManager._enableDepthTest();
+                GL11.glEnable(GL11.GL_DEPTH_TEST);
+            }
         }
     }
 

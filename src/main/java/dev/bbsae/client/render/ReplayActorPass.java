@@ -90,6 +90,11 @@ public final class ReplayActorPass
 
         if (form == null)
         {
+            if (Boolean.getBoolean("bbsae.debugModelLog"))
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.info("bbsae model: layer {} has no form", layer.id);
+            }
+
             return null;
         }
 
@@ -97,6 +102,11 @@ public final class ReplayActorPass
 
         if (client == null || client.world == null || client.getBufferBuilders() == null)
         {
+            if (Boolean.getBoolean("bbsae.debugModelLog"))
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.info("bbsae model: missing client/world/builders");
+            }
+
             return null;
         }
 
@@ -111,7 +121,7 @@ public final class ReplayActorPass
             height = Math.max(1, Math.round(height * quality));
         }
 
-        GlFramebuffer buffer = target(width, height);
+        GlFramebuffer buffer = modelTarget(layer, width, height);
 
         if (buffer == null)
         {
@@ -173,6 +183,12 @@ public final class ReplayActorPass
 
             FilmEntityRenderer.renderEntity(actor);
             GL11.glEnable(GL11.GL_DEPTH_TEST);
+
+            if (Boolean.getBoolean("bbsae.debugModelLog"))
+            {
+                dev.bbsae.BbsAeAddon.LOGGER.info("bbsae model: draw call {} form={} at {}x{}",
+                    layer.id, form.getClass().getSimpleName(), width, height);
+            }
         }
         catch (RuntimeException e)
         {
@@ -219,6 +235,11 @@ public final class ReplayActorPass
     }
     private static GlFramebuffer target;
     private static int targetWidth;
+    /** One target per independent model layer: a shared target was cleared by the next bake. */
+    private static final java.util.Map<CompLayer, GlFramebuffer> MODEL_TARGETS =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    private static final java.util.Map<CompLayer, int[]> MODEL_TARGET_SIZES =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
     private static int targetHeight;
     private static long lastFailureLog;
     private static int suppressedFailures;
@@ -450,6 +471,40 @@ public final class ReplayActorPass
         mchorse.bbs_mod.forms.renderers.utils.RenderFrame.invalidate();
     }
 
+    private static GlFramebuffer modelTarget(CompLayer layer, int width, int height)
+    {
+        GlFramebuffer existing = MODEL_TARGETS.get(layer);
+        int[] size = MODEL_TARGET_SIZES.get(layer);
+
+        if (existing != null && size != null && size[0] == width && size[1] == height)
+        {
+            return existing;
+        }
+
+        if (existing != null)
+        {
+            existing.delete();
+            MODEL_TARGETS.remove(layer);
+            MODEL_TARGET_SIZES.remove(layer);
+        }
+
+        try
+        {
+            GlFramebuffer created = new GlFramebuffer(width, height, true);
+
+            MODEL_TARGETS.put(layer, created);
+            MODEL_TARGET_SIZES.put(layer, new int[] {width, height});
+
+            return created;
+        }
+        catch (RuntimeException e)
+        {
+            logFailure(e);
+
+            return null;
+        }
+    }
+
     private static GlFramebuffer target(int width, int height)
     {
         if (target != null && targetWidth == width && targetHeight == height)
@@ -490,6 +545,17 @@ public final class ReplayActorPass
     public static void release()
     {
         releaseTarget();
+
+        synchronized (MODEL_TARGETS)
+        {
+            for (GlFramebuffer framebuffer : MODEL_TARGETS.values())
+            {
+                framebuffer.delete();
+            }
+
+            MODEL_TARGETS.clear();
+            MODEL_TARGET_SIZES.clear();
+        }
     }
 
     private static void logFailure(RuntimeException e)

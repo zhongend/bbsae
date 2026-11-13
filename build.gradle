@@ -107,6 +107,7 @@ loom {
             vmArg "-Dbbsae.debugOnlyLayer=" + (project.findProperty("bbsaeOnlyLayer") ?: "")
             vmArg "-Dbbsae.debugCube2D=" + (project.findProperty("bbsaeCube2D") ?: "false")
             vmArg "-Dbbsae.debugFilmId=" + (project.findProperty("bbsaeFilmId") ?: "A2(MAIN)_")
+            vmArg "-Dbbsae.debugModelLog=" + (project.findProperty("bbsaeModelLog") ?: "false")
             vmArg "-Dbbsae.debugFilmTime=" + (project.findProperty("bbsaeFilmTime") ?: "2")
             vmArg "-Dbbsae.debugEntityStage=" + (project.findProperty("bbsaeEntityStage") ?: "false")
             vmArg "-Dbbsae.debugOnlyEntityLayer=" + (project.findProperty("bbsaeOnlyEntityLayer") ?: "false")

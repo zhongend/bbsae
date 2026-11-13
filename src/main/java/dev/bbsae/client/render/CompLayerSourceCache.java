@@ -97,6 +97,14 @@ public final class CompLayerSourceCache
             return null;
         }
 
+        /* Independent bbsae models are live 3D actors, not a cacheable 2D source raster. Baking
+         * them reused the shared actor target and could return an empty/overwritten texture when
+         * other layers were present. Draw them directly every frame. */
+        if (layer.independent)
+        {
+            return null;
+        }
+
         String key = cacheKey(context.project == null ? "" : context.project.id, context.comp.id, layer.id);
         Rect rect = bounds(layer, context);
         float scale = rasterScaleFor(rect.width, rect.height, rasterMaxEdge(context));
