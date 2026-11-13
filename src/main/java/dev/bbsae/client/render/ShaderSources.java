@@ -369,16 +369,24 @@ public final class ShaderSources
         {
             vec4 sum = vec4(0.0);
             float total = 0.0;
+            /* Tap count follows the radius instead of being fixed at 17. At radius 200 the old
+             * fixed kernel stepped 25 px and produced visible combing; that is what users read as
+             * "the blur stops working". The loop bound stays constant so this is valid GLSL 150,
+             * while the runtime break skips the unused taps. */
+            int taps = int(clamp(floor(Radius * 0.125), 8.0, 64.0));
 
-            for (int i = -8; i <= 8; i++)
+            for (int i = -64; i <= 64; i++)
             {
-                float fi = float(i);
-                float weight = Mode == 1 ? 1.0 : exp(-fi * fi / 30.0);
-                /* fi is the tap index; the kernel reach is Radius *composition* pixels, so the
-                 * offset has to be normalised by the tap count. Without the /8 a radius of 12
-                 * sampled up to 96 px, which made every blur/glow/shadow eight times too strong
-                 * and its halo eight times wider than the padding reserved for it. */
-                vec2 uv = vUv + Direction * Texel * (fi / 8.0) * max(Radius, 0.0);
+                if (i < -taps || i > taps)
+                {
+                    continue;
+                }
+
+                float fi = float(i) / float(taps);
+                float weight = Mode == 1 ? 1.0 : exp(-fi * fi * 4.0);
+                /* fi is the normalised tap index; the kernel reach is Radius *composition* pixels,
+                 * so the offset is directly Direction * Texel * fi * Radius. */
+                vec2 uv = vUv + Direction * Texel * fi * max(Radius, 0.0);
                 sum += texture(Source, clamp(uv, vec2(0.0), vec2(1.0))) * weight;
                 total += weight;
             }
@@ -639,7 +647,7 @@ public final class ShaderSources
             {
                 vec2 p = vUv - Center;
                 float r = max(Radius / size.y, 0.001);
-                float t = smoothstep(r, 0.0, length(p));
+                float t = 1.0 - smoothstep(0.0, max(r, 0.0001), length(p));
                 uv = Center + p * (1.0 - clamp(Amount, -1.0, 1.0) * 0.75 * t);
             }
             else if (Mode == 3)
@@ -662,7 +670,7 @@ public final class ShaderSources
             {
                 vec2 p = vUv - Center;
                 float r = max(Radius / size.y, 0.001);
-                float k = smoothstep(1.0, 0.0, length(p) / r);
+                float k = 1.0 - smoothstep(0.0, 1.0, length(p) / max(r, 0.0001));
                 uv = Center + p / (1.0 + max(Amount, 0.0) * k);
             }
             else if (Mode == 7)
@@ -1014,8 +1022,8 @@ public final class ShaderSources
          * the key hue" from "how bright is it", which is the whole reason this keyer works: the
          * old RGB-distance matte conflated "right hue, wrong brightness" with "different colour",
          * so every shaded pixel of a green screen kept a translucent green veil. Pixels with
-         * almost no chroma (grey, white, black) have no meaningful hue at all — their angle is
-         * noise — so the saturation gate pushes them to distance 1 (far from the key, kept); the
+         * almost no chroma (grey, white, black) have no meaningful hue at all 鈥?their angle is
+         * noise 鈥?so the saturation gate pushes them to distance 1 (far from the key, kept); the
          * gate is relative to the key's own saturation, which keeps dark-but-saturated screen
          * colours keyed while desaturated footage stays. */
         float keyDistance(vec3 rgb, vec3 key)
@@ -1049,8 +1057,8 @@ public final class ShaderSources
                 matte = clamp((matte - ClipBlack) / max(ClipWhite - ClipBlack, 0.001), 0.0, 1.0);
 
                 /* Despill: remove the green that sits ABOVE the other channels wherever the
-                 * screen still has influence. Fully kept pixels (matte 1) are untouched — a
-                 * genuinely green shirt survives — while keyed and semi-keyed pixels lose the
+                 * screen still has influence. Fully kept pixels (matte 1) are untouched 鈥?a
+                 * genuinely green shirt survives 鈥?while keyed and semi-keyed pixels lose the
                  * veil, so downstream premultiplied effects (blur/glow) cannot re-inject the
                  * green the matte removed. */
                 float spill = max(0.0, c.g - max(c.r, c.b));
@@ -1168,10 +1176,10 @@ public final class ShaderSources
             return mat2(c, -s, s, c);
         }
 
-        /* Fractal noise for 分形杂色. Each octave is rotated by the evolution angle before being
-         * sampled, so a keyed 演化 MORPHS the clouds (AE's Evolution) instead of sliding the whole
-         * field diagonally. Normalising by the summed amplitudes keeps 对比度/亮度 meaningful at
-         * every 细节 level. */
+        /* Fractal noise for 鍒嗗舰鏉傝壊. Each octave is rotated by the evolution angle before being
+         * sampled, so a keyed 婕斿寲 MORPHS the clouds (AE's Evolution) instead of sliding the whole
+         * field diagonally. Normalising by the summed amplitudes keeps 瀵规瘮搴?浜害 meaningful at
+         * every 缁嗚妭 level. */
         float fbmMorph(vec2 p, float evo, int octaves)
         {
             float value = 0.0;
@@ -1215,7 +1223,7 @@ public final class ShaderSources
             }
             else if (Type == 1)
             {
-                /* Fractal noise measured in LAYER pixels: 缩放 is the feature size, so a 80 px
+                /* Fractal noise measured in LAYER pixels: 缂╂斁 is the feature size, so a 80 px
                  * cloud reads the same on a 200 px title and a 1920 px background. The old
                  * normalized `uv * Scale` counted noise cycles across the layer instead, which
                  * stretched the pattern on wide layers and made the FX read as fine static. */
@@ -1260,6 +1268,7 @@ public final class ShaderSources
         uniform int Mode;
         uniform int UseMap;
         uniform vec2 Size;
+        uniform vec2 CompSize;
         uniform float Amount;
         uniform float Angle;
         uniform vec2 Center;
@@ -1294,14 +1303,14 @@ public final class ShaderSources
             vec2 lp = vec2(luv.x * LayerSize.x, luv.y * LayerSize.y);
             vec2 px = LayerX * lp.x + LayerY * lp.y + LayerOrigin;
 
-            return vec2(px.x / Size.x, 1.0 - px.y / Size.y);
+            return vec2(px.x / max(CompSize.x, 1.0), 1.0 - px.y / max(CompSize.y, 1.0));
         }
 
         vec2 localDeltaToComp(vec2 d)
         {
             vec2 px = LayerX * d.x + LayerY * d.y;
 
-            return vec2(px.x / Size.x, -px.y / Size.y);
+            return vec2(px.x / max(CompSize.x, 1.0), -px.y / max(CompSize.y, 1.0));
         }
 
         float hash(vec2 p)
@@ -1369,9 +1378,9 @@ public final class ShaderSources
 
                 /* Amount is in pixels; convert through the layer basis so displacement follows
                  * rotation and scale instead of always pushing along the comp axes. localDeltaToComp
-                 * takes LAYER pixels (LayerX/LayerY are comp pixels per layer pixel) — the old
+                 * takes LAYER pixels (LayerX/LayerY are comp pixels per layer pixel) 鈥?the old
                  * extra /LayerSize division made a 48 px displacement move ~0.1 px, which is why
-                 * 置换图 looked dead on anything larger than a postage stamp. */
+                 * 缃崲鍥?looked dead on anything larger than a postage stamp. */
                 uv += localDeltaToComp(offset);
             }
             else if (Mode == 1 || Mode == 2)
@@ -1406,9 +1415,9 @@ public final class ShaderSources
             }
             else if (Mode == 4)
             {
-                /* Frequency is radians per pixel (2π / wavelength), so the wavelength parameter
+                /* Frequency is radians per pixel (2蟺 / wavelength), so the wavelength parameter
                  * means the same thing on a 200 px title and a 1920 px background. Amplitude is a
-                 * LAYER pixel delta handed straight to localDeltaToComp — the old wave/LayerSize
+                 * LAYER pixel delta handed straight to localDeltaToComp 鈥?the old wave/LayerSize
                  * pre-division shrank a 24 px wave to a fraction of a pixel and the effect never
                  * moved. */
                 float travel = Vertical == 1 ? luv.y * LayerSize.y : luv.x * LayerSize.x;
@@ -1440,6 +1449,7 @@ public final class ShaderSources
 
         uniform sampler2D Source;
         uniform vec2 Size;
+        uniform vec2 CompSize;
         uniform int Mode;
         uniform float Amount;
         uniform float Invert;
@@ -1470,7 +1480,7 @@ public final class ShaderSources
             vec2 lp = luv * LayerSize;
             vec2 comp = LayerX * lp.x + LayerY * lp.y + LayerOrigin;
 
-            return vec2(comp.x / max(Size.x, 1.0), 1.0 - comp.y / max(Size.y, 1.0));
+            return vec2(comp.x / max(CompSize.x, 1.0), 1.0 - comp.y / max(CompSize.y, 1.0));
         }
 
         vec4 sampleLocal(vec2 luv)
@@ -1709,6 +1719,7 @@ public final class ShaderSources
 
         uniform sampler2D Source;
         uniform vec2 Size;
+        uniform vec2 CompSize;
         uniform int Mode;
         uniform vec2 Grid;
         uniform float Scale;
@@ -1738,7 +1749,7 @@ public final class ShaderSources
             vec2 lp = luv * LayerSize;
             vec2 comp = LayerX * lp.x + LayerY * lp.y + LayerOrigin;
 
-            return vec2(comp.x / max(Size.x, 1.0), 1.0 - comp.y / max(Size.y, 1.0));
+            return vec2(comp.x / max(CompSize.x, 1.0), 1.0 - comp.y / max(CompSize.y, 1.0));
         }
 
         float hash21(vec2 p)
@@ -1810,17 +1821,18 @@ public final class ShaderSources
      * Layer replication (Alight Motion's "repeat" family).
      *
      * <p>Repeat is not a pixel warp: it draws the layer several times. Doing that inside the layer
-     * rectangle is what made it look like a mask — four copies squeezed into a 400 px box and
+     * rectangle is what made it look like a mask 鈥?four copies squeezed into a 400 px box and
      * nothing outside it. This pass therefore runs in <b>composition space</b> on the finished
      * layer image, sampling the source once per copy. Copies are placed across the composition,
      * each keeps the layer's own size (scaled by {@code Scale}) and none of them is clipped by the
-     * original rectangle, which is what "无限" means here: only the composition bounds remain.</p>
+     * original rectangle, which is what "鏃犻檺" means here: only the composition bounds remain.</p>
      */
     public static final String REPLICATE = """
         #version 150 core
 
         uniform sampler2D Source;
         uniform vec2 Size;         /* composition pixels (for pixel-authored offsets) */
+        uniform vec2 CompSize;     /* grid of LayerX/LayerY/LayerOrigin (raster in a bake) */
         uniform int Mode;          /* 0 = grid, 1 = line, 2 = comp scatter, 3 = repeat, 4 = ring, 5 = scatter */
         uniform vec2 Grid;         /* copies per axis; line/repeat/ring/scatter use Grid.x */
         uniform float Gap;         /* shrink each copy to leave a gap (0..0.9) */
@@ -1869,7 +1881,7 @@ public final class ShaderSources
          * <p>The accumulation runs in <b>premultiplied</b> space and is un-premultiplied once at
          * the end. The source texture is straight alpha (the compositor un-premultiplies every
          * layer), so the old `acc.rgb = texel.rgb * a + acc.rgb * (1 - a)` plus straight output
-         * darkened every translucent copy: an α=128 red copy came out (128,0,0,128) instead of
+         * darkened every translucent copy: an 伪=128 red copy came out (128,0,0,128) instead of
          * (255,0,0,128), and soft edges (text antialiasing, glows) turned black when repeated.</p>
          */
         void accumulate(inout vec4 acc, vec2 copy, float rot, float sc, float weight)
@@ -1910,10 +1922,10 @@ public final class ShaderSources
 
             if (Mode >= 3)
             {
-                int count = int(clamp(Grid.x, 1.0, 32.0));
+                int count = int(clamp(Grid.x, 1.0, 64.0));
                 int n = count;
 
-                for (int i = 0; i < 32; i++)
+                for (int i = 0; i < 64; i++)
                 {
                     if (i >= n)
                     {
@@ -1961,18 +1973,18 @@ public final class ShaderSources
             }
 
             vec2 grid = max(Grid, vec2(1.0));
-            int cols = int(clamp(grid.x, 1.0, 8.0));
-            int rows = Mode == 1 ? 1 : int(clamp(grid.y, 1.0, 8.0));
+            int cols = int(clamp(grid.x, 1.0, 20.0));
+            int rows = Mode == 1 ? 1 : int(clamp(grid.y, 1.0, 20.0));
             float copies = float(cols * rows);
 
-            for (int j = 0; j < 8; j++)
+            for (int j = 0; j < 20; j++)
             {
                 if (j >= rows)
                 {
                     break;
                 }
 
-                for (int i = 0; i < 8; i++)
+                for (int i = 0; i < 20; i++)
                 {
                     if (i >= cols)
                     {
@@ -2210,6 +2222,7 @@ public final class ShaderSources
         uniform vec2 LayerY;
         uniform vec2 LayerOrigin;
         uniform vec2 Size;
+        uniform vec2 CompSize;
 
         in vec2 vUv;
         out vec4 fragColor;
@@ -2224,7 +2237,7 @@ public final class ShaderSources
             vec2 lp = vec2(luv.x * LayerSize.x, luv.y * LayerSize.y);
             vec2 px = LayerX * lp.x + LayerY * lp.y + LayerOrigin;
 
-            return vec2(px.x / Size.x, 1.0 - px.y / Size.y);
+            return vec2(px.x / max(CompSize.x, 1.0), 1.0 - px.y / max(CompSize.y, 1.0));
         }
 
         vec2 hash2(vec2 p)
@@ -2424,7 +2437,7 @@ public final class ShaderSources
      * <p>Why not compare depth textures here? Because that is the operation that failed on the
      * target stack: the depth target demonstrably contained the actor, the full-screen program ran,
      * yet every depth sample read 1.0. An RGBA texture has no compare mode, no shadow-sampler
-     * interpretation and no depth-attachment state to inherit — it is the same texture path every
+     * interpretation and no depth-attachment state to inherit 鈥?it is the same texture path every
      * other layer already uses.</p>
      *
      * <p>Coverage is {@code max(alpha, any strong colour channel)}. Alpha is the normal case; the
@@ -2459,7 +2472,7 @@ public final class ShaderSources
         {
             if (DebugView == 3)
             {
-                /* "Did the pass reach the target at all?" — before any mapping. */
+                /* "Did the pass reach the target at all?" 鈥?before any mapping. */
                 fragColor = vec4(0.0, 1.0, 0.0, 1.0);
                 return;
             }
@@ -2537,9 +2550,9 @@ public final class ShaderSources
      * Copies a captured world frame with alpha forced to 1.
      *
      * <p>{@code glCopyTexSubImage2D} copies alpha verbatim, and shader packs routinely leave the
-     * final pass alpha at 0 — iterationRP's final fragment literally writes {@code vec4(color, 0.0)}.
+     * final pass alpha at 0 鈥?iterationRP's final fragment literally writes {@code vec4(color, 0.0)}.
      * Every consumer draws the capture with texture-alpha blending, so a verbatim copy is
-     * <b>invisible</b>: under such a pack the BBS 预览 layer and the whole compositor preview go
+     * <b>invisible</b>: under such a pack the BBS 棰勮 layer and the whole compositor preview go
      * black. This pass is the last step of every capture; it also drops any pack-side garbage in
      * the alpha channel.</p>
      */

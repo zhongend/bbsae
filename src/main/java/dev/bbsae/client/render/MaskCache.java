@@ -191,14 +191,19 @@ public final class MaskCache
     /**
      * Whether a mask contributes to the alpha matte at all.
      *
-     * <p>Three points is the smallest path with an area, and an open path is a stroke being drawn
-     * rather than a region. Before this rule a two-point mask (the state after the pen tool's second
-     * click) rasterized to zero coverage and made the entire layer disappear — which looked like
-     * "the pen tool broke the layer" while the path was still being drawn.</p>
+     * <p>Three points is the smallest path with an area. A closed flag does not gate matting:
+     * AE/AE-style open masks are implicitly closed from the last vertex to the first for fill, so
+     * an open three-point mask must still matte. Before this rule a two-point mask (the state after
+     * the pen tool's second click) rasterized to zero coverage and made the entire layer disappear
+     * — which looked like "the pen tool broke the layer" while the path was still being drawn.</p>
      */
     static boolean isMatte(CompMask mask)
     {
-        return mask != null && mask.enabled && mask.closed && mask.points != null && mask.points.size() >= 3;
+        /* An open path still defines a region: the rasterizer closes it from the last vertex to
+         * the first, exactly like After Effects/AE masks do while the pen is still drawing. It
+         * used to be silently ignored, which looked like "the pen tool did nothing". A two-point
+         * path has no area and remains a stroke, hence the >= 3 rule. */
+        return mask != null && mask.enabled && mask.points != null && mask.points.size() >= 3;
     }
 
     /** Package-private so the pen tool's regression tests can prove that {@code closed} invalidates. */

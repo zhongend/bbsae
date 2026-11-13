@@ -1563,6 +1563,14 @@ public final class CompStore
             project.settings.logicVersion = project.settings.legacy3DLogic ? 2 : 1;
         }
 
+        /* v7: the compositor's source browser moved from the right of the preview to the left.
+         * Old files need CompDockSource to convert their effects-right default tree exactly once;
+         * 0 here is the "not converted yet" marker, 1 means the current/user-chosen layout. */
+        if (previousVersion < 7)
+        {
+            project.settings.uiLayoutRevision = 0;
+        }
+
         if (project.renderQueue == null)
         {
             project.renderQueue = new java.util.ArrayList<>();

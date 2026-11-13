@@ -114,6 +114,8 @@ public class UIReplayModePanel extends UIDashboardPanel
     private float debugYaw = Float.NaN;
     private float debugPitch = Float.NaN;
     private float debugDistance = Float.NaN;
+    /** True when the panel is a child of the compositor instead of a dashboard page. */
+    private boolean embedded;
 
     public UIReplayModePanel(UIDashboard dashboard)
     {
@@ -173,6 +175,73 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.header.add(button);
 
         return button;
+    }
+
+    /**
+     * Embeds the replay editor as the compositor's second workspace.
+     *
+     * <p>The default dashboard header is hidden: the compositor's own mode bar provides the
+     * 合成/回放 switch and the transport, so the user gets one chrome instead of a second page with
+     * a second visual language. The main row grows into the header's space; the keyframe editor
+     * still owns the bottom strip.</p>
+     */
+    public void setEmbedded(boolean embedded)
+    {
+        this.embedded = embedded;
+        this.header.setVisible(!embedded);
+        this.main.relative(this).x(0).y(embedded ? 0 : HEADER).w(1F)
+            .h(1F, -(embedded ? 0 : HEADER) - TIMELINE);
+        this.resize();
+    }
+
+    public boolean isEmbedded()
+    {
+        return this.embedded;
+    }
+
+    public void togglePlaybackFromHost()
+    {
+        this.togglePlayback();
+    }
+
+    public void stepFromHost(int ticks)
+    {
+        this.step(ticks);
+    }
+
+    public void frameAllFromHost()
+    {
+        this.frameAll();
+    }
+
+    public void openModelLibraryFromHost()
+    {
+        this.openModelLibrary();
+    }
+
+    public void openOriginalEditorFromHost()
+    {
+        this.openOriginalEditor();
+    }
+
+    /** Playhead in seconds for the host's timecode/status line. */
+    public float playheadSeconds()
+    {
+        return this.session == null ? 0F : this.session.playhead() / ReplayTime.TICKS_PER_SECOND;
+    }
+
+    /** Seeks from the host's playhead without changing the film's cursor semantics. */
+    public void seekSeconds(float seconds)
+    {
+        if (this.session != null)
+        {
+            this.session.seek(Math.max(0F, seconds) * ReplayTime.TICKS_PER_SECOND);
+        }
+    }
+
+    public boolean isPlayingFromHost()
+    {
+        return this.session != null && this.session.isPlaying();
     }
 
     /* ------------------------------------------------------------ binding */
@@ -589,6 +658,10 @@ public class UIReplayModePanel extends UIDashboardPanel
         );
 
         editor.target(this.replayProperties);
+        /* The timeline's own empty-state hint ("Click a keyframe...") was drawn over the replay
+         * properties in the narrow embedded layout. The dope sheet below has a proper Chinese
+         * empty state, so suppress this legacy label. */
+        editor.setEmptyState(() -> IKey.constant(""));
         /* Unique undo id: the borrowed film panel's own replay editor already registers
          * "replay_keyframe_editor" for its hidden keyframe editor. Sharing the id would let the
          * hidden editor's snapshot overwrite this one's selection on every undo. */
@@ -1066,7 +1139,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             this.dashboard == null || this.dashboard.getPanels() == null || this.dashboard.getPanels().panel == null
                 ? "null" : this.dashboard.getPanels().panel.getClass().getSimpleName());
 
-        if (client != null && this.getRoot() == null)
+        if (client != null && this.getRoot() == null && !this.embedded)
         {
             BbsAeAddon.LOGGER.warn("Replay history: page detached from the UI root; reopening the dashboard");
 
@@ -1079,7 +1152,7 @@ public class UIReplayModePanel extends UIDashboardPanel
                 BbsAeAddon.LOGGER.error("Could not reopen the dashboard after replay undo/redo", e);
             }
         }
-        else if (this.dashboard != null && this.dashboard.getPanels() != null
+        else if (!this.embedded && this.dashboard != null && this.dashboard.getPanels() != null
             && this.dashboard.getPanels().panel != this)
         {
             /* BBS' film-panel undo path (applyUndoData -> showPanel/createEntities) can re-select a

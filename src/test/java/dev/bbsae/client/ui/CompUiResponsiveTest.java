@@ -99,8 +99,7 @@ public class CompUiResponsiveTest
                     {layout.renderX, 54, layout.showRender ? 1 : 0},
                     {layout.exportX, 54, layout.showExport ? 1 : 0},
                     {layout.saveX, 48, layout.showSave ? 1 : 0},
-                    {layout.projectsX, CompUi.PROJECTS_W, layout.showProjects ? 1 : 0},
-                    {layout.libraryX, CompUi.LIBRARY_W, layout.showLibrary ? 1 : 0}
+                    {layout.projectsX, CompUi.PROJECTS_W, layout.showProjects ? 1 : 0}
                 };
 
                 int previousEnd = -1;

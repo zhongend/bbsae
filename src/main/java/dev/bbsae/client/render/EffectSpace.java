@@ -260,5 +260,11 @@ final class EffectSpace
         program.set("LayerX", m00, m01);
         program.set("LayerY", m10, m11);
         program.set("LayerOrigin", originCompX, originCompY);
+        /* Grid of LayerX/LayerY/LayerOrigin. In a layer-local bake this is the raster size
+         * (compWidth = raster), while refWidth/Size is the parent composition grid used only for
+         * pixel-authored parameters. Source resampling must divide by this, not by Size: dividing
+         * by the parent comp in a bake read the top-left corner of the raster (the broken
+         * distortion/3D resampling family). */
+        program.set("CompSize", compWidth, compHeight);
     }
 }

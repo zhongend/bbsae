@@ -600,6 +600,14 @@ public final class CompLayerSourceCache
 
             String type = effect.type == null ? "" : effect.type;
 
+            /* Extrusion is geometry, not a pixel filter: the raster stays the flat layer and
+             * CompRenderer stacks it along local Z when drawing the 3D quad. Applying it here would
+             * only produce one flattened copy and clip the volume at the raster edge. */
+            if ("extrude3d".equals(type))
+            {
+                continue;
+            }
+
             try
             {
                 CompEffect resolved = scaleEffectForRaster(layer.resolveEffect(effect, parent.frame), effectScale);

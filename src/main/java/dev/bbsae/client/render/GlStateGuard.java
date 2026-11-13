@@ -42,6 +42,7 @@ public final class GlStateGuard implements AutoCloseable
     private final boolean cull;
     private final boolean scissor;
     private final boolean stencil;
+    private final boolean srgb;
     private final boolean depthMask;
     private final boolean[] colorMask = new boolean[4];
     private final int depthFunc;
@@ -64,6 +65,11 @@ public final class GlStateGuard implements AutoCloseable
         this.cull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
         this.scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
         this.stencil = GL11.glIsEnabled(GL11.GL_STENCIL_TEST);
+        /* Iris outputs in sRGB. Comp FBOs are RGBA8 and the compositor already works in the
+         * display space, so leaving the global sRGB conversion on would wash out/darken every
+         * layer under a shader pack. Save it and force it off for the pass. */
+        this.srgb = GL11.glIsEnabled(GL30.GL_FRAMEBUFFER_SRGB);
+        GL11.glDisable(GL30.GL_FRAMEBUFFER_SRGB);
         this.depthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
 
         /* glGetBoolean only returns the first component of GL_COLOR_WRITEMASK. Reading it four
@@ -125,6 +131,9 @@ public final class GlStateGuard implements AutoCloseable
 
         if (this.stencil) GL11.glEnable(GL11.GL_STENCIL_TEST);
         else GL11.glDisable(GL11.GL_STENCIL_TEST);
+
+        if (this.srgb) GL11.glEnable(GL30.GL_FRAMEBUFFER_SRGB);
+        else GL11.glDisable(GL30.GL_FRAMEBUFFER_SRGB);
 
         GlStateManager._depthMask(this.depthMask);
         GlStateManager._colorMask(this.colorMask[0], this.colorMask[1], this.colorMask[2], this.colorMask[3]);

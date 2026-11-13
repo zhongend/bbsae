@@ -86,6 +86,23 @@ public class UiMotion
             {
                 return easeOutExpo(x);
             }
+        },
+        /** The 200–260 ms "surface" curve used by iOS/AE; much crisper than cubic ease-out. */
+        EASE_OUT_QUINT
+        {
+            @Override
+            public float apply(float x)
+            {
+                return easeOutQuint(x);
+            }
+        },
+        EASE_IN_OUT_QUART
+        {
+            @Override
+            public float apply(float x)
+            {
+                return easeInOutQuart(x);
+            }
         };
 
         public abstract float apply(float x);
@@ -176,6 +193,25 @@ public class UiMotion
         return x >= 1F ? 1F : 1F - (float) Math.pow(2D, -10D * x);
     }
 
+    /** 1 − (1−x)^5: the default for panel/page moves (fast start, long soft landing). */
+    public static float easeOutQuint(float x)
+    {
+        x = clamp01(x);
+
+        float inv = 1F - x;
+
+        return 1F - inv * inv * inv * inv * inv;
+    }
+
+    public static float easeInOutQuart(float x)
+    {
+        x = clamp01(x);
+
+        return x < 0.5F
+            ? 8F * x * x * x * x
+            : 1F - (float) Math.pow(-2D * x + 2D, 4D) / 2F;
+    }
+
     public static float approach(float value, float target, float speed, float dt)
     {
         if (dt <= 0F || speed <= 0F)
@@ -193,8 +229,9 @@ public class UiMotion
      * One step of a damped spring. Exposed as a pure function so the curve itself can be tested;
      * the stateful version is {@link #spring(String, float, float, float)}.
      *
-     * <p>Critical damping is {@code damping = 2 * sqrt(stiffness)}. The step is clamped/snapped so
-     * an animation always comes to rest instead of oscillating forever at 1e-6 amplitude.</p>
+     * <p>The damping is applied as {@code exp(−d·dt)}, not {@code 1 − d·dt}: at a 50 ms frame the
+     * latter goes negative for {@code d = 30}, flipping the velocity every frame instead of settling.
+     * Critical damping is still {@code damping = 2 * sqrt(stiffness)}.</p>
      */
     public static float springStep(float value, float target, float stiffness, float damping, float dt)
     {
@@ -203,9 +240,10 @@ public class UiMotion
         float d = Math.max(0F, damping);
         float acceleration = (target - value) * s;
         float velocity = acceleration * step;
-        float next = value + velocity * step;
 
-        velocity *= Math.max(0F, 1F - d * step);
+        velocity *= (float) Math.exp(-d * step);
+
+        float next = value + velocity * step;
 
         if (Math.abs(target - next) < SNAP_EPSILON)
         {
@@ -257,14 +295,16 @@ public class UiMotion
         if (!this.shown)
         {
             this.shown = true;
-            this.shownAt = System.nanoTime();
+            /* Use the injectable frame clock, not System.nanoTime(): entrances must be pinnable in
+             * headless tests and must share the same dt as every other channel. */
+            this.shownAt = this.nowNanos;
         }
     }
 
     public void replay()
     {
         this.shown = true;
-        this.shownAt = System.nanoTime();
+        this.shownAt = this.nowNanos;
     }
 
     public void reset()
@@ -330,7 +370,9 @@ public class UiMotion
         float d = Math.max(0F, damping);
 
         velocity += (target - value) * s * step;
-        velocity *= Math.max(0F, 1F - d * step);
+        /* Exponential decay is unconditionally stable: at 50 ms and damping 30 the old linear
+         * (1 - d*dt) factor was negative, which made buttons/tabs oscillate instead of settle. */
+        velocity *= (float) Math.exp(-d * step);
         value += velocity * step;
 
         if (Math.abs(target - value) < SNAP_EPSILON && Math.abs(velocity) < SNAP_EPSILON)
@@ -406,6 +448,28 @@ public class UiMotion
         return this.anim("s:" + key, selected ? 1F : 0F, 18F);
     }
 
+    /* Named springs keep every surface on the same physical feel instead of scattering magic
+     * numbers through widgets. ζ = d / (2√s); all three are near-critical with a little life. */
+    /** Panel/mode surfaces: ζ≈0.90, settles around 260 ms. */
+    public static final float SPRING_PANEL_STIFFNESS = 210F;
+    public static final float SPRING_PANEL_DAMPING = 26F;
+    /** Button press/release: ζ≈0.75, ~120 ms — noticeably springy without wobbling. */
+    public static final float SPRING_PRESS_STIFFNESS = 520F;
+    public static final float SPRING_PRESS_DAMPING = 34F;
+    /** Tab underline/selection: ζ≈0.87, ~180 ms. */
+    public static final float SPRING_TAB_STIFFNESS = 300F;
+    public static final float SPRING_TAB_DAMPING = 30F;
+
+    public float press(String key, boolean down)
+    {
+        return this.spring(key, down ? 1F : 0F, SPRING_PRESS_STIFFNESS, SPRING_PRESS_DAMPING);
+    }
+
+    public float panel(String key, float target)
+    {
+        return this.spring(key, target, SPRING_PANEL_STIFFNESS, SPRING_PANEL_DAMPING);
+    }
+
     /** Entrance progress, 0→1, with an optional delay and the global speed multiplier. */
     public float intro(float delay)
     {
@@ -419,7 +483,7 @@ public class UiMotion
             return 1F;
         }
 
-        float elapsed = (System.nanoTime() - this.shownAt) / 1.0E9F;
+        float elapsed = (this.nowNanos - this.shownAt) / 1.0E9F;
         float duration = ENTRANCE / Math.max(0.25F, this.speedFactor());
 
         return easeOut((elapsed - delay) / duration);
@@ -433,7 +497,7 @@ public class UiMotion
             return 1F;
         }
 
-        float elapsed = (System.nanoTime() - this.shownAt) / 1.0E9F;
+        float elapsed = (this.nowNanos - this.shownAt) / 1.0E9F;
         float duration = ENTRANCE / Math.max(0.25F, this.speedFactor());
 
         return easeOutBack((elapsed - delay) / duration);

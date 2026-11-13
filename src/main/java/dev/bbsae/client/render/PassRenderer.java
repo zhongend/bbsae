@@ -214,7 +214,7 @@ public final class PassRenderer
             return input;
         }
 
-        int r = Math.max(1, Math.min(200, Math.round(radius)));
+        int r = Math.max(1, Math.min(1024, Math.round(radius)));
         GlFramebuffer horizontal = FboPool.acquire(input.width, input.height);
 
         horizontal.begin();

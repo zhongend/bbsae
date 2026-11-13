@@ -99,13 +99,13 @@ public final class CompEffectRegistry
     static
     {
         add(new Definition("blur", "高斯模糊", "模糊与锐化")
-            .p("radius", "半径", 0, 200, 12, 1)
+            .p("radius", "半径", 0, 1024, 12, 1)
             .p("opacity", "混合", 0, 1, 1, 0.01F));
         add(new Definition("box_blur", "方框模糊", "模糊与锐化")
-            .p("radius", "半径", 0, 200, 8, 1)
+            .p("radius", "半径", 0, 1024, 8, 1)
             .p("opacity", "混合", 0, 1, 1, 0.01F));
         add(new Definition("directional_blur", "方向模糊", "模糊与锐化")
-            .p("radius", "长度", 0, 300, 24, 1)
+            .p("radius", "长度", 0, 1024, 24, 1)
             .p("angle", "角度", -180, 180, 0, 1));
         add(new Definition("radial_blur", "径向模糊", "模糊与锐化")
             .p("radius", "强度", -1, 1, 0.15F, 0.01F)
@@ -335,13 +335,13 @@ public final class CompEffectRegistry
             .p("seed", "种子", 0, 9999, 0, 1));
 
         add(new Definition("glow", "辉光", "风格化")
-            .p("radius", "半径", 0, 200, 40, 1)
+            .p("radius", "半径", 0, 1024, 40, 1)
             .p("intensity", "强度", 0, 4, 1.2F, 0.01F)
             .c("color", "着色", 0xFFFFFFFF));
         add(new Definition("drop_shadow", "投影", "风格化")
             .p("distance", "距离", -300, 300, 12, 1)
             .p("angle", "角度", -180, 180, 45, 1)
-            .p("softness", "柔和度", 0, 100, 6, 1)
+            .p("softness", "柔和度", 0, 512, 6, 1)
             .p("opacity", "不透明度", 0, 1, 0.65F, 0.01F)
             .c("color", "投影颜色", 0xFF000000));
         add(new Definition("stroke", "描边", "风格化")
@@ -349,7 +349,7 @@ public final class CompEffectRegistry
             .p("opacity", "不透明度", 0, 1, 1, 0.01F)
             .c("color", "颜色", 0xFFFFFFFF));
         add(new Definition("outer_glow", "外发光", "风格化")
-            .p("radius", "大小", 0, 200, 24, 1)
+            .p("radius", "大小", 0, 1024, 24, 1)
             .p("intensity", "强度", 0, 4, 1, 0.01F)
             .p("opacity", "不透明度", 0, 1, 0.8F, 0.01F)
             .c("color", "颜色", 0xFF55AAFF));
@@ -542,10 +542,18 @@ public final class CompEffectRegistry
         addS3d("quad", "平面（验证）");
     }
 
+    /** Layer silhouette extrusion: the layer raster is stacked along its local Z. */
+    static
+    {
+        add(new Definition("extrude3d", "挤压体积", "AM · 3D 形状")
+            .p("depth", "厚度（像素）", 1F, 400F, 60F, 1F)
+            .p("slices", "切片数", 2F, 48F, 16F, 1F)
+            .p("shade", "侧面明暗", 0F, 1F, 0.35F, 0.01F));
+    }
+
     private static void addS3d(String shape, String name)
     {
-        add(new Definition("s3d_" + shape, name, "AM · 3D 形状")
-            .p("rotate_x", "旋转 X", -180F, 180F, 20F, 1F)
+        add(new Definition("s3d_" + shape, name, "AM · 3D 形状")            .p("rotate_x", "旋转 X", -180F, 180F, 20F, 1F)
             .p("rotate_y", "旋转 Y", -180F, 180F, 35F, 1F)
             .p("rotate_z", "旋转 Z", -180F, 180F, 0F, 1F)
             .p("depth", "厚度", 0.05F, 2F, 0.5F, 0.01F)

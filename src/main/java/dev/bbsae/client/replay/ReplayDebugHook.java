@@ -12,6 +12,7 @@ import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.forms.MobForm;
 import mchorse.bbs_mod.ui.dashboard.UIDashboard;
 import mchorse.bbs_mod.ui.film.UIFilmPanel;
+import dev.bbsae.client.ui.UICompositorPanel;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
 import java.util.ArrayList;
@@ -218,6 +219,17 @@ public final class ReplayDebugHook
             {
                 ReplayInteractionScript.start(panel);
             }
+        }
+
+        /* Optional composition-camera audit: add a 3D replay layer to the film's comp and switch
+         * back to the compositor. Proves the actor pass renders with the bbsae camera rather than
+         * the world plate. Test-only; enabled by an explicit property. */
+        if (Boolean.getBoolean("bbsae.debugReplayComp") && BbsAeClient.compositorPanel() != null)
+        {
+            UICompositorPanel host = BbsAeClient.compositorPanel();
+
+            host.openCompositeWorkspace();
+            host.debugReplayEntityLayer3D();
         }
 
         BbsAeAddon.LOGGER.info("Replay debug hook: opened film='{}' replays={} panel={}",

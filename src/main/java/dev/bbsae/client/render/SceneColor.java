@@ -62,6 +62,7 @@ public final class SceneColor
     private static boolean finalFallback;
     private static boolean finalRequested;
     private static boolean finalLogged;
+    private static int frameSerial = -1;
     /** Read framebuffer used only by the colortex0 fallback copy. */
     private static int copyFbo;
 
@@ -133,6 +134,7 @@ public final class SceneColor
 
         normalize(texture, opaqueTexture, opaqueFbo, width, height);
         GlTexture.unbind(0);
+        frameSerial = ReplayEntityMask.frameSerial();
 
         /* Iris will call captureFinal() at the tail of finalizeLevelRendering(). The early copy
          * remains the fallback for vanilla/no-shader and for the very first frame while the
@@ -221,6 +223,7 @@ public final class SceneColor
         {
             normalize(finalTexture, finalOpaque, finalFbo, finalWidth, finalHeight);
             GlTexture.unbind(0);
+            frameSerial = ReplayEntityMask.frameSerial();
 
             if (!finalLogged)
             {
@@ -294,6 +297,7 @@ public final class SceneColor
             {
                 normalize(finalTexture, finalOpaque, finalFbo, finalWidth, finalHeight);
                 GlTexture.unbind(0);
+                frameSerial = ReplayEntityMask.frameSerial();
 
                 if (!finalLogged)
                 {
@@ -511,6 +515,12 @@ public final class SceneColor
         return finalValid && finalOpaque != null;
     }
 
+    /** World-frame serial the current colour copy was produced for (-1 before the first copy). */
+    public static int frameSerial()
+    {
+        return frameSerial;
+    }
+
     /** True when the current final frame came from the colortex0 fallback instead of the final pass. */
     public static boolean isFallbackFinal()
     {
@@ -555,5 +565,6 @@ public final class SceneColor
         finalFallback = false;
         finalRequested = false;
         finalLogged = false;
+        frameSerial = -1;
     }
 }

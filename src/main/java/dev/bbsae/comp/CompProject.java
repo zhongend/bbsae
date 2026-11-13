@@ -82,8 +82,14 @@ public class CompProject
      * files cannot be told apart from v5 files authored with either logic. Version 6 records
      * {@link CompSettings#logicVersion} once (derived from the legacy toggle for older files); no
      * visual default changes, it only gives future 3D-logic migrations a stable anchor.
+     *
+     * 7 — editor layout revision. The compositor moved the source browser (effects/assets/presets)
+     * from the right of the preview to the left, and split the old "effect controls" page into
+     * 图层 + 效果. Version 7 lets {@link CompProject.CompSettings#uiLayoutRevision} distinguish an
+     * old saved effects-right tree (one-time conversion) from a user who later chooses that layout
+     * from the menu (must stay chosen).
      */
-    public static final int VERSION = 6;
+    public static final int VERSION = 7;
 
     public String format = FORMAT;
     public int version = VERSION;
@@ -379,6 +385,14 @@ public class CompProject
 
         /** True when the dock is unlocked (panels can be dragged). BBS ships locked by default. */
         public boolean dockUnlocked = false;
+
+        /**
+         * Editor layout revision. 0 = a project written before the effects-left redesign; 1 = the
+         * current layout (source browser left, preview centre, inspector right). The dock source
+         * converts the old default tree once and then records 1 here, so a user who later picks
+         * "效果库在右侧" from the layout menu keeps that choice across loads.
+         */
+        public int uiLayoutRevision = 1;
 
         /* ------------------------------------------------------------ editor view state */
 

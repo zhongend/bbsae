@@ -20,8 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>This is the regression suite for the pen tool's first live bug: a two-point path — the state
  * after the second click — used to rasterize to zero coverage and made the whole layer disappear.
- * Open paths are strokes, not regions, so they never take part in matting; only closed paths with
- * enough vertices to enclose an area do.</p>
+ * Open paths are filled by implicitly closing them from the last vertex to the first (AE mask
+ * semantics); a two-point path has no area and remains a stroke. Only paths with at least three
+ * points take part in matting.
  */
 public class MaskPathRasterTest
 {
@@ -104,7 +105,7 @@ public class MaskPathRasterTest
     }
 
     @Test
-    public void openPathIsNotAMask()
+    public void openPathStillDefinesAFill()
     {
         CompMask mask = mask("open");
 
@@ -114,20 +115,28 @@ public class MaskPathRasterTest
         mask.add(0F, 40F);
         mask.closed = false;
 
-        assertFalse(MaskCache.isMatte(mask));
-        assertNull(alpha(list(mask), null), "an open path is a stroke being drawn, not a matte");
+        assertTrue(MaskCache.isMatte(mask), "an open three-point mask is implicitly closed for fill");
+        float[] alpha = alpha(list(mask), null);
+        assertNotNull(alpha, "an open path must still matte the layer");
+        assertEquals(1600F, coverage(alpha), 60F, "the implicit closing edge encloses the rectangle");
     }
 
     @Test
-    public void openingAClosedPathRemovesItsMatte()
+    public void openingAClosedPathKeepsItsFill()
     {
         CompMask mask = mask("toggle");
 
         mask.rectangle(10F, 10F, 20F, 20F);
-        assertNotNull(alpha(list(mask), null));
+        float[] closed = alpha(list(mask), null);
+        assertNotNull(closed);
 
+        int closedHash = MaskCache.hash(list(mask));
         mask.closed = false;
-        assertNull(alpha(list(mask), null));
+        float[] open = alpha(list(mask), null);
+        assertNotNull(open, "opening a mask must not erase its fill");
+        assertEquals(coverage(closed), coverage(open), 20F);
+        assertNotEquals(closedHash, MaskCache.hash(list(mask)),
+            "closed is still part of the cache key even though it does not gate fill");
 
         mask.closed = true;
         assertNotNull(alpha(list(mask), null));

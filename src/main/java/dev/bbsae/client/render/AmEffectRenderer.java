@@ -134,6 +134,11 @@ public final class AmEffectRenderer
 
         program.set("Size", pixelWidth, pixelHeight);
         program.set("Texel", 1F / pixelWidth, 1F / pixelHeight);
+
+        if (space == null)
+        {
+            program.set("CompSize", Math.max(1, input.width), Math.max(1, input.height));
+        }
         program.set("LayerTexel", 1F / Math.max(1F, space.width), 1F / Math.max(1F, space.height));
         program.set("Time", context == null ? 0F : context.time);
 
@@ -205,6 +210,10 @@ public final class AmEffectRenderer
             uniform sampler2D Comp;
             uniform vec2 Size;
             uniform vec2 Texel;
+            /** Pixel size of the bound Source texture. In a layer-local bake Size is the parent
+             *  composition grid while Source is the (possibly scaled) raster; UV conversion must use
+             *  the texture's own size or every resample reads the top-left corner. */
+            uniform vec2 CompSize;
             uniform vec2 LayerSize;
             uniform vec3 LayerU;
             uniform vec3 LayerV;
@@ -303,12 +312,12 @@ public final class AmEffectRenderer
                 vec2 lp = vec2(luv.x * LayerSize.x, luv.y * LayerSize.y);
                 vec2 px = LayerX * lp.x + LayerY * lp.y + LayerOrigin;
 
-                return vec2(px.x / Size.x, 1.0 - px.y / Size.y);
+                return vec2(px.x / max(CompSize.x, 1.0), 1.0 - px.y / max(CompSize.y, 1.0));
             }
 
             /* The layer raster is drawn with a y-down ortho projection, so its texture V axis
              * points the other way: local y=0 (the top of the layer) is v=1. Sampling it with the
-             * layer UV directly ("LayerLocal" shortcut) read the raster mirrored — a 3D layer with
+             * layer UV directly ("LayerLocal" shortcut) read the raster mirrored 鈥?a 3D layer with
              * any content-sampling effect came out upside down (text layers made it obvious). The
              * composition mapping is the one place that owns the flip, and in the layer-local bake
              * the proxy composition *is* the raster, so it is exact there too. */

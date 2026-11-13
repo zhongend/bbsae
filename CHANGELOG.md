@@ -7,6 +7,82 @@ Esc「假取消」、离开页面临杀导出、导出中编辑混版、右键�
 违约、Mask/Shape 跨合成串键、图片/字体内容身份、显存无字节预算、绿帧写盘竞态、预渲染巨栅格等。
 全量 **145 个测试套件 / 929 项测试全绿（1 skipped）**（0.98 基线 142/905）。
 
+### 关键帧抽屉（0.99 hotfix）
+
+- **打开即崩溃（P0）**：dock 模式下 legacy `body` 按设计为 null，抽屉分隔条拖动却读
+  `body.area.w` → NPE。拖动/标题栏误触都会在下一帧渲染崩溃。现在宽度/高度按当前布局引擎取
+  `timeline.area.*`，不再依赖 `body`。
+- **打开不显示（P0）**：默认 72/28 dock 比例在 960×540 只给时间轴 125 px（抽屉最小要 189 px），
+  旧代码直接 `keyframeOpen=false` 并清 slide，于是按钮永远打不开、恢复的打开状态也被静默清掉。
+  现在按抽屉硬性最小高度自动增高所在 dock 分栏（只改最外层竖向 ratio，保留 80 px 兄弟面板），
+  legacy 则抬高时间轴；并把轨道保留量从 56 px 修为实测“标尺 + 3 条轨道”，抽屉不再盖住轨道。
+- 分隔条移到抽屉上方，不再抢标题栏/关闭按钮的点击；Esc 取消抽屉拖动不再把
+  `timelinePanelHeight` 写成抽屉高度。
+- 新增 `CompDockSourceTest` 5 例；全量 **145 套件 / 934 项测试全绿**。真机 960×540 截图
+  `docs/verify/round55-keyframe-drawer.png`（抽屉 154 px + 3 条完整轨道）。详见
+  [ROUND55-KEYFRAME-DRAWER.zh.md](docs/ROUND55-KEYFRAME-DRAWER.zh.md)。
+
+### 界面 / 效果 / 预览（0.99 后缀更新）
+
+- **效果库在左、独立效果页**：默认 dock 改为「效果/素材/预设 | 预览 | 属性」；检查器标签改为
+  调色/图层/蒙版/效果/文字/合成/输出，原「效果控件」拆成「图层」（运动/不透明度/来源/绑定）与
+  「效果」（效果栈/参数/样式）。顶栏效果库按钮删除，左侧标签即入口。旧工程布局由 v7 +
+  `uiLayoutRevision` 迁移一次，旧布局仍可在布局菜单选择。真机截图
+  `docs/verify/round56-ui-effects.png`。
+- **预览自适应分辨率**：预览 FBO 按 GUI scale 换算设备像素（GUI scale 2 不再 0.5× 欠采样），
+  预渲染 720p 不再无条件上采样，预览信息栏显示实际百分比。
+- **效果底层**：`EffectSpace` 新增 `CompSize` uniform，修复 3D 烘焙里采样 UV 除以父合成尺寸导致
+  扭曲/置换/玻璃/镜像采到左上角的 P0；模糊上限 200→1024、tap 数随半径增长，重复 count 32→64、
+  行列 8→20，bulge/pinch/twist 的 padding 按真实采样范围计算，修掉未定义 smoothstep。
+- **钢笔**：Set First Vertex 的模型旋转方向修正为与关键帧通道一致（新增全 shift 测试）；Shape PATH
+  的 overlay/hit/drag 现在经过形状自身平移+旋转（含动画），不再与渲染错位。
+- **回放抠像**：遮罩/世界帧配对帧序号，旧帧遮罩不再抠新帧；合成/3D/导出进入
+  `BBSRendering.renderOffscreen`，`GlStateGuard` 保存 sRGB。
+- 动效：弹簧阻尼改指数衰减（修 50 ms 帧下负阻尼翻转）、命名 SPRING_PANEL/PRESS/TAB、quint
+  页面过渡、可注入入场时钟。
+- 未完成（下一轮）：回放编辑顶部模式切换、回放实体合成相机空间、3D 挤出、3D 工作区真重复、
+  open-path 蒙版语义。详见 [ROUND56-UI-EFFECTS.zh.md](docs/ROUND56-UI-EFFECTS.zh.md)。
+
+### 回放嵌入 / 合成相机实体（0.99 后缀更新 2）
+
+- **回放编辑嵌入主界面**：顶栏下新增「合成 / 回放」模式条；回放不再是 dashboard 独立页，
+  不再有第二套标题栏/播放条。回放 transport 在模式条右侧，合成 header 的播放/时间码在回放模式
+  隐藏；切回时把回放 playhead 写回合成时间。`BbsAeClient` 不再注册回放 page。
+- **3D 回放实体进入 bbsae 相机空间**：新增 `ReplayActorPass`，把 BBS 模型按
+  `comp = layerPos + scale(px,-px,px)·(world-actorCenter)` 映射，并用 `CompCamera` 的
+  view/projection 渲染；不再用真实世界帧的贴片。3D entity layer 使用该 pass，2D 保持 world plate。
+  同步屏蔽 `ACTOR_BEFORE` 对世界抠像相机快照的覆盖。
+- 真机：`-PbbsaeView=replay`（嵌入回放页 + 交互脚本全通过）、
+  `-PbbsaeView=replay -PbbsaeReplayComp=true`（合成相机中的实体层）。
+  截图 `docs/verify/round57-replay-embed.png`、`docs/verify/round57-comp-actors.png`；详见
+  [ROUND57-REPLAY-EMBED.zh.md](docs/ROUND57-REPLAY-EMBED.zh.md)。
+- 3D 回放实体映射现在乘 `CompScene.world(layer)`，层平移/旋转/缩放/父级都会带动模型；2D entity
+  layer 仍保持 world plate。未完成：回放左右栏仍是 BBS 原生面板、3D 工作区真重复/挤出与
+  open-path 语义下一轮。
+
+### 3D 工作区重复 / 抠像同步（0.99 后缀更新 3）
+
+- **3D 工作区真实重复**：`drawReplicated3D` 对 `am_repeat` / radial / scatter / grid / line
+  逐复制体绘制独立 3D quad，复制体在图层局部空间按 offset/angle/scale/radius 排布，不再只画
+  一张图层方框。正常合成/导出路径不变。
+- **抠像同步**：遮罩记录世界帧 controller tick，懒渲染不再读实时 tick；遮罩尺寸与世界帧不一致
+  时拒绝绘制旧遮罩，避免运动时边缘露出背景。
+- **钢笔开放路径**：3 点以上开放蒙版按 AE 语义隐式闭合填充；2 点仍是绘制中的线段，不会让整层
+  消失。overlay 显示隐式闭合边，`closed` 仍参与缓存 key。
+- **3D 挤压体积**：新增 `extrude3d`（厚度/切片/侧面明暗），在 3D 图层本地 Z 轴堆叠切片；
+  合成预览/导出和 3D 工作区都会显示体积，2D 图层不适用。
+- **2D 回放预览兜底**：世界 plate/遮罩未就绪时，用 `renderFlat` 以合成 ortho 渲染 actor，
+  不再显示蓝色等待框；世界帧恢复后回到抠像路径。
+- **崩溃边界**：回放工作区打开/关闭失败会回到合成器并显示原因；`renderOffscreen` 在光影
+  pipeline 抛异常时回退直接渲染，不让整个合成器崩溃。
+- **光影真机**：正式 modpack（Iris 1.7.6 + Sodium 0.5.13 + Indium + BSL v10）进入世界并打开
+  合成器，预览信息显示「光影已加载 · 光影最终帧」，截图
+  `docs/verify/round64-modpack-iris.png`。测试后已恢复 iris 配置并删除测试世界。
+- **回放时间轴空状态**：隐藏 BBS 遗留的「Click a keyframe on the timeline…」标签，避免它在
+  窄宽度嵌入布局里覆盖右侧回放属性。
+- 详见 [ROUND58-3D-REPEAT-MATTE.zh.md](docs/ROUND58-3D-REPEAT-MATTE.zh.md)、
+  [ROUND59-REGRESSION.zh.md](docs/ROUND59-REGRESSION.zh.md)。
+
 ### UI 状态机
 
 - **Esc 真取消**：图层/手柄拖动记录完整 press-time 姿态（x/y、scale 三轴、rotation 三轴、z、相机

@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Preview proxy and pre-render cache sizing.
  *
  * <p>Both are pure functions of the composition and the viewport, which is exactly why they are
- * testable without a GL context — and exactly why they should be tested: a wrong scale renders the
+ * testable without a GL context 鈥?and exactly why they should be tested: a wrong scale renders the
  * preview at the wrong resolution forever, and a wrong cache size makes every cached frame a
  * differently-scaled copy of the composition.</p>
  */
@@ -35,17 +35,17 @@ public class PreviewProxyTest
 
         /* A viewport larger than the comp must not upscale the render target: a preview is not a
          * render, and 4K pixels for a 1080p comp would be four times the cost for no detail. */
-        assertEquals(1F, CompRenderer.previewScale(doc, 4000F, 3000F, 0));
+        assertEquals(1F, CompRenderer.previewScale(doc, 4000F, 3000F, 0, 1F));
     }
 
     @Test
     public void previewShrinksWithTheViewport()
     {
         CompDocument doc = document(1920, 1080);
-        float half = CompRenderer.previewScale(doc, 960F, 540F, 0);
+        float half = CompRenderer.previewScale(doc, 960F, 540F, 0, 1F);
 
         assertEquals(0.5F, half, 0.001F);
-        assertEquals(0.25F, CompRenderer.previewScale(doc, 480F, 270F, 0), 0.001F);
+        assertEquals(0.25F, CompRenderer.previewScale(doc, 480F, 270F, 0, 1F), 0.001F);
     }
 
     @Test
@@ -55,7 +55,7 @@ public class PreviewProxyTest
 
         /* 700x600 contain: the width is the limiting axis (700/1920 = 0.364), so the height ratio
          * (600/1080 = 0.555) must not be used. */
-        float scale = CompRenderer.previewScale(doc, 700F, 600F, 0);
+        float scale = CompRenderer.previewScale(doc, 700F, 600F, 0, 1F);
 
         assertEquals(0.375F, scale, 0.001F);
     }
@@ -66,12 +66,29 @@ public class PreviewProxyTest
         CompDocument doc = document(1920, 1080);
 
         /* The floor is 0.2 before quantisation, so the smallest representable step is 3/16. */
-        assertEquals(0.1875F, CompRenderer.previewScale(doc, 1F, 1F, 0), 0.001F);
+        assertEquals(0.1875F, CompRenderer.previewScale(doc, 1F, 1F, 0, 1F), 0.001F);
 
         /* Quantised to 1/16 so a splitter drag does not re-render on every pixel. */
-        float scale = CompRenderer.previewScale(doc, 1000F, 1000F, 0);
+        float scale = CompRenderer.previewScale(doc, 1000F, 1000F, 0, 1F);
 
         assertEquals(Math.round(scale * 16F) / 16F, scale, 0.0001F);
+    }
+
+    @Test
+    public void previewUsesDevicePixelsForGuiScale()
+    {
+        CompDocument doc = document(1920, 1080);
+
+        /* At GUI scale 2 a 960x540 GUI panel covers 1920x1080 device pixels, so the preview can be
+         * 1:1 instead of the old 0.5 (which looked soft on every default setup). */
+        float device = CompRenderer.previewScale(doc, 960F, 540F, 0, 2F);
+
+        assertEquals(1F, device, 0.001F);
+        assertEquals(0.5F, CompRenderer.previewScale(doc, 480F, 270F, 0, 2F), 0.001F);
+        assertTrue(device > CompRenderer.previewScale(doc, 960F, 540F, 0, 1F),
+            "device-pixel sizing must not undersample at GUI scale 2");
+        assertEquals(0.5F, CompRenderer.previewScale(doc, 960F, 540F, 0, 0F),
+            "invalid device scales fall back to 1, never NaN/negative");
     }
 
     @Test
@@ -132,7 +149,7 @@ public class PreviewProxyTest
         assertEquals(0.25F, EffectRenderer.proxyScale(480, 1920), 0.0001F);
 
         /* A 12 px shadow distance in a composition rendered at half resolution is a 6 px target
-         * offset — and the composition-pixel figure is recovered by dividing by the same factor. */
+         * offset 鈥?and the composition-pixel figure is recovered by dividing by the same factor. */
         float half = EffectRenderer.proxyScale(960, 1920);
 
         assertEquals(6F, 12F * half, 0.0001F);

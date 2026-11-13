@@ -293,8 +293,7 @@ public final class CompUi
 
     /* --------------------------------------------------------- toolbar geometry */
 
-    /** Width of the two optional header actions (效果库 / 工程), in UI pixels. */
-    public static final int LIBRARY_W = 54;
+    /** Width of the optional project header action, in UI pixels. */
     public static final int PROJECTS_W = 54;
 
     /**
@@ -421,9 +420,9 @@ public final class CompUi
      *
      * <p>Priority, left to right: the right cluster is anchored to the right edge and grows
      * leftwards; the left cluster grows rightwards. When they would collide, low-priority actions
-     * disappear (save → export → render → timecode → frame step → replay → title → library →
-     * projects → play) rather than overlap. Focus, settings and the layout button are never
-     * hidden.</p>
+     * disappear (save → export → render → timecode → frame step → replay → title → projects → play)
+     * rather than overlap. Focus, settings and the layout button are never hidden. The effect
+     * library is not a header action any more: it is the left column's first tab.</p>
      */
     public static HeaderLayout headerLayout(int width, int control)
     {
@@ -438,12 +437,10 @@ public final class CompUi
         boolean showExport = w >= 860;
         boolean showSave = w >= 980;
         boolean showPlay = w >= 120;
-        boolean showLibrary = true;
         boolean showProjects = true;
 
         int[] left;
         int[] right;
-        int libraryX;
         int projectsX;
 
         while (true)
@@ -452,23 +449,17 @@ public final class CompUi
             right = rightPositions(w, c, showRender, showExport, showSave);
 
             projectsX = right[6] - 8 - PROJECTS_W;
-            libraryX = projectsX - 8 - LIBRARY_W;
 
-            /* Optional action buttons must not start off-screen; hide them before they draw over
-             * the left cluster. */
-            if (showLibrary && libraryX < 8)
-            {
-                showLibrary = false;
-                continue;
-            }
-
-            if (!showLibrary && showProjects && projectsX < 8)
+            /* Optional actions must not start off-screen; hide them before they draw over the
+             * left cluster. The effect library now lives in the left column, so it no longer
+             * competes with the playback controls for header width. */
+            if (showProjects && projectsX < 8)
             {
                 showProjects = false;
                 continue;
             }
 
-            int clusterStart = showLibrary ? libraryX : (showProjects ? projectsX : right[6]);
+            int clusterStart = showProjects ? projectsX : right[6];
 
             if (left[9] + 8 <= clusterStart)
             {
@@ -508,10 +499,6 @@ public final class CompUi
             {
                 showTitle = false;
             }
-            else if (showLibrary)
-            {
-                showLibrary = false;
-            }
             else if (showProjects)
             {
                 showProjects = false;
@@ -523,8 +510,8 @@ public final class CompUi
         }
 
         return new HeaderLayout(w, c, showTitle, showReplay, showPlay, showTimecode, showFrames,
-            showRender, showExport, showSave, showLibrary, showProjects,
-            showLibrary ? libraryX : -1, showProjects ? projectsX : -1, left, right);
+            showRender, showExport, showSave, showProjects,
+            showProjects ? projectsX : -1, left, right);
     }
 
     /** Left cluster: title, replay selector, play, frame step, timecode. */
@@ -637,8 +624,7 @@ public final class CompUi
         public final boolean showRender;
         public final boolean showExport;
         public final boolean showSave;
-        /** Optional action buttons (效果库 / 工程): hidden before they can overlap the left cluster. */
-        public final boolean showLibrary;
+        /** Optional project button: hidden before it can overlap the left cluster. */
         public final boolean showProjects;
 
         public final int titleX;
@@ -655,15 +641,14 @@ public final class CompUi
         public final int renderX;
         public final int exportX;
         public final int saveX;
-        public final int libraryX;
         public final int projectsX;
         public final int leftEnd;
         public final int rightStart;
 
         HeaderLayout(int width, int control, boolean showTitle, boolean showReplay, boolean showPlay,
                      boolean showTimecode, boolean showFrames, boolean showRender, boolean showExport,
-                     boolean showSave, boolean showLibrary, boolean showProjects,
-                     int libraryX, int projectsX, int[] left, int[] right)
+                     boolean showSave, boolean showProjects,
+                     int projectsX, int[] left, int[] right)
         {
             this.width = width;
             this.control = control;
@@ -675,9 +660,7 @@ public final class CompUi
             this.showRender = showRender;
             this.showExport = showExport;
             this.showSave = showSave;
-            this.showLibrary = showLibrary;
             this.showProjects = showProjects;
-            this.libraryX = libraryX;
             this.projectsX = projectsX;
 
             this.titleX = left[0];

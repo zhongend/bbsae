@@ -105,6 +105,36 @@ public final class BbsPreviewBridge
     private BbsPreviewBridge()
     {}
 
+    /** The film panel this preview is bound to (null when the compositor is on a standalone project). */
+    public static UIFilmPanel filmPanel()
+    {
+        return filmPanel;
+    }
+
+    /** The film the preview is bound to, if any. */
+    public static mchorse.bbs_mod.film.Film film()
+    {
+        return filmPanel == null ? null : filmPanel.getData();
+    }
+
+    /**
+     * Entities the BBS film editor would render this frame. The editor controller owns them; the
+     * runner context is the same map the film panel's own preview fills. Returns an empty map (not
+     * null) when no film is attached, so callers do not need a second null check.
+     */
+    public static java.util.Map<String, mchorse.bbs_mod.forms.entities.IEntity> entities()
+    {
+        if (filmPanel == null || filmPanel.getRunner() == null || filmPanel.getRunner().getContext() == null)
+        {
+            return java.util.Collections.emptyMap();
+        }
+
+        java.util.Map<String, mchorse.bbs_mod.forms.entities.IEntity> entities =
+            filmPanel.getRunner().getContext().entities;
+
+        return entities == null ? java.util.Collections.emptyMap() : entities;
+    }
+
     /** Called from the compositor's {@code onAppear}; the film panel has already left editing. */
     public static void attach(UIFilmPanel panel, CompDocument comp)
     {

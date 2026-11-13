@@ -20,7 +20,7 @@ import dev.bbsae.comp.CompStyle;
  */
 public final class EffectPadding
 {
-    private static final float MAX_PADDING = 512F;
+    private static final float MAX_PADDING = 1024F;
 
     private EffectPadding()
     {}
@@ -91,8 +91,21 @@ public final class EffectPadding
             case "drop_shadow" -> effect.valueF("distance", 12F) + effect.valueF("softness", 6F) + 2F;
             case "stroke" -> effect.valueF("width", 3F) + 1F;
             case "rgb_split" -> effect.valueF("amount", 14F) + 2F;
-            case "displacement", "bulge", "pinch", "twist", "turbulent_displace" ->
+            case "displacement", "turbulent_displace" ->
                 effect.valueF("amount", 48F) + 2F;
+            case "bulge", "pinch", "twist" ->
+            {
+                /* amount is 0..1 and the shader divides the effect radius by
+                 * f = 1 ± amount; at 0.9 that samples up to 10× the radius. The old +amount+2
+                 * padding left ~3 px, so a 3D bake clamped at its edge and the warp looked like a
+                 * hard crop instead of a bulge/pinch. */
+                float amount = Math.min(0.92F, Math.abs(effect.valueF("amount", 0.5F)));
+                float radius = Math.max(0F, effect.valueF("radius", 0.35F));
+                float maxSide = Math.max(Math.abs(layer.width), Math.abs(layer.height));
+                float inverse = 1F / Math.max(0.08F, 1F - amount);
+
+                yield (inverse - 1F) * radius * maxSide * 0.5F + 2F;
+            }
             case "wave" -> effect.valueF("amplitude", effect.valueF("amount", 24F)) + 2F;
             case "glitch" -> effect.valueF("amount", 18F) + 2F;
             case "radial_blur" -> effect.valueF("radius", 0.15F) * Math.max(layer.width, layer.height) + 2F;

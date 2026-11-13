@@ -226,7 +226,7 @@ public class UICompButton extends UIButton
         int ex = this.area.ex();
         int ey = this.area.ey();
         float hv = this.motion.anim("hover", this.hover ? 1F : 0F, 20F);
-        float pv = this.motion.spring("press", this.press.held() ? 1F : 0F, 520F, 30F);
+        float pv = this.motion.press("press", this.press.held());
         float en = this.motion.spring("enabled", enabled ? 1F : 0F, 320F, 28F);
         float intensity = this.motion.intensity();
         float lift = lift(hv, pv, intensity, en);

@@ -234,11 +234,12 @@ public class UICompTabBar extends UIElement
             public void render(UIContext context)
             {
                 boolean selected = UICompTabBar.this.active.getAsInt() == index;
-                float sel = UICompTabBar.this.motion.select(selectKey, selected);
+                float sel = UICompTabBar.this.motion.spring(selectKey, selected ? 1F : 0F,
+                    UiMotion.SPRING_TAB_STIFFNESS, UiMotion.SPRING_TAB_DAMPING);
                 float hov = UICompTabBar.this.motion.anim(hoverKey,
                     this.area.isInside(context) ? 1F : 0F, 22F);
-                float press = UICompTabBar.this.motion.spring(pressKey,
-                    UICompTabBar.this.pressedTab == index ? 1F : 0F, 520F, 30F);
+                float press = UICompTabBar.this.motion.press(pressKey,
+                    UICompTabBar.this.pressedTab == index);
                 float scale = 1F - 0.04F * press * UiMotion.clamp01(UICompTabBar.this.motion.intensity());
                 MatrixStack stack = Math.abs(scale - 1F) > 0.001F
                     ? context.batcher.getContext().getMatrices() : null;
@@ -306,7 +307,15 @@ public class UICompTabBar extends UIElement
                 if (context.mouseButton == 0 && this.area.isInside(context))
                 {
                     UICompTabBar.this.pressedTab = index;
-                    UICompTabBar.this.select(index);
+
+                    /* Clicking the already-active tab used to fire onSelect again, which rebuilt
+                     * the whole inspector (scroll reset, focused text field destroyed, a save
+                     * queued) for a no-op. Programmatic select() still notifies; a physical click
+                     * on the active tab does not. */
+                    if (UICompTabBar.this.active.getAsInt() != index)
+                    {
+                        UICompTabBar.this.select(index);
+                    }
 
                     return true;
                 }

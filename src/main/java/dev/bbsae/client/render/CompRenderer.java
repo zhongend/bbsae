@@ -10,6 +10,7 @@ import dev.bbsae.client.ui.CompPrefs;
 import dev.bbsae.comp.CompProject;
 import dev.bbsae.comp.CompStore;
 import dev.bbsae.comp.CompStyle;
+import mchorse.bbs_mod.client.BBSRendering;
 import mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D;
 import mchorse.bbs_mod.utils.colors.Colors;
 import net.minecraft.client.MinecraftClient;
@@ -71,7 +72,8 @@ public final class CompRenderer
      */
     public static void render(CompProject project, CompDocument doc, float time, float alpha, float frameWidth, float frameHeight, int fit, boolean preview, boolean captureDepth, boolean renderEffects, boolean renderMasks, Matrix4f projection, Batcher2D batcher, boolean cameraPreview)
     {
-        GlFramebuffer composition = renderToTexture(project, doc, time, captureDepth, renderEffects, renderMasks, preview, projection);
+        GlFramebuffer composition = renderOffscreen(() ->
+            renderToTexture(project, doc, time, captureDepth, renderEffects, renderMasks, preview, projection));
 
         if (composition == null)
         {
@@ -116,13 +118,18 @@ public final class CompRenderer
         /* Clamped like every other frame lookup: past the composition's end the green bar and the
          * AE preview must agree instead of the cache silently missing. */
         int frameIndex = frameIndex(doc, time);
+        float scale = previewScale(doc, frameWidth, frameHeight, fit);
 
         /* 1. Green frames: the whole point of the pre-render cache. Only when the A/B switches are
          * on, because a cached frame always contains effects and masks; otherwise the 效果/蒙版
          * toggles would do nothing while the playhead sits on a green frame. */
         GlTexture cached = (renderEffects && renderMasks) ? CompPrecache.texture(project, doc, frameIndex) : null;
 
-        if (cached != null)
+        /* The cached frame is only accepted when it was rendered at least at the requested preview
+         * scale (same rule as the AE path). The pre-render is capped at 1280x720; a larger panel
+         * used to upscale that frame and look permanently soft even though a real render would have
+         * been sharper. */
+        if (cached != null && CompPrecache.cacheScale(doc) + 0.0001F >= scale)
         {
             blitTexture(batcher, cached.id, doc, alpha, frameWidth, frameHeight, fit);
 
@@ -143,7 +150,6 @@ public final class CompRenderer
             return;
         }
 
-        float scale = previewScale(doc, frameWidth, frameHeight, fit);
         long signature = CompRenderCache.signature(project, doc, time, renderEffects, renderMasks, fit, Math.round(frameWidth), Math.round(frameHeight), cameraOverlays) ^ ((long) Math.round(scale * 1000F) << 48);
 
         if (!cameraOverlays && !liveWorld && CompRenderCache.matches(signature, doc, doc.width, doc.height))
@@ -161,7 +167,8 @@ public final class CompRenderer
 
         try
         {
-            composition = renderToTexture(project, doc, time, false, renderEffects, renderMasks, true, null, scale);
+            composition = renderOffscreen(() ->
+                renderToTexture(project, doc, time, false, renderEffects, renderMasks, true, null, scale));
         }
         finally
         {
@@ -250,10 +257,23 @@ public final class CompRenderer
      */
     public static float previewScale(CompDocument doc, float frameWidth, float frameHeight, int fit)
     {
+        return previewScale(doc, frameWidth, frameHeight, fit, deviceScale());
+    }
+
+    /**
+     * Device-pixel-aware preview scale. {@code frameWidth/Height} are GUI units; one GUI pixel is
+     * {@code deviceScale()} framebuffer pixels. Sizing the composition FBO from GUI units made the
+     * preview undersample by 2× on every GUI scale-2 setup (the default), while original BBS
+     * supersamples its film preview by 2×. The old pure 4-arg form is kept for tests/callers that
+     * explicitly want a 1:1 GUI reference.
+     */
+    public static float previewScale(CompDocument doc, float frameWidth, float frameHeight, int fit, float deviceScale)
+    {
         float dw = Math.max(1F, doc.width);
         float dh = Math.max(1F, doc.height);
-        float sx = frameWidth / dw;
-        float sy = frameHeight / dh;
+        float device = Math.max(1F, Math.min(4F, deviceScale));
+        float sx = frameWidth * device / dw;
+        float sy = frameHeight * device / dh;
         float uniform = fit == 2 ? Math.max(sx, sy) : fit == 1 ? Math.max(sx, sy) : Math.min(sx, sy);
 
         /* Adaptive resolution while a curve is being dragged: the graph is being evaluated on
@@ -269,6 +289,21 @@ public final class CompRenderer
         return Math.round(uniform * 16F) / 16F;
     }
 
+    /** MC's GUI scale (device pixels per GUI pixel); 1 when it cannot be read (headless/tests). */
+    private static float deviceScale()
+    {
+        try
+        {
+            float scale = mchorse.bbs_mod.BBSModClient.getGUIScale();
+
+            return scale <= 0.01F ? 1F : Math.min(4F, scale);
+        }
+        catch (RuntimeException | LinkageError e)
+        {
+            return 1F;
+        }
+    }
+
     /** Extra factor applied to the preview while a curve/handle is being dragged. */
     private static final float INTERACTION_SCALE = 0.7F;
     /** Camera-preview frames use an opaque stage: a transparent stage lets the previous frame/
@@ -279,6 +314,45 @@ public final class CompRenderer
     public static void setInteractionPreview(boolean interacting)
     {
         interactionPreview = interacting;
+    }
+
+    /**
+     * Runs one composition render inside BBS' offscreen contract.
+     *
+     * <p>With Iris installed, {@code BBSRendering.renderOffscreen} is what tells the shader pack
+     * that this is not a world pass (it saves/restores the shadow state and the render-target
+     * listener). Rendering our FBOs without it meant a pack overriding shaders could substitute its
+     * own program/vertex format into the composition graph; the UI would then show wrong colours or
+     * fail to draw. BBSRendering is a no-op when Iris is absent.</p>
+     */
+    private static boolean offscreenFailureLogged;
+
+    private static GlFramebuffer renderOffscreen(java.util.function.Supplier<GlFramebuffer> action)
+    {
+        GlFramebuffer[] result = new GlFramebuffer[1];
+
+        try
+        {
+            BBSRendering.renderOffscreen(() -> result[0] = action.get());
+        }
+        catch (RuntimeException | LinkageError e)
+        {
+            /* A shader-pack pipeline that cannot enter its offscreen contract must not take the
+             * compositor down. Fall back to the plain pass; the frame is still correct vanilla,
+             * it simply may not receive the pack's post-processing. */
+            if (!offscreenFailureLogged)
+            {
+                offscreenFailureLogged = true;
+                BbsAeAddon.LOGGER.warn("BBS offscreen contract unavailable; rendering the composition directly", e);
+            }
+
+            if (result[0] == null)
+            {
+                result[0] = action.get();
+            }
+        }
+
+        return result[0];
     }
 
     private static GlFramebuffer renderToTexture(CompProject project, CompDocument doc, float time, boolean captureDepth, boolean renderEffects, boolean renderMasks, boolean preview, Matrix4f projection)
@@ -650,7 +724,8 @@ public final class CompRenderer
 
             try
             {
-                return renderToTexture(project, doc, clamped / fps, false, true, true, false, null, clampedScale, transparentStage);
+                return renderOffscreen(() ->
+                    renderToTexture(project, doc, clamped / fps, false, true, true, false, null, clampedScale, transparentStage));
             }
             finally
             {
@@ -705,8 +780,9 @@ public final class CompRenderer
 
         try
         {
-            return renderToTexture(project, doc, time, false, true, true, false, null,
-                Math.max(0.05F, Math.min(1F, scale)), previewStageTransparent(project));
+            return renderOffscreen(() ->
+                renderToTexture(project, doc, time, false, true, true, false, null,
+                    Math.max(0.05F, Math.min(1F, scale)), previewStageTransparent(project)));
         }
         finally
         {
@@ -1637,35 +1713,67 @@ public final class CompRenderer
             float stepX = w / BAKED_CELLS;
             float stepY = h / BAKED_CELLS;
 
-            for (int j = 0; j < BAKED_CELLS; j++)
+            /* Extrusion is a geometry operation: stack the flat layer raster along its local Z.
+             * The source cache deliberately leaves extrude3d out of the pixel bake; doing it here
+             * (instead of flattening a copy into the raster) makes the side volume survive the
+             * projection and the camera orbit. */
+            CompEffect extrusion = findEffect(layer, "extrude3d");
+
+            if (extrusion != null)
             {
-                for (int i = 0; i < BAKED_CELLS; i++)
-                {
-                    float lx0 = x0 + i * stepX;
-                    float ly0 = y0 + j * stepY;
-                    float lx1 = lx0 + stepX;
-                    float ly1 = ly0 + stepY;
-
-                    /* straight alpha raster: u across, v up (the raster was drawn y-down).
-                     *
-                     * texturedBox takes the two UV *corners* in the same order as the quad corners
-                     * (top-left first): (u, v) is the top-left, (uw, uh) the bottom-right. Passing
-                     * them the other way round flipped every baked 3D layer vertically — invisible
-                     * on a horizontal gradient, but a vertical/diagonal gradient came out with its
-                     * colours reversed and any text upside down. */
-                    float u0 = (lx0 - x0) / w;
-                    float u1 = (lx1 - x0) / w;
-                    float vTop = 1F - (ly0 - y0) / h;
-                    float vBottom = 1F - (ly1 - y0) / h;
-
-                    batcher.texturedBox(source.texture.color.id, 0xFFFFFFFF,
-                        lx0, ly0, stepX, stepY,
-                        u0 * texW, vTop * texH, u1 * texW, vBottom * texH,
-                        (int) texW, (int) texH);
-                }
+                extrusion = layer.resolveEffect(extrusion, context.frame);
             }
+            float extrudeDepth = extrusion == null ? 0F
+                : Math.max(0F, Math.min(400F, extrusion.valueF("depth", 60F)));
+            int slices = extrusion == null ? 0
+                : Math.max(1, Math.min(48, Math.round(extrusion.valueF("slices", 16F))));
+            float sideShade = extrusion == null ? 0F
+                : Math.max(0F, Math.min(1F, extrusion.valueF("shade", 0.35F)));
+            int firstSlice = extrudeDepth > 0.5F ? slices : 0;
 
-            batcher.flush();
+            for (int slice = firstSlice; slice >= 0; slice--)
+            {
+                float z = firstSlice == 0 ? 0F : -extrudeDepth * (slice / (float) firstSlice);
+
+                stack.peek().getPositionMatrix().set(model).translate(0F, 0F, z);
+
+                float shade = firstSlice == 0 ? 1F
+                    : 1F - sideShade * (slice / (float) firstSlice);
+                int value = Math.max(0, Math.min(255, Math.round(255F * shade)));
+                int tint = 0xFF000000 | (value << 16) | (value << 8) | value;
+
+                for (int j = 0; j < BAKED_CELLS; j++)
+                {
+                    for (int i = 0; i < BAKED_CELLS; i++)
+                    {
+                        float lx0 = x0 + i * stepX;
+                        float ly0 = y0 + j * stepY;
+                        float lx1 = lx0 + stepX;
+                        float ly1 = ly0 + stepY;
+
+                        /* straight alpha raster: u across, v up (the raster was drawn y-down).
+                         *
+                         * texturedBox takes the two UV *corners* in the same order as the quad corners
+                         * (top-left first): (u, v) is the top-left, (uw, uh) the bottom-right. Passing
+                         * them the other way round flipped every baked 3D layer vertically — invisible
+                         * on a horizontal gradient, but a vertical/diagonal gradient came out with its
+                         * colours reversed and any text upside down. */
+                        float u0 = (lx0 - x0) / w;
+                        float u1 = (lx1 - x0) / w;
+                        float vTop = 1F - (ly0 - y0) / h;
+                        float vBottom = 1F - (ly1 - y0) / h;
+
+                        batcher.texturedBox(source.texture.color.id, tint,
+                            lx0, ly0, stepX, stepY,
+                            u0 * texW, vTop * texH, u1 * texW, vBottom * texH,
+                            (int) texW, (int) texH);
+                    }
+                }
+
+                /* One flush per depth slice keeps the painter order explicit: the back cap and
+                 * walls are composited before the front cap. */
+                batcher.flush();
+            }
         }
         finally
         {
@@ -2019,9 +2127,27 @@ public final class CompRenderer
         return firstProjectedEffect(layer.effects) < layer.effects.size();
     }
 
-    private static boolean hasEnabledEffects(CompLayer layer)
+    /** First enabled effect of a type, or null. */
+    private static CompEffect findEffect(CompLayer layer, String type)
     {
-        if (layer.effects == null)
+        if (layer == null || layer.effects == null)
+        {
+            return null;
+        }
+
+        for (CompEffect effect : layer.effects)
+        {
+            if (effect != null && effect.enabled && type.equals(effect.type))
+            {
+                return effect;
+            }
+        }
+
+        return null;
+    }
+
+    private static boolean hasEnabledEffects(CompLayer layer)
+    {        if (layer.effects == null)
         {
             return false;
         }

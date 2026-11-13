@@ -2490,7 +2490,7 @@ public final class AmEffectLibrary
             }
             """, 0F, "strength")
             .blur("strength", false, null)
-            .p("strength", "半径", 0F, 150F, 12F, 1F));
+            .p("strength", "半径", 0F, 1024F, 12F, 1F));
 
         add(new AmEffectDef("am_box_blur", "方框模糊", "AM · 模糊", """
             void main()
@@ -2500,7 +2500,7 @@ public final class AmEffectLibrary
             }
             """, 0F, "strength")
             .blur("strength", true, "iter")
-            .p("strength", "半径", 0F, 100F, 8F, 1F)
+            .p("strength", "半径", 0F, 1024F, 8F, 1F)
             .p("iter", "迭代次数", 1F, 4F, 1F, 1F));
 
         add(new AmEffectDef("am_motion_blur", "动感模糊", "AM · 模糊", """

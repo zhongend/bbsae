@@ -54,7 +54,7 @@ public class UICompIconButton extends UIIcon
         this.press.poll(Window.isMouseButtonPressed(0), this.isEnabled());
 
         float hv = this.motion.anim("hover", this.hover ? 1F : 0F, 24F);
-        float pv = this.motion.spring("press", this.press.held() ? 1F : 0F, 520F, 30F);
+        float pv = this.motion.press("press", this.press.held());
         float en = this.motion.spring("enabled", this.isEnabled() ? 1F : 0F, 320F, 28F);
         int inset = UICompButton.pressInset(pv);
         int x = this.area.x + inset;

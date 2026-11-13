@@ -88,6 +88,8 @@ loom {
             vmArg "-Dbbsae.debugShotTicks=" + (project.findProperty("bbsaeShotTicks") ?: "260")
             vmArg "-Dbbsae.debugShotEachView=" + (project.findProperty("bbsaeShotEachView") ?: "false")
             vmArg "-Dbbsae.debugShotPrefix=" + (project.findProperty("bbsaeShotPrefix") ?: "round31-")
+            vmArg "-Dbbsae.debugReplayComp=" + (project.findProperty("bbsaeReplayComp") ?: "false")
+            vmArg "-Dbbsae.replayInteractionScript.disable=" + (project.findProperty("bbsaeReplayScriptOff") ?: "false")
             /* Font verification sheet (see BbsAeClient.saveFontSheet):
              *   ./gradlew runClientView -PbbsaeFontShot=fontsheet -PbbsaeFontShotFont=timesbd.ttf
              * It renders the text through the real composition renderer, which is the only way to

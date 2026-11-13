@@ -132,12 +132,45 @@ public final class ReplayEntityMask
         }
 
         serial += 1;
+        lastActorTick = -1;
+    }
+
+    /** Marks the comp-camera actor pass so its {@code ACTOR_BEFORE} event is not captured as world. */
+    static void setCompositeActorPass(boolean active)
+    {
+        inCompositeActorPass = active;
     }
 
     /** True while any composition on screen wants a replay entity matte. */
     public static boolean isRequested()
     {
         return requested;
+    }
+
+    /**
+     * True only when the mask texture belongs to the world frame currently being composited.
+     *
+     * <p>Before this check the only freshness rule was "a target exists", so after a failed mask
+     * pass (no controller, request cleared, film change) the previous frame's silhouette kept
+     * keying the new world frame. Under motion that is exactly the background leak the user sees:
+     * the old actor outline is where the actor was, not where it is now. Refusing to compose is
+     * strictly safer than composing a stale matte; the layer draws its waiting placeholder.</p>
+     */
+    public static boolean isCurrentFrame()
+    {
+        return renderedSerial == serial && texture() != 0;
+    }
+
+    /** Serial of the world frame currently being rendered (diagnostics/tests). */
+    public static int frameSerial()
+    {
+        return serial;
+    }
+
+    /** Serial the current mask texture was produced for (diagnostics/tests). */
+    public static int renderedSerial()
+    {
+        return renderedSerial;
     }
 
     /**
@@ -156,7 +189,8 @@ public final class ReplayEntityMask
      */
     public static void captureActorState(FilmControllerContext context)
     {
-        if (inMaskRender || context == null || context.stack == null || context.camera == null)
+        if (inMaskRender || inCompositeActorPass
+            || context == null || context.stack == null || context.camera == null)
         {
             return;
         }
@@ -186,6 +220,12 @@ public final class ReplayEntityMask
     private static boolean loggedCapture;
     private static boolean loggedLiveFallback;
     private static boolean inMaskRender;
+    /**
+     * True while {@link ReplayActorPass} renders the same actors into the composition camera.
+     * That pass also fires {@code FormPoseEvents.ACTOR_BEFORE}; without this flag it would replace
+     * the world-frame matte pose with the composition frame's synthetic camera.
+     */
+    private static boolean inCompositeActorPass;
 
     /**
      * The fractional tick the world actor was actually drawn with.
@@ -197,6 +237,8 @@ public final class ReplayEntityMask
      * Capturing the actor's own transition makes both passes use the same sub-tick.</p>
      */
     private static float lastActorTransition;
+    /** Controller tick the world frame's actors were rendered at (-1 = not captured yet). */
+    private static int lastActorTick = -1;
     /** Pixel size of the framebuffer the world frame was rendered into (0 = unknown). */
     private static int lastWorldWidth;
     private static int lastWorldHeight;
@@ -435,6 +477,11 @@ public final class ReplayEntityMask
 
             return;
         }
+
+        /* Snapshot the controller tick that produced the world frame. The lazy overlay path used
+         * to read the live controller tick again; a film cursor update between AFTER_ENTITIES and
+         * the composition put the matte actor one keyframe away from the world actor. */
+        lastActorTick = controller.getTick();
 
         /* The world colour/depth are in the framebuffer that is current at AFTER_ENTITIES:
          * Minecraft's main target, BBS' custom-size target, or Iris' g-buffer. Copying its depth
@@ -753,7 +800,8 @@ public final class ReplayEntityMask
                          * the real one). Playback does not do onion skins, which is exactly why
                          * the matte "worked" when the compositor was opened from film playback.
                          * Re-apply the replay at the current tick before the coverage render. */
-                        float tick = replay.getTick(controller.getTick()) + actorTransition;
+                        float tick = replay.getTick(lastActorTick >= 0 ? lastActorTick : controller.getTick())
+                            + actorTransition;
 
                         replay.keyframes.apply(tick, entity);
 

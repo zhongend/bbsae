@@ -10,6 +10,7 @@ import dev.bbsae.client.render.CompViewportCamera;
 import dev.bbsae.client.render.CompViewportRenderer;
 import dev.bbsae.client.render.ImageTextureCache;
 import dev.bbsae.client.render.TextureFilter;
+import dev.bbsae.client.replay.UIReplayModePanel;
 import dev.bbsae.comp.CompBinding;
 import dev.bbsae.comp.CompAnimationPreset;
 import dev.bbsae.comp.CompDocument;
@@ -37,6 +38,7 @@ import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.camera.utils.TimeUtils;
 import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
+import mchorse.bbs_mod.settings.values.ui.EditorLayoutNode;
 import mchorse.bbs_mod.ui.dashboard.UIDashboard;
 import mchorse.bbs_mod.ui.dashboard.panels.UIDashboardPanel;
 import mchorse.bbs_mod.ui.framework.UIContext;
@@ -103,7 +105,6 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UIButton save;
     private final UIButton play;
     private final UIButton renderMode;
-    private final UIButton effectLibraryButton;
     private final UIButton projectsButton;
     private UIEffectLibraryOverlay effectLibraryOverlay;
     private final UIButton exportFilm;
@@ -116,6 +117,22 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private final UIElement header;
     private UIElement body;
+    /** 合成 / 回放 workspace switch, directly under the header. */
+    private final UIElement modeBar;
+    private final UICompTabBar modeTabs;
+    private final UICompIconButton replayPrev;
+    private final UICompIconButton replayNext;
+    private final UICompIconButton replayAll;
+    private final UICompIconButton replayModels;
+    private final UICompIconButton replayOriginal;
+    private final UICompButton replayPlayButton;
+    private final UILabel replayTimecode;
+    private final UIReplayModePanel replayWorkspace;
+    private final UiPageTransition workspaceMotion = new UiPageTransition(0.22F, 6F);
+    private int workspaceMode;
+    private static final int MODE_BAR_H = 22;
+    private static final int WORKSPACE_COMPOSITE = 0;
+    private static final int WORKSPACE_REPLAY = 1;
     private final UIElement timeline;
     private final UIElement timelineHeader;
     private final UIElement effectColumn;
@@ -306,8 +323,9 @@ public class UICompositorPanel extends UIDashboardPanel
     private boolean keyframeOpen;
     /**
      * User's intent for the drawer, independent of whether the current layout has room to show
-     * it. layoutKeyframeDrawer() force-closes the presented drawer on a short timeline; persisting
-     * that forced value made "open drawer, open project" silently forget the drawer.
+     * it. The layout grows the timeline panel to make room; only when even that is impossible does
+     * the drawer render at the height the panel allows, and this flag keeps the request so a later
+     * resize can reveal it.
      */
     private boolean keyframeOpenRequested;
     /** doc.id + primary layer id of the sheets currently in the drawer (selection carry gate). */
@@ -330,6 +348,24 @@ public class UICompositorPanel extends UIDashboardPanel
     private static final int PAGE_TEXT = 4;
     private static final int PAGE_COMP = 5;
     private static final int PAGE_OUTPUT = 6;
+
+    /** Inspector tab index → page id. Must match the addTab() order in the constructor. */
+    private static final int[] INSPECTOR_TAB_PAGES = {
+        PAGE_GRADE, PAGE_LAYER, PAGE_MASK, PAGE_EFFECTS, PAGE_TEXT, PAGE_COMP, PAGE_OUTPUT
+    };
+
+    private static int inspectorTabForPage(int page)
+    {
+        for (int index = 0; index < INSPECTOR_TAB_PAGES.length; index++)
+        {
+            if (INSPECTOR_TAB_PAGES[index] == page)
+            {
+                return index;
+            }
+        }
+
+        return 3;
+    }
 
     private static final int TIMELINE_HEIGHT = 250;
 
@@ -391,8 +427,17 @@ public class UICompositorPanel extends UIDashboardPanel
     private float keyframeDrawerSlide;
     private long keyframeSlideNanos;
     private static final int KEYFRAME_DRAWER_MIN = 96;
-    /** Two track rows + the strip's 26 px header and 5 px splitter must survive the drawer. */
-    private static final int MIN_TRACKS_HEIGHT = 56;
+    /** Guards the "make the timeline tall enough for the drawer" pass against re-entry. */
+    private boolean drawerSpacePass;
+    /** The too-short status line is emitted once per open attempt, not on every layout pass. */
+    private boolean drawerSpaceWarned;
+    /** Last (timeline height, required height, dock height) the grow pass already tried. */
+    private int drawerGrowTriedHeight = Integer.MIN_VALUE;
+    private int drawerGrowTriedRequired = -1;
+    private int drawerGrowTriedBody = -1;
+    /** Fallback row height when the track timeline has not been built/laid out yet. */
+    private static final int KEYFRAME_TRACK_ROW_FALLBACK = 26;
+    private static final int KEYFRAME_TRACK_RULER = 20;
     private UIStartScreen startScreen;
     private boolean startScreenOpen;
     private int pendingScheme;
@@ -418,8 +463,6 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.replaySelector = CompUi.flat("回放：-", "选择这条合成对应的回放或影片；右键可切到其它影片", this::openReplaySelector);
         this.replaySelector.context(this::replayContextMenu);
-
-        this.effectLibraryButton = CompUi.flat("效果库", "打开带预览图的效果库（单击即可叠加到当前轨道）", this::openEffectLibrary);
 
         this.projectsButton = CompUi.flat("工程", "工程列表：保存当前工程并回到选择工程页面（也可在设置中打开）", () ->
         {
@@ -470,7 +513,6 @@ public class UICompositorPanel extends UIDashboardPanel
         this.prevFrame.relative(this.header).x(302).y(inset).w(control).h(control);
         this.nextFrame.relative(this.header).x(302 + control + 2).y(inset).w(control).h(control);
         this.timecode.relative(this.header).x(302 + control * 2 + 8).y(inset).w(86).h(control);
-        this.effectLibraryButton.relative(this.header).x(1F, -456).y(inset).w(54).h(control);
         this.projectsButton.relative(this.header).x(1F, -396).y(inset).w(54).h(control);
         this.save.relative(this.header).x(1F, -336).y(inset).w(48).h(control);
         this.exportFilm.relative(this.header).x(1F, -248).y(inset).w(54).h(control);
@@ -479,8 +521,57 @@ public class UICompositorPanel extends UIDashboardPanel
         this.focusButton.relative(this.header).x(1F, -40).y(inset).w(control).h(control);
 
         this.header.add(this.title, this.replaySelector, this.play, this.prevFrame, this.nextFrame,
-            this.timecode, this.effectLibraryButton, this.projectsButton, this.save, this.exportFilm,
+            this.timecode, this.projectsButton, this.save, this.exportFilm,
             this.renderMode, this.settingsButton, this.layoutButton, this.focusButton);
+
+        /* One mode bar for the whole workspace. The replay editor used to be a second dashboard
+         * page with its own header and its own visual language; it is the same editor with the same
+         * chrome now, just a different body. */
+        this.modeBar = new UIElement()
+        {
+            @Override
+            public void render(UIContext context)
+            {
+                context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF12161D);
+                context.batcher.box(this.area.x, this.area.ey() - 1, this.area.ex(), this.area.ey(), 0xFF2A303A);
+                super.render(context);
+            }
+        };
+        this.modeBar.relative(this).x(0).y(24).w(1F).h(MODE_BAR_H);
+
+        this.replayWorkspace = new UIReplayModePanel(this.dashboard);
+        this.replayWorkspace.setEmbedded(true);
+        this.replayWorkspace.relative(this).x(0).y(24 + MODE_BAR_H).w(1F)
+            .h(1F, -24 - MODE_BAR_H - 18);
+        this.replayWorkspace.setVisible(false);
+        this.replayWorkspace.setEnabled(false);
+
+        this.modeTabs = new UICompTabBar();
+        this.modeTabs.relative(this.modeBar).x(8).y(2).w(112).h(18);
+        this.modeTabs.addTab("合成");
+        this.modeTabs.addTab("回放");
+        this.modeTabs.active(() -> this.workspaceMode);
+        this.modeTabs.onSelect((index) -> this.switchWorkspace(index == 1 ? WORKSPACE_REPLAY : WORKSPACE_COMPOSITE));
+
+        this.replayPlayButton = CompUi.flat("播放", "回放：播放 / 暂停", () -> this.replayWorkspace.togglePlaybackFromHost());
+        this.replayPlayButton.relative(this.modeBar).x(1F, -184).y(2).w(52).h(18);
+        this.replayTimecode = new UILabel(IKey.constant("00:00:00:00"));
+        this.replayTimecode.color(0xFFD8DEE9, false);
+        this.replayTimecode.labelAnchor(1F, 0.5F);
+        this.replayTimecode.relative(this.modeBar).x(1F, -262).y(2).w(70).h(18);
+        this.replayPrev = CompUi.iconButton(Icons.FRAME_PREV, "回放：上一帧", () -> this.replayWorkspace.stepFromHost(-1));
+        this.replayNext = CompUi.iconButton(Icons.FRAME_NEXT, "回放：下一帧", () -> this.replayWorkspace.stepFromHost(1));
+        this.replayAll = CompUi.iconButton(Icons.MAXIMIZE, "回放：框选全部模型", () -> this.replayWorkspace.frameAllFromHost());
+        this.replayModels = CompUi.iconButton(Icons.PLAYER, "回放：打开模型库", () -> this.replayWorkspace.openModelLibraryFromHost());
+        this.replayOriginal = CompUi.iconButton(Icons.FILM, "回放：切到 BBS 原版回放编辑", () -> this.replayWorkspace.openOriginalEditorFromHost());
+        this.replayPrev.relative(this.modeBar).x(1F, -128).y(2).w(18).h(18);
+        this.replayNext.relative(this.modeBar).x(1F, -106).y(2).w(18).h(18);
+        this.replayAll.relative(this.modeBar).x(1F, -84).y(2).w(18).h(18);
+        this.replayModels.relative(this.modeBar).x(1F, -62).y(2).w(18).h(18);
+        this.replayOriginal.relative(this.modeBar).x(1F, -40).y(2).w(18).h(18);
+
+        this.modeBar.add(this.modeTabs, this.replayPlayButton, this.replayTimecode,
+            this.replayPrev, this.replayNext, this.replayAll, this.replayModels, this.replayOriginal);
 
         /* Left column: the two panels an editor actually browses from - effects and media.
          * The layer stack lives in the timeline's track headers; keeping a second layer list
@@ -523,7 +614,9 @@ public class UICompositorPanel extends UIDashboardPanel
         this.assetPanel.add(assetSection);
 
         this.leftTabs = new UICompTabBar();
-        this.leftTabs.relative(this.effectColumn).x(0).y(0).w(1F).h(22);
+        /* 6 px dock-splitter inset on the right: the tab bar's "»" overflow control otherwise sits
+         * under the splitter hot zone and a click there starts a panel drag. */
+        this.leftTabs.relative(this.effectColumn).x(0).y(0).w(1F, -22).h(22);
         this.presetBrowser = new UICompPresetBrowser(this);
         this.presetBrowser.relative(this.effectColumn).x(0).y(22).w(1F).h(1F, -22);
         this.presetBrowser.setVisible(false);
@@ -534,8 +627,14 @@ public class UICompositorPanel extends UIDashboardPanel
         this.leftTabs.onSelect((index) -> this.applyLeftPage(index, true));
         this.leftTabs.active(() -> this.leftPage);
 
+        /* The reference-style browser (thumbnails, categories) stays reachable from the left
+         * column instead of the removed header button. */
+        UIIcon effectGallery = new UIIcon(Icons.IMAGE, (icon) -> this.openEffectLibrary());
+        effectGallery.relative(this.effectColumn).x(1F, -20).y(2).w(18).h(18);
+        effectGallery.tooltip(IKey.constant("打开带预览图的效果库（单击效果即可叠加到当前轨道）"));
+
         this.effectColumn.w(190).h(1F);
-        this.effectColumn.add(this.leftTabs, this.effectLibrary, this.assetPanel, this.presetBrowser);
+        this.effectColumn.add(this.leftTabs, effectGallery, this.effectLibrary, this.assetPanel, this.presetBrowser);
 
         this.preview = new UIElement()
         {
@@ -5271,7 +5370,7 @@ public class UICompositorPanel extends UIDashboardPanel
          * timeline, gizmo and model library instead of re-implementing them. The dashboard bar also
          * carries the same entry as a registered panel. */
         this.replayModeButton = new UIIcon(Icons.PLAYER,
-            (button) -> BbsAeClient.openReplayMode(this.dashboard, this));
+            (button) -> this.openReplayWorkspace());
         this.replayModeButton.relative(this.preview).x(1F, -160).y(6).w(20).h(20);
         this.replayModeButton.tooltip(IKey.constant("实体回放：在 3D 空间里编辑影片回放（原版轨道 / 原版 gizmo / 原版模型库）"));
         this.preview.add(this.replayModeButton);
@@ -5315,22 +5414,26 @@ public class UICompositorPanel extends UIDashboardPanel
         this.inspectorColumn.w(300).h(1F);
 
         this.inspectorTabs = new UICompTabBar();
-        this.inspectorTabs.relative(this.inspectorColumn).x(0).y(0).w(1F).h(22);
-        this.inspectorTabs.addTab("效果控件");
+        this.inspectorTabs.relative(this.inspectorColumn).x(0).y(0).w(1F, -6).h(22);
+        /* Tab order is an editing order, not a constant order: grade → layer → mask → effects is
+         * the "select a layer, fix its transform, then add visual effects" path. The effect stack
+         * used to live at index 0 together with transform/opacity, which is the crowding this split
+         * removes. PAGE_* keeps its numeric contract for project files; the map below translates. */
         this.inspectorTabs.addTab("调色");
         this.inspectorTabs.addTab("图层");
         this.inspectorTabs.addTab("蒙版");
+        this.inspectorTabs.addTab("效果");
         this.inspectorTabs.addTab("文字");
         this.inspectorTabs.addTab("合成");
         this.inspectorTabs.addTab("输出");
         this.inspectorTabs.onSelect((index) ->
         {
-            this.inspectorPage = index;
-            this.beginPageMotion(this.inspectorPageMotion, "inspector:" + index);
+            this.inspectorPage = INSPECTOR_TAB_PAGES[Math.max(0, Math.min(INSPECTOR_TAB_PAGES.length - 1, index))];
+            this.beginPageMotion(this.inspectorPageMotion, "inspector:" + this.inspectorPage);
             this.refreshInspector();
             this.markViewStateDirty();
         });
-        this.inspectorTabs.active(() -> this.inspectorPage);
+        this.inspectorTabs.active(() -> inspectorTabForPage(this.inspectorPage));
 
         this.inspector = new UIScrollView(ScrollDirection.VERTICAL);
         this.inspector.relative(this.inspectorColumn).x(0).y(22).w(1F).h(1F, -22);
@@ -5763,7 +5866,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 .onLayoutSettled(this::onDockLayoutSettled);
 
             this.dock.addPanel(CompDockSource.PANEL_EFFECTS, this.effectColumn, Icons.MATERIAL,
-                IKey.constant("效果 / 素材"));
+                IKey.constant("效果/素材/预设"));
             this.dock.addPanel(CompDockSource.PANEL_PREVIEW, this.preview, Icons.CAMERA,
                 IKey.constant("预览"));
             this.dock.addPanel(CompDockSource.PANEL_INSPECTOR, this.inspectorColumn, Icons.PROPERTIES,
@@ -5844,12 +5947,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.dock != null)
         {
-            this.add(this.header, this.dock, this.renderPanel, this.status,
+            this.add(this.header, this.modeBar, this.dock, this.renderPanel, this.replayWorkspace, this.status,
                 this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay);
         }
         else
         {
-            this.add(this.header, this.body, this.renderPanel, this.timeline, this.quickPanel, this.status,
+            this.add(this.header, this.modeBar, this.body, this.renderPanel, this.timeline, this.quickPanel,
+                this.replayWorkspace, this.status,
                 this.modalLayer, this.startScreen, this.onboarding, this.settingsOverlay);
         }
 
@@ -5900,6 +6004,16 @@ public class UICompositorPanel extends UIDashboardPanel
     private void leavePanel(boolean closed)
     {
         this.stopCameraFlightOnLeave();
+
+        /* Do not leave the embedded replay editor running behind another dashboard page. */
+        if (this.workspaceMode == WORKSPACE_REPLAY)
+        {
+            this.workspaceMode = WORKSPACE_COMPOSITE;
+            this.replayWorkspace.disappear();
+            this.replayWorkspace.setVisible(false);
+            this.replayWorkspace.setEnabled(false);
+        }
+
         this.savePanelLayout();
         this.flushSave();
         CompPrefs.flush();
@@ -5947,9 +6061,32 @@ public class UICompositorPanel extends UIDashboardPanel
      * A compositor belongs to exactly one BBS film (replay project). This is the only entry
      * point that gives the panel data; the dashboard tab alone deliberately has no project.
      */
+    /**
+     * Opens the embedded replay workspace. Kept public for {@code BbsAeClient.openReplayMode} and
+     * the debug scripts; the mode bar calls the same path.
+     */
+    public void openReplayWorkspace()
+    {
+        this.switchWorkspace(WORKSPACE_REPLAY);
+    }
+
+    public void openCompositeWorkspace()
+    {
+        this.switchWorkspace(WORKSPACE_COMPOSITE);
+    }
+
+    public UIReplayModePanel replayWorkspacePanel()
+    {
+        return this.replayWorkspace;
+    }
+
+    public mchorse.bbs_mod.film.Film film()
+    {
+        return this.film;
+    }
+
     public void bind(mchorse.bbs_mod.ui.film.UIFilmPanel filmPanel, mchorse.bbs_mod.film.Film film, mchorse.bbs_mod.film.replays.Replay replay)
-    {        if (film == null)
-        {
+    {        if (film == null)        {
             return;
         }
 
@@ -9535,8 +9672,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
             case "replay":
                 /* Entity-replay editing page: BBS's own replay timeline/gizmo/model library inside
-                 * bbsae's 3D space. */
-                BbsAeClient.openReplayMode(this.dashboard, this);
+                 * bbsae's 3D space, as the compositor's second workspace. */
+                this.openReplayWorkspace();
                 break;
 
             case "docktest":
@@ -11526,19 +11663,37 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void focusEffectLibrary()
     {
-        /* The full-screen library is the reference-style browser (previews, categories, search);
-         * the narrow left list stays available for quick keyboard-style use. */
+        /* The effect library is the left column's first tab now. The header button and the
+         * full-screen overlay are gone: adding an effect is a left-to-right workflow (browse on
+         * the left, edit the applied stack on the right), not a modal detour. */
         this.leftPage = 0;
-        this.leftTabs.select(0);
-        this.effectLibrary.setVisible(true);
-        this.assetPanel.setVisible(false);
-        this.openEffectLibrary();
-        this.setStatus("在效果库中单击效果即可叠加到当前轨道");
+        this.applyLeftPage(0, true);
+        this.revealDockPanel(CompDockSource.PANEL_EFFECTS);
+        this.setStatus("在左侧效果库中单击效果即可叠加到当前轨道");
+    }
+
+    /** Brings a dock panel back when the user hid it, so a header/library action can still work. */
+    private void revealDockPanel(String panelId)
+    {
+        if (this.dock == null || this.dockSource == null || panelId == null)
+        {
+            return;
+        }
+
+        java.util.Set<String> hidden = this.dockSource.getHiddenPanels();
+
+        if (hidden.remove(panelId))
+        {
+            this.dockSource.setHiddenPanels(hidden);
+            this.dock.refresh();
+            this.dockLayoutDirty = true;
+        }
     }
 
     public void setInspectorPage(int page)
     {
-        this.inspectorTabs.select(page);
+        this.inspectorPage = Math.max(PAGE_EFFECTS, Math.min(PAGE_OUTPUT, page));
+        this.inspectorTabs.select(inspectorTabForPage(this.inspectorPage));
     }
 
     /** Time-axis zoom for the keyframe drawer; the title-bar arrows call this. */
@@ -11680,10 +11835,20 @@ public class UICompositorPanel extends UIDashboardPanel
         if (needsReveal)
         {
             this.keyframeDrawerSlide = 0F;
+            this.drawerSpaceWarned = false;
+        }
+
+        if (open)
+        {
+            /* The drawer has a hard minimum height (header + a few track rows + the editor). If the
+             * timeline panel is shorter than that, enlarging it is the only way to display the
+             * drawer; opening it into 30 px would look like the click did nothing. */
+            this.ensureKeyframeDrawerSpace();
         }
 
         if (!open)
         {
+            this.drawerSpaceWarned = false;
             /* The keyframe properties panel is parented to the inspector, not to the drawer.
              * Hiding the drawer used to leave that panel covering Effect Controls with no way
              * to dismiss it. Clearing the picked keyframe removes it with the drawer. */
@@ -11765,34 +11930,43 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        int timelineHeight = this.dock != null ? Math.max(0, this.timeline.area.h) : this.timelinePanelHeight;
+        int timelineHeight = this.timelineLayoutHeight();
 
-        /* The drawer must leave room for the strip header (plus the dock top inset), at least two
-         * track rows and the 5 px splitter. The old "timelineHeight - 96" cap ignored the header:
-         * in focus mode the timeline is only ~16 % of the dock, so opening the drawer produced a
-         * negative track height (the tracks vanished and the drawer covered the toolbar). */
-        int max = Math.max(0, timelineHeight - top - MIN_TRACKS_HEIGHT - 5);
+        /* The drawer must leave room for the strip header (plus the dock top inset), the track
+         * ruler, three track rows and the 5 px splitter. The old "timelineHeight - 96" cap ignored
+         * the header: in focus mode the timeline is only ~16 % of the dock, so opening the drawer
+         * produced a negative track height (the tracks vanished and the drawer covered the
+         * toolbar). */
+        int max = this.keyframeDrawerMaxHeight(timelineHeight);
 
-        if (max < KEYFRAME_DRAWER_MIN)
+        if (this.keyframeOpen && max < KEYFRAME_DRAWER_MIN)
         {
-            if (this.keyframeOpen)
-            {
-                /* Only the presented state is hidden; keyframeOpenRequested keeps the user's
-                 * intent so a later save/layout does not forget that they wanted it open. */
-                this.keyframeOpen = false;
-                this.setStatus("时间轴太矮，关键帧抽屉已收起；拖高时间轴或退出聚焦后再打开");
-            }
-
-            this.keyframeDrawerSlide = 0F;
-            max = 0;
+            /* Dock ratios are user-controlled, and the default 72/28 split leaves the timeline
+             * ~125 px on a 960×540 UI: less than the drawer minimum. Grow the timeline panel (a
+             * layout can and must honour a hard minimum) and re-measure; do not flip the open flag
+             * off, because that made the button lie and made a resize unable to reveal the drawer. */
+            this.ensureKeyframeDrawerSpace();
+            timelineHeight = this.timelineLayoutHeight();
+            max = this.keyframeDrawerMaxHeight(timelineHeight);
         }
 
-        this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.keyframeDrawerHeight));
+        if (this.keyframeOpen && max < KEYFRAME_DRAWER_MIN && !this.drawerSpaceWarned)
+        {
+            this.drawerSpaceWarned = true;
+            this.setStatus("时间轴太矮，关键帧抽屉只能显示 " + max + "px；拖高时间轴可完整显示");
+        }
+        else if (max >= KEYFRAME_DRAWER_MIN)
+        {
+            this.drawerSpaceWarned = false;
+        }
 
-        /* Use the live slide value for both directions: closing must shrink the drawer instead of
-         * snapping it shut, so the same animated height drives the layout until it reaches 0. */
+        /* Keep the preferred height across short layouts: clamping the stored value to the current
+         * maximum made the drawer permanently 96 px after one too-short frame. The visible height
+         * is the minimum of the preference and the room that actually exists. */
+        this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, this.keyframeDrawerHeight);
+
         float slide = Math.max(0F, Math.min(1F, this.keyframeDrawerSlide));
-        int shownHeight = Math.round(this.keyframeDrawerHeight * slide);
+        int shownHeight = Math.round(Math.min(this.keyframeDrawerHeight, max) * slide);
 
         /* Visibility is a function of the page and the open flag here, not a one-shot side effect
          * in setKeyframeOpen(). The page switch sets visible=false; restoring it here is what makes
@@ -11804,7 +11978,11 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.trackTimeline.relative(this.timeline).x(0).y(top).w(stripWidth).h(1F, -top - shownHeight);
             this.keyframeDrawer.relative(this.timeline).x(0).y(1F, -shownHeight).w(stripWidth).h(shownHeight);
-            this.keyframeHandle.relative(this.timeline).x(0).y(1F, -shownHeight - 2).w(stripWidth).h(5);
+
+            /* The splitter sits entirely above the drawer, not on its title bar. With the old
+             * "-shownHeight - 2" the top 3 px of the title bar (and the top of the close button)
+             * started a resize drag instead of pressing the control. */
+            this.keyframeHandle.relative(this.timeline).x(0).y(1F, -shownHeight - 5).w(stripWidth).h(5);
         }
         else
         {
@@ -11826,6 +12004,132 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
                 this.keyframeViewNeedsFit = false;
             }
+        }
+    }
+
+    /** Pixel height of the timeline panel in whichever layout engine is active. */
+    private int timelineLayoutHeight()
+    {
+        return this.dock != null ? Math.max(0, this.timeline.area.h) : this.timelinePanelHeight;
+    }
+
+    /** Width the legacy column splitters may divide: the body, or the dock timeline in dock mode. */
+    private int layoutBodyWidth()
+    {
+        if (this.body != null)
+        {
+            return Math.max(1, this.body.area.w);
+        }
+
+        if (this.timeline != null && this.timeline.area.w > 0)
+        {
+            return this.timeline.area.w;
+        }
+
+        return Math.max(1, this.area.w);
+    }
+
+    /** Room left for the drawer after the strip header, the visible tracks and the splitter. */
+    private int keyframeDrawerMaxHeight(int timelineHeight)
+    {
+        return Math.max(0, timelineHeight - this.timelineContentTop() - this.keyframeDrawerTrackReserve() - 5);
+    }
+
+    /**
+     * Pixels the track lane must keep above the drawer: its ruler plus three full rows.
+     *
+     * <p>The old constant was 56 px, which is less than ruler (20) + two default rows (52). A drawer
+     * opening at the "minimum" therefore covered half of the second track — the user saw the
+     * drawer "eat" the tracks. Row height is user-adjustable, so this is measured, not assumed.</p>
+     */
+    private int keyframeDrawerTrackReserve()
+    {
+        int row = KEYFRAME_TRACK_ROW_FALLBACK;
+
+        if (this.trackTimeline != null)
+        {
+            row = Math.max(18, this.trackTimeline.rowHeight());
+        }
+
+        return KEYFRAME_TRACK_RULER + row * 3;
+    }
+
+    /**
+     * Makes the timeline panel tall enough to hold the open keyframe drawer.
+     *
+     * <p>In dock mode this rewrites the outermost vertical split ratio on the timeline's path and
+     * lets {@code UIDockLayout} re-run its flex pass; in the legacy fixed layout it raises the
+     * persisted timeline height (still capped by {@link CompUi#fitTimelineHeight}). The call is
+     * idempotent and guarded against the dock's own layout pass, and a failed attempt is not
+     * retried for the same geometry.</p>
+     */
+    private void ensureKeyframeDrawerSpace()
+    {
+        if (!this.keyframeOpen || this.timelinePage != 0 || this.timeline == null
+            || this.project == null || this.renderView || this.drawerSpacePass)
+        {
+            return;
+        }
+
+        /* Never rewrite the dock tree from inside the dock's own flex pass, and never while the
+         * user is dragging a dock splitter: refresh() would clear that drag. Recording the attempt
+         * in either case would also suppress the retry on the next frame, when it is safe. */
+        if (this.dock != null && (this.layoutPass || this.dock.isAnySplitterDragging()))
+        {
+            return;
+        }
+
+        int current = this.timelineLayoutHeight();
+        int required = this.timelineContentTop() + this.keyframeDrawerTrackReserve() + 5
+            + Math.max(KEYFRAME_DRAWER_MIN, this.keyframeDrawerHeight);
+        int body = this.dock != null ? this.dock.area.h : this.area.h;
+
+        if (current <= 0 || body <= 0 || current >= required - 2)
+        {
+            return;
+        }
+
+        if (current == this.drawerGrowTriedHeight && required == this.drawerGrowTriedRequired
+            && body == this.drawerGrowTriedBody)
+        {
+            return;
+        }
+
+        this.drawerGrowTriedHeight = current;
+        this.drawerGrowTriedRequired = required;
+        this.drawerGrowTriedBody = body;
+        this.drawerSpacePass = true;
+
+        try
+        {
+            if (this.dock == null)
+            {
+                int target = CompUi.fitTimelineHeight(this.area.h, required);
+
+                if (target > this.timelinePanelHeight)
+                {
+                    this.timelinePanelHeight = target;
+                    this.applyLegacyLayout();
+                }
+            }
+            else if (this.dockSource != null)
+            {
+                EditorLayoutNode root = this.dock.getLayoutRoot();
+                EditorLayoutNode grown = CompDockSource.growPanelHeight(root,
+                    CompDockSource.PANEL_TIMELINE, current, required, body);
+
+                if (grown != null && grown != root)
+                {
+                    this.dockSource.setRoot(grown);
+                    this.dock.refresh();
+                    this.dockLayoutDirty = true;
+                    this.primedWidth = -1;
+                }
+            }
+        }
+        finally
+        {
+            this.drawerSpacePass = false;
         }
     }
 
@@ -12544,17 +12848,159 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
+    /** Shows the transport controls only while the replay workspace is active. */
+    private void layoutModeBar()
+    {
+        boolean replay = this.workspaceMode == WORKSPACE_REPLAY;
+
+        this.modeTabs.relative(this.modeBar).x(8).y(2).w(112).h(18);
+        this.replayPlayButton.setVisible(replay);
+        this.replayTimecode.setVisible(replay);
+        this.replayPrev.setVisible(replay);
+        this.replayNext.setVisible(replay);
+        this.replayAll.setVisible(replay);
+        this.replayModels.setVisible(replay);
+        this.replayOriginal.setVisible(replay);
+
+        /* The header's transport belongs to the composition. In replay mode it is hidden so there
+         * is exactly one play button and one timecode on screen, both owned by the mode bar. */
+        this.title.label = IKey.constant(replay ? "BBS 合成器 · 回放" : "BBS 合成器");
+        this.play.setVisible(!replay);
+        this.prevFrame.setVisible(!replay);
+        this.nextFrame.setVisible(!replay);
+        this.timecode.setVisible(!replay);
+        this.replaySelector.setVisible(!replay);
+
+        if (replay)
+        {
+            this.replayPlayButton.label = IKey.constant(this.replayWorkspace.isPlayingFromHost() ? "暂停" : "播放");
+
+            int frames = Math.max(0, Math.round(this.replayWorkspace.playheadSeconds() * 20F));
+            int ff = frames % 20;
+            int totalSeconds = frames / 20;
+            int ss = totalSeconds % 60;
+            int mm = (totalSeconds / 60) % 60;
+            int hh = totalSeconds / 3600;
+
+            this.replayTimecode.label = IKey.constant(String.format(java.util.Locale.ROOT,
+                "%02d:%02d:%02d:%02d", hh, mm, ss, ff));
+        }
+    }
+
+    private void switchWorkspace(int mode)
+    {
+        if (mode == this.workspaceMode)
+        {
+            return;
+        }
+
+        if (mode == WORKSPACE_REPLAY)
+        {
+            if (this.film == null || this.filmPanel == null)
+            {
+                this.setStatus("没有打开的影片：先从 BBS 影片编辑器打开合成器，或点上方「回放」前先绑定影片");
+
+                return;
+            }
+
+            if (this.renderView)
+            {
+                this.toggleRenderView();
+            }
+
+            this.workspaceMode = WORKSPACE_REPLAY;
+
+            try
+            {
+                this.replayWorkspace.appear();
+                this.replayWorkspace.seekSeconds(this.time);
+            }
+            catch (RuntimeException e)
+            {
+                /* A malformed film or a BBS panel that refuses to build must not take the whole
+                 * compositor down. Stay in the composition workspace and surface the reason. */
+                dev.bbsae.BbsAeAddon.LOGGER.error("Could not open the embedded replay workspace", e);
+                this.workspaceMode = WORKSPACE_COMPOSITE;
+                this.applyLayout();
+                this.setStatus("回放工作区打开失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+
+                return;
+            }
+
+            this.beginPageMotion(this.workspaceMotion, "mode:replay");
+        }
+        else
+        {
+            this.workspaceMode = WORKSPACE_COMPOSITE;
+
+            if (this.replayWorkspace != null)
+            {
+                /* Keep the comp playhead where the replay editor left it. The replay panel owns
+                 * the film cursor while it is visible; without writing it back the timeline jumped
+                 * to the last comp time as soon as the user returned. */
+                this.time = Math.max(0F, Math.min(this.doc == null ? this.time : this.doc.duration,
+                    this.replayWorkspace.playheadSeconds()));
+
+                try
+                {
+                    this.replayWorkspace.disappear();
+                }
+                catch (RuntimeException e)
+                {
+                    dev.bbsae.BbsAeAddon.LOGGER.warn("Replay workspace failed to disappear cleanly", e);
+                }
+
+                this.invalidatePlayheadUi();
+                this.beginPageMotion(this.workspaceMotion, "mode:composite");
+            }
+        }
+
+        this.applyLayout();
+        this.updateToolbarLabels();
+        this.setStatus(this.workspaceMode == WORKSPACE_REPLAY
+            ? "回放编辑：上方「合成 / 回放」可随时切回合成器"
+            : "已回到合成器");
+    }
+
+    private void invalidatePlayheadUi()
+    {
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.resize();
+        }
+
+        this.previewInfoTick = 0;
+    }
+
+    @Override
+    public void update()
+    {
+        super.update();
+
+        if (this.workspaceMode == WORKSPACE_REPLAY && this.replayWorkspace != null)
+        {
+            this.replayWorkspace.update();
+        }
+    }
+
     /** Dock mode: the dock owns the panel rectangles; the rest of the chrome is positioned here. */
     private void applyDockLayout()
     {
-        int bodyHeight = Math.max(1, this.area.h - 24 - 18);
+        int bodyHeight = Math.max(1, this.area.h - 24 - MODE_BAR_H - 18);
+        boolean replay = this.workspaceMode == WORKSPACE_REPLAY;
 
         this.header.relative(this).x(0).y(0).w(1F).h(24);
+        this.modeBar.relative(this).x(0).y(24).w(1F).h(MODE_BAR_H);
         this.status.relative(this).x(0).y(1F, -18).w(1F).h(16);
-        this.dock.relative(this).x(0).y(24).w(1F).h(bodyHeight);
-        this.dock.setVisible(!this.renderView);
-        this.renderPanel.relative(this).x(0).y(24).w(1F).h(bodyHeight);
-        this.renderPanel.setVisible(this.renderView);
+        this.dock.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
+        this.dock.setVisible(!this.renderView && !replay);
+        this.dock.setEnabled(!this.renderView && !replay);
+        this.renderPanel.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
+        this.renderPanel.setVisible(this.renderView && !replay);
+        this.replayWorkspace.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
+        this.replayWorkspace.setVisible(replay);
+        this.replayWorkspace.setEnabled(replay);
+        this.layoutModeBar();
 
         /* super.resize() propagates the chrome rectangles; the dock's own flex pass runs in the
          * resize() override below (it needs a real area before it can divide it). */
@@ -12566,6 +13012,8 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         boolean left = this.effectColumn.isVisible();
         boolean right = this.inspectorColumn.isVisible();
+        boolean replay = this.workspaceMode == WORKSPACE_REPLAY;
+        int usableHeight = Math.max(1, this.area.h - MODE_BAR_H);
         int lw = left ? this.leftPanelWidth : 0;
         int rw = right ? this.rightPanelWidth : 0;
         int gapL = left ? 6 : 0;
@@ -12576,7 +13024,7 @@ public class UICompositorPanel extends UIDashboardPanel
          *  - the two columns shrink proportionally before they can make the preview negative;
          *  - on a very narrow panel the side columns still fit, but their configured widths are
          *    capped instead of turning the preview into a zero-width strip. */
-        this.timelinePanelHeight = CompUi.fitTimelineHeight(this.area.h, this.timelinePanelHeight);
+        this.timelinePanelHeight = CompUi.fitTimelineHeight(usableHeight, this.timelinePanelHeight);
         int maxSide = CompUi.maxSideWidth(this.area.w);
 
         this.leftPanelWidth = Math.min(this.leftPanelWidth, maxSide);
@@ -12593,22 +13041,35 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.layoutPreviewBar(Math.max(48, this.area.w - lw - rw - gapL - gapR));
 
-        int bodyHeight = CompUi.bodyHeight(this.area.h, this.timelinePanelHeight);
+        int bodyHeight = CompUi.bodyHeight(usableHeight, this.timelinePanelHeight);
 
-        this.body.relative(this).x(0).y(24).w(1F).h(bodyHeight);
+        this.modeBar.relative(this).x(0).y(24).w(1F).h(MODE_BAR_H);
+        this.body.relative(this).x(0).y(24 + MODE_BAR_H).w(1F).h(bodyHeight);
+        this.body.setVisible(!replay && !this.renderView);
+        this.body.setEnabled(!replay && !this.renderView);
         boolean quick = this.quickPanel != null && this.quickPanel.isVisible();
         int quickWidth = quick ? CompUi.quickWidth(this.area.w, this.quickPanelWidth) : 0;
 
         this.timeline.relative(this).x(0).y(1F, -(this.timelinePanelHeight + 18))
             .w(1F, -quickWidth).h(this.timelinePanelHeight);
+        this.timeline.setVisible(!replay && !this.renderView);
+        this.timeline.setEnabled(!replay && !this.renderView);
 
         if (quick)
         {
             this.quickPanel.relative(this).x(1F, -quickWidth).y(1F, -(this.timelinePanelHeight + 18))
                 .w(quickWidth).h(this.timelinePanelHeight);
+            this.quickPanel.setVisible(!replay && !this.renderView);
+            this.quickPanel.setEnabled(!replay && !this.renderView);
         }
-        this.renderPanel.relative(this).x(0).y(24).w(1F)
-            .h(this.renderView ? Math.max(1, this.area.h - 42) : bodyHeight);
+        this.renderPanel.relative(this).x(0).y(24 + MODE_BAR_H).w(1F)
+            .h(this.renderView ? Math.max(1, usableHeight - 24 - 18) : bodyHeight);
+        this.renderPanel.setVisible(this.renderView && !replay);
+        this.replayWorkspace.relative(this).x(0).y(24 + MODE_BAR_H).w(1F)
+            .h(1F, -24 - MODE_BAR_H - 18);
+        this.replayWorkspace.setVisible(replay);
+        this.replayWorkspace.setEnabled(replay);
+        this.layoutModeBar();
 
         if (this.leftHandle != null)
         {
@@ -12859,13 +13320,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.dockLayoutDirty = true;
             this.setStatus("面板布局已重置");
         });
-        manager.action(Icons.MATERIAL, IKey.constant("经典布局（效果库在左侧，旧版默认）"), () ->
+        manager.action(Icons.MATERIAL, IKey.constant("效果库在右侧（旧版布局）"), () ->
         {
-            this.dockSource.setRoot(CompDockSource.classicLayout());
+            this.dockSource.setRoot(CompDockSource.effectsRightLayout());
             this.dockSource.setHiddenPanels(new java.util.LinkedHashSet<>());
             this.dock.refresh();
             this.dockLayoutDirty = true;
-            this.setStatus("已切换为经典布局（效果库在左）；「重置为默认布局」可回到效果库在预览右侧");
+            this.setStatus("已切换为旧版布局（预览在左、效果库与属性在右）；「重置为默认布局」回到效果库在左");
         });
         manager.action(Icons.UNDO, IKey.constant("撤销布局改动（Ctrl+Alt+Z）"), () ->
         {
@@ -13039,17 +13500,10 @@ public class UICompositorPanel extends UIDashboardPanel
             this.save.relative(this.header).x(layout.saveX).y(inset).w(48).h(control);
         }
 
-        /* Optional actions: the effect library and project switcher sit left of the right cluster
-         * and disappear before they can overlap the left group (they used to be pinned with
-         * x = 1F - 456 / 1F - 396, which overlapped the play controls below ~520 px). */
-        this.effectLibraryButton.setVisible(layout.showLibrary);
+        /* Optional action: the project switcher sits left of the right cluster and disappears
+         * before it can overlap the left group. The effect library is the left column's first tab,
+         * not a header action. */
         this.projectsButton.setVisible(layout.showProjects);
-
-        if (layout.showLibrary)
-        {
-            this.effectLibraryButton.relative(this.header).x(layout.libraryX).y(inset)
-                .w(CompUi.LIBRARY_W).h(control);
-        }
 
         if (layout.showProjects)
         {
@@ -13396,6 +13850,7 @@ public class UICompositorPanel extends UIDashboardPanel
         private int startLeft;
         private int startRight;
         private int startHeight;
+        private int startDrawerHeight;
 
         PanelResizeHandle(int mode)
         {
@@ -13418,8 +13873,21 @@ public class UICompositorPanel extends UIDashboardPanel
             this.dragging = false;
             UICompositorPanel.this.leftPanelWidth = this.startLeft;
             UICompositorPanel.this.rightPanelWidth = this.startRight;
-            UICompositorPanel.this.timelinePanelHeight = this.startHeight;
-            UICompositorPanel.this.applyLayout();
+
+            if (this.mode == 3)
+            {
+                /* The keyframe splitter's startHeight is a drawer height, not the timeline height.
+                 * Writing it into timelinePanelHeight (the old code) shrank the timeline to 154 px
+                 * when Esc cancelled a drawer drag. */
+                UICompositorPanel.this.keyframeDrawerHeight = this.startDrawerHeight;
+                UICompositorPanel.this.layoutKeyframeDrawer();
+                UICompositorPanel.this.timeline.resize();
+            }
+            else
+            {
+                UICompositorPanel.this.timelinePanelHeight = this.startHeight;
+                UICompositorPanel.this.applyLayout();
+            }
 
             return true;
         }
@@ -13452,8 +13920,12 @@ public class UICompositorPanel extends UIDashboardPanel
 
             int dx = context.mouseX - this.startX;
             int dy = context.mouseY - this.startY;
-            int width = UICompositorPanel.this.body.area.w;
-            int height = UICompositorPanel.this.area.h;
+            /* In dock mode the legacy body is deliberately null (the dock positions the panels).
+             * Reading body.area.w here crashed every keyframe-splitter drag with an NPE. */
+            int width = UICompositorPanel.this.layoutBodyWidth();
+            int height = UICompositorPanel.this.dock != null
+                ? UICompositorPanel.this.timelineLayoutHeight()
+                : UICompositorPanel.this.area.h;
 
             if (this.mode == 0)
             {
@@ -13465,9 +13937,10 @@ public class UICompositorPanel extends UIDashboardPanel
             }
             else if (this.mode == 3)
             {
-                int max = Math.max(KEYFRAME_DRAWER_MIN, UICompositorPanel.this.timelinePanelHeight - 96);
+                int max = Math.max(KEYFRAME_DRAWER_MIN,
+                    UICompositorPanel.this.keyframeDrawerMaxHeight(height));
 
-                UICompositorPanel.this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.startHeight - dy));
+                UICompositorPanel.this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.startDrawerHeight - dy));
                 UICompositorPanel.this.layoutKeyframeDrawer();
                 UICompositorPanel.this.timeline.resize();
                 UICompositorPanel.this.primedWidth = -1;
@@ -13500,9 +13973,8 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.startY = context.mouseY;
                 this.startLeft = UICompositorPanel.this.leftPanelWidth;
                 this.startRight = UICompositorPanel.this.rightPanelWidth;
-                this.startHeight = this.mode == 3
-                    ? UICompositorPanel.this.keyframeDrawerHeight
-                    : UICompositorPanel.this.timelinePanelHeight;
+                this.startHeight = UICompositorPanel.this.timelinePanelHeight;
+                this.startDrawerHeight = UICompositorPanel.this.keyframeDrawerHeight;
 
                 return true;
             }
@@ -14053,9 +14525,41 @@ public class UICompositorPanel extends UIDashboardPanel
         this.save();
     }
 
-    private void duplicateSelected()
+    /**
+     * Debug-only: adds a full-frame 3D replay layer to the current composition. Used by the replay
+     * verification hook to exercise the composition-camera actor pass without hand-building a
+     * project in the UI.
+     */
+    public void debugReplayEntityLayer3D()
     {
-        /* One Ctrl+D, one meaning: duplicate what is highlighted. The single-layer path was wired
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        this.addLayer("replay");
+
+        CompLayer layer = this.getSelectedLayer();
+
+        if (layer == null || !layer.isEntityLayer())
+        {
+            return;
+        }
+
+        layer.threeD = true;
+        layer.width = this.doc.width;
+        layer.height = this.doc.height;
+        layer.x = this.doc.width / 2F;
+        layer.y = this.doc.height / 2F;
+        layer.z = 0F;
+        layer.entityScope = CompLayer.ENTITY_SCOPE_ALL;
+        layer.name = "回放实体（3D 合成相机）";
+        this.refreshInspector();
+        this.setStatus("验证：回放实体在合成相机空间的 3D 渲染");
+    }
+
+    private void duplicateSelected()
+    {        /* One Ctrl+D, one meaning: duplicate what is highlighted. The single-layer path was wired
          * to the key even when the inspector showed "多选 · 5 个图层", so four of them silently
          * stayed behind. */
         if (this.getSelectionCount() > 1)
@@ -14778,20 +15282,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         switch (this.inspectorPage)
         {
-            case PAGE_EFFECTS -> this.addEffectControls();
+            case PAGE_EFFECTS -> this.addEffectPage();
             case PAGE_GRADE -> this.inspector.add(this.gradeSection(this.selectedLayer));
-            case PAGE_LAYER ->
-            {
-                this.inspector.add(this.layerSection());
-                this.inspector.add(this.bindingSection(this.selectedLayer));
-                this.inspector.add(this.layerMarkerSection(this.selectedLayer));
-                this.inspector.add(this.animationPresetSection(this.selectedLayer));
-
-                if (this.selectedLayer != null && "shape".equals(this.selectedLayer.type))
-                {
-                    this.inspector.add(this.shapeSection(this.selectedLayer));
-                }
-            }
+            case PAGE_LAYER -> this.addLayerPage();
             case PAGE_MASK -> this.inspector.add(this.maskSection(this.selectedLayer));
             case PAGE_TEXT ->
             {
@@ -14812,7 +15305,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.inspector.add(this.parameterSection());
             }
             case PAGE_OUTPUT -> this.inspector.add(this.outputPresetSection());
-            default -> this.addEffectControls();
+            default -> this.addEffectPage();
         }
 
         this.decorateInspector();
@@ -14877,7 +15370,15 @@ public class UICompositorPanel extends UIDashboardPanel
         return section;
     }
 
-    private void addEffectControls()
+    /**
+     * Effects page: only the selected layer's applied effect stack and layer styles.
+     *
+     * <p>Transform, opacity, source/clip, camera and binding controls moved to {@link #addLayerPage()}.
+     * The old "效果控件" page mixed all of them, so a user with five effects had to scroll past
+     * motion/opacity/source controls to reach the second effect. The left library adds effects, this
+     * page edits the ones the layer owns.</p>
+     */
+    private void addEffectPage()
     {
         CompLayer layer = this.selectedLayer;
 
@@ -14894,11 +15395,10 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.inspector.add(UI.label(IKey.constant(this.layerLabel(layer) + "  ·  " + layer.type), 16));
-        this.inspector.add(this.fragmentSection(layer));
 
         if ("camera".equals(layer.type))
         {
-            this.inspector.add(this.cameraSection(layer));
+            this.inspector.add(this.emptySelectionSection("效果", "摄像机没有可应用的效果；摄像机参数在「图层」页。"));
             return;
         }
 
@@ -14909,9 +15409,6 @@ public class UICompositorPanel extends UIDashboardPanel
             this.inspector.add(UI.label(IKey.constant("调整层：下面的 " + below + " 个图层会被本层效果处理；本层自身不产生像素。"), 14));
         }
 
-        this.inspector.add(this.motionSection(layer));
-        this.inspector.add(this.motionTemplateSection(layer));
-        this.inspector.add(this.opacitySection(layer));
         this.inspector.add(this.effectHeaderSection(layer));
 
         for (CompEffect effect : layer.effects)
@@ -14924,6 +15421,55 @@ public class UICompositorPanel extends UIDashboardPanel
         for (CompStyle style : layer.styles)
         {
             this.inspector.add(this.styleControlSection(layer, style));
+        }
+    }
+
+    /**
+     * Layer page: identity/timing, transform, opacity, source/clip, camera and binding.
+     *
+     * <p>This is the "what is this layer and where is it" half of the old Effect Controls page;
+     * the effect stack itself is on its own page.</p>
+     */
+    private void addLayerPage()
+    {
+        CompLayer layer = this.selectedLayer;
+
+        if (this.getSelectionCount() > 1)
+        {
+            this.inspector.add(this.multiSelectionSection());
+            return;
+        }
+
+        if (layer == null)
+        {
+            this.inspector.add(this.layerSection());
+            return;
+        }
+
+        this.inspector.add(UI.label(IKey.constant(this.layerLabel(layer) + "  ·  " + layer.type), 16));
+        this.inspector.add(this.fragmentSection(layer));
+
+        if ("camera".equals(layer.type))
+        {
+            this.inspector.add(this.cameraSection(layer));
+            this.inspector.add(this.bindingSection(layer));
+            this.inspector.add(this.layerMarkerSection(layer));
+            this.inspector.add(this.animationPresetSection(layer));
+
+            return;
+        }
+
+        this.inspector.add(this.layerSection());
+        this.inspector.add(this.motionSection(layer));
+        this.inspector.add(this.motionTemplateSection(layer));
+        this.inspector.add(this.opacitySection(layer));
+        this.inspector.add(this.bindingSection(layer));
+        this.inspector.add(this.layerMarkerSection(layer));
+        this.inspector.add(this.animationPresetSection(layer));
+
+        if ("shape".equals(layer.type))
+        {
+            this.inspector.add(this.shapeSection(layer));
         }
     }
 
@@ -14950,14 +15496,14 @@ public class UICompositorPanel extends UIDashboardPanel
         UISection section = new UISection(IKey.constant("快速开始"));
 
         section.fields.add(UI.label(IKey.constant("① 添加或选择一条轨道"), 16));
-        section.fields.add(UI.label(IKey.constant("② 在右侧调整运动、不透明度和效果"), 14));
+        section.fields.add(UI.label(IKey.constant("② 左侧效果库/素材库负责添加；右侧「图层」调运动和不透明度、「效果」编辑效果"), 14));
         section.fields.add(UI.label(IKey.constant("③ 在底部时间轴拖动或裁剪片段"), 14));
         section.fields.add(UI.label(IKey.constant("不确定怎么操作？点时间轴右端的 ? 看快捷键。"), 14));
 
         section.fields.add(new UICompButton(IKey.constant("＋ 新建形状"), (button) -> this.addLayer("shape")));
         section.fields.add(new UICompButton(IKey.constant("＋ 添加 BBS 预览层"), (button) -> this.addLayer("bbs")));
         section.fields.add(new UICompButton(IKey.constant("＋ 添加空对象"), (button) -> this.addLayer("null")));
-        section.fields.add(new UICompButton(IKey.constant("打开效果库"), (button) -> this.focusEffectLibrary()));
+        section.fields.add(new UICompButton(IKey.constant("去左侧效果库添加效果"), (button) -> this.focusEffectLibrary()));
 
         if (this.doc != null && !this.doc.layers.isEmpty())
         {
@@ -15620,7 +16166,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         section.remember(this.sectionFolds, "effects", true);
         section.fields.add(UI.label(IKey.constant("已应用 " + layer.effects.size() + " 个效果，按从上到下顺序渲染。"), 16));
-        section.fields.add(new UICompButton(IKey.constant("打开效果库（添加）"), (button) -> this.focusEffectLibrary()));
+        section.fields.add(new UICompButton(IKey.constant("在左侧效果库添加效果…"), (button) -> this.focusEffectLibrary()));
 
         return section;
     }
@@ -16636,7 +17182,7 @@ public class UICompositorPanel extends UIDashboardPanel
         CompLayer l = layer;
 
         section.fields.add(UI.label(IKey.constant(l.type + " · " + l.id), 16));
-        section.fields.add(UI.label(IKey.constant("变换、不透明度与效果在“效果控件”页。"), 14));
+        section.fields.add(UI.label(IKey.constant("变换、不透明度、来源与绑定都在本页；效果在「效果」页。"), 14));
 
         UITextbox name = new UITextbox(64, (text) ->
         {
@@ -16676,20 +17222,8 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(UI.row(visible, locked));
         section.fields.add(UI.row(solo, guide));
 
-        float editFrame = 1F / Math.max(1F, this.doc.fps);
-
-        section.fields.add(this.numberRow("入点", l.in, 0F, 36000F, false, (value) ->
-        {
-            /* Route this through trimInTo like the timeline and the Clip section do; writing
-             * l.in directly skipped the startTime compensation and shifted the source frame. */
-            l.trimInTo((float) Math.max(0D, Math.min(l.out - editFrame, value)), this.doc.fps);
-            this.commitLayerTiming();
-        }));
-        section.fields.add(this.numberRow("出点", l.out, 0F, 36000F, false, (value) ->
-        {
-            l.trimOutTo((float) Math.max(l.in + editFrame, Math.min(this.doc.duration, value)), this.doc.fps, this.doc.duration);
-            this.commitLayerTiming();
-        }));
+        /* In/out and the quick trim buttons are the 片段 section above; keeping a second copy here
+         * made the layer page twice as tall with two controls editing the same value. */
         section.fields.add(this.numberRow("源时间偏移", l.startTime, -36000F, 36000F, false, (value) -> l.startTime = value.floatValue()));
         section.fields.add(this.numberRow("时间缩放", l.timeScale, -10F, 10F, false, (value) -> l.timeScale = value.floatValue()));
 
@@ -20669,6 +21203,15 @@ public class UICompositorPanel extends UIDashboardPanel
     @Override
     public void startRenderFrame(float tickDelta)
     {
+        if (this.workspaceMode == WORKSPACE_REPLAY)
+        {
+            /* The replay workspace owns its own 3D viewport; driving the film camera/compositor
+             * playhead here would fight its session cursor. */
+            this.lastPlayNanos = 0L;
+
+            return;
+        }
+
         if (!this.playing || this.doc == null || this.renderView)
         {
             this.lastPlayNanos = 0L;
@@ -20725,6 +21268,7 @@ public class UICompositorPanel extends UIDashboardPanel
          * track's x->time mapping change under the cursor (clips jumped a few pixels on grab).
          * Defer layout changes until the mouse is released. */
         boolean wantQuick = this.selectedLayer != null && !this.renderView && !this.focusMode
+            && this.workspaceMode == WORKSPACE_COMPOSITE
             && !mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0);
 
         if (this.quickPanel != null && this.quickPanel.isVisible() != wantQuick)
@@ -20787,6 +21331,17 @@ public class UICompositorPanel extends UIDashboardPanel
 
         context.batcher.box(this.area.x, this.area.y, this.area.ex(), this.area.ey(), 0xFF0E1116);
         this.renderShellAtmosphere(context);
+
+        if (this.workspaceMode == WORKSPACE_REPLAY)
+        {
+            /* The replay workspace owns its own 3D viewport and timeline. Do not run the
+             * composition's prime/reconcile/precache/save paths while it is visible: they would
+             * rebuild the hidden timeline and advance the film camera behind the replay editor. */
+            this.layoutModeBar();
+            super.render(context);
+
+            return;
+        }
 
         this.primeTimeline();
         this.reconcileTimelinePage();
@@ -20912,13 +21467,18 @@ public class UICompositorPanel extends UIDashboardPanel
                  * fallback (colortex0, un-tonemapped) or a missing final frame is exactly the kind
                  * of thing that would otherwise read as "the preview is just dark". */
                 String capture = dev.bbsae.client.render.SceneColor.status();
+                float previewScale = dev.bbsae.client.render.CompRenderer.previewScale(
+                    this.doc, Math.max(1, this.preview.area.w), Math.max(1, this.preview.area.h), 0);
+                String scaleText = this.preview.area.w >= 360
+                    ? " · 预览 " + Math.round(previewScale * 100F) + "%" : "";
 
                 /* One short line. The old readout appended shader/depth/camera/cache status and
                  * overflowed the preview's own width, which made it collide with the BBS flight
                  * HUD. The authoritative camera hint lives in the inspector and the status bar. */
                 this.previewInfo.label = IKey.constant(this.doc.width + "x" + this.doc.height + "  " + (int) this.doc.fps
                     + "fps  " + effects + " FX  ·  " + shader
-                    + (capture == null || "世界帧".equals(capture) ? "" : " · " + capture) + depth);
+                    + (capture == null || "世界帧".equals(capture) ? "" : " · " + capture)
+                    + scaleText + depth);
                 this.updatePrecacheLabel();
             }
             else

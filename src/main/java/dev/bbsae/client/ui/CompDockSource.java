@@ -5,7 +5,11 @@ import mchorse.bbs_mod.data.DataToString;
 import mchorse.bbs_mod.settings.values.ui.EditorLayoutNode;
 import mchorse.bbs_mod.ui.framework.elements.layout.ILayoutSource;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 
@@ -36,6 +40,9 @@ public final class CompDockSource implements ILayoutSource
     public static final String PANEL_INSPECTOR = "inspector";
     public static final String PANEL_TIMELINE = "timeline";
 
+    /** Current editor-layout revision; see {@link CompProject.CompSettings#uiLayoutRevision}. */
+    public static final int UI_LAYOUT_REVISION = 1;
+
     private final Supplier<CompProject.CompSettings> settingsSupplier;
     private final Supplier<EditorLayoutNode> defaults;
     private final Runnable onChange;
@@ -46,6 +53,8 @@ public final class CompDockSource implements ILayoutSource
     private Set<String> cachedHidden;
     private boolean hiddenLoaded;
     private boolean dirty;
+    /** True when getRoot() converted a pre-v7 layout and the new revision still needs persisting. */
+    private boolean layoutRevisionUpgraded;
     /**
      * Focus mode is a session view, not a document edit: while suspended the tree is still cached
      * in memory (so the dock can be laid out) but {@link #flush()} never writes it into the
@@ -97,9 +106,65 @@ public final class CompDockSource implements ILayoutSource
              * snapshot pushed an unrelated tree). One cached root keeps every consumer on the same
              * objects until setRoot/reload replaces it. */
             this.cachedRoot = stored != null ? stored : (this.defaults == null ? null : this.defaults.get());
+
+            /* v7: one-time conversion of the old effects-right default tree. Custom layouts are
+             * left alone, but the revision still flips to 1 so this never runs for them again. */
+            if (settings != null && settings.uiLayoutRevision < UI_LAYOUT_REVISION)
+            {
+                EditorLayoutNode migrated = migrateLegacyEffectsRight(this.cachedRoot);
+
+                if (migrated != null && migrated != this.cachedRoot)
+                {
+                    this.cachedRoot = migrated;
+                    this.dirty = true;
+                }
+
+                settings.uiLayoutRevision = UI_LAYOUT_REVISION;
+                this.layoutRevisionUpgraded = true;
+                this.dirty = true;
+            }
         }
 
         return this.cachedRoot;
+    }
+
+    /**
+     * Converts the 0.97–0.99 default tree (preview left; effects + inspector stacked in the right
+     * column) into the effects-left tree. Returns the input unchanged for any other shape, including
+     * a deliberate custom layout.
+     */
+    private static EditorLayoutNode migrateLegacyEffectsRight(EditorLayoutNode root)
+    {
+        if (!(root instanceof EditorLayoutNode.SplitterNode outer) || !outer.isHorizontal()
+            || !isPanel(outer.getSecond(), PANEL_TIMELINE))
+        {
+            return root;
+        }
+
+        if (!(outer.getFirst() instanceof EditorLayoutNode.SplitterNode row) || row.isHorizontal()
+            || !isPanel(row.getFirst(), PANEL_PREVIEW))
+        {
+            return root;
+        }
+
+        if (!(row.getSecond() instanceof EditorLayoutNode.SplitterNode right) || !right.isHorizontal()
+            || !isPanel(right.getFirst(), PANEL_EFFECTS) || !isPanel(right.getSecond(), PANEL_INSPECTOR))
+        {
+            return root;
+        }
+
+        EditorLayoutNode editorRow = new EditorLayoutNode.SplitterNode(false, 0.19F,
+            new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
+            new EditorLayoutNode.SplitterNode(false, 0.62F,
+                new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
+                new EditorLayoutNode.PanelNode(PANEL_INSPECTOR)));
+
+        return new EditorLayoutNode.SplitterNode(true, outer.getRatio(), editorRow, outer.getSecond());
+    }
+
+    private static boolean isPanel(EditorLayoutNode node, String panelId)
+    {
+        return node instanceof EditorLayoutNode.PanelNode panel && panel.getPanelId().equals(panelId);
     }
 
     @Override
@@ -220,12 +285,17 @@ public final class CompDockSource implements ILayoutSource
 
         String root = encode(this.getRoot());
         String hidden = join(this.cachedHidden == null ? Set.of() : this.cachedHidden);
+        boolean revisionChanged = this.layoutRevisionUpgraded;
 
-        boolean changed = !root.equals(settings.dockLayout == null ? "" : settings.dockLayout)
+        this.layoutRevisionUpgraded = false;
+
+        boolean changed = revisionChanged
+            || !root.equals(settings.dockLayout == null ? "" : settings.dockLayout)
             || !hidden.equals(settings.dockHiddenPanels == null ? "" : settings.dockHiddenPanels);
 
         settings.dockLayout = root;
         settings.dockHiddenPanels = hidden;
+        settings.uiLayoutRevision = UI_LAYOUT_REVISION;
 
         if (changed && this.onChange != null)
         {
@@ -242,6 +312,7 @@ public final class CompDockSource implements ILayoutSource
         this.cachedRoot = null;
         this.cachedHidden = null;
         this.dirty = false;
+        this.layoutRevisionUpgraded = false;
     }
 
     private static String join(Set<String> ids)
@@ -298,9 +369,160 @@ public final class CompDockSource implements ILayoutSource
     }
 
     /**
-     * The default compositor tree: effects column on the left, preview over the timeline in the
-     * middle, inspector on the right — the layout the fixed splitter system had, expressed as a
-     * dock tree so the user can rearrange it.
+     * Grows the outermost <b>vertical stacking</b> splitter on the way to {@code panelId} until the
+     * panel has {@code requiredHeight} pixels, or returns {@code null} when the tree cannot help.
+     *
+     * <p>This exists because a dock panel's height is a ratio the user controls. The keyframe
+     * drawer lives inside the timeline panel and needs a minimum number of pixels (header + a few
+     * track rows + the drawer itself). On a 960×540 UI the default 72/28 split gives the timeline
+     * only ~125 px, which is less than one drawer, so opening the drawer used to silently close it
+     * again. A layout must make room for a panel that has a hard minimum; refusing to open is not a
+     * display.</p>
+     *
+     * <p>Only the outer splitter is touched: changing an ancestor's ratio scales the whole branch,
+     * including any nested splits, so the panel grows by the same factor. The sibling keeps at
+     * least BBS' 80 px splitter minimum. The result is a new tree (the dock's splitter handles are
+     * keyed by node identity, so the caller must apply it through {@link #setRoot}).</p>
+     *
+     * @param root            current dock tree
+     * @param panelId         panel that needs the height
+     * @param currentHeight   its current pixel height
+     * @param requiredHeight  wanted pixel height
+     * @param bodyHeight      pixel height of the dock itself (for the 80 px sibling minimum)
+     */
+    public static EditorLayoutNode growPanelHeight(EditorLayoutNode root, String panelId,
+                                                   int currentHeight, int requiredHeight, int bodyHeight)
+    {
+        if (root == null || panelId == null || bodyHeight <= 0 || currentHeight <= 0
+            || requiredHeight <= currentHeight)
+        {
+            return null;
+        }
+
+        List<PathSplit> path = new ArrayList<>();
+
+        if (!findPanelPath(root, panelId, path) || path.isEmpty())
+        {
+            return null;
+        }
+
+        /* findPanelPath() appends while unwinding, so the list runs leaf -> root. Walking it in
+         * reverse gives root -> leaf; the outermost vertical stacking splitter is the first
+         * horizontal entry met on that walk. */
+        float height = bodyHeight;
+        PathSplit target = null;
+        float targetShare = 0F;
+        float targetHeight = 0F;
+
+        for (int i = path.size() - 1; i >= 0; i--)
+        {
+            PathSplit entry = path.get(i);
+            float ratio = entry.splitter().getRatio();
+
+            if (entry.splitter().isHorizontal())
+            {
+                float share = entry.second() ? 1F - ratio : ratio;
+
+                if (target == null)
+                {
+                    target = entry;
+                    targetShare = share;
+                    targetHeight = height;
+                }
+
+                height *= share;
+            }
+        }
+
+        if (target == null || targetHeight <= 0F || targetShare <= 0.001F)
+        {
+            return null;
+        }
+
+        /* Grow by the factor that turns the panel's current content height into the requested one.
+         * The branch controlled by the ratio is a little taller than the panel (dock gutters/tab
+         * strip); using the branch height instead of the content height keeps the estimate honest
+         * for small timelines where those few pixels are a large fraction. */
+        float branchHeight = targetHeight * targetShare;
+
+        if (branchHeight <= 0F)
+        {
+            return null;
+        }
+
+        float gutter = Math.max(0F, branchHeight - currentHeight);
+        float scale = (requiredHeight + gutter) / branchHeight;
+        float minShare = Math.max(EditorLayoutNode.MIN_RATIO, 80F / targetHeight);
+        float maxShare = 1F - minShare;
+        float newShare = Math.max(minShare, Math.min(maxShare, targetShare * scale));
+
+        if (maxShare <= minShare || newShare <= targetShare + 0.0005F)
+        {
+            return null;
+        }
+
+        float newRatio = target.second() ? 1F - newShare : newShare;
+        newRatio = Math.max(EditorLayoutNode.MIN_RATIO, Math.min(EditorLayoutNode.MAX_RATIO, newRatio));
+
+        Map<EditorLayoutNode.SplitterNode, Float> ratios = new HashMap<>();
+
+        ratios.put(target.splitter(), newRatio);
+
+        EditorLayoutNode grown = EditorLayoutNode.copyWithSplitterRatios(root, ratios);
+
+        return grown == root ? null : grown;
+    }
+
+    /** One splitter on the root -> panel path; {@code second} is true when the path uses child 2. */
+    private record PathSplit(EditorLayoutNode.SplitterNode splitter, boolean second)
+    {}
+
+    private static boolean findPanelPath(EditorLayoutNode node, String panelId, List<PathSplit> out)
+    {
+        if (node == null)
+        {
+            return false;
+        }
+
+        if (node instanceof EditorLayoutNode.PanelNode panel)
+        {
+            return panel.getPanelId().equals(panelId);
+        }
+
+        if (node instanceof EditorLayoutNode.StackNode stack)
+        {
+            return stack.getPanelIds().contains(panelId);
+        }
+
+        if (node instanceof EditorLayoutNode.SplitterNode splitter)
+        {
+            if (findPanelPath(splitter.getFirst(), panelId, out))
+            {
+                out.add(new PathSplit(splitter, false));
+
+                return true;
+            }
+
+            if (findPanelPath(splitter.getSecond(), panelId, out))
+            {
+                out.add(new PathSplit(splitter, true));
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The default compositor tree: effects/assets column on the <b>left</b>, preview in the
+     * middle, inspector on the right, timeline below.
+     *
+     * <p>This is the editing flow the UI is built around: browse sources on the left, see the
+     * result in the middle, edit the selected layer's own effects on the right. The old default
+     * put preview first and stacked effects + inspector into a narrow right column; that made the
+     * preview look like the whole editor and forced the effect stack into a page that also held
+     * transform/opacity, which is exactly the crowding the effects tab now removes.</p>
      *
      * <p>BBS's {@code SplitterNode(horizontal, …)} splits along the horizontal axis when the flag is
      * true, i.e. the two children are stacked <b>vertically</b> (first above second). The outer split
@@ -309,25 +531,20 @@ public final class CompDockSource implements ILayoutSource
     public static EditorLayoutNode defaultLayout()
     {
         return new EditorLayoutNode.SplitterNode(true, 0.72F,
-            new EditorLayoutNode.SplitterNode(false, 0.72F,
-                new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
-                new EditorLayoutNode.SplitterNode(true, 0.5F,
-                    new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
-                    new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
-            new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
-    }
-
-    /** Pre-dock layout: effect library column on the left of the preview. */
-    public static EditorLayoutNode classicLayout()
-    {
-        return new EditorLayoutNode.SplitterNode(true, 0.72F,
-            new EditorLayoutNode.SplitterNode(false, 0.13F,
+            new EditorLayoutNode.SplitterNode(false, 0.19F,
                 new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
-                new EditorLayoutNode.SplitterNode(false, 0.80F,
+                new EditorLayoutNode.SplitterNode(false, 0.62F,
                     new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
                     new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
             new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
     }
+
+    /** Pre-dock layout: effects column on the left, preview + inspector on the right. */
+    public static EditorLayoutNode classicLayout()
+    {
+        return defaultLayout();
+    }
+
     /** Focus mode: preview over the timeline, side panels hidden (transient, not persisted). */
     public static EditorLayoutNode focusLayout()
     {
@@ -337,14 +554,21 @@ public final class CompDockSource implements ILayoutSource
     }
 
     /**
-     * Alternative default: the effect library and the inspector stacked to the **right** of the
-     * preview (the layout the user asked for: "把图层的效果列表并入预览框右侧的区域"). Selecting it
-     * from the layout menu is a normal layout change (persisted per project), not a mode.
+     * Optional layout: effect library and inspector stacked to the **right** of the preview.
+     *
+     * <p>This was the 0.97–0.99 default ("效果列表在预览右侧"). It stays available from the layout
+     * menu for users who prefer it, but it is no longer the default: the effect library is a source
+     * browser and belongs on the left of the editing flow.</p>
      */
     public static EditorLayoutNode effectsRightLayout()
     {
-        /* Kept for callers/tests written before this became the default. */
-        return defaultLayout();
+        return new EditorLayoutNode.SplitterNode(true, 0.72F,
+            new EditorLayoutNode.SplitterNode(false, 0.72F,
+                new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
+                new EditorLayoutNode.SplitterNode(true, 0.5F,
+                    new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
+                    new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
+            new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
     }
 
     /**
@@ -359,16 +583,16 @@ public final class CompDockSource implements ILayoutSource
         {
             case 1 -> focusLayout();
             case 2 -> new EditorLayoutNode.SplitterNode(true, 0.70F,
-                new EditorLayoutNode.SplitterNode(false, 0.11F,
+                new EditorLayoutNode.SplitterNode(false, 0.17F,
                     new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
-                    new EditorLayoutNode.SplitterNode(false, 0.78F,
+                    new EditorLayoutNode.SplitterNode(false, 0.64F,
                         new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
                         new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
                 new EditorLayoutNode.PanelNode(PANEL_TIMELINE));
             case 3 -> new EditorLayoutNode.SplitterNode(true, 0.74F,
-                new EditorLayoutNode.SplitterNode(false, 0.15F,
+                new EditorLayoutNode.SplitterNode(false, 0.21F,
                     new EditorLayoutNode.PanelNode(PANEL_EFFECTS),
-                    new EditorLayoutNode.SplitterNode(false, 0.82F,
+                    new EditorLayoutNode.SplitterNode(false, 0.64F,
                         new EditorLayoutNode.PanelNode(PANEL_PREVIEW),
                         new EditorLayoutNode.PanelNode(PANEL_INSPECTOR))),
                 new EditorLayoutNode.PanelNode(PANEL_TIMELINE));

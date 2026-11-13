@@ -305,6 +305,7 @@ public class BbsAeClient implements BBSAddonMod
 
             CompRenderer.clearCaches();
             dev.bbsae.client.replay.ReplayModelPass.release();
+        dev.bbsae.client.render.ReplayActorPass.release();
         });
 
         /* The compositor's "BBS preview" layer shows BBS's own frame. Replay actors are drawn by
@@ -664,17 +665,11 @@ public class BbsAeClient implements BBSAddonMod
             BbsAeAddon.ICON
         );
 
-        /* The entity replay editor is its own dashboard page: the dashboard bar gets the entry,
-         * and the compositor/film editor open it through openReplayMode(). */
-        replayModePanel = new dev.bbsae.client.replay.UIReplayModePanel(event.dashboard);
+        /* The entity replay editor is the compositor's second workspace, not a dashboard page.
+         * Keeping one shell means one mode bar, one theme and one place for the film binding. */
+        replayModePanel = compositorPanel.replayWorkspacePanel();
 
-        event.dashboard.getPanels().registerPanel(
-            replayModePanel,
-            IKey.constant("实体回放"),
-            mchorse.bbs_mod.ui.utils.icons.Icons.PLAYER
-        );
-
-        BbsAeAddon.LOGGER.info("BBS AE dashboard panels registered");
+        BbsAeAddon.LOGGER.info("BBS AE dashboard panel registered (replay is embedded)");
     }
 
     /**
@@ -686,7 +681,9 @@ public class BbsAeClient implements BBSAddonMod
      */
     public static void openReplayMode(mchorse.bbs_mod.ui.dashboard.UIDashboard dashboard, UICompositorPanel panel)
     {
-        if (replayModePanel == null || dashboard == null)
+        UICompositorPanel host = panel != null ? panel : compositorPanel;
+
+        if (host == null || dashboard == null)
         {
             return;
         }
@@ -694,21 +691,22 @@ public class BbsAeClient implements BBSAddonMod
         UIFilmPanel filmPanel = dashboard.getPanel(UIFilmPanel.class);
         Film film = filmPanel == null ? null : filmPanel.getData();
 
-        if (film == null)
+        if (film != null)
         {
-            BbsAeAddon.LOGGER.info("Replay mode opened without a film; the 3D viewport will stay empty");
+            Replay replay = filmPanel.replayEditor == null ? null : filmPanel.replayEditor.getReplay();
 
-            dashboard.setPanel(replayModePanel);
-            UIScreen.open(dashboard);
-
-            return;
+            /* Re-bind only when the host is not already showing this film; bind() flushes the
+             * previous project, which would be an unwanted save while simply switching modes. */
+            if (host.film() != film)
+            {
+                host.bind(filmPanel, film, replay);
+            }
         }
 
-        Replay replay = filmPanel.replayEditor == null ? null : filmPanel.replayEditor.getReplay();
-
-        replayModePanel.bind(filmPanel, film, replay);
-        dashboard.setPanel(replayModePanel);
+        replayModePanel = host.replayWorkspacePanel();
+        dashboard.setPanel(host);
         UIScreen.open(dashboard);
+        host.openReplayWorkspace();
     }
 
     /** Convenience overload for call sites that only have the dashboard. */
@@ -720,5 +718,10 @@ public class BbsAeClient implements BBSAddonMod
     public static dev.bbsae.client.replay.UIReplayModePanel replayModePanel()
     {
         return replayModePanel;
+    }
+
+    public static UICompositorPanel compositorPanel()
+    {
+        return compositorPanel;
     }
 }

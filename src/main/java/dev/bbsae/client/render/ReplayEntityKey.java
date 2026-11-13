@@ -115,6 +115,15 @@ public final class ReplayEntityKey
             return false;
         }
 
+        /* A mask that was not produced for this world frame is the "background leaks while the
+         * actor moves" bug: the old silhouette keys pixels where the actor no longer is. Draw the
+         * waiting placeholder instead of a mismatched matte. */
+        if (!ReplayEntityMask.isCurrentFrame()
+            || SceneColor.frameSerial() != ReplayEntityMask.frameSerial())
+        {
+            return false;
+        }
+
         GlslProgram program = CompShaders.entityKey;
 
         if (program == null)
@@ -179,13 +188,20 @@ public final class ReplayEntityKey
         int maskWidth = ReplayEntityMask.width();
         int maskHeight = ReplayEntityMask.height();
 
-        if ((Math.abs(maskWidth - world.width) > 1 || Math.abs(maskHeight - world.height) > 1)
-            && now - lastSizeWarning > 2000L)
+        if (Math.abs(maskWidth - world.width) > 1 || Math.abs(maskHeight - world.height) > 1)
         {
-            lastSizeWarning = now;
-            dev.bbsae.BbsAeAddon.LOGGER.warn(
-                "Entity key target {}x{} does not match the world frame {}x{}; the matte may be offset",
-                maskWidth, maskHeight, world.width, world.height);
+            if (now - lastSizeWarning > 2000L)
+            {
+                lastSizeWarning = now;
+                dev.bbsae.BbsAeAddon.LOGGER.warn(
+                    "Entity key target {}x{} does not match the world frame {}x{}; the matte may be offset",
+                    maskWidth, maskHeight, world.width, world.height);
+            }
+
+            /* A differently-sized mask samples a different rectangle of the actor. Drawing it
+             * anyway is the "motion reveals background" leak at the edges; leave the layer's
+             * waiting placeholder until the coverage target catches up. */
+            return false;
         }
 
         if (Boolean.getBoolean("bbsae.debugEntityKeyLog"))

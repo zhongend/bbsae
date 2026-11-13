@@ -16,6 +16,7 @@ import java.nio.ByteBuffer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -190,13 +191,15 @@ public class MaskGlRenderTest
     }
 
     @Test
-    public void openAndDegeneratePathsProduceNoTexture()
+    public void openPathMatsAndDegeneratePathsDoNot()
     {
         CompMask open = new CompMask("open");
 
         open.rectangle(10F, 10F, 20F, 20F);
         open.closed = false;
-        assertNull(MaskCache.get(layer(open), SIZE, SIZE, null, 0F), "open path must not matte");
+        MaskCache.MaskTexture openTexture = MaskCache.get(layer(open), SIZE, SIZE, null, 0F);
+        assertNotNull(openTexture, "an open 4-point path is filled by its implicit closing edge");
+        assertEquals(400F / (SIZE * SIZE), coverage(readAlpha(openTexture.texture)), 0.02F);
 
         CompMask twoPoints = new CompMask("two");
 
@@ -291,9 +294,12 @@ public class MaskGlRenderTest
         assertNotNull(first);
         assertSame(first, second, "the alpha texture is cached by geometry hash");
 
-        /* Opening the path must miss the cache (closed is part of the hash) and produce no matte. */
+        /* Opening the path still mattes, but it misses the cache because closed is part of the
+         * geometry hash. The cache may reuse the same texture object and refresh its contents. */
         mask.closed = false;
-        assertNull(MaskCache.get(layer, SIZE, SIZE, null, 0F));
+        MaskCache.MaskTexture third = MaskCache.get(layer, SIZE, SIZE, null, 0F);
+        assertNotNull(third, "an open 4-point mask still fills");
+        assertEquals(256F / (SIZE * SIZE), coverage(readAlpha(third.texture)), 0.02F);
     }
 
     @Test

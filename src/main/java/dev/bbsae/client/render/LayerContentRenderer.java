@@ -280,8 +280,41 @@ final class LayerContentRenderer
      */
     private static void drawReplayEntity(CompLayer layer, CompRenderContext context, Batcher2D batcher, Matrix4f world, Matrix4f projection)
     {
+        /* A 3D entity layer is a real model in the composition camera, not a crop of the world
+         * frame. The pass maps blocks to comp pixels and applies the comp camera; drawing its
+         * result with the normal comp ortho is what makes orbiting the bbsae camera actually orbit
+         * the actor. */
+        if (layer.threeD)
+        {
+            GlFramebuffer actors = ReplayActorPass.render(layer, context, batcher);
+
+            if (actors != null)
+            {
+                drawCompositionActors(context, batcher, actors);
+
+                return;
+            }
+        }
+
         dev.bbsae.client.render.GlTexture texture = dev.bbsae.client.overlay.BbsPreviewBridge.texture();
         boolean active = dev.bbsae.client.overlay.BbsPreviewBridge.isActive();
+
+        /* 2D entity layers normally key the live world plate. If the plate or its matte is not
+         * available yet (first frame, film switch, shader-pack capture failure), falling straight
+         * to the blue placeholder made the preview look broken. Render the same actors screen-fixed
+         * with the composition ortho as a fallback; the keyed path takes over again as soon as the
+         * world frame is valid. */
+        if (!layer.threeD && (texture == null || !ReplayEntityMask.isCurrentFrame()))
+        {
+            GlFramebuffer flatActors = ReplayActorPass.renderFlat(layer, context, batcher);
+
+            if (flatActors != null)
+            {
+                drawCompositionActors(context, batcher, flatActors);
+
+                return;
+            }
+        }
 
         if (texture == null)
         {
@@ -331,6 +364,32 @@ final class LayerContentRenderer
             float y = -layer.height * layer.anchorY;
 
             batcher.outline(x, y, x + layer.width, y + layer.height, 0x4455AAFF);
+        }
+    }
+
+    /** Draws the comp-camera actor pass as a full-composition image (already camera-projected). */
+    private static void drawCompositionActors(CompRenderContext context, Batcher2D batcher, GlFramebuffer actors)
+    {
+        MatrixStack stack = batcher.getContext().getMatrices();
+        Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+
+        stack.push();
+
+        try
+        {
+            stack.peek().getPositionMatrix().identity();
+            RenderSystem.setProjectionMatrix(GlStateGuard.ortho(context.width, context.height),
+                com.mojang.blaze3d.systems.VertexSorter.BY_Z);
+            batcher.texturedBox(actors.color.id, 0xFFFFFFFF,
+                0F, 0F, context.width, context.height,
+                0F, context.height, context.width, 0F,
+                context.width, context.height);
+            batcher.flush();
+        }
+        finally
+        {
+            stack.pop();
+            RenderSystem.setProjectionMatrix(previousProjection, com.mojang.blaze3d.systems.VertexSorter.BY_Z);
         }
     }
 

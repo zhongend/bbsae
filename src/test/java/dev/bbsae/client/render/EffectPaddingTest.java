@@ -111,10 +111,10 @@ public class EffectPaddingTest
         CompLayer layer = layer();
         CompEffect blur = new CompEffect("fx1", "blur");
 
-        blur.put("radius", 600D);
+        blur.put("radius", 2000D);
         layer.effects.add(blur);
 
-        assertEquals(512F, EffectPadding.of(layer, 0F), 0.01F);
+        assertEquals(1024F, EffectPadding.of(layer, 0F), 0.01F);
     }
 
     /**

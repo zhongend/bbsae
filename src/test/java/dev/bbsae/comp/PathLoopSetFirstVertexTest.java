@@ -201,7 +201,9 @@ public class PathLoopSetFirstVertexTest
         @Override
         public boolean rotatePoints(int shift)
         {
-            java.util.Collections.rotate(this.points, shift);
+            /* Same direction as the production adapters once the sign bug is fixed: new[i] is
+             * old[(i+shift) mod n], i.e. Collections.rotate(-shift). */
+            java.util.Collections.rotate(this.points, -shift);
 
             return true;
         }
@@ -709,6 +711,52 @@ public class PathLoopSetFirstVertexTest
 
             assertEquals(1, loops.size(), "the loop must rotate with the channel");
             assertEquals(loop, loops.get(0));
+        }
+    }
+
+    @Test
+    public void setFirstVertexUsesTheSameDirectionForEveryShift()
+    {
+        /* Regression: the model list was rotated with Collections.rotate(+shift) while the channels
+         * used new[i] = old[(i+shift) % n]. The two directions coincide only when 2*shift ≡ 0
+         * (mod n), which is exactly the old test's n=4/shift=2 case. Sweep every shift. */
+        for (int count = 3; count <= 8; count++)
+        {
+            for (int shift = 1; shift < count; shift++)
+            {
+                Recorder recorder = new Recorder();
+                CompPenSession session = new CompPenSession(recorder);
+                LoopPath path = new LoopPath();
+
+                for (int i = 0; i < count; i++)
+                {
+                    path.add(i * 10F, i * 20F);
+                }
+
+                path.animated = false;
+                path.closed = true;
+                session.setTarget(path);
+
+                float[][] before = new float[count][];
+
+                for (int i = 0; i < count; i++)
+                {
+                    before[i] = path.points.get(i).clone();
+                }
+
+                assertTrue(session.setFirstVertex(shift), "n=" + count + " shift=" + shift);
+
+                for (int i = 0; i < count; i++)
+                {
+                    float[] expected = before[(i + shift) % count];
+                    float[] actual = path.points.get(i);
+
+                    assertEquals(expected[0], actual[0], 0.0001F,
+                        "n=" + count + " shift=" + shift + " point=" + i + " x");
+                    assertEquals(expected[1], actual[1], 0.0001F,
+                        "n=" + count + " shift=" + shift + " point=" + i + " y");
+                }
+            }
         }
     }
 

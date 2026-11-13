@@ -43,7 +43,11 @@ public final class EffectRenderer
         "cc_slant", "magnify", "cc_ripple_pulse", "cc_bend", "cc_split",
         "rolling_shutter_repair", "transform",
         "drop_shadow", "stroke", "depth_matte", "depth_fog", "depth_dof",
-        "grid_repeat", "random_repeat", "turbulent_displace", "colorama", "light_sweep"
+        "grid_repeat", "random_repeat", "turbulent_displace", "colorama", "light_sweep",
+        /* Geometry effect: CompRenderer stacks the layer raster in Z. It is listed here so the
+         * catalogue/renderer coverage contract stays honest; applying it as a pixel filter is a
+         * no-op and the 2D path intentionally leaves it alone. */
+        "extrude3d"
     );
 
     public static boolean supports(String type)
@@ -444,6 +448,12 @@ public final class EffectRenderer
     {
         program.set("Texel", 1F / refWidth(space, input), 1F / refHeight(space, input));
         program.set("Size", refWidth(space, input), refHeight(space, input));
+        /* CompSize is bound by EffectSpace.bind() (the LayerOrigin grid); programs without a space
+         * fall back to the input grid so resampling still has a denominator. */
+        if (space == null)
+        {
+            program.set("CompSize", Math.max(1, input.width), Math.max(1, input.height));
+        }
     }
 
     /**
@@ -699,7 +709,7 @@ public final class EffectRenderer
         program.set("Texel", 1F / w, 1F / h);
         program.set("Mode", 0);
         program.set("Direction", (float) Math.cos(Math.toRadians(angle)), (float) Math.sin(Math.toRadians(angle)));
-        program.set("Radius", Math.min(200F, radius));
+        program.set("Radius", Math.min(1024F, radius));
         program.drawFullscreen();
 
         if (premultiplied != input)
@@ -1321,7 +1331,7 @@ public final class EffectRenderer
         {
             /* AM repeat: `count` copies marching along `offset`, each stepped by `angle` and
              * multiplied by `scale`. Offsets are authored in composition pixels. */
-            float count = clamp(effect.valueF("count", 5F), 1F, 32F);
+            float count = clamp(effect.valueF("count", 5F), 1F, 64F);
 
             columns = count;
             stepX = effect.valueF("offset_x", 48F) / Math.max(1F, compW);
@@ -1334,7 +1344,7 @@ public final class EffectRenderer
         {
             /* AM repeat.radial: `count` copies on an arc of `radius`, from `startAngle` over
              * `sweep`, each stepped by `angle` / `baseScale` × `scale`. */
-            float count = clamp(effect.valueF("count", 8F), 1F, 32F);
+            float count = clamp(effect.valueF("count", 8F), 1F, 64F);
             float radius = Math.max(0F, effect.valueF("radius", 300F));
 
             columns = count;
@@ -1353,7 +1363,7 @@ public final class EffectRenderer
         else if (scatterRing)
         {
             /* AM repeat.scatter: `count` copies on random points of a `radius` disk. */
-            float count = clamp(effect.valueF("count", 12F), 1F, 32F);
+            float count = clamp(effect.valueF("count", 12F), 1F, 64F);
             float radius = Math.max(0F, effect.valueF("radius", 300F));
 
             columns = count;
@@ -1368,7 +1378,7 @@ public final class EffectRenderer
         }
         else if (line)
         {
-            float count = clamp(effect.valueF("count", 4F), 1F, 8F);
+            float count = clamp(effect.valueF("count", 4F), 1F, 64F);
             float duty = clamp(effect.valueF("duty", 0.7F), 0.05F, 1F);
 
             columns = count;
@@ -1378,8 +1388,8 @@ public final class EffectRenderer
         }
         else if (scatter)
         {
-            columns = clamp(effect.valueF("columns", 5F), 1F, 8F);
-            rows = clamp(effect.valueF("rows", 4F), 1F, 8F);
+            columns = clamp(effect.valueF("columns", 5F), 1F, 20F);
+            rows = clamp(effect.valueF("rows", 4F), 1F, 20F);
             gap = clamp(effect.valueF("gap", 0.05F), 0F, 0.9F);
             scale = Math.max(0.02F, effect.valueF("scale", 0.75F));
             rotation = (float) Math.toRadians(effect.valueF("rotation", 45F));
@@ -1389,15 +1399,15 @@ public final class EffectRenderer
         }
         else if ("am_grid_repeat".equals(type))
         {
-            columns = clamp(effect.valueF("columns", 2F), 1F, 8F);
-            rows = clamp(effect.valueF("rows", 2F), 1F, 8F);
+            columns = clamp(effect.valueF("columns", 2F), 1F, 20F);
+            rows = clamp(effect.valueF("rows", 2F), 1F, 20F);
             gap = clamp(effect.valueF("gap", 0.05F), 0F, 0.9F);
             opacity = clamp(effect.valueF("amount", 1F), 0F, 1F);
         }
         else
         {
-            columns = clamp(effect.valueF("columns", 4F), 1F, 8F);
-            rows = clamp(effect.valueF("rows", 3F), 1F, 8F);
+            columns = clamp(effect.valueF("columns", 4F), 1F, 20F);
+            rows = clamp(effect.valueF("rows", 3F), 1F, 20F);
             gap = clamp(effect.valueF("gap", 0.04F), 0F, 0.9F);
             scale = Math.max(0.02F, effect.valueF("scale", 0.9F));
             rotation = (float) Math.toRadians(effect.valueF("rotation", 0F));

@@ -71,7 +71,9 @@ public final class UiPageTransition
     /** Eased 0→1 progress of the current transition. */
     public float progress()
     {
-        return UiMotion.easeOut(this.elapsed / this.duration);
+        /* Quintic ease-out: a fast start and a long soft landing. Cubic ease-out reads as a
+         * mechanical slide on a 300 px surface; this is the curve AE/iOS use for page moves. */
+        return UiMotion.easeOutQuint(this.elapsed / this.duration);
     }
 
     /** Vertical offset of the incoming content, in pixels. */

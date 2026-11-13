@@ -115,6 +115,26 @@ public class CompStoreMigrationTest
     }
 
     @Test
+    public void oldProjectsGetOneEditorLayoutMigration()
+    {
+        CompProject project = project(6);
+
+        assertEquals(1, project.settings.uiLayoutRevision, "new settings default to the current revision");
+
+        CompStore.migrate(project);
+
+        assertEquals(0, project.settings.uiLayoutRevision,
+            "a v6 project must be marked for the effects-left conversion");
+
+        project.version = 7;
+        project.settings.uiLayoutRevision = 1;
+        CompStore.migrate(project);
+
+        assertEquals(1, project.settings.uiLayoutRevision,
+            "a v7 project must not be marked again once its layout revision is current");
+    }
+
+    @Test
     public void audioModulesAreMarkedAsAudio()
     {
         assertEquals("audio", CompOutputPreset.audioWav().kind);

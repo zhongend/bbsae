@@ -293,7 +293,7 @@ public final class ReplayModelPass
      * Lazily builds the full-bright light map (16x16, every texel white). Created on the render
      * thread from this pass; released in {@link #release()}.
      */
-    private static int whiteLightmapId()
+    public static int whiteLightmapId()
     {
         if (whiteLightmapTexture == null)
         {

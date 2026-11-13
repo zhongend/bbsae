@@ -1216,6 +1216,20 @@ public final class UIPenTool implements CompPenSession.Listener
             }
         }
 
+        /* Open mask paths are implicitly closed by the rasterizer (AE fill semantics). Show that
+         * closing edge faintly, otherwise the overlay promises a stroke while the layer is matted
+         * by a region the user cannot see. Open shape paths stay genuinely open. */
+        if (!closed && this.targetKind == KIND_MASK && path.count() >= 3)
+        {
+            float[] first = this.localToScreen(layer, view, path.x(0), path.y(0));
+            float[] last = this.localToScreen(layer, view, path.x(path.count() - 1), path.y(path.count() - 1));
+
+            if (first != null && last != null)
+            {
+                this.line(context, last[0], last[1], first[0], first[1], 0x66FFFFFF);
+            }
+        }
+
         /* Open paths get an end marker so "there is no closing segment" is visible at a glance. */
         if (!closed && path.count() >= 2)
         {
@@ -2441,7 +2455,11 @@ public final class UIPenTool implements CompPenSession.Listener
         @Override
         public boolean rotatePoints(int shift)
         {
-            java.util.Collections.rotate(this.mask.points, shift);
+            /* Collections.rotate(list, +d) moves old[i-d] to i; the channel contract is
+             * new[i] = old[(i+shift) mod n] (CompPenSession §40-45). Negating the distance is what
+             * makes the model and the keyframe channels agree for every (n, shift), not only for
+             * the 2*shift ≡ 0 cases the old test used. */
+            java.util.Collections.rotate(this.mask.points, -shift);
 
             return true;
         }
@@ -2651,29 +2669,49 @@ public final class UIPenTool implements CompPenSession.Listener
             }
 
             float[] values = new float[length];
+            float[] transform = this.transform(frame);
+            float cos = transform[2];
+            float sin = transform[3];
 
             for (int i = 0; i < count; i++)
             {
                 CompShape.Point point = this.shape.points.get(i);
                 String base = "shape/" + this.shape.id + "/p/" + i + "/";
 
-                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_X] =
-                    this.layer.scalarAt(base + "x", point.x, frame);
-                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_Y] =
-                    this.layer.scalarAt(base + "y", point.y, frame);
-                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_IN_X] =
-                    this.layer.scalarAt(base + "inX", point.inX, frame);
-                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_IN_Y] =
-                    this.layer.scalarAt(base + "inY", point.inY, frame);
-                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_OUT_X] =
-                    this.layer.scalarAt(base + "outX", point.outX, frame);
-                values[i * CompPenSession.COMPONENT_COUNT + CompPenSession.COMPONENT_OUT_Y] =
-                    this.layer.scalarAt(base + "outY", point.outY, frame);
+                float x = this.layer.scalarAt(base + "x", point.x, frame);
+                float y = this.layer.scalarAt(base + "y", point.y, frame);
+                float inX = this.layer.scalarAt(base + "inX", point.inX, frame);
+                float inY = this.layer.scalarAt(base + "inY", point.inY, frame);
+                float outX = this.layer.scalarAt(base + "outX", point.outX, frame);
+                float outY = this.layer.scalarAt(base + "outY", point.outY, frame);
+                int at = i * CompPenSession.COMPONENT_COUNT;
+
+                /* Shape path points are authored in the shape's local space (ShapeRasterizer applies
+                 * T(shape.x,shape.y)·R(rotation) after building the path). The pen projects layer
+                 * coordinates, so the adapter is the one boundary that converts both ways; otherwise
+                 * the overlay/hit-test/drag drift by the shape transform while the pixels stay put. */
+                values[at + CompPenSession.COMPONENT_X] = x * cos - y * sin + transform[0];
+                values[at + CompPenSession.COMPONENT_Y] = x * sin + y * cos + transform[1];
+                values[at + CompPenSession.COMPONENT_IN_X] = inX * cos - inY * sin;
+                values[at + CompPenSession.COMPONENT_IN_Y] = inX * sin + inY * cos;
+                values[at + CompPenSession.COMPONENT_OUT_X] = outX * cos - outY * sin;
+                values[at + CompPenSession.COMPONENT_OUT_Y] = outX * sin + outY * cos;
             }
 
             UIPenTool.this.evaluations.store(this.layer, this.shape, frame, UIPenTool.this.evaluationRevision, values);
 
             return values;
+        }
+
+        /** @return {translateX, translateY, cos(rotation), sin(rotation)} at the current frame. */
+        private float[] transform(float frame)
+        {
+            float x = this.layer.scalarAt("shape/" + this.shape.id + "/x", this.shape.x, frame);
+            float y = this.layer.scalarAt("shape/" + this.shape.id + "/y", this.shape.y, frame);
+            float rotation = this.layer.scalarAt("shape/" + this.shape.id + "/rotation", this.shape.rotation, frame);
+            float radians = (float) Math.toRadians(rotation);
+
+            return new float[] {x, y, (float) Math.cos(radians), (float) Math.sin(radians)};
         }
 
         private CompShape.Point point(int index)
@@ -2684,7 +2722,8 @@ public final class UIPenTool implements CompPenSession.Listener
         @Override
         public boolean rotatePoints(int shift)
         {
-            java.util.Collections.rotate(this.shape.points, shift);
+            /* Same direction as the channel rotation; see MaskTarget.rotatePoints(). */
+            java.util.Collections.rotate(this.shape.points, -shift);
             this.shape.ensureCorners();
 
             return true;
@@ -2718,18 +2757,28 @@ public final class UIPenTool implements CompPenSession.Listener
         public void setPoint(int index, float x, float y)
         {
             String base = "shape/" + this.shape.id + "/p/" + index + "/";
+            float[] transform = this.transform(UIPenTool.this.panel.getFrame());
+            float dx = x - transform[0];
+            float dy = y - transform[1];
+            float cos = transform[2];
+            float sin = transform[3];
 
-            UIPenTool.this.panel.penSetScalar(this.layer, base + "x", x);
-            UIPenTool.this.panel.penSetScalar(this.layer, base + "y", y);
+            /* Layer coords -> shape-local coords; see values(). */
+            UIPenTool.this.panel.penSetScalar(this.layer, base + "x", dx * cos + dy * sin);
+            UIPenTool.this.panel.penSetScalar(this.layer, base + "y", -dx * sin + dy * cos);
         }
 
         @Override
         public void setHandle(int index, boolean out, float dx, float dy)
         {
             String base = "shape/" + this.shape.id + "/p/" + index + "/";
+            float[] transform = this.transform(UIPenTool.this.panel.getFrame());
+            float cos = transform[2];
+            float sin = transform[3];
 
-            UIPenTool.this.panel.penSetScalar(this.layer, base + (out ? "outX" : "inX"), dx);
-            UIPenTool.this.panel.penSetScalar(this.layer, base + (out ? "outY" : "inY"), dy);
+            /* Handles are direction vectors: inverse-rotate them, never translate. */
+            UIPenTool.this.panel.penSetScalar(this.layer, base + (out ? "outX" : "inX"), dx * cos + dy * sin);
+            UIPenTool.this.panel.penSetScalar(this.layer, base + (out ? "outY" : "inY"), -dx * sin + dy * cos);
         }
 
         @Override

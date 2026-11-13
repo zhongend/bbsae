@@ -118,6 +118,7 @@ public class ShaderWaveTest
             GL20.glUniform2f(GL20.glGetUniformLocation(program, "LayerSize"), SIZE, SIZE);
             GL20.glUniform2f(GL20.glGetUniformLocation(program, "LayerX"), 1F, 0F);
             GL20.glUniform2f(GL20.glGetUniformLocation(program, "LayerY"), 0F, 1F);
+            GL20.glUniform2f(GL20.glGetUniformLocation(program, "CompSize"), SIZE, SIZE);
             GL20.glUniform2f(GL20.glGetUniformLocation(program, "LayerOrigin"), 0F, 0F);
             GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 3);
 

@@ -585,6 +585,7 @@ public class ShaderPixelTest
             GL20.glUniform3f(GL20.glGetUniformLocation(program, "LayerU"), space.ux, space.uy, space.uz);
             GL20.glUniform3f(GL20.glGetUniformLocation(program, "LayerV"), space.vx, space.vy, space.vz);
             GL20.glUniform2f(GL20.glGetUniformLocation(program, "LayerSize"), space.width, space.height);
+            GL20.glUniform2f(GL20.glGetUniformLocation(program, "CompSize"), space.compWidth, space.compHeight);
             GL20.glUniform2f(GL20.glGetUniformLocation(program, "LayerX"), space.m00, space.m01);
             GL20.glUniform2f(GL20.glGetUniformLocation(program, "LayerY"), space.m10, space.m11);
             GL20.glUniform2f(GL20.glGetUniformLocation(program, "LayerOrigin"), space.originCompX, space.originCompY);
