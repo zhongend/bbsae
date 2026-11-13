@@ -121,7 +121,10 @@ public final class ReplayEntityKey
      */
     public static boolean drawActors(CompLayer layer, CompRenderContext context, Batcher2D batcher)
     {
-        int mask = ReplayEntityMask.texture(layer.entityOcclusion);
+        /* The flat cutout must be complete. World-depth occlusion is a film-plate feature and it
+         * was rejecting some front faces when the actor re-render and the world depth did not
+         * agree by a texel; the actor-only layer therefore always uses the unoccluded target. */
+        int mask = ReplayEntityMask.texture(false);
 
         if (mask == 0 || !ReplayEntityMask.isCurrentFrame()
             || SceneColor.frameSerial() != ReplayEntityMask.frameSerial())

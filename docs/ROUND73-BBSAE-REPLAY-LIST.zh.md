@@ -52,6 +52,8 @@ world-plate matte 换成 actor-only 图像。
 - 预览框「看穿摄像机」按钮隐藏；
 - 摄像机工具不会在预览工具栏/右侧按钮区误启动 orbit/Track；
 - 摄像机工具 3px 死区：单击不再产生零距离相机移动/幽灵撤销步骤；
+- 2D 平面回放：actor-only 图一律使用 **unoccluded** 目标，世界深度只作为旧 matte 的可选遮挡，
+  不再把模型前面的面踢出；
 - BBS 飞行摄像机 orbit 每帧先恢复按下时姿态，再应用总位移，修复“滑动鼠标相机乱晃/加速旋转”；
 - 改为「设置 → 显示 → 看穿摄像机」；
 - 数字键盘 0 仍可用。
@@ -80,8 +82,8 @@ world-plate matte 换成 actor-only 图像。
 ## 7. 验证
 
 - 全量：**152 suites / 950 tests / 0 failures / 0 errors / 1 skipped**。
-- 本地候选包：`bbsae-0.99-hotfix30.jar`，已安装到正式 modpack；
-  SHA-256 `B22E0C9253642B6E8A122E4A2F7A63BE7FEF269184EA54C677FDBDE37420952A`。
+- 本地候选包：`bbsae-0.99-hotfix31.jar`，已安装到正式 modpack；
+  SHA-256 `8ADA295AE4F9303436D40925FA15A25FFE3C35EA073B2F3BE495A14F0D7165AD`。
 - 本地提交：`077e244`、`41755f1`；本轮素材链接改动尚未提交。
 - 未推送 GitHub。
 

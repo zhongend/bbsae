@@ -372,13 +372,14 @@ public final class ReplayEntityMask
 
                 any[0] = true;
 
+                /* The actor-only flat cutout always needs the unoccluded color image. The occluded
+                 * target is an extra film-plate matte; world depth must not kick faces out of the
+                 * cutout itself. */
+                unoccluded[0] = true;
+
                 if (layer.entityOcclusion)
                 {
                     occluded[0] = true;
-                }
-                else
-                {
-                    unoccluded[0] = true;
                 }
 
                 if (layer.entityScope == CompLayer.ENTITY_SCOPE_ALL)
