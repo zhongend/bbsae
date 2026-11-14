@@ -128,6 +128,16 @@ public class BlendModesTest
 
             assertPixel(255, 255, 255, 255, dodge, "linear dodge");
 
+            /* Hue over an opaque white backdrop used to become white: HSV's backdrop
+             * saturation is zero, so the standard formula throws away the source chroma.
+             * A hue blend should keep the source's hue and saturation over an achromatic
+             * backdrop; otherwise a gradient layer set to 色相 disappears into white. */
+            int[] hue = pixel(program, texture(255, 0, 0, 255), texture(255, 255, 255, 255),
+                CompLayer.BLEND_HUE, 255);
+
+            assertTrue(hue[0] > 180 && hue[1] < 80 && hue[2] < 80,
+                "hue over white must keep the red hue, got " + describe(hue));
+
             assertEquals(GL11.GL_NO_ERROR, GL11.glGetError(), "GL error after blend cases");
         }
         finally

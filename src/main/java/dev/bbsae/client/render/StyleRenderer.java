@@ -150,6 +150,13 @@ public final class StyleRenderer
         program.set("NoiseAmount", 0F);
         program.set("NoiseScale", 64F);
         program.set("Seed", 0F);
+        /* The colour program is shared with the effect chain. Reset the colour-map uniforms too:
+         * a preceding Colorama effect leaves its palette latched, and a colour overlay applied on
+         * top would then remap the layer to that palette (often white) instead of tinting it. */
+        program.set("Colorama", 0F);
+        program.set("ColoramaA", 0F, 0F, 0F, 1F);
+        program.set("ColoramaB", 0.18F, 0.53F, 0.67F, 1F);
+        program.set("ColoramaC", 1F, 0.89F, 0.66F, 1F);
         program.drawFullscreen();
 
         return output;

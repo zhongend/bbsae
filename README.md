@@ -1,5 +1,11 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix73**：色相/颜色相关显示修复。
+> - **色相混合模式**不再在白色/灰色背景上把渐变洗成一片白：背景无彩度时保留源饱和度，
+>   只有背景本身有色时才采用背景饱和度。
+> - 颜色效果不再向全透明像素写入白色 RGB；色相/颜色链路不会把边缘颜色泄漏成白边。
+> - 颜色叠加样式重置 Colorama 色板 uniform，避免前面的颜色效果污染后续图层样式。
+>
 > **0.99-hotfix72**：复制预合成后的独立嵌套合成。
 > - 复制/粘贴/右键复制一个预合成图层时，不再只复制 `precompId` 字符串；
 >   副本会得到一棵完整的嵌套合成副本，编辑副本不会影响原预合成。
@@ -219,16 +225,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download `bbsae-0.99-hotfix72.jar` from the repository's
+1. Download `bbsae-0.99-hotfix73.jar` from the repository's
    [releases](https://github.com/zhongend/bbsae/releases), or build it with
-   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix72.jar`).
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix73.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99-hotfix72.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix73.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix72.jar` SHA-256: `B0529515A4BEE49A2248F177C3DAB529E00760BF9654B9E2191B872C47B72B71` (4,031,009 bytes).
+`bbsae-0.99-hotfix73.jar` SHA-256: `27A9FA486FC8339E154AED385F767F19A6767EE195AEE594DFC90A2049D273C9` (4,031,873 bytes).
 
 ## Gallery
 

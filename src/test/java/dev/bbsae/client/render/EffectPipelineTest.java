@@ -743,6 +743,47 @@ public class EffectPipelineTest
         return new CompRenderContext(project, comp, 0F, null, null, null);
     }
 
+    private static Outcome applyChain(int[] sourcePixels, List<CompEffect> effects)
+    {
+        CompRenderContext context = context();
+        CompLayer layer = layer();
+        GlFramebuffer current = new GlFramebuffer(SIZE, SIZE);
+        GlFramebuffer first = current;
+
+        current.color.uploadTopDown(sourcePixels);
+
+        try
+        {
+            EffectSpace space = EffectSpace.identity(context);
+
+            for (CompEffect effect : effects)
+            {
+                GlFramebuffer next = EffectRenderer.apply(layer, effect, current, context, space);
+
+                if (next != current)
+                {
+                    if (current != first)
+                    {
+                        FboPool.release(current);
+                    }
+
+                    current = next;
+                }
+            }
+
+            return new Outcome(current.width, current.height, current.readTopDown());
+        }
+        finally
+        {
+            if (current != first)
+            {
+                FboPool.release(current);
+            }
+
+            FboPool.release(first);
+        }
+    }
+
     private static Outcome applyTo(int[] sourcePixels, CompEffect effect)
     {
         CompRenderContext context = context();
@@ -1002,6 +1043,130 @@ public class EffectPipelineTest
 
         assertEquals(alpha(sourcePixels[24 * SIZE + 24]), alpha(center), "blur must keep the alpha");
         assertTrue(red(center) < 250, "blur must soften the bright diagonal");
+    }
+
+    @Test
+    public void colourEffectsKeepGeneratedGradientColours()
+    {
+        for (String gradient : List.of("gradient_ramp", "am_four_color_gradient"))
+        {
+            CompEffect generate = CompEffectRegistry.create(gradient, 1);
+            CompEffect hue = CompEffectRegistry.create(
+                "am_four_color_gradient".equals(gradient) ? "am_hue_shift" : "hue_saturation", 2);
+
+            hue.put("hue", 75D);
+            hue.put("amount", 1D);
+            hue.put("saturation", 0.4D);
+
+            Outcome outcome = applyChain(source(), List.of(generate, hue));
+            int sample = outcome.at(SIZE / 2, SIZE / 2);
+            int r = red(sample);
+            int g = green(sample);
+            int b = blue(sample);
+
+            assertTrue(!(r > 245 && g > 245 && b > 245),
+                gradient + " + hue turned the generated gradient white: " + Integer.toHexString(sample));
+        }
+    }
+
+    @Test
+    public void everyHueFamilyEffectKeepsAColouredSourceColoured()
+    {
+        int[] colourful = new int[SIZE * SIZE];
+
+        for (int y = 0; y < SIZE; y++)
+        {
+            for (int x = 0; x < SIZE; x++)
+            {
+                colourful[y * SIZE + x] = (255 << 24)
+                    | ((20 + x * 7) << 16)
+                    | ((30 + y * 6) << 8)
+                    | (220 - x * 5);
+            }
+        }
+
+        String[] types = {
+            "hue_saturation", "color_grade", "am_hue_shift", "am_channel_map_hsv",
+            "am_color_balance", "am_four_color_gradient"
+        };
+
+        for (String type : types)
+        {
+            CompEffect effect = CompEffectRegistry.create(type, 1);
+
+            effect.put("hue", 70D);
+            effect.put("hue_shift", 70D);
+            effect.put("amount", 1D);
+            effect.put("saturation", 0.3D);
+
+            Outcome outcome = applyTo(colourful, effect);
+            int sample = outcome.at(SIZE / 2, SIZE / 2);
+            int r = red(sample);
+            int g = green(sample);
+            int b = blue(sample);
+
+            assertTrue(!(r > 245 && g > 245 && b > 245),
+                type + " turned a coloured source white: " + Integer.toHexString(sample));
+        }
+    }
+
+    @Test
+    public void hueColourEffectsDoNotCreateAlphaInTransparentPixels()
+    {
+        for (String type : List.of("hue_saturation", "am_hue_shift"))
+        {
+            CompEffect effect = CompEffectRegistry.create(type, 1);
+
+            effect.put("hue", 90D);
+            effect.put("saturation", 0.5D);
+            effect.put("amount", 1D);
+
+            Outcome outcome = applyTo(cardSource(), effect);
+
+            assertEquals(0, alpha(outcome.at(0, 0)),
+                type + " must not create alpha in a transparent corner");
+            assertEquals(0, alpha(outcome.at(SIZE - 1, SIZE - 1)),
+                type + " must not create alpha in the opposite transparent corner");
+        }
+    }
+
+    @Test
+    public void hueColourEffectsKeepSemiTransparentGradientRGB()
+    {
+        int[] gradient = new int[SIZE * SIZE];
+
+        for (int y = 0; y < SIZE; y++)
+        {
+            for (int x = 0; x < SIZE; x++)
+            {
+                int a = 64 + x * 6;
+                int r = 20 + x * 7;
+                int g = 40 + y * 4;
+                int b = 200 - x * 4;
+
+                gradient[y * SIZE + x] = (Math.min(255, a) << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+
+        for (String type : List.of("hue_saturation", "am_hue_shift"))
+        {
+            CompEffect effect = CompEffectRegistry.create(type, 1);
+
+            effect.put("hue", 60D);
+            effect.put("saturation", 0.35D);
+            effect.put("amount", 1D);
+
+            Outcome outcome = applyTo(gradient, effect);
+            int sample = outcome.at(SIZE / 2, SIZE / 2);
+            int r = red(sample);
+            int g = green(sample);
+            int b = blue(sample);
+
+            assertEquals(alpha(gradient[SIZE / 2 * SIZE + SIZE / 2]), alpha(sample),
+                type + " must keep the gradient alpha");
+            assertTrue(!(r > 245 && g > 245 && b > 245),
+                type + " turned a coloured gradient white: " + Integer.toHexString(sample));
+        }
     }
 
     @Test

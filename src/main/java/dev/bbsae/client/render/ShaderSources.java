@@ -331,7 +331,20 @@ public final class ShaderSources
             if (Blend == 22) return clamp(b / max(s, vec3(0.0001)), 0.0, 1.0);
             if (Blend == 23) return length(luminanceWeights * s) > length(luminanceWeights * b) ? b : s;
             if (Blend == 24) return length(luminanceWeights * s) > length(luminanceWeights * b) ? s : b;
-            if (Blend == 25) return hsv2rgb(vec3(rgb2hsv(s).x, rgb2hsv(b).yz));
+            if (Blend == 25)
+            {
+                vec3 sh = rgb2hsv(s);
+                vec3 bh = rgb2hsv(b);
+                /* A hue blend must not erase the source's chroma just because the backdrop is
+                 * achromatic. The textbook formula (source hue + backdrop saturation/value) makes
+                 * a gradient over white or grey turn completely white, which reads as a broken
+                 * colour effect: every hue the user picks produces the same flat backdrop colour.
+                 * Keep the backdrop's saturation when it has one; over an achromatic backdrop,
+                 * carry the source saturation so the hue remains visible. */
+                float sat = bh.y <= 0.0001 ? sh.y : bh.y;
+
+                return hsv2rgb(vec3(sh.x, sat, bh.z));
+            }
             if (Blend == 26) return hsv2rgb(vec3(rgb2hsv(b).x, rgb2hsv(s).y, rgb2hsv(b).z));
             if (Blend == 27) return yuv2rgb(vec3(rgb2yuv(b).x, rgb2yuv(s).yz));
             if (Blend == 28) return yuv2rgb(vec3(rgb2yuv(s).x, rgb2yuv(b).yz));
@@ -987,6 +1000,16 @@ public final class ShaderSources
         void main()
         {
             vec4 c = texture(Source, vUv);
+
+            /* Colour maths is undefined for a pixel with no coverage. Writing a transformed RGB
+             * into a fully transparent texel leaves white/garbage colour beside gradients; a later
+             * glow/shadow/tint can then pull that colour into the visible area. Keep transparent
+             * pixels transparent black, exactly as the layer arrived. */
+            if (c.a <= 0.0001)
+            {
+                fragColor = vec4(0.0);
+                return;
+            }
 
             c.rgb = clamp((c.rgb - BlackPoint) / max(WhitePoint - BlackPoint, 0.0001), 0.0, 1.0);
             c.rgb = pow(max(c.rgb, vec3(0.0)) * pow(2.0, Exposure), vec3(max(Gamma, 0.01)));
