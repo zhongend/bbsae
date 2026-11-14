@@ -57,12 +57,10 @@ public final class CompRenderContext
     /**
      * True only for the free 3D workspace draft viewport ({@link CompViewportRenderer}).
      *
-     * <p>The 3D workspace draws a cheap <b>draft</b>: a precomp layer is represented by a blue
-     * "预合成（草稿）" plate instead of rendering the nested composition (that would be a second
-     * full graph per orbit frame). That plate is editor chrome and must never leak into the
-     * composition panel preview or the encoder — those render the real nested comp. Before this
-     * flag existed, {@code CompLayerSourceCache} keyed the plate off {@code preview} alone, so the
-     * panel preview (also "preview") showed a blue placeholder instead of the actual precomp.</p>
+     * <p>The 3D workspace is still a cheaper draft for composition-level effects, but a precomp
+     * layer is rendered as its real nested composition in every mode. The old blue
+     * "预合成（草稿）" plate was an opaque rectangle that lied about the layer's content and alpha;
+     * users correctly read it as the precomposed layer being broken.</p>
      */
     public boolean draftViewport = false;
 

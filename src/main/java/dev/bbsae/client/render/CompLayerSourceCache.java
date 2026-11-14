@@ -393,19 +393,11 @@ public final class CompLayerSourceCache
                 -1000F, 1000F
             );
 
-            if ("precomp".equals(layer.type) && wantsPrecompPlate(layer, context))
-            {
-                /* The plate is a draft annotation for the 3D workspace only. It must never leak
-                 * into the composition panel preview or the encoder: those render the real nested
-                 * composition (see the else branch). */
-                drawPrecompPlate(layer, batcher, rect);
-            }
-            else
-            {
-                /* Outside the 3D workspace a precomp is drawn as its real nested composition into
-                 * the layer-local raster; everything else is ordinary layer content. */
-                LayerContentRenderer.draw(layer, context, batcher, new Matrix4f(), projection);
-            }
+            /* A precomp is a real nested composition in every mode, including the free 3D
+             * workspace. The old blue "预合成（草稿）" plate was an opaque rectangle that did not
+             * match the precomp's own content, alpha or transform; users correctly read it as the
+             * precomposed layer being broken. Correctness wins over the cheap preview here. */
+            LayerContentRenderer.draw(layer, context, batcher, new Matrix4f(), projection);
 
             batcher.flush();
             BufferRenderer.resetCurrentVertexBuffer();
@@ -548,7 +540,7 @@ public final class CompLayerSourceCache
         CompRenderContext context = new CompRenderContext(parent.project, proxy, parent.time,
             parent.projection, parent.camera, parent.depth);
 
-        /* The proxy context must inherit the editor flags: the 3D draft plate is only editor chrome,
+        /* The proxy context must inherit the editor flags: preview placeholders are editor-only,
          * and the encoder render may run at a different raster cap. */
         context.preview = parent.preview;
         context.draftViewport = parent.draftViewport;
@@ -903,33 +895,12 @@ public final class CompLayerSourceCache
     }
 
     /**
-     * A precomp is another composition, and rendering it here would run a second full graph per
-     * mouse move. The draft shows a plate with the target's name instead; look-through renders the
-     * real thing.
-     */
-    /**
-     * True when a precomp layer may be drawn as the cheap "预合成（草稿）" plate.
-     *
-     * <p>Only the free 3D workspace may: it is explicitly a draft view (the HUD says 草稿) and
-     * rendering the real nested graph there would cost a second full composition per orbit frame.
-     * The composition panel preview and the encoder must show the real nested composition, so they
-     * fall through to {@link LayerContentRenderer#draw}, which calls the nested graph.</p>
+     * Kept for the audit API and old callers: the 3D workspace no longer substitutes a plate for a
+     * precomp. The real nested composition is drawn in every mode.
      */
     static boolean wantsPrecompPlate(CompLayer layer, CompRenderContext context)
     {
-        return layer != null && "precomp".equals(layer.type)
-            && context != null && context.preview && context.draftViewport;
-    }
-
-    private static void drawPrecompPlate(CompLayer layer, Batcher2D batcher, Rect rect)
-    {
-        float x = rect.x;
-        float y = rect.y;
-
-        batcher.box(x, y, x + rect.width, y + rect.height, 0x331E88E5);
-        batcher.box(x, y, x + rect.width, y + 2F, 0xAA55AAFF);
-        batcher.box(x, y + rect.height - 2F, x + rect.width, y + rect.height, 0xAA55AAFF);
-        batcher.textShadow("预合成（草稿）", x + 10F, y + 10F, 0xFF9CC7FF);
+        return false;
     }
 
     private static void release(Entry entry)
@@ -1061,10 +1032,10 @@ public final class CompLayerSourceCache
         h = mix(h, context.renderEffects ? 1 : 0);
         h = mix(h, context.renderMasks ? 1 : 0);
 
-        /* The editor mode is baked into this raster too: the 3D workspace draws a blue
-         * "预合成（草稿）" plate and the BBS-preview placeholder, while the panel preview and the
-         * encoder draw the real nested composition / sampled world frame. Without these two bits
-         * the first viewer won the cache and the other modes showed its pixels. */
+        /* The editor mode is baked into this raster too: editor-only placeholders and the
+         * BBS-preview waiting plate differ from the encoder, while precomps now render their real
+         * nested composition everywhere. Without these bits the first viewer won the cache and the
+         * other modes showed its pixels. */
         h = mix(h, context.preview ? 1 : 0);
         h = mix(h, context.draftViewport ? 1 : 0);
 
@@ -1305,9 +1276,8 @@ public final class CompLayerSourceCache
      *
      * <p>The raster of a precomp layer is the real nested composition (panel preview / encoder), so
      * without this the per-layer raster cache would keep serving the old nested picture after an
-     * edit inside the precomp even though the composite-level frame was invalidated. The 3D
-     * workspace draft plate does not depend on the nested content, but hashing it costs little and
-     * keeping one rule avoids a mode-dependent cache.</p>
+     * edit inside the precomp even though the composite-level frame was invalidated. Keeping the
+     * draft bit in the hash also keeps the preview/export rasters distinct.</p>
      */
     private static long precompContent(long h, CompRenderContext context, CompLayer layer, float frame,
                                        int pixelWidth, int pixelHeight, int depth, java.util.Set<String> stack)

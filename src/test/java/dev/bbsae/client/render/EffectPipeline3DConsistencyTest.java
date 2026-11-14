@@ -517,10 +517,10 @@ public class EffectPipeline3DConsistencyTest
     /* ------------------------------------------------ task-27 audit fixes */
 
     /**
-     * P0-1: the layer raster cache must not share pixels between editor modes. The 3D workspace
-     * bakes a blue "预合成（草稿）" plate and a BBS-preview waiting plate; the panel preview/encoder
-     * render the real nested composition. Before the mode was in the fingerprint, whichever mode
-     * rasterized first won and the other showed its placeholder.
+     * P0-1: the layer raster cache must not share pixels between editor modes. The 3D workspace now
+     * renders the real nested composition (no draft plate); preview/encoder still keep separate
+     * raster signatures for their different preview/export flags. Before the mode was in the
+     * fingerprint, whichever mode rasterized first won and the other showed its placeholder.
      */
     @Test
     public void rasterSignatureSeparatesDraftFromEncoderModes()

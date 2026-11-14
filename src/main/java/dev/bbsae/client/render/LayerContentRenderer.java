@@ -631,10 +631,7 @@ final class LayerContentRenderer
          * relationship intact when it is grouped into a precomp. Masks/effects/styles force the
          * normal flattened render, because they are applied to the precomp layer itself.
          */
-        boolean collapse = layer.collapse
-            && (layer.masks == null || layer.masks.isEmpty())
-            && (layer.effects == null || layer.effects.isEmpty())
-            && (layer.styles == null || layer.styles.isEmpty());
+        boolean collapse = usesParentCameraForPrecomp(layer);
 
         GlFramebuffer framebuffer;
 
@@ -657,8 +654,14 @@ final class LayerContentRenderer
         }
         else
         {
+            /* Flattened precomp: the child is its own composition, so it must be rendered with its
+             * own camera/projection and only then placed as this layer's quad. Passing the parent
+             * viewport projection here projected the nested 3D scene through the editor camera and
+             * then projected the resulting quad again — the "pre-rendered layer is wrong/blank in
+             * the 3D world" report. Collapse keeps the parent camera because that mode explicitly
+             * joins the parent's space. */
             framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth,
-                context.projection, context.camera, context.stack, batcher, 0,
+                null, null, context.stack, batcher, 0,
                 context.renderEffects, context.renderMasks, context.preview, context.scale, true);
         }
 
@@ -699,6 +702,20 @@ final class LayerContentRenderer
         batcher.flush();
         BufferRenderer.resetCurrentVertexBuffer();
         FboPool.release(framebuffer);
+    }
+
+    /**
+     * True only for a precomp that opted into Collapse Transformations and has no per-layer pixels
+     * of its own. A normal precomp is flattened with its own camera; inheriting the parent viewport
+     * projection here would project the nested scene once into its raster and a second time when
+     * the raster becomes a quad (the 3D precomp bug).
+     */
+    static boolean usesParentCameraForPrecomp(CompLayer layer)
+    {
+        return layer != null && layer.collapse
+            && (layer.masks == null || layer.masks.isEmpty())
+            && (layer.effects == null || layer.effects.isEmpty())
+            && (layer.styles == null || layer.styles.isEmpty());
     }
 
     private static void drawPrecompPlaceholder(CompLayer layer, Batcher2D batcher, String hint)

@@ -168,8 +168,8 @@ public final class CompViewportRenderer
 
         CompRenderContext context = new CompRenderContext(project, doc, time, null, null, null);
 
-        /* Draft view: only this viewport may use the cheap precomp plate. The composition panel
-         * preview and the encoder render the real nested composition. */
+        /* Draft view: this viewport still skips some composition-level effects, but precomp
+         * layers render their real nested composition here and in the panel/encoder. */
         context.draftViewport = true;
         GlFramebuffer target = sceneTarget(width, height);
 

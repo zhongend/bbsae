@@ -1,5 +1,19 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix68**：3D 世界 / 回放编辑器里的预合成图层修复。
+> - 3D 自由视口不再用不透明的蓝色「预合成（草稿）」色板代替预合成：真实嵌套合成
+>   会在预览、3D 工作区、回放编辑器的自由/环绕/摄像机预览和导出中渲染；
+> - 预合成透明背景保留，不再是一整块不透明矩形；
+> - **关键投影修复**：普通预合成按它自己的合成相机/投影先栅格化，再作为父层平面
+>   放置；此前把父级 3D 视口的相机传进嵌套合成，再做一次四边形投影，导致嵌套 3D
+>   内容双重投影、位置/大小错误；
+> - 「折叠变换」仍显式继承父相机；带蒙版/效果/样式的预合成仍压平，避免把父层像素
+>   操作错误地复制到子层；
+> - 回放编辑器的自由视图、环绕视图、摄像机预览与 PiP 共用同一套 `CompRenderer` /
+>   `CompViewportRenderer`，修复自动同步。
+> - 详见 [`CHANGELOG.md`](CHANGELOG.md) 与
+>   [`docs/ROUND104-PRECOMP-3D-ALPHA.zh.md`](docs/ROUND104-PRECOMP-3D-ALPHA.zh.md)。
+>
 > **0.99-hotfix67**：总变换关键帧、预览吸附、X/Y 缩放锁定。
 > - 关键帧抽屉新增 **「总变换」**：一次 K 帧会把位置/旋转/缩放的全部 XYZ 轴在同一帧打键；
 >   总变换有独立的关键帧轨道（同步 XYZ），各 XYZ 子曲线仍可分别编辑。
@@ -175,16 +189,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download `bbsae-0.99-hotfix67.jar` from the repository's
+1. Download `bbsae-0.99-hotfix68.jar` from the repository's
    [releases](https://github.com/zhongend/bbsae/releases), or build it with
-   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix67.jar`).
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix68.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99-hotfix67.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix68.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix67.jar` SHA-256: `EE97DBDFD34440A1095E59B0139D8ECFF0784FC1BFAB8D772FEF05297371C0A8` (4,027,393 bytes).
+`bbsae-0.99-hotfix68.jar` SHA-256: `F8CC4D8E993ADC9500D3763FEAF6A34BBEA0C8B6937073E505D5635E877190AB` (4,027,156 bytes).
 
 ## Gallery
 

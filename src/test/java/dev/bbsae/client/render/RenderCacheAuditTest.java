@@ -344,7 +344,24 @@ public class RenderCacheAuditTest
     /* ------------------------------------------- P1-B: draft plate gating */
 
     @Test
-    public void precompPlateIsOnlyAllowedInTheDraftViewport()
+    public void aPrecompUsesItsOwnCameraUnlessCollapsed()
+    {
+        CompLayer layer = precomp("pc", "child");
+
+        assertFalse(LayerContentRenderer.usesParentCameraForPrecomp(layer),
+            "a normal precomp must flatten through its own camera, not the editor viewport");
+
+        layer.collapse = true;
+        assertTrue(LayerContentRenderer.usesParentCameraForPrecomp(layer),
+            "Collapse Transformations explicitly joins the parent camera");
+
+        layer.masks.add(new CompMask("mask"));
+        assertFalse(LayerContentRenderer.usesParentCameraForPrecomp(layer),
+            "a precomp with its own mask must stay flattened");
+    }
+
+    @Test
+    public void precompIsNeverReplacedByTheDraftPlate()
     {
         CompDocument comp = comp("main");
         CompLayer precompLayer = precomp("pc", "child");
@@ -361,15 +378,15 @@ public class RenderCacheAuditTest
             "the composition panel preview must render the real nested composition");
 
         editorial.draftViewport = true;
-        assertTrue(CompLayerSourceCache.wantsPrecompPlate(precompLayer, editorial),
-            "the 3D workspace draft may use the cheap plate");
+        assertFalse(CompLayerSourceCache.wantsPrecompPlate(precompLayer, editorial),
+            "the 3D workspace must render the real nested composition, not an opaque draft plate");
 
         editorial.preview = false;
         assertFalse(CompLayerSourceCache.wantsPrecompPlate(precompLayer, editorial),
             "the encoder must never bake the draft plate");
 
         assertFalse(CompLayerSourceCache.wantsPrecompPlate(solid("shape"), editorial),
-            "only precomp layers have a plate");
+            "only precomp layers could ever have a plate");
     }
 
     @Test

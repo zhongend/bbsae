@@ -97,5 +97,5 @@ if all selected layers share matte M (M outside selection) -> precomp.trackMatte
   签名、持久化回归。
 - 未启动客户端；蒙版/预合成渲染路径与 2D/3D 共用同一套 `CompRenderer` /
   `CompLayerSourceCache` 代码，导出与预览共用渲染入口。
-- 已知边界：3D 自由视口的预合成仍显示“预合成（草稿）”色板（既有性能取舍）；
-  2D 预览和导出渲染真实嵌套合成。
+- 已知边界（已由 hotfix68 修复）：3D 自由视口的预合成曾显示“预合成（草稿）”色板；
+  现在预览与回放编辑器都渲染真实嵌套合成，不再使用不透明草稿板。
