@@ -40,8 +40,8 @@ public class UICompositorKeyframes extends UIKeyframes
 
     /**
      * BBS' dope sheet has a real {@code setTrackHeight}; the compositor editor simply never exposed
-     * it. Alt+wheel (and Alt+= / Alt+-) is the same vertical zoom gesture as the curve editor, so
-     * both keyframe surfaces behave alike.
+     * it. Alt+Shift+wheel (and Alt+= / Alt+-) is the same vertical zoom gesture as the track
+     * timeline and the curve editor, so all three keyframe surfaces behave alike.
      */
     /** Verification hook: change the dope-sheet row height without a wheel event. */
     public void debugSetTrackHeight(double height)
@@ -78,17 +78,14 @@ public class UICompositorKeyframes extends UIKeyframes
         dopeSheet.setTrackHeight(next);
         CompPrefs.get().keyframeRowHeight = (int) Math.round(next);
         CompPrefs.markDirty();
-        this.panel.setStatus("关键帧轨道高度 " + Math.round(next) + "px（Alt+滚轮）");
+        this.panel.setStatus("关键帧轨道高度 " + Math.round(next) + "px（Alt+Shift+滚轮）");
     }
 
     @Override
     protected boolean subMouseScrolled(UIContext context)
     {
-        if (this.area.isInside(context) && CompInput.altDown())
+        if (this.area.isInside(context))
         {
-            /* The user asked for Alt+wheel to zoom the TIME axis from anywhere in the keyframe
-             * drawer, including over the XYZ track labels. BBS' dope sheet only zooms when the
-             * pointer is over the graph, so this path normalises the gesture. */
             double wheel = context.mouseWheel;
 
             if (Math.abs(wheel) < 0.0001D)
@@ -96,14 +93,28 @@ public class UICompositorKeyframes extends UIKeyframes
                 wheel = context.mouseWheelHorizontal;
             }
 
-            if (Math.abs(wheel) < 0.0001D)
+            if (Math.abs(wheel) >= 0.0001D)
             {
-                return super.subMouseScrolled(context);
+                if (CompInput.altDown() && CompInput.shiftDown())
+                {
+                    /* Same split as the track timeline: Alt+Shift+wheel is the vertical (row)
+                     * zoom, Alt+wheel alone is the horizontal (time) zoom. */
+                    this.changeTrackHeight(wheel > 0D ? 2 : -2);
+
+                    return true;
+                }
+
+                if (CompInput.altDown())
+                {
+                    /* The user asked for Alt+wheel to zoom the TIME axis from anywhere in the
+                     * keyframe drawer, including over the XYZ track labels. BBS' dope sheet only
+                     * zooms when the pointer is over the graph, so this path normalises the
+                     * gesture and makes it identical to the track timeline's. */
+                    this.panel.zoomKeyframeTime(wheel > 0D ? 1 : -1, context.mouseX);
+
+                    return true;
+                }
             }
-
-            this.panel.zoomKeyframeTime(wheel > 0D ? 1 : -1, context.mouseX);
-
-            return true;
         }
 
         return super.subMouseScrolled(context);

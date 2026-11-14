@@ -335,6 +335,28 @@ public final class CompRenderCache
         h = mix(h, layer.precompId == null ? 0 : layer.precompId.hashCode());
         h = mix(h, layer.precompTimeOffset);
         h = mix(h, layer.precompTimeScale);
+        /* Collapse Transformations changes the projection of every nested 3D layer. It was missing
+         * from the fingerprint, so toggling it on a parked playhead kept the old drawing until an
+         * unrelated edit invalidated the frame. */
+        h = mix(h, layer.collapse ? 1 : 0);
+        /* Extrusion is geometry: every field changes the silhouette, the side colour or the shading
+         * of the volume, so each one has to invalidate the frame. */
+        h = mix(h, layer.extrude ? 1 : 0);
+        h = mix(h, layer.extrudeDepth);
+        h = mix(h, layer.extrudeSlices);
+        h = mix(h, layer.extrudeColor);
+        h = mix(h, layer.extrudeUseLayerColor ? 1 : 0);
+        h = mix(h, layer.extrudeShade);
+        h = mix(h, layer.extrudeDirection);
+        h = mix(h, layer.extrudeCap ? 1 : 0);
+        /* The independent replay model's identity lives in formData/replayId; editing the linked
+         * replay or picking a different model must not be served from the parked frame. */
+        h = mix(h, layer.formData == null ? 0 : layer.formData.hashCode());
+        h = mix(h, layer.independent ? 1 : 0);
+        h = mix(h, layer.replayId == null ? 0 : layer.replayId.hashCode());
+        h = mix(h, layer.replayAnchorX);
+        h = mix(h, layer.replayAnchorY);
+        h = mix(h, layer.replayAnchorZ);
         h = mix(h, layer.entityScope);
         h = mix(h, layer.entityIds == null ? 0 : layer.entityIds.hashCode());
         h = mix(h, layer.entityOcclusion ? 1 : 0);

@@ -761,7 +761,7 @@ public class UIOnboarding extends UIElement
                 UiGfx.mulA(UiMotion.lerpColor(0xFF334052, BBSSettings.primaryColor(), sel), appear));
             context.batcher.text(i == 0 ? "Premiere Pro" : "BBS 原版", cx + 16, dy + 18,
                 UiMotion.alpha(sel > 0.5F ? 0xFFFFFFFF : 0xFFD3DCE8, appear));
-            context.batcher.text(i == 0 ? "Alt+滚轮缩放 · Ctrl+Shift+D 复制" : "Ctrl+滚轮缩放 · Ctrl+D 复制",
+            context.batcher.text(i == 0 ? "Alt+滚轮缩放 · Ctrl+Shift+D 复制" : "Alt+滚轮缩放 · Ctrl+D 复制",
                 cx + 16, dy + 44, UiMotion.alpha(0xFF8492A6, appear));
             context.batcher.text(i == 0 ? "空格播放 · J/K/L 倒放/暂停/正放" : "空格播放 · I/O 工作区",
                 cx + 16, dy + 64, UiMotion.alpha(0xFF8492A6, appear));

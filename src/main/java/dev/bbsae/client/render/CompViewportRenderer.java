@@ -805,56 +805,50 @@ public final class CompViewportRenderer
     }
 
     /**
-     * Draws the layer raster as a depth stack for the {@code extrude3d} effect. Each slice is a
-     * real 3D plane at a different local Z, so the workspace shows the volume from the side; the
-     * front cap is drawn last.
+     * Draws the layer raster as a depth stack for an extruded volume.
+     *
+     * <p>The geometry comes from {@link dev.bbsae.comp.CompExtrusion}, the same helper the
+     * composition/export path uses, so the workspace cannot disagree with the exported frame about
+     * where the volume starts, which end keeps the artwork colours or how the sides are shaded.
+     * Each slice is a real depth-tested plane, so the volume reads correctly from the side while the
+     * camera orbits; the front cap is drawn last.</p>
      */
     private static int drawExtruded3D(CompLayer layer, CompRenderContext context, CompViewportCamera camera,
                                       CompLayerSourceCache.Entry source, Matrix4f world, float opacity)
     {
-        if (layer.effects == null || layer.effects.isEmpty())
-        {
-            return 0;
-        }
+        dev.bbsae.comp.CompEffect legacy = null;
 
-        CompEffect extrusion = null;
-
-        for (CompEffect effect : layer.effects)
+        if (!dev.bbsae.comp.CompExtrusion.isEnabled(layer) && layer.effects != null)
         {
-            if (effect != null && effect.enabled && "extrude3d".equals(effect.type))
+            for (CompEffect effect : layer.effects)
             {
-                extrusion = effect;
+                if (effect != null && effect.enabled && "extrude3d".equals(effect.type))
+                {
+                    legacy = layer.resolveEffect(effect, context.frame);
 
-                break;
+                    break;
+                }
             }
         }
 
-        if (extrusion == null)
+        java.util.List<dev.bbsae.comp.CompExtrusion.Slice> slices =
+            dev.bbsae.comp.CompExtrusion.slices(layer, legacy);
+
+        if (slices.isEmpty())
         {
             return 0;
         }
 
-        extrusion = layer.resolveEffect(extrusion, context.frame);
-
-        float depth = Math.max(0F, Math.min(400F, extrusion.valueF("depth", 60F)));
-        int slices = Math.max(1, Math.min(48, Math.round(extrusion.valueF("slices", 16F))));
-
-        if (depth <= 0.5F)
+        for (dev.bbsae.comp.CompExtrusion.Slice slice : slices)
         {
-            return 0;
-        }
-
-        for (int slice = slices; slice >= 0; slice--)
-        {
-            float z = -depth * (slice / (float) slices);
-            Matrix4f copyWorld = new Matrix4f(world).translate(0F, 0F, z);
+            Matrix4f copyWorld = new Matrix4f(world).translate(0F, 0F, slice.z());
 
             Viewport3DRenderer.draw(source.texture.color, copyWorld, camera.viewProjection,
                 source.localX, source.localY, source.localX + source.localWidth,
-                source.localY + source.localHeight, opacity);
+                source.localY + source.localHeight, opacity, slice.tint());
         }
 
-        return slices + 1;
+        return slices.size();
     }
 
     private static void drawCopy(CompLayerSourceCache.Entry source, Matrix4f world, Matrix4f local,

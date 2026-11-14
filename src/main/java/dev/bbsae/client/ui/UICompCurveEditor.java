@@ -140,8 +140,8 @@ public class UICompCurveEditor extends UIElement
 
         /* Visible row-height controls: Alt+wheel works, but the graph also handles wheel events, so
          * a plain button is the only guaranteed way to resize the channel list. */
-        UIButton rowDown = CompUi.flat("-", "通道轨道行高 -2（Alt+滚轮也可）", () -> this.graph.stepRowHeight(-2));
-        UIButton rowUp = CompUi.flat("+", "通道轨道行高 +2（Alt+滚轮也可）", () -> this.graph.stepRowHeight(2));
+        UIButton rowDown = CompUi.flat("-", "通道轨道行高 -2（Alt+Shift+滚轮也可）", () -> this.graph.stepRowHeight(-2));
+        UIButton rowUp = CompUi.flat("+", "通道轨道行高 +2（Alt+Shift+滚轮也可）", () -> this.graph.stepRowHeight(2));
 
         rowDown.relative(this.toolbar).x(1F, -312).y(barY).w(18).h(control);
         rowUp.relative(this.toolbar).x(1F, -292).y(barY).w(18).h(control);
@@ -3765,9 +3765,10 @@ public class UICompCurveEditor extends UIElement
                 return super.subMouseScrolled(context);
             }
 
-            /* Alt+wheel works anywhere in the editor (channel list or graph), not only when the
-             * pointer happens to be over a specific row. */
-            if (CompInput.altDown())
+            /* Alt+wheel is the shared horizontal (time) zoom on every timeline surface; the
+             * vertical zoom of the channel rows moved to Alt+Shift+wheel so the same gesture no
+             * longer means "time" in the drawer and "row height" here. */
+            if (CompInput.altDown() && CompInput.shiftDown())
             {
                 double wheel = context.mouseWheel;
 
@@ -3782,6 +3783,29 @@ public class UICompCurveEditor extends UIElement
                 }
 
                 this.stepRowHeight(wheel > 0D ? 2 : -2);
+
+                return true;
+            }
+
+            if (CompInput.altDown())
+            {
+                double wheel = context.mouseWheel;
+
+                if (Math.abs(wheel) < 0.0001D)
+                {
+                    wheel = context.mouseWheelHorizontal;
+                }
+
+                if (Math.abs(wheel) < 0.0001D)
+                {
+                    return super.subMouseScrolled(context);
+                }
+
+                double anchor = this.fromX(context.mouseX);
+                double factor = wheel > 0D ? 0.85D : 1.18D;
+
+                this.viewDuration = Math.max(0.05D, Math.min(3600D, this.viewDuration * factor));
+                this.viewStart = Math.max(0D, anchor - (anchor - this.viewStart) * factor);
 
                 return true;
             }

@@ -141,6 +141,13 @@ public class UICompositorPanel extends UIDashboardPanel
     private final java.util.Map<String, Boolean> modelFocusVisibility = new java.util.LinkedHashMap<>();
     private boolean modelFocusActive;
     private static final int MODE_BAR_H = 22;
+    /**
+     * Height of the inspector's section strip: nine sections wrapped into two 22 px rows.
+     *
+     * <p>Fixed rather than measured: the wrapped grid must not change height while the dock column
+     * is dragged, otherwise every pixel of a splitter drag would re-flow the whole inspector.</p>
+     */
+    private static final int INSPECTOR_TABS_H = 44;
     private static final int WORKSPACE_COMPOSITE = 0;
     private static final int WORKSPACE_REPLAY = 1;
     private final UIElement timeline;
@@ -322,6 +329,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private int lastPreviewWidth = 300;
     private UIIcon cameraViewButton;
     private UIIcon space3DButton;
+    /** Preview shortcut to the inspector's 3D partition (extrusion / 3D options). */
+    private UIIcon threeDPageButton;
     /** AE camera tool toggle (left orbit / middle track XY / right dolly). */
     private UIIcon cameraToolButton;
     private UIElement replayViewBar;
@@ -387,6 +396,10 @@ public class UICompositorPanel extends UIDashboardPanel
     private Replay debugSelectReplay;
     private int debugSelectDelay;
     private final List<Runnable> inspectorBindings = new ArrayList<>();
+    /** Last inspector page/selection identity, used to remember its scroll position. */
+    private String lastInspectorIdentity = "";
+    /** Scroll offset per inspector page+selection, so switching tabs returns to the same place. */
+    private final Map<String, Double> inspectorScrollMemory = new HashMap<>();
     private final Map<String, Boolean> sectionFolds = new HashMap<>();
     private final LinkedList<String> recentEffects = new LinkedList<>();
     /** Mask tab: manual pen/path masks are advanced; the AM-style matte buttons are the default. */
@@ -401,10 +414,16 @@ public class UICompositorPanel extends UIDashboardPanel
     private static final int PAGE_OUTPUT = 6;
     /** Film/video page: audio clip and video-layer parameters that are not per-effect. */
     private static final int PAGE_FILM = 7;
+    /**
+     * 3D page: extrusion and 3D editing. Deliberately <b>not</b> a home for Z/tilt/Z-scale —
+     * those stay next to the other transform channels on the layer page, because splitting the
+     * transform would make keyframing a 3D move a two-page operation.
+     */
+    private static final int PAGE_3D = 8;
 
     /** Inspector tab index → page id. Must match the addTab() order in the constructor. */
     private static final int[] INSPECTOR_TAB_PAGES = {
-        PAGE_GRADE, PAGE_LAYER, PAGE_FILM, PAGE_MASK, PAGE_EFFECTS, PAGE_TEXT, PAGE_COMP, PAGE_OUTPUT
+        PAGE_GRADE, PAGE_LAYER, PAGE_3D, PAGE_FILM, PAGE_MASK, PAGE_EFFECTS, PAGE_TEXT, PAGE_COMP, PAGE_OUTPUT
     };
 
     private static int inspectorTabForPage(int page)
@@ -488,6 +507,25 @@ public class UICompositorPanel extends UIDashboardPanel
     private int drawerGrowTriedHeight = Integer.MIN_VALUE;
     private int drawerGrowTriedRequired = -1;
     private int drawerGrowTriedBody = -1;
+    /**
+     * Layout to restore when a transient timeline expansion (keyframe drawer, curve page) ends.
+     *
+     * <p>Opening those surfaces genuinely needs more pixels than the saved split ratio may give
+     * them, so the timeline panel is grown for the session. The growth used to be written straight
+     * into the project layout, which is why the preview stayed compressed after the drawer closed:
+     * closing restored the drawer's own flag but nothing put the split ratio back. The saved tree /
+     * height is captured once and restored on close, so the preview always returns to the size the
+     * user chose.</p>
+     */
+    private EditorLayoutNode transientLayoutReturnRoot;
+    private int transientTimelineReturnHeight = -1;
+    private boolean transientLayoutExpanded;
+    /** Panel height when the expansion started; a real window resize re-evaluates it. */
+    private int transientExpandedPanelHeight = -1;
+    /** Guards the restore against re-entering the grow pass through layoutKeyframeDrawer. */
+    private boolean transientLayoutRestoring;
+    /** Minimum height the preview keeps when a drawer asks for room. */
+    private static final int TRANSIENT_PREVIEW_FLOOR = 150;
     /** Fallback row height when the track timeline has not been built/laid out yet. */
     private static final int KEYFRAME_TRACK_ROW_FALLBACK = 26;
     private static final int KEYFRAME_TRACK_RULER = 20;
@@ -635,7 +673,7 @@ public class UICompositorPanel extends UIDashboardPanel
          * The layer stack lives in the timeline's track headers; keeping a second layer list
          * here would be a second source of truth for selection and z-order. */
         this.effectLibrary = new UIEffectLibrary(this);
-        this.effectLibrary.relative(this.effectColumn = new UIElement()).x(0).y(22).w(1F).h(1F, -22);
+        this.effectLibrary.relative(this.effectColumn = new UIElement()).x(0).y(22).w(1F, -6).h(1F, -22);
 
         this.assetPanel = new UIScrollView(ScrollDirection.VERTICAL);
         /* 6 px right inset: the dock splitter hot zone is 7 px wide and would otherwise eat the scrollbar drag. */
@@ -679,9 +717,12 @@ public class UICompositorPanel extends UIDashboardPanel
         this.projectBin.setVisible(false);
 
         this.leftTabs = new UICompTabBar();
-        /* 6 px dock-splitter inset on the right: the tab bar's "»" overflow control otherwise sits
-         * under the splitter hot zone and a click there starts a panel drag. */
-        this.leftTabs.relative(this.effectColumn).x(0).y(0).w(1F, -22).h(22);
+        /* One row is enough for four sections even in a narrow dock column, and the row height is
+         * fixed so the panels below never jump when the column is resized. */
+        this.leftTabs.wrap(1);
+        /* 6 px dock-splitter inset on the right: the tab bar's last pixels otherwise sit under the
+         * splitter hot zone and a click there starts a panel drag. */
+        this.leftTabs.relative(this.effectColumn).x(0).y(0).w(1F, -6).h(22);
         this.presetBrowser = new UICompPresetBrowser(this);
         this.presetBrowser.relative(this.effectColumn).x(0).y(22).w(1F).h(1F, -22);
         this.presetBrowser.setVisible(false);
@@ -5915,6 +5956,15 @@ public class UICompositorPanel extends UIDashboardPanel
         this.space3DButton.tooltip(IKey.constant("进入/退出 3D 空间（自由视口：右键拖动环绕、Shift+右键平移、滚轮缩放、0 看穿摄像机）"));
         this.preview.add(this.space3DButton);
 
+        /* Direct shortcut to the inspector's 3D partition, one click away from the picture. It is
+         * the same state indicator as the tab: white when the selected layer is 3D, dim otherwise. */
+        this.threeDPageButton = new UIIcon(Icons.SHAPES, (button) -> this.open3DPage());
+        this.threeDPageButton.relative(this.preview).x(1F, -72).y(6).w(20).h(20);
+        this.threeDPageButton.tooltip(IKey.constant("3D 分区：开启 3D、挤出厚度、侧面颜色与方向（白色 = 当前图层已开启 3D）"));
+        this.threeDPageButton.highlight(() -> this.selectedLayer != null && this.selectedLayer.threeD,
+            mchorse.bbs_mod.utils.Direction.BOTTOM);
+        this.preview.add(this.threeDPageButton);
+
         /* Entity replay: switches to bbsae's own 3D replay editing page, which reuses BBS's replay
          * timeline, gizmo and model library instead of re-implementing them. The dashboard bar also
          * carries the same entry as a registered panel. */
@@ -5993,19 +6043,27 @@ public class UICompositorPanel extends UIDashboardPanel
         this.inspectorColumn.w(300).h(1F);
 
         this.inspectorTabs = new UICompTabBar();
-        this.inspectorTabs.relative(this.inspectorColumn).x(0).y(0).w(1F, -6).h(22);
+        /* Nine sections do not fit one 300 px row. Two fixed rows (5 + 4) show every section at
+         * once instead of making the user scroll the strip (or click "»" repeatedly) to reach
+         * 输出/3D. Fixed rows keep the height stable across resizes. */
+        this.inspectorTabs.wrap(2);
+        this.inspectorTabs.relative(this.inspectorColumn).x(0).y(0).w(1F, -6).h(INSPECTOR_TABS_H);
         /* Tab order is an editing order, not a constant order: grade → layer → mask → effects is
          * the "select a layer, fix its transform, then add visual effects" path. The effect stack
          * used to live at index 0 together with transform/opacity, which is the crowding this split
          * removes. PAGE_* keeps its numeric contract for project files; the map below translates. */
         this.inspectorTabs.addTab("调色");
         this.inspectorTabs.addTab("图层");
+        this.inspectorTabs.addTab("3D");
         this.inspectorTabs.addTab("影视");
         this.inspectorTabs.addTab("蒙版");
         this.inspectorTabs.addTab("效果");
         this.inspectorTabs.addTab("文字");
         this.inspectorTabs.addTab("合成");
         this.inspectorTabs.addTab("输出");
+        /* The 3D section announces the layer's state: white only once the selected layer is a 3D
+         * layer, muted grey otherwise (a flat layer has no volume to extrude). */
+        this.inspectorTabs.emphasize(2, () -> this.selectedLayer != null && this.selectedLayer.threeD);
         this.inspectorTabs.onSelect((index) ->
         {
             this.inspectorPage = INSPECTOR_TAB_PAGES[Math.max(0, Math.min(INSPECTOR_TAB_PAGES.length - 1, index))];
@@ -6016,7 +6074,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.inspectorTabs.active(() -> inspectorTabForPage(this.inspectorPage));
 
         this.inspector = new UIScrollView(ScrollDirection.VERTICAL);
-        this.inspector.relative(this.inspectorColumn).x(0).y(22).w(1F).h(1F, -22);
+        this.inspector.relative(this.inspectorColumn).x(0).y(INSPECTOR_TABS_H).w(1F).h(1F, -INSPECTOR_TABS_H);
         this.inspector.column(4).vertical().stretch().scroll().padding(4);
         this.inspectorColumn.add(this.inspectorTabs, this.inspector);
 
@@ -6073,8 +6131,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.keyframeRowDown = new UIIcon(Icons.ARROW_DOWN, (icon) -> this.stepKeyframeRowHeight(-2));
         this.keyframeRowUp.relative(this.keyframeEditor).x(1F, -42).y(3).w(16).h(16);
         this.keyframeRowDown.relative(this.keyframeEditor).x(1F, -24).y(3).w(16).h(16);
-        this.keyframeRowUp.tooltip(IKey.constant("加高关键帧轨道（Alt+滚轮）"));
-        this.keyframeRowDown.tooltip(IKey.constant("降低关键帧轨道（Alt+滚轮）"));
+        this.keyframeRowUp.tooltip(IKey.constant("加高关键帧轨道（Alt+Shift+滚轮）"));
+        this.keyframeRowDown.tooltip(IKey.constant("降低关键帧轨道（Alt+Shift+滚轮）"));
         this.keyframeEditor.add(this.keyframeRowUp, this.keyframeRowDown);
 
         this.keyframeDrawer = new UIElement()
@@ -6614,6 +6672,10 @@ public class UICompositorPanel extends UIDashboardPanel
             this.replayWorkspace.setEnabled(false);
         }
 
+        /* A transient drawer/curve expansion must never be what gets saved. Restoring first means
+         * closing the panel while the keyframe drawer is open keeps the preview the size the user
+         * chose when they reopen it. */
+        this.endTransientTimelineExpansion();
         this.savePanelLayout();
         this.flushSave();
         CompPrefs.flush();
@@ -7357,6 +7419,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.flushProjectBeforeSwitch();
         this.hideStartScreen();
         this.precompStack.clear();
+        this.forgetTransientTimelineExpansion();
 
         if (this.precompBack != null)
         {
@@ -8189,7 +8252,7 @@ public class UICompositorPanel extends UIDashboardPanel
         scheme.callback((value) -> this.setShortcutScheme(value == null ? 0 : value));
         scheme.setValue(this.getShortcutScheme());
         scheme.relative(this.modalBox).x(190).y(126).w(140).h(20);
-        scheme.tooltip(IKey.constant("Premiere：Alt+滚轮缩放；BBS：Ctrl+滚轮缩放、Alt+滚轮改行高"));
+        scheme.tooltip(IKey.constant("两种方案的时间轴滚轮手势一致：Alt+滚轮缩放、Alt+Shift+滚轮改行高、Ctrl+滚轮缩放（别名）；方案只影响按键"));
 
         UIToggle autoSave = new UIToggle(IKey.constant("自动保存"), settings.autoSave, (toggle) ->
         {
@@ -10841,10 +10904,16 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (target > this.timelinePanelHeight)
                 {
+                    this.rememberTransientTimelineLayout();
                     this.timelinePanelHeight = target;
                     this.applyLayout();
                 }
             }
+        }
+        else if (!this.keyframeOpen)
+        {
+            /* Back on the track strip with no drawer: undo a curve-page expansion. */
+            this.endTransientTimelineExpansion();
         }
 
         this.layoutKeyframeDrawer();
@@ -11112,6 +11181,7 @@ public class UICompositorPanel extends UIDashboardPanel
             switch (debugPage)
             {
                 case "layer" -> this.setInspectorPage(PAGE_LAYER);
+                case "3d" -> this.setInspectorPage(PAGE_3D);
                 case "film" -> this.setInspectorPage(PAGE_FILM);
                 case "mask" -> this.setInspectorPage(PAGE_MASK);
                 case "text" -> this.setInspectorPage(PAGE_TEXT);
@@ -13141,6 +13211,14 @@ public class UICompositorPanel extends UIDashboardPanel
         this.beginAction("复制图层");
         CompLayer copy = dev.bbsae.comp.CompLayerOps.duplicateLayer(this.project, layer);
 
+        if (copy == null)
+        {
+            this.discardCancelledAction();
+            this.setStatus("复制失败：图层数据不可用");
+
+            return;
+        }
+
         copy.id = CompStore.uniqueId(layer.id + "_copy", this.doc.layers, (candidate) -> candidate.id);
         copy.name = this.layerLabel(layer) + " 副本";
         this.doc.layers.add(this.doc.layers.indexOf(layer) + 1, copy);
@@ -13781,8 +13859,28 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void setInspectorPage(int page)
     {
-        this.inspectorPage = Math.max(PAGE_EFFECTS, Math.min(PAGE_FILM, page));
+        this.inspectorPage = Math.max(PAGE_EFFECTS, Math.min(PAGE_3D, page));
         this.inspectorTabs.select(inspectorTabForPage(this.inspectorPage));
+    }
+
+    /** Preview shortcut: reveal the inspector and open the 3D partition. */
+    public void open3DPage()
+    {
+        this.revealDockPanel(CompDockSource.PANEL_INSPECTOR);
+        this.setInspectorPage(PAGE_3D);
+
+        if (this.selectedLayer == null)
+        {
+            this.setStatus("3D 分区：先在时间轴选择一条轨道");
+        }
+        else if (this.selectedLayer.threeD)
+        {
+            this.setStatus("3D 分区：当前图层已开启 3D，可挤出厚度");
+        }
+        else
+        {
+            this.setStatus("3D 分区：勾选「3D 图层」后即可挤出厚度");
+        }
     }
 
     /** Time-axis zoom for the keyframe drawer; the title-bar arrows call this. */
@@ -13960,6 +14058,11 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.keyframeDrawerSlide = 0F;
             this.drawerSpaceWarned = false;
+            /* A previous close restored the original split, so the geometry guard has to forget its
+             * last attempt or the next open would refuse to grow again. */
+            this.drawerGrowTriedHeight = Integer.MIN_VALUE;
+            this.drawerGrowTriedRequired = -1;
+            this.drawerGrowTriedBody = -1;
         }
 
         if (open)
@@ -13977,6 +14080,13 @@ public class UICompositorPanel extends UIDashboardPanel
              * Hiding the drawer used to leave that panel covering Effect Controls with no way
              * to dismiss it. Clearing the picked keyframe removes it with the drawer. */
             this.keyframeEditor.view.pickKeyframe(null);
+
+            /* Same page, drawer closed: the timeline panel must go back to the height the user
+             * chose. Without this the preview stayed compressed for the rest of the session. */
+            if (this.timelinePage == 0)
+            {
+                this.endTransientTimelineExpansion();
+            }
         }
 
         this.layoutKeyframeDrawer();
@@ -14205,7 +14315,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private void ensureKeyframeDrawerSpace()
     {
         if (!this.keyframeOpen || this.timelinePage != 0 || this.timeline == null
-            || this.project == null || this.renderView || this.drawerSpacePass)
+            || this.project == null || this.renderView || this.drawerSpacePass
+            || this.transientLayoutRestoring)
         {
             return;
         }
@@ -14228,6 +14339,12 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* The drawer is an editor surface, not a reason to collapse the picture being edited.
+         * Keep a preview floor: on a short window the drawer simply shows at whatever height is
+         * left (with the "drag the timeline taller" hint) instead of eating the whole preview. */
+        required = Math.min(required, Math.max(KEYFRAME_DRAWER_MIN,
+            body - this.timelineContentTop() - TRANSIENT_PREVIEW_FLOOR));
+
         if (current == this.drawerGrowTriedHeight && required == this.drawerGrowTriedRequired
             && body == this.drawerGrowTriedBody)
         {
@@ -14247,6 +14364,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (target > this.timelinePanelHeight)
                 {
+                    this.rememberTransientTimelineLayout();
                     this.timelinePanelHeight = target;
                     this.applyLegacyLayout();
                 }
@@ -14259,6 +14377,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (grown != null && grown != root)
                 {
+                    this.rememberTransientTimelineLayout();
                     this.dockSource.setRoot(grown);
                     this.dock.refresh();
                     this.dockLayoutDirty = true;
@@ -14270,6 +14389,88 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.drawerSpacePass = false;
         }
+    }
+
+    /** Captures the user's layout once, before the first transient timeline growth. */
+    private void rememberTransientTimelineLayout()
+    {
+        if (this.transientLayoutExpanded)
+        {
+            return;
+        }
+
+        this.transientLayoutExpanded = true;
+        this.transientExpandedPanelHeight = this.area.h;
+
+        if (this.dock != null && this.dockSource != null)
+        {
+            this.transientLayoutReturnRoot = this.dock.getLayoutRoot();
+            this.transientTimelineReturnHeight = -1;
+        }
+        else
+        {
+            this.transientLayoutReturnRoot = null;
+            this.transientTimelineReturnHeight = this.timelinePanelHeight;
+        }
+    }
+
+    /**
+     * Puts the timeline panel back to the height/ratio the user had before a drawer or the curve
+     * page temporarily grew it. Idempotent and safe to call on every close/resize.
+     */
+    private void endTransientTimelineExpansion()
+    {
+        if (!this.transientLayoutExpanded)
+        {
+            return;
+        }
+
+        this.transientLayoutExpanded = false;
+        this.transientLayoutRestoring = true;
+        this.drawerGrowTriedHeight = Integer.MIN_VALUE;
+        this.drawerGrowTriedRequired = -1;
+        this.drawerGrowTriedBody = -1;
+
+        try
+        {
+            if (this.dock != null && this.dockSource != null && this.transientLayoutReturnRoot != null)
+            {
+                this.dockSource.setRoot(this.transientLayoutReturnRoot);
+                this.dock.refresh();
+                this.dockLayoutDirty = true;
+                this.syncDockDerivedLayout();
+            }
+            else if (this.transientTimelineReturnHeight > 0)
+            {
+                this.timelinePanelHeight = this.transientTimelineReturnHeight;
+                this.applyLegacyLayout();
+            }
+        }
+        finally
+        {
+            this.transientLayoutRestoring = false;
+        }
+
+        this.transientLayoutReturnRoot = null;
+        this.transientTimelineReturnHeight = -1;
+        this.transientExpandedPanelHeight = -1;
+    }
+
+    /**
+     * Forgets an expansion without restoring it. Used when the project itself is replaced (undo,
+     * project switch): the remembered tree belongs to the old project and must not be written into
+     * the new one.
+     */
+    private void forgetTransientTimelineExpansion()
+    {
+        this.transientLayoutExpanded = false;
+        this.transientLayoutRestoring = false;
+        this.transientLayoutReturnRoot = null;
+        this.transientTimelineReturnHeight = -1;
+        this.transientExpandedPanelHeight = -1;
+        this.drawerGrowTriedHeight = Integer.MIN_VALUE;
+        this.drawerGrowTriedRequired = -1;
+        this.drawerGrowTriedBody = -1;
     }
 
     /** Per-frame slide update; the drawer is a pure function of keyframeOpen + slide. */
@@ -14912,6 +15113,10 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.focusMode)
         {
+            /* Focus remembers the *current* tree as the return state. Restore a transient drawer
+             * expansion first so "exit focus" returns to the user's real layout, not the taller
+             * timeline that only existed to host the drawer. */
+            this.endTransientTimelineExpansion();
             this.focusReturnRoot = this.dock.getLayoutRoot();
             this.focusReturnHidden = this.dockSource.getHiddenPanels();
 
@@ -14976,6 +15181,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.layoutHeader();
         this.updateFilterButton();
+        this.layoutWrappedTabStrips();
 
         if (this.dock != null)
         {
@@ -14984,6 +15190,47 @@ public class UICompositorPanel extends UIDashboardPanel
         else
         {
             this.applyLegacyLayout();
+        }
+    }
+
+    /**
+     * Positions the two side columns' section strips and their pages.
+     *
+     * <p>Both strips are wrapped grids now (the inspector has nine sections, the left column four),
+     * so the pages below them start at the bar's height instead of a hard-coded 22 px. This is the
+     * one place that knows the relationship, so the dock layout and the legacy layout cannot drift
+     * apart.</p>
+     */
+    private void layoutWrappedTabStrips()
+    {
+        if (this.leftTabs != null && this.effectColumn != null)
+        {
+            int height = this.leftTabs.preferredHeight();
+
+            this.leftTabs.relative(this.effectColumn).x(0).y(0).w(1F, -6).h(height);
+
+            UIElement[] pages = {
+                this.effectLibrary, this.assetPanel, this.projectBin, this.presetBrowser, this.replayBrowser
+            };
+
+            for (UIElement page : pages)
+            {
+                if (page != null)
+                {
+                    page.relative(this.effectColumn).x(0).y(height).w(1F, -6).h(1F, -height);
+                }
+            }
+        }
+
+        if (this.inspectorTabs != null && this.inspectorColumn != null)
+        {
+            this.inspectorTabs.relative(this.inspectorColumn).x(0).y(0).w(1F, -6).h(INSPECTOR_TABS_H);
+
+            if (this.inspector != null)
+            {
+                this.inspector.relative(this.inspectorColumn).x(0).y(INSPECTOR_TABS_H).w(1F)
+                    .h(1F, -INSPECTOR_TABS_H);
+            }
         }
     }
 
@@ -15498,6 +15745,16 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* A real window resize re-evaluates a temporary drawer expansion: the extra height may no
+         * longer be needed (or may now be affordable). Splitter drags do not change this.area.h, so
+         * this cannot fight a dock drag; a 40 px dead band absorbs GUI-scale jitter. */
+        if (this.transientLayoutExpanded && !this.transientLayoutRestoring
+            && this.transientExpandedPanelHeight > 0
+            && Math.abs(this.area.h - this.transientExpandedPanelHeight) > 40)
+        {
+            this.endTransientTimelineExpansion();
+        }
+
         this.layoutPreviewBar(Math.max(48, this.preview.area.w));
         this.syncViewportSize();
         this.layoutKeyframeDrawer();
@@ -15785,6 +16042,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (!visible)
         {
+            /* Leaving the page hides the panel; restore the user's split before the hidden state
+             * can be flushed with the temporary expansion baked in. */
+            this.endTransientTimelineExpansion();
             this.restoreBbsOnionSkin();
         }
     }
@@ -15976,7 +16236,7 @@ public class UICompositorPanel extends UIDashboardPanel
     private void applyPreviewRail(CompUi.PreviewRailLayout rail)
     {
         UIIcon[] icons = {
-            this.space3DButton, this.cameraToolButton, this.createCameraButton,
+            this.space3DButton, this.threeDPageButton, this.cameraToolButton, this.createCameraButton,
             this.cameraSettingsButton, this.penButton, this.replayModeButton
         };
 
@@ -16175,7 +16435,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         }
 
-        this.setInspectorPage(Math.max(PAGE_EFFECTS, Math.min(PAGE_FILM, settings.inspectorPage)));
+        this.setInspectorPage(Math.max(PAGE_EFFECTS, Math.min(PAGE_3D, settings.inspectorPage)));
         this.leftTabs.select(Math.max(0, Math.min(3, settings.leftPage)));
         this.applyLeftPage(settings.leftPage, false);
 
@@ -17963,6 +18223,25 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         this.inspectorRefreshQueued = false;
         this.buildingInspector = true;
+
+        /* Remember where the user was reading before the widget tree is replaced. Rebuilding used
+         * to keep whatever offset the previous page had, so landing on a long page (or coming back
+         * from one) started half-way down and had to be scrolled back by hand. Each page+selection
+         * now restores its own position. */
+        String previous = this.lastInspectorIdentity;
+        String identity = this.inspectorIdentity();
+
+        if (!previous.isEmpty())
+        {
+            if (this.inspectorScrollMemory.size() > 256)
+            {
+                this.inspectorScrollMemory.clear();
+            }
+
+            this.inspectorScrollMemory.put(previous, this.inspector.scroll.getScroll());
+        }
+
+        this.lastInspectorIdentity = identity;
         this.inspector.removeAll();
         this.inspectorBindings.clear();
 
@@ -17983,6 +18262,7 @@ public class UICompositorPanel extends UIDashboardPanel
             case PAGE_EFFECTS -> this.addEffectPage();
             case PAGE_GRADE -> this.inspector.add(this.gradeSection(this.selectedLayer));
             case PAGE_LAYER -> this.addLayerPage();
+            case PAGE_3D -> this.inspector.add(this.threeDSection(this.selectedLayer));
             case PAGE_FILM -> this.addFilmPage();
             case PAGE_MASK -> this.inspector.add(this.maskSection(this.selectedLayer));
             case PAGE_TEXT ->
@@ -18002,6 +18282,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.inspector.add(this.compSection());
                 this.inspector.add(this.markerSection());
                 this.inspector.add(this.parameterSection());
+                this.inspector.add(this.trackerSection());
             }
             case PAGE_OUTPUT -> this.inspector.add(this.outputPresetSection());
             default -> this.addEffectPage();
@@ -18009,6 +18290,12 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.decorateInspector();
         this.inspector.resize();
+
+        /* Restore the remembered offset for this page/selection; clamp() keeps a now-shorter page
+         * from staying scrolled past its end. */
+        this.inspector.scroll.setScroll(this.inspectorScrollMemory.getOrDefault(identity, 0D));
+        this.inspector.scroll.clamp();
+
         this.buildingInspector = false;
         this.lastInspectorTime = this.time;
         this.updateToolbarLabels();
@@ -18023,6 +18310,15 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.curveEditor.refresh();
         }
+    }
+
+    /** Identity of "what the inspector is showing": page, document and selection. */
+    private String inspectorIdentity()
+    {
+        return (this.doc == null ? "" : this.doc.id) + "|" + this.inspectorPage + "|"
+            + (this.selectedLayer == null ? "" : this.selectedLayer.id) + "|"
+            + (this.selectedAudio == null ? "" : this.selectedAudio.id) + "|"
+            + this.getSelectionCount();
     }
 
     /**
@@ -20521,11 +20817,242 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
+    /**
+     * The 3D page: extrusion and the volume options a flat 3D layer needs.
+     *
+     * <p>First principle: position/rotation/scale (including Z) are <b>transform</b> channels and
+     * stay on the layer page, next to the keyframe stopwatches. This page only owns what the
+     * transform cannot express — how thick the layer is, which colour its sides use and how they
+     * are shaded — so opening it never hides the controls a 3D move is animated with. The section
+     * is grey in the tab strip while the layer is 2D and turns white as soon as 3D is on, which is
+     * the state the page is about.</p>
+     */
+    private UISection threeDSection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("3D · 挤压与立体"));
+
+        section.remember(this.sectionFolds, "layer3d", true);
+
+        if (layer == null)
+        {
+            section.fields.add(UI.label(IKey.constant("在时间轴选择一条轨道后，这里可以给平面图层挤出厚度。"), 15));
+            section.fields.add(new UICompButton(IKey.constant("选择最上层轨道"), (button) ->
+            {
+                if (this.doc != null && !this.doc.layers.isEmpty())
+                {
+                    this.selectLayer(this.doc.layers.get(this.doc.layers.size() - 1));
+                }
+            }));
+
+            return section;
+        }
+
+        boolean entityLayer = layer.isEntityLayer();
+        boolean pixelLayer = !layer.isCamera() && !"null".equals(layer.type)
+            && !"adjustment".equals(layer.type) && !entityLayer;
+
+        if (this.getSelectionCount() > 1)
+        {
+            section.fields.add(UI.label(IKey.constant("多选 " + this.getSelectionCount()
+                + " 个图层：3D 选项只作用于主选图层；要批量挤出请逐个处理。"), 13));
+        }
+
+        section.fields.add(UI.label(IKey.constant(layer.threeD
+            ? "3D 已开启：这个图层跟随合成摄像机，可以挤出成有厚度的立体。"
+            : "当前是 2D（屏幕附着）：开启 3D 后才能挤出厚度。"), 14));
+
+        UIToggle threeD = new UIToggle(IKey.constant("3D 图层（跟随摄像机）"), layer.threeD, (toggle) ->
+        {
+            this.beginAction("切换 3D 图层");
+            layer.threeD = toggle.getValue();
+
+            if (layer.threeD && layer.isCamera())
+            {
+                layer.camera3D = true;
+            }
+
+            this.refreshInspector();
+            this.save();
+            this.setStatus(layer.threeD ? "已开启 3D：" + this.layerLabel(layer) : "已关闭 3D：" + this.layerLabel(layer));
+        });
+
+        threeD.setEnabled(pixelLayer);
+        section.fields.add(threeD);
+
+        UIToggle extrude = new UIToggle(IKey.constant("挤出厚度（平面 → 立体）"), layer.extrude, (toggle) ->
+        {
+            this.beginAction("挤出厚度");
+            layer.extrude = toggle.getValue();
+
+            /* Turning extrusion on for a 2D layer has no visible effect (a screen-attached stack
+             * collapses into one quad). Auto-enabling 3D is the useful interpretation of the
+             * click, and it is announced in the status bar instead of silently doing nothing. */
+            if (layer.extrude && !layer.threeD && pixelLayer)
+            {
+                layer.threeD = true;
+                this.setStatus("已开启 3D 并挤出厚度：" + this.layerLabel(layer));
+            }
+            else
+            {
+                this.setStatus(layer.extrude ? "已挤出厚度：" + this.layerLabel(layer) : "已关闭挤出：" + this.layerLabel(layer));
+            }
+
+            this.refreshInspector();
+            this.save();
+        });
+
+        extrude.setEnabled(pixelLayer);
+        section.fields.add(extrude);
+
+        if (!pixelLayer)
+        {
+            section.fields.add(UI.label(IKey.constant(entityLayer
+                ? "回放实体层本身已经是 3D 体积（模型 / 深度抠像），不需要挤出；要厚度请用文字、形状、纯色或图片图层。"
+                : "摄像机 / 空对象 / 调整层没有自己的像素，不能挤出。"), 13));
+
+            return section;
+        }
+
+        if (!layer.extrude)
+        {
+            section.fields.add(UI.label(IKey.constant("开启「挤出厚度」后，这里出现厚度、侧面颜色、方向和明暗控制。"), 13));
+
+            return section;
+        }
+
+        section.fields.add(this.numberRow("厚度（像素）", layer.extrudeDepth, 0D, dev.bbsae.comp.CompExtrusion.MAX_DEPTH, false, (value) ->
+        {
+            layer.extrudeDepth = Math.max(0F, Math.min(dev.bbsae.comp.CompExtrusion.MAX_DEPTH, value.floatValue()));
+            this.save();
+        }));
+        section.fields.add(this.numberRow("切片数（越大侧面越平滑）", layer.extrudeSlices,
+            dev.bbsae.comp.CompExtrusion.MIN_SLICES, dev.bbsae.comp.CompExtrusion.MAX_SLICES, true, (value) ->
+        {
+            layer.extrudeSlices = Math.max(dev.bbsae.comp.CompExtrusion.MIN_SLICES,
+                Math.min(dev.bbsae.comp.CompExtrusion.MAX_SLICES, value.intValue()));
+            this.save();
+        }));
+
+        UICompButton direction = new UICompButton(IKey.constant(this.extrudeDirectionLabel(layer)), (button) ->
+        {
+            this.beginAction("挤出方向");
+            layer.extrudeDirection = (layer.extrudeDirection + 1) % 3;
+            button.label = IKey.constant(this.extrudeDirectionLabel(layer));
+            this.save();
+            this.setStatus("挤出方向：" + this.extrudeDirectionLabel(layer));
+        });
+
+        direction.tooltip(IKey.constant("向后：画面留在正面；向前：体积朝观众；双向：以画面为中心两侧各一半"));
+        section.fields.add(this.fieldRow("挤出方向", direction));
+
+        section.fields.add(this.colorRow("厚度颜色", layer.extrudeColor, (color) ->
+        {
+            layer.extrudeColor = color;
+            this.save();
+        }));
+        section.fields.add(new UIToggle(IKey.constant("取用图层颜色"), layer.extrudeUseLayerColor, (toggle) ->
+        {
+            layer.extrudeUseLayerColor = toggle.getValue();
+            this.refreshInspector();
+            this.save();
+        }));
+
+        if (layer.extrudeUseLayerColor)
+        {
+            section.fields.add(UI.label(IKey.constant("侧面使用图层自身颜色（文字=文字色，纯色=填充色，图片=画面颜色）。"), 12));
+        }
+
+        section.fields.add(this.numberRow("侧面明暗", layer.extrudeShade, 0D, 1D, false, (value) ->
+        {
+            layer.extrudeShade = Math.max(0F, Math.min(1F, value.floatValue()));
+            this.save();
+        }));
+        section.fields.add(new UIToggle(IKey.constant("背面封盖"), layer.extrudeCap, (toggle) ->
+        {
+            layer.extrudeCap = toggle.getValue();
+            this.save();
+        }));
+
+        /* Quick volumes: three useful setups instead of making the user dial four numbers to get
+         * a card, a title block or a slab. */
+        UIElement presets = new UIElement();
+
+        presets.w(1F).h(18);
+
+        String[] labels = {"卡片 24", "字块 60", "厚板 160"};
+        float[] depths = {24F, 60F, 160F};
+
+        for (int i = 0; i < labels.length; i++)
+        {
+            final float depth = depths[i];
+            final String label = labels[i];
+            UIButton preset = new UICompButton(IKey.constant(label), (button) ->
+            {
+                this.beginAction("挤出预设");
+                layer.extrude = true;
+                layer.threeD = true;
+                layer.extrudeDepth = depth;
+                layer.extrudeSlices = depth >= 120F ? 24 : depth >= 40F ? 16 : 10;
+                layer.extrudeDirection = dev.bbsae.comp.CompExtrusion.DIRECTION_BACK;
+                this.refreshInspector();
+                this.save();
+                this.setStatus("挤出预设：" + label + "px");
+            });
+
+            preset.relative(presets).x(i / 3F, 1).y(0).w(1F / 3F, -2).h(18);
+            presets.add(preset);
+        }
+
+        section.fields.add(presets);
+
+        int slices = dev.bbsae.comp.CompExtrusion.sliceCount(layer);
+        float currentDepth = dev.bbsae.comp.CompExtrusion.depth(layer);
+
+        section.fields.add(UI.label(IKey.constant(String.format(java.util.Locale.ROOT,
+            "体积：%.0f px 厚 · %d 个平面 · 方向 %s · 预览/回放/导出使用同一套渲染",
+            currentDepth, slices, this.extrudeDirectionLabel(layer))), 13));
+        section.fields.add(UI.label(IKey.constant("正面看是原画面；在「图层」页给旋转 X/Y 打关键帧、"
+            + "推 Z，或用摄像机/3D 预览从侧面看，就能看到厚度和侧面颜色。"), 12));
+
+        section.fields.add(this.smallButton("重置 3D 参数", () ->
+        {
+            this.beginAction("重置 3D 参数");
+            layer.extrude = false;
+            layer.extrudeDepth = dev.bbsae.comp.CompExtrusion.DEFAULT_DEPTH;
+            layer.extrudeSlices = dev.bbsae.comp.CompExtrusion.DEFAULT_SLICES;
+            layer.extrudeColor = 0xFF9C7A3C;
+            layer.extrudeUseLayerColor = true;
+            layer.extrudeShade = dev.bbsae.comp.CompExtrusion.DEFAULT_SHADE;
+            layer.extrudeDirection = dev.bbsae.comp.CompExtrusion.DIRECTION_BACK;
+            layer.extrudeCap = true;
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已重置 3D / 挤压参数（Z、旋转、缩放不变）");
+        }));
+
+        return section;
+    }
+
+    private String extrudeDirectionLabel(CompLayer layer)
+    {
+        return switch (dev.bbsae.comp.CompExtrusion.direction(layer))
+        {
+            case dev.bbsae.comp.CompExtrusion.DIRECTION_FRONT -> "向前（朝观众）";
+            case dev.bbsae.comp.CompExtrusion.DIRECTION_BOTH -> "双向（居中）";
+            default -> "向后";
+        };
+    }
+
     private UISection layerSection()
     {
-        UISection section = new UISection(IKey.constant("图层"));
+        UISection section = new UISection(IKey.constant("图层 · 来源 / 父级 / 遮罩"));
 
-        section.remember(this.sectionFolds, "layer", true);
+        /* Collapsed by default. This section holds identity, timing, parenting, mattes, expressions,
+         * sources and precomp targets — a long page on its own. With it expanded the transform and
+         * opacity controls above were the only thing visible and reaching anything else meant a lot
+         * of wheel scrolling. Transform/opacity stay expanded; this is one click away and its fold
+         * state is remembered. */
+        section.remember(this.sectionFolds, "layer", false);
 
         CompLayer layer = this.selectedLayer;
 
@@ -20725,59 +21252,6 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.textRow("表达式：旋转", l.expressionRotation, (text) -> l.expressionRotation = text));
         section.fields.add(this.textRow("表达式：不透明度", l.expressionOpacity, (text) -> l.expressionOpacity = text));
 
-        /* Point tracker: follows a feature across the film; the result either bakes into this
-         * layer's position or feeds expressions like tracker.<id>.x. */
-        if (this.doc != null)
-        {
-            section.fields.add(UI.label(IKey.constant("跟踪器"), 14));
-
-            for (CompTracker tracker : this.doc.trackers)
-            {
-                boolean trackerRunning = dev.bbsae.client.render.TrackerEngine.isRunning()
-                    && dev.bbsae.client.render.TrackerEngine.current() == tracker;
-
-                section.fields.add(UI.label(IKey.constant(tracker.name + " · " + trackerStateLabel(tracker)
-                    + " · " + tracker.samples.size() + " 帧"
-                    + (tracker.message == null || tracker.message.isEmpty() ? "" : " · " + tracker.message)), 13));
-                section.fields.add(this.numberRow("锚点 X", (double) tracker.x, 0D, (double) Math.max(1, this.doc.width), false,
-                    (value) -> tracker.x = value.floatValue()));
-                section.fields.add(this.numberRow("锚点 Y", (double) tracker.y, 0D, (double) Math.max(1, this.doc.height), false,
-                    (value) -> tracker.y = value.floatValue()));
-                section.fields.add(this.numberRow("模板半径（像素）", (double) tracker.pattern, 4D, 64D, true,
-                    (value) -> tracker.pattern = value.intValue()));
-                section.fields.add(this.numberRow("搜索半径（像素）", (double) tracker.search, 4D, 128D, true,
-                    (value) -> tracker.search = value.intValue()));
-                section.fields.add(this.numberRow("置信度阈值", (double) tracker.confidence, 0D, 1D, false,
-                    (value) -> tracker.confidence = value.floatValue()));
-                section.fields.add(UI.row(
-                    this.smallButton(trackerRunning ? "停止" : "开始分析", () -> this.toggleTracker(tracker)),
-                    this.smallButton("应用到位置", () -> this.bakeTrackerToLayer(tracker))
-                ));
-                section.fields.add(UI.row(
-                    this.smallButton("清除结果", () ->
-                    {
-                        tracker.clearSamples();
-                        this.refreshInspector();
-                        this.save();
-                    }),
-                    this.smallButton("删除跟踪器", () ->
-                    {
-                        if (dev.bbsae.client.render.TrackerEngine.current() == tracker)
-                        {
-                            dev.bbsae.client.render.TrackerEngine.cancel();
-                        }
-
-                        this.beginAction("删除跟踪器");
-                        this.doc.removeTracker(tracker.id);
-                        this.refreshInspector();
-                        this.save();
-                    })
-                ));
-            }
-
-            section.fields.add(this.smallButton("＋ 新建跟踪器", () -> this.createTracker()));
-        }
-
         if ("image".equals(l.type) || "footage".equals(l.type) || "videolink".equals(l.type))
         {
             section.fields.add(this.textRow("序列".equals(l.type) ? "图片序列 (%04d)" : "图片路径", l.imagePath, (text) -> l.imagePath = text));
@@ -20861,6 +21335,21 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.setStatus("已创建预合成：" + sub.name);
             }));
             section.fields.add(this.smallButton("进入预合成", () -> this.enterPrecomp(l)));
+            section.fields.add(this.smallButton("复制目标预合成（独立副本）", () ->
+            {
+                this.beginAction("复制预合成");
+                CompDocument clone = dev.bbsae.comp.CompLayerOps.duplicatePrecompTarget(this.project, l);
+
+                if (clone == null)
+                {
+                    this.setStatus("复制失败：这个预合成层还没有有效的目标合成");
+                    return;
+                }
+
+                this.refreshInspector();
+                this.save();
+                this.setStatus("已复制独立预合成：" + clone.name + "（改副本不会再影响原预合成）");
+            }));
             section.fields.add(this.numberRow("预合成时间偏移", l.precompTimeOffset, -36000F, 36000F, false, (value) -> l.precompTimeOffset = value.floatValue()));
             section.fields.add(this.numberRow("预合成时间缩放", l.precompTimeScale, -10F, 10F, false, (value) -> l.precompTimeScale = value.floatValue()));
             section.fields.add(new UIToggle(IKey.constant("折叠变换（3D 子层使用父合成相机）"), l.collapse, (toggle) ->
@@ -22114,6 +22603,77 @@ public class UICompositorPanel extends UIDashboardPanel
             row.add(jump, remove);
             section.fields.add(row);
         }
+
+        return section;
+    }
+
+    /**
+     * Composition-level point trackers.
+     *
+     * <p>They used to live at the bottom of the layer page, even though a tracker belongs to the
+     * composition ({@code CompDocument.trackers}) and is used by several layers through
+     * expressions. Moving them here follows the data: the layer page loses a long block that was
+     * never about the selected layer, and the 合成 page owns everything comp-wide.</p>
+     */
+    private UISection trackerSection()
+    {
+        UISection section = new UISection(IKey.constant("跟踪器"));
+
+        section.remember(this.sectionFolds, "trackers", false);
+
+        if (this.doc == null)
+        {
+            return section;
+        }
+
+        section.fields.add(UI.label(IKey.constant("跟踪画面上的一个特征；结果可烘焙成图层位置，"
+            + "也可用 tracker.<id>.x/y 表达式驱动多个图层。"), 13));
+
+        for (CompTracker tracker : this.doc.trackers)
+        {
+            boolean trackerRunning = dev.bbsae.client.render.TrackerEngine.isRunning()
+                && dev.bbsae.client.render.TrackerEngine.current() == tracker;
+
+            section.fields.add(UI.label(IKey.constant(tracker.name + " · " + trackerStateLabel(tracker)
+                + " · " + tracker.samples.size() + " 帧"
+                + (tracker.message == null || tracker.message.isEmpty() ? "" : " · " + tracker.message)), 13));
+            section.fields.add(this.numberRow("锚点 X", (double) tracker.x, 0D, (double) Math.max(1, this.doc.width), false,
+                (value) -> tracker.x = value.floatValue()));
+            section.fields.add(this.numberRow("锚点 Y", (double) tracker.y, 0D, (double) Math.max(1, this.doc.height), false,
+                (value) -> tracker.y = value.floatValue()));
+            section.fields.add(this.numberRow("模板半径（像素）", (double) tracker.pattern, 4D, 64D, true,
+                (value) -> tracker.pattern = value.intValue()));
+            section.fields.add(this.numberRow("搜索半径（像素）", (double) tracker.search, 4D, 128D, true,
+                (value) -> tracker.search = value.intValue()));
+            section.fields.add(this.numberRow("置信度阈值", (double) tracker.confidence, 0D, 1D, false,
+                (value) -> tracker.confidence = value.floatValue()));
+            section.fields.add(UI.row(
+                this.smallButton(trackerRunning ? "停止" : "开始分析", () -> this.toggleTracker(tracker)),
+                this.smallButton("应用到位置", () -> this.bakeTrackerToLayer(tracker))
+            ));
+            section.fields.add(UI.row(
+                this.smallButton("清除结果", () ->
+                {
+                    tracker.clearSamples();
+                    this.refreshInspector();
+                    this.save();
+                }),
+                this.smallButton("删除跟踪器", () ->
+                {
+                    if (dev.bbsae.client.render.TrackerEngine.current() == tracker)
+                    {
+                        dev.bbsae.client.render.TrackerEngine.cancel();
+                    }
+
+                    this.beginAction("删除跟踪器");
+                    this.doc.removeTracker(tracker.id);
+                    this.refreshInspector();
+                    this.save();
+                })
+            ));
+        }
+
+        section.fields.add(this.smallButton("＋ 新建跟踪器", () -> this.createTracker()));
 
         return section;
     }
@@ -24084,6 +24644,24 @@ public class UICompositorPanel extends UIDashboardPanel
          * restored graph below so undo inside a precomp does not trap the user in it. */
         java.util.List<PrecompReturn> restorePrecompPath = new ArrayList<>(this.precompStack);
 
+        /* The live settings may already carry the temporary drawer expansion. Write the user's
+         * original layout back before it is preserved into the restored project, then drop the
+         * transient state: otherwise undoing while the drawer is open would make the taller
+         * timeline permanent. */
+        if (this.transientLayoutExpanded && liveSettings != null)
+        {
+            if (this.transientLayoutReturnRoot != null)
+            {
+                liveSettings.dockLayout = CompDockSource.encode(this.transientLayoutReturnRoot);
+            }
+
+            if (this.transientTimelineReturnHeight > 0)
+            {
+                liveSettings.timelineHeight = this.transientTimelineReturnHeight;
+            }
+        }
+
+        this.forgetTransientTimelineExpansion();
         this.restoring = true;
 
         try
@@ -24260,12 +24838,24 @@ public class UICompositorPanel extends UIDashboardPanel
             return true;
         }
 
-        /* Alt+wheel must work over the preview as well as over the timeline. The timeline
-         * consumes it when the cursor is there; this is the fallback for the rest of the panel. */
+        /* Alt+wheel must mean "zoom time" over the preview as well as over both timeline strips.
+         * The timeline and the keyframe drawer consume it when the cursor is inside them; this
+         * fallback keeps the gesture working everywhere else in the panel and routes it to the
+         * surface under the pointer instead of always zooming the track timeline (which is what
+         * made the drawer's own zoom feel inconsistent). Alt+Shift is the row-height gesture and
+         * must not be turned into a time zoom here. */
         if (!this.startScreenOpen && !this.modalLayer.isVisible() && this.doc != null
-            && CompInput.altDown() && Math.abs(context.mouseWheel) > 0.001D)
+            && CompInput.altDown() && !CompInput.shiftDown() && Math.abs(context.mouseWheel) > 0.001D)
         {
-            this.trackTimeline.zoom(context.mouseWheel > 0D ? 1D : -1D);
+            if (this.keyframeOpen && this.keyframeDrawer.isVisible()
+                && this.keyframeDrawer.area.isInside(context))
+            {
+                this.zoomKeyframeTime(context.mouseWheel > 0D ? 1 : -1, context.mouseX);
+            }
+            else
+            {
+                this.trackTimeline.zoom(context.mouseWheel > 0D ? 1D : -1D);
+            }
 
             return true;
         }
@@ -25009,7 +25599,9 @@ public class UICompositorPanel extends UIDashboardPanel
         list.add(new String[] {"Alt + Shift + ← / →", "前后挪 5 帧"});
         list.add(new String[] {"Home / End", "合成开头 / 结尾"});
         list.add(new String[] {"↑ / ↓", "上一个 / 下一个剪辑点"});
-        list.add(new String[] {"Alt + 滚轮", "时间轴缩放（Premiere 习惯）"});
+        list.add(new String[] {"Alt + 滚轮", "时间轴 / 关键帧抽屉放大缩小（同一手势）"});
+        list.add(new String[] {"Alt + Shift + 滚轮", "轨道行高放大 / 缩小"});
+        list.add(new String[] {"Ctrl + 滚轮", "时间轴缩放（Alt+滚轮的别名）"});
         list.add(new String[] {"Shift + 滚轮", "时间轴水平平移"});
         list.add(new String[] {", / .", "上一个 / 下一个关键帧"});
         list.add(new String[] {"[ / ]", "裁剪所选轨道入点 / 出点到播放头"});
@@ -25020,7 +25612,7 @@ public class UICompositorPanel extends UIDashboardPanel
         list.add(new String[] {"M", "添加合成标记"});
         list.add(new String[] {"Shift + M / Ctrl + Shift + M", "下一个 / 上一个标记"});
         list.add(new String[] {"= / -", "时间轴放大 / 缩小（1.35× 一档）"});
-        list.add(new String[] {"Alt + = / -", "轨道高度放大 / 缩小（同 Alt+滚轮）"});
+        list.add(new String[] {"Alt + = / -", "轨道高度放大 / 缩小（同 Alt+Shift+滚轮）"});
         list.add(new String[] {"\\", "时间轴适配全长"});
         list.add(new String[] {"F", "聚焦预览"});
         list.add(new String[] {"Alt + K", "在播放头添加变换关键帧"});

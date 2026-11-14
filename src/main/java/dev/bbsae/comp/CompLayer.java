@@ -192,6 +192,31 @@ public class CompLayer
      */
     public boolean collapse = false;
 
+    /* --- 3D extrusion -----------------------------------------------------
+     *
+     * A flat layer is a picture; extrusion turns it into a solid whose front face is that picture.
+     * These fields are deliberately on the layer, not in the effect stack: thickness is a property
+     * of the object (like AE's "Extrude" in the 3D layer options), it must apply before effects,
+     * and it has to survive copy/paste, presets and the renderer's layer-space bake. The old
+     * {@code extrude3d} effect is still read as a fallback for projects that used it.
+     */
+    /** Master switch for the volume; only honoured while {@link #threeD} is on. */
+    public boolean extrude = false;
+    /** Thickness along the layer's local Z, in composition pixels. */
+    public float extrudeDepth = 60F;
+    /** Number of planes used to fill the volume; higher = smoother sides, more draw calls. */
+    public int extrudeSlices = 16;
+    /** Side colour used when {@link #extrudeUseLayerColor} is false. ARGB. */
+    public int extrudeColor = 0xFF9C7A3C;
+    /** Side colour = the layer's own colour (text colour, solid fill, image tint). */
+    public boolean extrudeUseLayerColor = true;
+    /** How much the side darkens away from the artwork face, 0 = flat, 1 = black. */
+    public float extrudeShade = 0.35F;
+    /** 0 = behind the artwork, 1 = in front of it, 2 = centred on it. */
+    public int extrudeDirection = CompExtrusion.DIRECTION_BACK;
+    /** Draw the far end cap; turning it off makes a hollow tube (a 3D editing option). */
+    public boolean extrudeCap = true;
+
     /** AE-style two-node camera: position comes from the normal transform, this is the look-at point. */
     public float cameraTargetX = 960F;
     public float cameraTargetY = 540F;
@@ -2023,6 +2048,12 @@ public class CompLayer
     public boolean isCamera()
     {
         return "camera".equals(this.type);
+    }
+
+    /** True when this layer is a 3D volume rather than a flat picture (see {@link CompExtrusion}). */
+    public boolean hasExtrusion()
+    {
+        return CompExtrusion.isEnabled(this);
     }
 
     /**

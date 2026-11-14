@@ -101,6 +101,18 @@ public class UICompTrackTimeline extends UIElement
     private String dragId;
     private int dragStartX;
     private int dragStartY;
+    /**
+     * Timeline time under the pointer when a move/trim started.
+     *
+     * <p>The old drag frame recomputed {@code fromX(dragStartX)} on every mouse move. As soon as
+     * the view scrolled or grew to make room for the clip (which is exactly what happens at the
+     * right edge), the "start" time changed under the gesture and the clip jumped. Snapshotting the
+     * start time once makes the translation independent of the viewport.</p>
+     */
+    private float dragStartTime;
+    /** Fit mode at press time; restored as "fit after the edit" when the drag extended the comp. */
+    private boolean dragFitMode;
+    private float dragStartDuration;
     private int dragReorderTarget = -1;
     private boolean dragCheckpoint;
     /** Snap targets are collected once per gesture, not once per drag frame. */
@@ -524,7 +536,13 @@ public class UICompTrackTimeline extends UIElement
 
     private float fromX(int x)
     {
-        return (float) Math.max(0D, Math.min(this.duration(), this.xAxis.from(x)));
+        /* Deliberately not clamped to the composition duration. The visible range is a view of the
+         * timeline, not the end of the project: dragging a clip later than the current end is how
+         * the composition grows. Clamping here was the "layers stop dragging after a while" wall —
+         * the pointer could never point past the right edge of a fitted view. The lower bound stays,
+         * because negative time has no meaning. Callers that must stay inside the composition
+         * (playhead scrubbing) clamp separately. */
+        return (float) Math.max(0D, this.xAxis.from(x));
     }
 
     private float frame()
@@ -666,11 +684,12 @@ public class UICompTrackTimeline extends UIElement
     }
 
     /**
-     * Keyboard equivalent of Alt+wheel: the row height, i.e. "track zoom".
+     * Keyboard equivalent of Alt+Shift+wheel: the row height, i.e. "track zoom".
      *
      * <p>The reported bug was "tracks cannot be zoomed with the keyboard". Time zoom existed but
-     * did nothing (it added ±1 px/s); vertical zoom only existed on Alt+wheel. Both are now on the
-     * keyboard, with the same key pair and Alt as the modifier that distinguishes them.</p>
+     * did nothing (it added ±1 px/s); vertical zoom only existed on a wheel gesture. Both are now on
+     * the keyboard as well, with Alt as the modifier that distinguishes time zoom (Alt+wheel) from
+     * row zoom (Alt+Shift+wheel).</p>
      */
     public void stepRowHeight(int step)
     {
@@ -685,7 +704,7 @@ public class UICompTrackTimeline extends UIElement
         this.clampScroll();
         CompPrefs.get().timelineRowHeight = next;
         CompPrefs.markDirty();
-        this.panel.setStatus("轨道高度 " + this.rowHeight + "px（Alt+滚轮 / Alt+加号减号）");
+        this.panel.setStatus("轨道高度 " + this.rowHeight + "px（Alt+Shift+滚轮 / Alt+加减号）");
     }
 
     /**
@@ -2153,11 +2172,14 @@ public class UICompTrackTimeline extends UIElement
         this.dragId = layer.id;
         this.dragStartX = context.mouseX;
         this.dragStartY = context.mouseY;
+        this.dragStartTime = time;
         this.dragIn = layer.in;
         this.dragOut = layer.out;
         this.dragOrigStartTime = layer.startTime;
         this.dragOrigFrame = this.panel.getFrame();
         this.dragCheckpoint = false;
+        this.dragFitMode = this.fitMode;
+        this.dragStartDuration = this.duration();
         this.dragSnapPoints = null;
 
         /* Snapshot every selected, unlocked layer: a MOVE drag applies the same delta to all of
@@ -2224,12 +2246,15 @@ public class UICompTrackTimeline extends UIElement
 
         this.dragAudio = clip;
         this.dragStartX = context.mouseX;
+        this.dragStartTime = this.fromX(context.mouseX);
         this.dragAudioStart = clip.start;
         this.dragAudioOffset = clip.offset;
         this.dragAudioLength = this.audioLength(clip);
         this.dragAudioRawDuration = clip.duration;
         this.dragOrigFrame = this.panel.getFrame();
         this.dragCheckpoint = false;
+        this.dragFitMode = this.fitMode;
+        this.dragStartDuration = this.duration();
         this.dragSnapPoints = null;
 
         if (context.mouseX - start <= EDGE)
@@ -2259,7 +2284,14 @@ public class UICompTrackTimeline extends UIElement
             return;
         }
 
-        float delta = this.fromX(context.mouseX) - this.fromX(this.dragStartX);
+        /* Measured against the press-time snapshot, not against the current view's mapping of the
+         * press pixel: the view can scroll to keep a long clip visible, and recomputing the origin
+         * under the gesture made the clip run away from the pointer. */
+        float delta = this.fromX(context.mouseX) - this.dragStartTime;
+
+        /* Dragging past the right edge of the view is a request to see further, not a wall: extend
+         * the visible range by exactly the pointer's time so the gesture keeps following the mouse. */
+        this.ensureDragViewCovers(this.dragStartTime + delta);
         float frame = 1F / this.fps();
         float duration = this.duration();
         float length = Math.max(frame, this.dragAudioLength);
@@ -2338,6 +2370,36 @@ public class UICompTrackTimeline extends UIElement
         if (end > this.xAxis.getMaxValue())
         {
             this.xAxis.view(this.xAxis.getMinValue(), end + Math.max(0.1D, end * 0.01D));
+        }
+    }
+
+    /**
+     * While a clip is being dragged, the visible range follows the pointer once it leaves the lane.
+     *
+     * <p>This is the second half of the duration-limit fix. The first half is that {@link #fromX}
+     * no longer clamps to the composition duration; this one makes the extended time actually
+     * visible, so the bar, the ruler and the playhead stay coherent with the pointer instead of the
+     * user dragging into an invisible region. The span is preserved (a pan, not a zoom), so the
+     * gesture keeps its pixels-per-second while the view slides.</p>
+     */
+    private void ensureDragViewCovers(double time)
+    {
+        if (this.laneArea.w <= 0 || Double.isNaN(time) || Double.isInfinite(time))
+        {
+            return;
+        }
+
+        double min = this.xAxis.getMinValue();
+        double max = this.xAxis.getMaxValue();
+        double span = Math.max(0.05D, max - min);
+
+        if (time > max - 0.0001D)
+        {
+            this.xAxis.view(min, time + span * 0.04D);
+        }
+        else if (time < min)
+        {
+            this.xAxis.view(Math.max(0D, time - span * 0.04D), max);
         }
     }
 
@@ -2466,7 +2528,14 @@ public class UICompTrackTimeline extends UIElement
 
         this.beginDragCheckpoint(this.dragMode == MODE_MOVE ? "移动片段" : "裁剪片段");
 
-        float delta = this.fromX(context.mouseX) - this.fromX(this.dragStartX);
+        /* Measured against the press-time snapshot, not against the current view's mapping of the
+         * press pixel: the view can scroll to keep a long clip visible, and recomputing the origin
+         * under the gesture made the clip run away from the pointer. */
+        float delta = this.fromX(context.mouseX) - this.dragStartTime;
+
+        /* See dragAudioClip: past the edge the view follows the pointer instead of the clip
+         * stopping at the last visible second. */
+        this.ensureDragViewCovers(this.dragStartTime + delta);
         float fps = this.fps();
         float duration = this.duration();
         float frame = 1F / fps;
@@ -2632,6 +2701,25 @@ public class UICompTrackTimeline extends UIElement
         this.dragGroup.clear();
         this.snapGuide = Float.NaN;
 
+        /* The user was in "fit whole comp" mode before the gesture. Keep that intent: if the drag
+         * grew the composition, re-fit so the new end is visible; otherwise restore the flag the
+         * fixed view temporarily cleared. */
+        if (this.dragFitMode)
+        {
+            CompDocument doc = this.doc();
+
+            if (doc != null && doc.duration > this.dragStartDuration + 0.0001F)
+            {
+                this.fit();
+            }
+            else
+            {
+                this.fitMode = true;
+            }
+        }
+
+        this.dragFitMode = false;
+
         if (edited)
         {
             this.panel.onTrackEdited();
@@ -2651,6 +2739,13 @@ public class UICompTrackTimeline extends UIElement
         }
 
         this.dragCheckpoint = true;
+
+        /* Freeze the fitted view for the duration of the gesture. Growing the document update
+         * (extendDurationForLayers) would otherwise re-fit the axis mid-drag, which changes the
+         * pixels-per-second under the user's hand. The original mode is restored on release. */
+        this.dragFitMode = this.fitMode;
+        this.dragStartDuration = this.duration();
+        this.fitMode = false;
         this.panel.beginAction(name);
     }
 
@@ -2731,6 +2826,15 @@ public class UICompTrackTimeline extends UIElement
         if (scrub)
         {
             this.panel.setFrame(this.dragOrigFrame);
+        }
+
+        /* Esc restores the view mode too: the gesture froze auto-fit, and a cancelled gesture must
+         * not leave the timeline zoomed/panned as if it had completed. fit() is exactly the view a
+         * fitted timeline had at press time. */
+        if (this.dragFitMode)
+        {
+            this.fit();
+            this.dragFitMode = false;
         }
 
         this.dragMode = MODE_NONE;
@@ -2829,11 +2933,15 @@ public class UICompTrackTimeline extends UIElement
         boolean shift = shiftDown();
         float anchor = Scale.getAnchorX(context, this.laneArea);
 
-        /* Alt+wheel resizes the tracks. This is the gesture the user asked for, and it matches
-         * the documentation and every NLE: Alt/Option+wheel is vertical zoom of the track rows,
-         * while the time axis is zoomed with Ctrl+wheel (or Alt+Shift+wheel). Row height moved
-         * here from Alt+Shift because "Alt+wheel does nothing to my tracks" was the bug. */
-        if (alt && !shift)
+        /* One modifier, one meaning across every timeline surface:
+         *   Alt+wheel        = zoom TIME (the keyframe drawer and the curve editor do the same),
+         *   Alt+Shift+wheel  = zoom track ROW HEIGHT (vertical zoom),
+         *   Ctrl+wheel       = zoom time as well (kept as an alias for muscle memory),
+         *   Shift+wheel      = pan, plain wheel = scroll.
+         * Before this, Alt+wheel changed row height here while it zoomed time in the keyframe
+         * drawer — the same gesture did two different things depending on which strip the pointer
+         * was over, which is exactly the inconsistency that was reported. */
+        if (alt && shift)
         {
             int step = wheel > 0 ? 2 : -2;
             int next = Math.max(ROW_MIN, Math.min(ROW_MAX, this.rowHeight + step));
@@ -2844,14 +2952,10 @@ public class UICompTrackTimeline extends UIElement
                 this.clampScroll();
                 CompPrefs.get().timelineRowHeight = this.rowHeight;
                 CompPrefs.markDirty();
-                this.panel.setStatus("轨道高度 " + this.rowHeight + "px（Alt+滚轮）");
+                this.panel.setStatus("轨道高度 " + this.rowHeight + "px（Alt+Shift+滚轮 / Alt+加减号）");
             }
         }
-        else if (alt)
-        {
-            this.zoomAt(anchor, wheel);
-        }
-        else if (ctrl)
+        else if (alt || ctrl)
         {
             this.zoomAt(anchor, wheel);
         }

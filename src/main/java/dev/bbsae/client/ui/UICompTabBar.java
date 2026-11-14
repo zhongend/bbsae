@@ -29,12 +29,34 @@ public class UICompTabBar extends UIElement
     private static final int OVERFLOW_W = 20;
     private static final String OVERFLOW_HOVER_KEY = "tab-overflow-hover";
     private static final String OVERFLOW_PRESS_KEY = "tab-overflow-press";
+    /** Height of one tab row; wrapping bars are as tall as their row count. */
+    private static final int ROW_H = 22;
+    /** Hard floor under a wrapped tab; below this nothing legible fits at all. */
+    private static final int MIN_TAB_W = 16;
+    private static final int MAX_ROWS = 4;
 
     private final List<UITextTab> tabs = new ArrayList<>();
     private final List<Integer> tabWidths = new ArrayList<>();
     private int nextX;
     private final UiMotion motion = new UiMotion();
     private int motionFrames;
+
+    /**
+     * Wrap into multiple rows instead of hiding the trailing tabs.
+     *
+     * <p>A fixed section strip (the inspector has nine sections) must not require scrolling to
+     * discover a page. Hiding tabs behind a "»" control made "go to 输出" a hunt; a wrapped grid
+     * shows every section at once at any panel width. The host reads {@link #preferredHeight()} and
+     * gives the bar that height.</p>
+     */
+    private boolean wrap;
+    /** Rows used by the last wrap layout. */
+    private int rows = 1;
+    /** Fixed row count (0 = derive from the width). Fixed rows keep the layout stable while resizing. */
+    private int fixedRows;
+    /** Tab index that changes colour with an external state (the 3D section: white only in 3D). */
+    private int emphasized = -1;
+    private java.util.function.BooleanSupplier emphasizedOn = () -> false;
 
     /**
      * When the bar is narrower than its tabs (dock panel dragged narrow), the trailing tabs are
@@ -140,8 +162,18 @@ public class UICompTabBar extends UIElement
         }
 
         int activeIndex = this.active.getAsInt();
+
+        if (this.wrap)
+        {
+            this.layoutWrapped(widths, activeIndex);
+            this.laidOutActive = activeIndex;
+
+            return;
+        }
+
         int[] window = CompUi.tabStripWindow(widths, this.area.w, activeIndex, OVERFLOW_W);
 
+        this.rows = 1;
         this.windowStart = window[0];
         this.windowEnd = window[1];
         this.overflowLeft = window[2] == 1;
@@ -169,6 +201,138 @@ public class UICompTabBar extends UIElement
     }
 
     /**
+     * Lays every tab out in a grid of {@link #rowCountFor(int)} rows.
+     *
+     * <p>Rows are filled evenly (9 tabs / 2 rows = 5 + 4) rather than greedily, so the last row does
+     * not end up holding a single orphan tab. When the natural widths do not fit even the evenly
+     * divided row, the tabs are scaled down together — the section name stays visible instead of
+     * being pushed off the bar.</p>
+     */
+    private void layoutWrapped(int[] widths, int activeIndex)
+    {
+        int size = this.tabs.size();
+        int width = Math.max(1, this.area.w);
+        int rowCount = this.rowCountFor(width);
+
+        this.rows = rowCount;
+        this.overflow = false;
+        this.overflowLeft = false;
+        this.overflowRight = false;
+        this.visibleTabs = 0;
+
+        int perRow = Math.max(1, (int) Math.ceil(size / (double) rowCount));
+        int rowHeight = Math.max(1, this.area.h / rowCount);
+        int index = 0;
+
+        for (int row = 0; row < rowCount && index < size; row++)
+        {
+            int count = Math.min(perRow, size - index);
+            int natural = 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                natural += widths[index + i] + 2;
+            }
+
+            int avail = Math.max(1, width - 2);
+            int gaps = 2 * count;
+            float scale = natural > avail ? Math.max(0.1F, (avail - gaps) / (float) natural) : 1F;
+            int minWidth = Math.max(MIN_TAB_W, (avail - gaps) / Math.max(1, count));
+            int x = 0;
+
+            for (int i = 0; i < count; i++, index++)
+            {
+                UITextTab tab = this.tabs.get(index);
+                int w = Math.max(minWidth, Math.round((widths[index] + 2) * scale) - 2);
+
+                /* Pathological width: min widths cannot fit the row. Hiding the overflow is safer
+                 * than drawing it past the bar, because BBS hit-tests children by their own
+                 * rectangle — a tab sticking out of the panel would steal clicks from the preview. */
+                boolean fits = x + w <= width + 2;
+
+                tab.setVisible(fits);
+
+                if (fits)
+                {
+                    tab.relative(this).x(x).y(row * rowHeight).w(w).h(rowHeight);
+                    this.visibleTabs += 1;
+                }
+
+                x += w + 2;
+            }
+        }
+    }
+
+    /** Rows this bar needs at {@code width}; 1 when wrapping is off. */
+    private int rowCountFor(int width)
+    {
+        if (!this.wrap || this.tabs.isEmpty() || width <= 0)
+        {
+            return 1;
+        }
+
+        if (this.fixedRows > 0)
+        {
+            return Math.max(1, Math.min(MAX_ROWS, Math.min(this.tabs.size(), this.fixedRows)));
+        }
+
+        int total = 0;
+
+        for (int w : this.tabWidths)
+        {
+            total += w + 2;
+        }
+
+        int rows = Math.max(1, (int) Math.ceil(total / (double) width));
+
+        return Math.max(1, Math.min(MAX_ROWS, Math.min(this.tabs.size(), rows)));
+    }
+
+    /**
+     * Turns multi-row layout on; the host must size the bar with {@link #preferredHeight()}.
+     * With {@code rows} &gt; 0 the row count is fixed (a stable grid); 0 derives it from the width.
+     */
+    public UICompTabBar wrap(int rows)
+    {
+        this.wrap = true;
+        this.fixedRows = Math.max(0, rows);
+        this.layoutTabs();
+
+        return this;
+    }
+
+    /** Height the bar wants for the current width (row count × row height). */
+    public int preferredHeight()
+    {
+        if (!this.wrap)
+        {
+            return this.area.h > 0 ? this.area.h : ROW_H;
+        }
+
+        int width = this.area.w > 0 ? this.area.w : 200;
+
+        return this.rowCountFor(width) * ROW_H;
+    }
+
+    public int rowCount()
+    {
+        return this.wrap ? this.rowCountFor(this.area.w > 0 ? this.area.w : 200) : 1;
+    }
+
+    /**
+     * Ties one tab's colour to external state: white when the predicate is true, muted grey when it
+     * is false. The compositor's 3D section uses it to say "this layer is 3D" without opening the
+     * page.
+     */
+    public UICompTabBar emphasize(int index, java.util.function.BooleanSupplier on)
+    {
+        this.emphasized = index;
+        this.emphasizedOn = on == null ? () -> false : on;
+
+        return this;
+    }
+
+    /**
      * Draws the overflow affordances.
      *
      * <p>A truncated tab row is a false affordance: if the last visible label simply ends, the
@@ -182,7 +346,7 @@ public class UICompTabBar extends UIElement
      */
     private void renderOverflow(UIContext context)
     {
-        if ((!this.overflowLeft && !this.overflowRight) || this.area.w <= 0)
+        if (this.wrap || (!this.overflowLeft && !this.overflowRight) || this.area.w <= 0)
         {
             return;
         }
@@ -384,6 +548,18 @@ public class UICompTabBar extends UIElement
                     }
 
                     this.color = UiMotion.lerpColor(0xFF8A94A6, 0xFFFFFFFF, bright);
+
+                    if (UICompTabBar.this.emphasized == index)
+                    {
+                        /* State-coloured tab: full white while the layer is 3D, muted grey while
+                         * it is not. Hover/shine still applies so it reads as clickable, but the
+                         * on/off contrast is large enough to see at a glance. */
+                        boolean on = UICompTabBar.this.emphasizedOn.getAsBoolean();
+
+                        this.color = on
+                            ? 0xFFFFFFFF
+                            : UiMotion.lerpColor(0xFF6C7686, 0xFFC9D3E1, hov * 0.55F);
+                    }
                     /* UITextTab itself swaps to hoverColor while the cursor is inside; point it at
                      * the animated value too, otherwise entering a tab still brightens in one frame
                      * and only the exit fades. */

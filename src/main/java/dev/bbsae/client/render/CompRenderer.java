@@ -2128,7 +2128,10 @@ public final class CompRenderer
 
         boolean masked = layer.masks != null && !layer.masks.isEmpty();
 
-        return hasEnabledEffects(layer) || hasEnabledStyles(layer) || masked;
+        /* Extrusion is a volume, so it always needs the layer-space raster path: the direct path
+         * can only draw one flat quad and would silently ignore the thickness. */
+        return hasEnabledEffects(layer) || hasEnabledStyles(layer) || masked
+            || dev.bbsae.comp.CompExtrusion.isEnabled(layer);
     }
 
     private static GlFramebuffer renderBaked3D(CompLayer layer, CompRenderContext context, Matrix4f model,
@@ -2182,46 +2185,50 @@ public final class CompRenderer
             /* Extrusion is a geometry operation: stack the flat layer raster along its local Z.
              * The source cache deliberately leaves extrude3d out of the pixel bake; doing it here
              * (instead of flattening a copy into the raster) makes the side volume survive the
-             * projection and the camera orbit. */
+             * projection and the camera orbit.
+             *
+             * The dedicated layer fields are the source of truth (the 3D inspector page edits
+             * them); a legacy extrude3d effect is only a fallback, otherwise a project that used
+             * the old effect AND the new switch would be extruded twice. */
             CompEffect extrusion = findEffect(layer, "extrude3d");
 
             if (extrusion != null)
             {
                 extrusion = layer.resolveEffect(extrusion, context.frame);
             }
-            float extrudeDepth = extrusion == null ? 0F
-                : Math.max(0F, Math.min(400F, extrusion.valueF("depth", 60F)));
-            int slices = extrusion == null ? 0
-                : Math.max(1, Math.min(48, Math.round(extrusion.valueF("slices", 16F))));
-            float sideShade = extrusion == null ? 0F
-                : Math.max(0F, Math.min(1F, extrusion.valueF("shade", 0.35F)));
-            int firstSlice = extrudeDepth > 0.5F ? slices : 0;
-            int iterations = hasCopies ? copies.size() : firstSlice + 1;
+
+            java.util.List<dev.bbsae.comp.CompExtrusion.Slice> volumes =
+                dev.bbsae.comp.CompExtrusion.slices(layer, extrusion);
+
+            if (!volumes.isEmpty() && extrusion != null)
+            {
+                /* The geometry has been drawn from this effect; it must not also run as a pixel
+                 * effect later in the stack. */
+                context.consumedEffectIds.add(extrusion.id);
+            }
+
+            int iterations = hasCopies ? copies.size() : Math.max(1, volumes.size());
 
             for (int iteration = 0; iteration < iterations; iteration++)
             {
+                int tint = 0xFFFFFFFF;
+
                 if (hasCopies)
                 {
                     stack.peek().getPositionMatrix().set(model).mul(copies.get(iteration));
                 }
                 else
                 {
-                    int slice = firstSlice - iteration;
-                    float z = firstSlice == 0 ? 0F : -extrudeDepth * (slice / (float) firstSlice);
+                    dev.bbsae.comp.CompExtrusion.Slice slice = volumes.isEmpty() ? null : volumes.get(iteration);
+                    float z = slice == null ? 0F : slice.z();
 
                     stack.peek().getPositionMatrix().set(model).translate(0F, 0F, z);
+
+                    if (slice != null)
+                    {
+                        tint = slice.tint();
+                    }
                 }
-
-                float shade = 1F;
-
-                if (!hasCopies && firstSlice > 0)
-                {
-                    int slice = firstSlice - iteration;
-                    shade = 1F - sideShade * (slice / (float) firstSlice);
-                }
-
-                int value = Math.max(0, Math.min(255, Math.round(255F * shade)));
-                int tint = 0xFF000000 | (value << 16) | (value << 8) | value;
 
                 for (int j = 0; j < BAKED_CELLS; j++)
                 {

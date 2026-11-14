@@ -1172,14 +1172,14 @@ public class UICompSettings extends UIElement
             prefs.keyframeRowHeight = (int) Math.round(value);
             CompPrefs.markDirty();
             this.panel.applyKeyframeRowHeight((int) Math.round(value));
-        }), 170, "关键帧编辑器左侧轨道行高；也可在编辑器右上角用 +/- 按钮或 Alt+滚轮"));
+        }), 170, "关键帧编辑器左侧轨道行高；也可在编辑器右上角用 +/- 按钮或 Alt+Shift+滚轮"));
         this.add(this.row("时间轴轨道高度", this.slider(prefs.timelineRowHeight > 0 ? prefs.timelineRowHeight : 26,
             18F, 62F, (value) ->
         {
             prefs.timelineRowHeight = (int) Math.round(value);
             CompPrefs.markDirty();
             this.panel.applyTimelineRowHeight((int) Math.round(value));
-        }), 170, "主时间轴每条轨道的行高；Alt+滚轮也可调整"));
+        }), 170, "主时间轴每条轨道的行高；Alt+Shift+滚轮也可调整（Alt+滚轮缩放时间轴）"));
 
         this.add(this.section("快捷预设"));
         this.add(this.fullButton("纯净预览（隐藏线框与文字）", "一键关闭 Gizmo、选择框、摄像机线框、参考线和预览文字",

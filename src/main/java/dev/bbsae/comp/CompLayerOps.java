@@ -658,7 +658,10 @@ public final class CompLayerOps
         {
             visiting.remove(sourceCompId);
 
-            return sourceCompId;
+            /* Refusing to copy is honest; silently reusing the source would recreate the shared
+             * precomp this whole path exists to prevent. An empty target renders the precomp
+             * placeholder, which tells the user something went wrong. */
+            return "";
         }
 
         if (project.comps == null)
@@ -686,6 +689,76 @@ public final class CompLayerOps
         visiting.remove(sourceCompId);
 
         return clone.id;
+    }
+
+    /**
+     * Deep-copies one composition (including every nested precomp it references) and registers the
+     * clone in the project. The source is untouched.
+     *
+     * <p>This is the project-level operation behind "make this precomp independent": a precomp
+     * layer only stores a {@code precompId}, so two layers can legitimately point at the same
+     * document. When the user wants a private copy, the right primitive is "clone this document",
+     * not "clone this layer" (which would also copy the layer's transform and timing).</p>
+     *
+     * @return the new composition, or null when the source cannot be resolved
+     */
+    public static CompDocument duplicateComposition(CompProject project, CompDocument source)
+    {
+        if (project == null || source == null || source.id == null || source.id.isEmpty())
+        {
+            return null;
+        }
+
+        String id = clonePrecompTree(project, source.id,
+            new java.util.HashMap<>(), new java.util.HashSet<>());
+        CompDocument clone = project.getComp(id);
+
+        if (clone == null || clone == source)
+        {
+            return null;
+        }
+
+        String base = source.name == null || source.name.isBlank() ? "预合成" : source.name;
+
+        clone.name = base + " 副本";
+        clone.id = id;
+
+        return clone;
+    }
+
+    /**
+     * Gives one precomp layer a private copy of its target and re-points the layer at it.
+     *
+     * <p>Used by the inspector's "复制目标预合成（独立副本）" action. It is the escape hatch for a
+     * project that already shares one nested composition between two layers: after it, editing the
+     * copy can never change the other layer's picture, and the rest of the project keeps pointing at
+     * the original.</p>
+     *
+     * @return the new composition, or null when the layer is not a precomp with a valid target
+     */
+    public static CompDocument duplicatePrecompTarget(CompProject project, CompLayer layer)
+    {
+        if (project == null || layer == null || !"precomp".equals(layer.type)
+            || layer.precompId == null || layer.precompId.isEmpty())
+        {
+            return null;
+        }
+
+        CompDocument source = project.getComp(layer.precompId);
+
+        if (source == null)
+        {
+            return null;
+        }
+
+        CompDocument clone = duplicateComposition(project, source);
+
+        if (clone != null)
+        {
+            layer.precompId = clone.id;
+        }
+
+        return clone;
     }
 
     /**

@@ -44,6 +44,19 @@ public final class Viewport3DRenderer
     public static void draw(GlTexture texture, Matrix4f world, Matrix4f viewProjection,
                             float x0, float y0, float x1, float y1, float opacity)
     {
+        draw(texture, world, viewProjection, x0, y0, x1, y1, opacity, 0xFFFFFFFF);
+    }
+
+    /**
+     * Same quad with an RGB tint (alpha stays {@code opacity}).
+     *
+     * <p>Extruded volumes use it to shade their side slices and to tint them with the layer's
+     * thickness colour; without the parameter every slice of the volume would be the untouched
+     * artwork and the side would not read as a surface.</p>
+     */
+    public static void draw(GlTexture texture, Matrix4f world, Matrix4f viewProjection,
+                            float x0, float y0, float x1, float y1, float opacity, int tint)
+    {
         GlslProgram program = CompShaders.viewport3d;
 
         if (program == null || texture == null || !program.isValid() || opacity <= 0.001F)
@@ -92,7 +105,10 @@ public final class Viewport3DRenderer
         program.use();
         PassRenderer.bindRaw(program, "Source", 0, texture.id);
         program.set("ViewProjection", viewProjection);
-        program.set("Tint", 1F, 1F, 1F, opacity);
+        float r = ((tint >> 16) & 0xFF) / 255F;
+        float g = ((tint >> 8) & 0xFF) / 255F;
+        float b = (tint & 0xFF) / 255F;
+        program.set("Tint", r, g, b, opacity);
 
         GL30.glBindVertexArray(vao);
 
