@@ -43,7 +43,8 @@ public final class CompRenderContext
      *
      * <p>The pre-render cache matches 1280x720, so its 3D layer bakes must not be capped to the
      * 1024 px draft guard; the encoder may go up to the composition's long edge; the panel preview
-     * keeps 1024. Callers that know the target set this on the context (or through
+     * follows its actual device-pixel target (a fullscreen 1920-wide preview must not bake layers
+     * at 1024 and upscale them). Callers that know the target set this on the context (or through
      * {@link #setTargetEdge(int)} before creating it).</p>
      */
     public int targetEdge;

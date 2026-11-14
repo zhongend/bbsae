@@ -552,28 +552,39 @@ public class EffectPipeline3DConsistencyTest
         assertNotEquals(previewHash, exportHash, "preview and encoder modes keep separate rasters");
     }
 
-    /** P1-4: the 1024 px raster cap is a preview guard; the export may use the composition width. */
+    /** P1-4: preview rasters follow the actual preview target; export may use the composition width. */
     @Test
-    public void rasterCapKeepsExportDetail()
+    public void rasterCapKeepsExportAndFullscreenDetail()
     {
         CompDocument comp = comp(1920, 1080);
         CompRenderContext preview = new CompRenderContext(project(comp), comp, 0F, null, null, null);
         CompRenderContext export = new CompRenderContext(project(comp), comp, 0F, null, null, null);
 
         preview.preview = true;
+        preview.scale = 0.5F;
         export.preview = false;
 
-        assertEquals(CompLayerSourceCache.MAX_EDGE, CompLayerSourceCache.rasterMaxEdge(preview), 0.001F);
+        assertEquals(CompLayerSourceCache.MAX_EDGE, CompLayerSourceCache.rasterMaxEdge(preview), 0.001F,
+            "a small panel keeps the 1024 draft guard");
         assertTrue(CompLayerSourceCache.rasterMaxEdge(export) >= 1920F,
             "encoder must not downscale a 1920 px composition to the draft cap");
 
-        float previewScale = CompLayerSourceCache.rasterScaleFor(1900F, 600F,
+        float smallPreviewScale = CompLayerSourceCache.rasterScaleFor(1900F, 600F,
             CompLayerSourceCache.rasterMaxEdge(preview));
         float exportScale = CompLayerSourceCache.rasterScaleFor(1900F, 600F,
             CompLayerSourceCache.rasterMaxEdge(export));
 
-        assertTrue(previewScale < 0.6F, "preview keeps the memory guard");
+        assertTrue(smallPreviewScale < 0.6F, "the small preview keeps the memory guard");
         assertEquals(1F, exportScale, 0.0001F, "a 1900 px layer exports at full raster resolution");
+
+        /* Fullscreen/maximized preview: the FBO is 1920 device pixels, so a 1024 px bake would be
+         * upscaled ~1.9× (the reported mosaic). It must follow the target instead. */
+        preview.scale = 1F;
+
+        assertEquals(1920F, CompLayerSourceCache.rasterMaxEdge(preview), 0.001F);
+        assertEquals(1F, CompLayerSourceCache.rasterScaleFor(1900F, 600F,
+            CompLayerSourceCache.rasterMaxEdge(preview)), 0.0001F,
+            "a fullscreen preview must not upscale a 1900 px layer from a 1024 px bake");
     }
 
     /** P2-1: the classic displacement map's depth mode needs the depth buffer, so it cannot bake. */

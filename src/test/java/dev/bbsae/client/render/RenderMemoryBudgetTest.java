@@ -115,8 +115,15 @@ public class RenderMemoryBudgetTest
 
         CompRenderContext preview = new CompRenderContext(project, doc, 0F, null, null, null);
 
+        preview.scale = 0.25F;
+
         assertEquals(1024F, CompLayerSourceCache.rasterMaxEdge(preview), 0.001F,
-            "the panel preview keeps the draft cap");
+            "a small preview keeps the 1024 draft guard");
+
+        preview.scale = 1F;
+
+        assertEquals(3840F, CompLayerSourceCache.rasterMaxEdge(preview), 0.001F,
+            "a fullscreen 4K preview must bake at the actual target, not the draft cap");
 
         preview.preview = false;
 

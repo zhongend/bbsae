@@ -87,9 +87,11 @@ public final class ReplayEntityMask
     private static boolean requestOccluded;
     private static boolean requestUnoccluded;
 
-    /* Two coverage targets: with and without the world depth test. */
+    /* Two coverage targets: with and without the world depth test. Both carry a depth attachment:
+     * the unoccluded target uses its own depth for actor self-occlusion, so back faces can no longer
+     * be painted over front faces (the "subject clips through itself" cutout). */
     private static final Target occludedTarget = new Target(true);
-    private static final Target plainTarget = new Target(false);
+    private static final Target plainTarget = new Target(true);
 
     /* Frame bookkeeping. */
     private static int serial;
@@ -193,6 +195,15 @@ public final class ReplayEntityMask
     {
         if (inMaskRender || inCompositeActorPass
             || context == null || context.stack == null || context.camera == null)
+        {
+            return;
+        }
+
+        /* First capture wins for this world frame. BBS' editor renders the current actor first and
+         * then its onion skins; the onion pass re-applies the replay at a different tick and a
+         * zero transition. Letting it overwrite this state posed the matte actor at the onion, so
+         * the cutout was a second, differently posed body. */
+        if (capturedSerial == serial)
         {
             return;
         }
@@ -493,10 +504,10 @@ public final class ReplayEntityMask
             return;
         }
 
-        /* Snapshot the controller tick that produced the world frame. The lazy overlay path used
-         * to read the live controller tick again; a film cursor update between AFTER_ENTITIES and
-         * the composition put the matte actor one keyframe away from the world actor. */
-        lastActorTick = controller.getTick();
+        /* Snapshot the controller tick that produced the world frame. FilmEditorController renders
+         * the running actor at cursor + 1 (the tick it is moving towards); using the bare cursor
+         * put the matte one keyframe behind, which showed up as chopped/offset body parts. */
+        lastActorTick = actorTick(controller);
 
         /* The world colour/depth are in the framebuffer that is current at AFTER_ENTITIES:
          * Minecraft's main target, BBS' custom-size target, or Iris' g-buffer. Copying its depth
@@ -602,6 +613,35 @@ public final class ReplayEntityMask
 
         renderedSerial = serial;
         renderedSignature = requestedSignature;
+    }
+
+    /**
+     * Tick the world actor was actually posed at.
+     *
+     * <p>{@link mchorse.bbs_mod.ui.film.controller.FilmEditorController#updateEntities(int)} adds
+     * one while the runner is running, because the editor shows the tick the actor is moving
+     * towards. The matte must use the same tick; the bare cursor is one keyframe behind and cuts
+     * the extracted body at every fast motion.</p>
+     */
+    private static int actorTick(BaseFilmController controller)
+    {
+        int tick = controller.getTick();
+
+        if (controller instanceof mchorse.bbs_mod.ui.film.controller.FilmEditorController editor
+            && editor.controller != null && editor.controller.panel != null)
+        {
+            try
+            {
+                if (editor.controller.panel.getRunner().isRunning())
+                {
+                    tick += 1;
+                }
+            }
+            catch (RuntimeException ignored)
+            {}
+        }
+
+        return tick;
     }
 
     private static float transitionOf(BaseFilmController controller, float tickDelta)
@@ -802,7 +842,15 @@ public final class ReplayEntityMask
             }
             else
             {
-                GL11.glDisable(GL11.GL_DEPTH_TEST);
+                /* Unoccluded coverage: clear the target's own depth and write the actor's nearest
+                 * surfaces. With depth writes off and culling disabled, every back face blended over
+                 * the front ones in submission order, which is exactly the "internal clipping /
+                 * incomplete body" the user reported. Self-depth gives a complete, correctly
+                 * layered actor silhouette; translucent texels are alpha-tested/discarded by the
+                 * form shader, so they do not punch body-shaped holes. */
+                GL11.glEnable(GL11.GL_DEPTH_TEST);
+                GL11.glDepthFunc(GL11.GL_LEQUAL);
+                GL11.glDepthMask(true);
                 GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
             }
 

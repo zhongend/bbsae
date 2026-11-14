@@ -203,11 +203,13 @@ public final class CompLayerSourceCache
     /**
      * Long-edge cap of a layer raster, before the proxy scale.
      *
-     * <p>The 1024 px cap is a draft/preview memory and fill-rate guard. The encoder used to inherit
-     * it too, so a 1900 px wide layer exported from a ~1024 px raster upscaled back to full size —
-     * soft, and worse once glow/blur padding enlarged the rectangle. Preview keeps the cap; any
-     * non-preview render (AE preview at scale 1, export) may use at least the composition's long
-     * edge. The signature contains the pixel size, so both variants keep separate cache entries.</p>
+     * <p>The 1024 px value is the small-panel guard. The encoder used to inherit it, so a 1900 px
+     * layer exported from a ~1024 px raster upscaled back to full size — soft, and worse once
+     * glow/blur padding enlarged the rectangle. Any non-preview render may use at least the
+     * composition's long edge. A preview follows its actual device-pixel target instead of a fixed
+     * guard: maximizing/fullscreening used to keep every baked 3D/text/effect layer at 1024 while
+     * the composition FBO was 1920+, which is the reported fullscreen mosaic. The signature
+     * contains the pixel size, so each variant keeps a separate cache entry.</p>
      */
     static float rasterMaxEdge(CompRenderContext context)
     {
@@ -225,7 +227,14 @@ public final class CompLayerSourceCache
 
         if (context.preview)
         {
-            return MAX_EDGE;
+            /* The draft guard was a fixed 1024 px. That is fine for a small panel, but once the
+             * preview is maximized/fullscreen the composition FBO can be 1920+ device pixels wide
+             * while every baked 3D/text/effect raster stayed at 1024 — the layer was then upscaled
+             * ~1.9× and read as mosaic. Follow the actual preview target, capped at 4K so an 8K
+             * composition cannot allocate an 8K raster per layer. */
+            int target = Math.max(context.renderWidth(), context.renderHeight());
+
+            return Math.max(MAX_EDGE, Math.min(4096, target));
         }
 
         return Math.max(MAX_EDGE, Math.max(context.width, context.height));

@@ -388,15 +388,23 @@ final class LayerContentRenderer
          * composition's 2D ortho matrix: the actor's screen position already comes from the world
          * camera, so baking the layer's z/rotationX/Y on top of it would move the matte away from
          * the actor it was extracted from. */
-        /* Actor-only image: the coverage pass now carries the actors' own RGB with transparent
-         * elsewhere. This replaces the world-plate matte entirely, so no background can leak. */
-        if (ReplayEntityKey.drawActors(layer, context, batcher))
+        Matrix4f matteWorld = layer.threeD ? CompScene.world(context, layer) : world;
+        Matrix4f matteProjection = layer.threeD || projection == null
+            ? GlStateGuard.ortho(context.width, context.height)
+            : projection;
+
+        /* Complete cutout first: the world frame's own actor pixels have correct self-occlusion and
+         * translucency, so the subject cannot show back faces over front ones (the "clipping
+         * through itself" report). Actor-only RGB is the fallback when no world frame is available. */
+        if (ReplayEntityKey.drawCutout(layer, context, matteWorld, matteProjection))
         {
             return;
         }
 
-        Matrix4f matteWorld = layer.threeD ? CompScene.world(context, layer) : world;
-        Matrix4f matteProjection = layer.threeD ? GlStateGuard.ortho(context.width, context.height) : projection;
+        if (ReplayEntityKey.drawActors(layer, context, batcher))
+        {
+            return;
+        }
 
         /* Production path: the full-screen coverage shader. The batcher variant is kept
          * behind a flag for A/B verification of sampler/state issues. */

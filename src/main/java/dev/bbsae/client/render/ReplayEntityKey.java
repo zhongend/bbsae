@@ -41,8 +41,29 @@ public final class ReplayEntityKey
      */
     public static boolean drawTextured(CompLayer layer, CompRenderContext context, mchorse.bbs_mod.ui.framework.elements.utils.Batcher2D batcher)
     {
+        return drawTextured(layer, context, batcher, layer.entityOcclusion);
+    }
+
+    /**
+     * Complete-actor cutout: copy the world frame's own actor pixels and cut them out with the
+     * coverage alpha.
+     *
+     * <p>The actor-only target is re-rendered under the matte camera, so with a multi-part form
+     * its interior can show faces in draw order (back faces over front faces) — the "the subject
+     * looks like it is clipping through itself" report. The world frame already contains the actor
+     * exactly where the film drew it, with correct self-occlusion and translucency; multiplying it
+     * by the coverage alpha gives the same complete silhouette without inventing a second image.
+     * The unoccluded coverage is used on purpose so no front face is carved away by a depth texel.</p>
+     */
+    public static boolean drawCutout(CompLayer layer, CompRenderContext context, Batcher2D batcher)
+    {
+        return drawTextured(layer, context, batcher, false);
+    }
+
+    private static boolean drawTextured(CompLayer layer, CompRenderContext context, Batcher2D batcher, boolean occluded)
+    {
         GlTexture world = BbsPreviewBridge.texture();
-        int mask = ReplayEntityMask.texture(layer.entityOcclusion);
+        int mask = ReplayEntityMask.texture(occluded);
 
         if (world == null || mask == 0)
         {
@@ -54,6 +75,16 @@ public final class ReplayEntityKey
          * actor pose" bug whenever the A/B flag was enabled. */
         if (!ReplayEntityMask.isCurrentFrame()
             || SceneColor.frameSerial() != ReplayEntityMask.frameSerial())
+        {
+            return false;
+        }
+
+        /* World color and matte must describe the same rectangle; otherwise the two quads are
+         * sampled at different scales and the actor looks doubled/offset. */
+        int frameMaskW = Math.max(1, ReplayEntityMask.width());
+        int frameMaskH = Math.max(1, ReplayEntityMask.height());
+
+        if (Math.abs(frameMaskW - world.width) > 1 || Math.abs(frameMaskH - world.height) > 1)
         {
             return false;
         }
@@ -168,10 +199,28 @@ public final class ReplayEntityKey
      * @return false when there is nothing to key (no world frame, no mask, no shader); the caller
      *         then draws its "waiting for the world" placeholder instead of a transparent rect.
      */
+    /**
+     * Complete-actor cutout through the proven fullscreen shader.
+     *
+     * <p>World colour + coverage alpha, using the unoccluded target. The actor-only target is
+     * re-rendered under the matte camera, so its draw order can show back faces over front faces
+     * (the "subject clips through itself" report). The world frame already contains the actor with
+     * correct self-occlusion and translucency; the shader only has to cut it out.</p>
+     */
+    public static boolean drawCutout(CompLayer layer, CompRenderContext context, Matrix4f model, Matrix4f projection)
+    {
+        return draw(layer, context, model, projection, false);
+    }
+
     public static boolean draw(CompLayer layer, CompRenderContext context, Matrix4f model, Matrix4f projection)
     {
+        return draw(layer, context, model, projection, layer.entityOcclusion);
+    }
+
+    private static boolean draw(CompLayer layer, CompRenderContext context, Matrix4f model, Matrix4f projection, boolean occluded)
+    {
         GlTexture world = BbsPreviewBridge.texture();
-        int mask = ReplayEntityMask.texture(layer.entityOcclusion);
+        int mask = ReplayEntityMask.texture(occluded);
 
         if (world == null || mask == 0 || projection == null)
         {
