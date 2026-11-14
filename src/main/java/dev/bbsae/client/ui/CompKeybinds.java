@@ -172,6 +172,10 @@ public final class CompKeybinds
         action("edit.redo", "重做", "编辑")
             .both(GLFW.GLFW_KEY_Z, true, true, false)
             .both(GLFW.GLFW_KEY_Y, true, false, false);
+        action("layer.copy", "复制图层", "编辑")
+            .both(GLFW.GLFW_KEY_C, true, false, false);
+        action("layer.paste", "粘贴图层", "编辑")
+            .both(GLFW.GLFW_KEY_V, true, false, false);
         action("layer.duplicate", "复制所选图层", "编辑")
             .premiere(GLFW.GLFW_KEY_D, true, true, false)
             .bbs(GLFW.GLFW_KEY_D, true, false, false);

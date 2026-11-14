@@ -1,6 +1,7 @@
 package dev.bbsae.client.ui;
 
 import org.junit.jupiter.api.Test;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -39,6 +40,16 @@ public class CompKeybindTest
         {
             assertTrue(!action.premiere.isEmpty() || !action.bbs.isEmpty(),
                 "no default shortcut for " + action.id);
+        }
+    }
+
+    @Test
+    public void layerClipboardShortcutsAreRegisteredInBothSchemes()
+    {
+        for (int scheme = 0; scheme <= 1; scheme++)
+        {
+            assertEquals("layer.copy", CompKeybinds.find(GLFW.GLFW_KEY_C, true, false, false, scheme));
+            assertEquals("layer.paste", CompKeybinds.find(GLFW.GLFW_KEY_V, true, false, false, scheme));
         }
     }
 

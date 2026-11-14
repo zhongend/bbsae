@@ -1,5 +1,56 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix70 — 2026-11-14
+
+图层复制/粘贴错位与项目时长硬上限修复。
+
+### 复制图层错位
+
+- `CompLayerOps.duplicate` 与 `duplicateLayer` 不再调用 `offsetCopy(+24,+24)`：
+  Ctrl+D / 复制按钮生成的副本与原图层严格重合；移动是用户自己的后续操作。
+- 旧的偏移只改 x/y 基字段和 X/Y 关键帧，在父级变换、3D 图层或非 X/Y 轴上会显示成
+  “副本错位”，因此整体移除。
+- 新增 `CompLayerOps.paste(doc, templates, index)`：原位插入、重新分配 id/名称、
+  重映射选中图层之间的父子/轨道遮罩引用。
+
+### Ctrl+C / Ctrl+V
+
+- `CompKeybinds` 新增 `layer.copy` / `layer.paste`，两个方案默认都是 Ctrl+C / Ctrl+V；
+  快捷键设置页可见、可改。
+- `UICompositorPanel` 新增图层剪贴板：
+  - Ctrl+C 保存所选图层的完整快照（不修改文档、不产生撤销点）；
+  - Ctrl+V 原位粘贴为独立图层，保留关键帧/效果/蒙版/父级等；重复粘贴互不影响；
+  - 剪贴板按工程 id 隔离，避免把别的工程图层粘贴进来；
+  - 右键轨道菜单同步提供复制/粘贴/原位复制。
+- 图层副本和粘贴都调用 `extendDurationToContent()`，不会因为旧时长被截断。
+
+### 项目时长 12 秒硬上限
+
+根因是 `CompDocument.duration` 默认 12，时间轴拖动/裁剪普遍用
+`Math.min(doc.duration, ...)` 截断，音频导入也把 start 夹到 12。
+
+修复：
+
+- `CompDocument.contentEnd()`：取所有图层（视觉/相机/音轨图层）的 `in/out` 与所有
+  音频片段 `start + length` 的最大值。
+- `CompDocument.extendDurationToContent()` / `setDurationAtLeast()`：只增长不自动缩短；
+  未被用户改短的工作区出点跟随新时长。
+- 图层 `moveTo` / `trimOutTo` 去掉合成时长上限；时间轴拖动、裁剪、多选整体移动、
+  音频移动/裁剪都不再有右墙，并在拖动中扩展时间轴可视范围。
+- 新图层、序列帧、视频导入、音频导入、音频 worker 探测完成后都触发扩展。
+- `CompStore.hydrate()` 在加载旧工程时自动扩展并更新工作区；
+  `UICompositorPanel.contentDurationChanged()` 同步 BBS 循环范围与影片 CompositionClip。
+- 面板/时间轴的 `setFrame`、工作区和关键帧时长继续读取新的 `doc.duration`。
+
+### 验证
+
+- 新增 `CompDocumentDurationTest`：最后图层、最后音频、拖动/裁剪超限、不自动缩短、
+  addLayer 自动扩展。
+- `CompLayerOpsTest`：复制原位、粘贴重映射父子关系。
+- `CompKeybindTest`：Ctrl+C/V 在两种快捷键方案中都有默认绑定。
+- 全量测试：**176 套件 / 1071 项 / 0 failures / 0 errors / 1 skipped**。
+- 未启动客户端截图；建议实机确认拖动、音频导入和快捷键。
+
 ## 0.99-hotfix69 — 2026-11-14
 
 3D 预合成标志的深入修复（接 hotfix68）。

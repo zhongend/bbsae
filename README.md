@@ -1,5 +1,16 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix70**：图层复制/粘贴与项目时长限制修复。
+> - **Ctrl+D / 图层副本原位**：不再自动偏移 24px，副本和原图层严格重合（AE 行为），
+>   父级/3D 图层也不会因为局部坐标偏移而错位。
+> - **Ctrl+C / Ctrl+V 图层复制粘贴**真正生效：复制所选图层快照，粘贴为独立副本，
+>   自动重映射父子/遮罩关系，原位插入，支持重复粘贴；剪贴板按工程隔离。
+> - **项目时长以最后一个图层/音频片段为准**：拖动、裁剪、音频移动/裁剪、序列帧/
+>   视频导入超过旧时长时自动扩展；不再有 12 秒硬墙。旧工程加载时自动扩展，工作区
+>   和影片 CompositionClip 同步。
+> - 详见 [`CHANGELOG.md`](CHANGELOG.md) 与
+>   [`docs/ROUND106-COPY-PASTE-DURATION.zh.md`](docs/ROUND106-COPY-PASTE-DURATION.zh.md)。
+>
 > **0.99-hotfix69**：3D 预合成的深层修复。
 > - hotfix68 已让 3D 工作区渲染真实嵌套合成并修正父/子相机双重投影；本轮继续修复
 >   预合成图层本身的 3D 标志：多选 3D 图层预合成后，新预合成层现在保持 `threeD=true`，
@@ -197,16 +208,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download `bbsae-0.99-hotfix69.jar` from the repository's
+1. Download `bbsae-0.99-hotfix70.jar` from the repository's
    [releases](https://github.com/zhongend/bbsae/releases), or build it with
-   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix69.jar`).
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix70.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99-hotfix69.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix70.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix69.jar` SHA-256: `08D0AC17B1B9AEB4C4E42441AB2DAE81EC84ACE2EF5B6C2015C7A5581BF6A1BD` (4,027,248 bytes).
+`bbsae-0.99-hotfix70.jar` SHA-256: `6FE65B14A20DAA22CDA28CCD2526AB922EA1FE13EA9026C226FFBB0C2E709CA1` (4,029,881 bytes).
 
 ## Gallery
 

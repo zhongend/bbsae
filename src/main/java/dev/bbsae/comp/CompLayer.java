@@ -1503,9 +1503,11 @@ public class CompLayer
     {
         float frame = 1F / Math.max(1F, fps);
         float length = Math.max(frame, this.out - this.in);
-        float maxIn = Math.max(0F, compDuration - length);
 
-        newIn = Math.max(0F, Math.min(maxIn, newIn));
+        /* No upper clamp: a layer may be dragged past the current composition end. The document
+         * grows to the last layer/audio clip (see CompDocument#extendDurationToContent) instead of
+         * the old 12s wall swallowing the gesture. */
+        newIn = Math.max(0F, newIn);
 
         float delta = newIn - this.in;
 
@@ -1545,7 +1547,9 @@ public class CompLayer
     {
         float frame = 1F / Math.max(1F, fps);
 
-        this.out = Math.max(this.in + frame, Math.min(Math.max(compDuration, this.in + frame), newOut));
+        /* No composition-duration ceiling: trimming beyond the current end is what asks the
+         * timeline/document to grow. */
+        this.out = Math.max(this.in + frame, newOut);
     }
 
     /**

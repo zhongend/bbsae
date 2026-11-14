@@ -566,7 +566,6 @@ public final class CompLayerOps
 
             copy.id = CompStore.uniqueId(layer.id + "_copy", doc.layers, (candidate) -> candidate.id);
             copy.name = layer.name + " 副本";
-            offsetCopy(copy, 24F, 24F);
             doc.layers.add(Math.min(doc.layers.size(), index + 1), copy);
             copies.add(copy);
             remap.put(layer.id, copy.id);
@@ -592,12 +591,74 @@ public final class CompLayerOps
     }
 
     /**
-     * Moves a fresh copy so it is visibly not the original.
+     * Inserts clipboard templates as independent layers, without an artificial pixel offset.
      *
-     * <p>{@code x/y} alone are not enough: once a layer has transform keyframes, {@code transformAt}
-     * evaluates the axis channels and ignores the base fields, so the "+24 px" offset was invisible
-     * and Ctrl+D looked like it had done nothing. The keyed values are shifted by the same delta,
-     * which translates the whole copied animation.</p>
+     * <p>AE's copy/paste and Ctrl+D both keep the copy in place; moving it is a separate user
+     * action. The old +24px "so you can see it" offset was wrong for parented/3D layers and read
+     * as a copy bug. References between clipped layers are remapped to the pasted copies.</p>
+     */
+    public static List<CompLayer> paste(CompDocument doc, List<CompLayer> templates, int insertIndex)
+    {
+        List<CompLayer> copies = new ArrayList<>();
+
+        if (doc == null || templates == null || templates.isEmpty())
+        {
+            return copies;
+        }
+
+        java.util.Map<String, String> remap = new java.util.LinkedHashMap<>();
+        int at = Math.max(0, Math.min(insertIndex, doc.layers.size()));
+
+        for (CompLayer template : templates)
+        {
+            if (template == null)
+            {
+                continue;
+            }
+
+            CompLayer copy = template.duplicate();
+
+            copy.id = CompStore.uniqueId(
+                (template.id == null || template.id.isEmpty() ? "layer" : template.id) + "_copy",
+                doc.layers, (candidate) -> candidate.id);
+            copy.name = (template.name == null || template.name.isEmpty() ? "Layer" : template.name) + " 副本";
+            doc.layers.add(at++, copy);
+            copies.add(copy);
+            remap.put(template.id, copy.id);
+        }
+
+        for (CompLayer copy : copies)
+        {
+            if (copy.parentId != null && remap.containsKey(copy.parentId))
+            {
+                copy.parentId = remap.get(copy.parentId);
+            }
+            else if (copy.parentId != null && !copy.parentId.isEmpty() && doc.getLayer(copy.parentId) == null)
+            {
+                copy.parentId = "";
+            }
+
+            if (copy.trackMatteId != null && remap.containsKey(copy.trackMatteId))
+            {
+                copy.trackMatteId = remap.get(copy.trackMatteId);
+            }
+            else if (copy.trackMatteId != null && !copy.trackMatteId.isEmpty() && doc.getLayer(copy.trackMatteId) == null)
+            {
+                copy.trackMatteId = "";
+                copy.trackMatteEnabled = false;
+            }
+        }
+
+        doc.extendDurationToContent();
+
+        return copies;
+    }
+
+    /**
+     * Legacy helper for callers that explicitly want a moved copy. Duplicate/paste no longer use
+     * it: an implicit +24 px offset made the copy look misaligned from its source.
+     *
+     * <p>{@code x/y} alone are not enough once a layer has transform keyframes...</p>
      */
     public static void offsetCopy(CompLayer copy, float dx, float dy)
     {

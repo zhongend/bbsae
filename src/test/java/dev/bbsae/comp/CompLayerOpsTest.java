@@ -368,7 +368,7 @@ public class CompLayerOpsTest
     }
 
     @Test
-    public void duplicateOfAnAnimatedLayerIsVisiblyOffset()
+    public void duplicateOfAnAnimatedLayerStaysInPlace()
     {
         CompDocument doc = new CompDocument();
 
@@ -383,10 +383,33 @@ public class CompLayerOpsTest
         java.util.List<CompLayer> copies = CompLayerOps.duplicate(doc, List.of(layer));
         CompLayer copy = copies.get(0);
 
-        /* The base fields are ignored once an axis channel has keys, so the +24 px has to be in
-         * the keyed values as well, otherwise the copy sits exactly on the original. */
-        assertEquals(124F, copy.axisAt(CompCurves.AXIS_X, 0F, 0F), 0.001F);
-        assertEquals(324F, copy.axisAt(CompCurves.AXIS_X, 30F, 0F), 0.001F);
+        /* Ctrl+D is an in-place duplicate: the old +24 px offset made the copy look misaligned,
+         * especially under a parent transform. */
+        assertEquals(100F, copy.axisAt(CompCurves.AXIS_X, 0F, 0F), 0.001F);
+        assertEquals(300F, copy.axisAt(CompCurves.AXIS_X, 30F, 0F), 0.001F);
+    }
+
+    @Test
+    public void pasteCreatesInPlaceCopiesWithRemappedRelations()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.width = 1920;
+        doc.height = 1080;
+
+        CompLayer parent = layer(doc, "parent", 300F, 200F);
+        CompLayer child = layer(doc, "child", 500F, 300F);
+
+        child.parentId = parent.id;
+
+        List<CompLayer> clipboard = List.of(parent.duplicate(), child.duplicate());
+        List<CompLayer> copies = CompLayerOps.paste(doc, clipboard, doc.layers.size());
+
+        assertEquals(2, copies.size());
+        assertEquals(parent.x, copies.get(0).x, 0.001F);
+        assertEquals(child.x, copies.get(1).x, 0.001F);
+        assertEquals(copies.get(0).id, copies.get(1).parentId,
+            "a pasted child must follow the pasted parent, not the original");
     }
 
     @Test
@@ -478,6 +501,6 @@ public class CompLayerOpsTest
         assertEquals(2, doc.layers.size());
         assertNotSame(a, copies.get(0));
         assertFalse(copies.get(0).id.equals(a.id));
-        assertEquals(a.x + 24F, copies.get(0).x, 0.001F);
+        assertEquals(a.x, copies.get(0).x, 0.001F, "duplicate is in place, not offset");
     }
 }

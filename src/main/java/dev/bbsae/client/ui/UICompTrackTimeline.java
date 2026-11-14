@@ -2267,7 +2267,8 @@ public class UICompTrackTimeline extends UIElement
 
         if (this.dragMode == MODE_AUDIO_MOVE)
         {
-            clip.start = this.clamp(this.quantize(this.dragAudioStart + delta), 0F, Math.max(0F, duration - frame));
+            clip.start = this.clamp(this.quantize(this.dragAudioStart + delta), 0F, Float.MAX_VALUE);
+            this.extendDurationForAudio(clip);
             this.panel.setStatus(String.format(Locale.ROOT, "音频 %s 入点 %.2fs", clip.name, clip.start));
         }
         else if (this.dragMode == MODE_AUDIO_TRIM_IN)
@@ -2287,13 +2288,56 @@ public class UICompTrackTimeline extends UIElement
             clip.start = Math.max(0F, newStart);
             clip.offset = Math.max(0F, newOffset);
             clip.duration = Math.max(frame, length - (clip.start - this.dragAudioStart));
+            this.extendDurationForAudio(clip);
             this.panel.setStatus(String.format(Locale.ROOT, "音频入点 %.2fs（源偏移 %.2fs · %.2fx）",
                 clip.start, clip.offset, speed));
         }
         else
         {
-            clip.duration = this.clamp(this.quantize(length + delta), frame, Math.max(frame, duration - clip.start));
+            clip.duration = this.clamp(this.quantize(length + delta), frame, Float.MAX_VALUE);
+            this.extendDurationForAudio(clip);
             this.panel.setStatus(String.format(Locale.ROOT, "音频时长 %.2fs（%.2fx）", clip.duration, speed));
+        }
+    }
+
+    private void extendDurationForLayers(float end)
+    {
+        CompDocument doc = this.doc();
+
+        if (doc != null && doc.setDurationAtLeast(end))
+        {
+            this.ensureViewCovers(doc.duration);
+        }
+    }
+
+    private void extendDurationForAudio(dev.bbsae.comp.CompAudio clip)
+    {
+        CompDocument doc = this.doc();
+
+        if (doc != null && clip != null
+            && doc.setDurationAtLeast(clip.start + Math.max(0F, clip.length(doc.duration))))
+        {
+            this.ensureViewCovers(doc.duration);
+        }
+    }
+
+    /** Expands the visible time range if new content lies beyond its right edge. */
+    public void ensureDurationVisible()
+    {
+        if (this.doc() != null)
+        {
+            this.ensureViewCovers(this.doc().duration);
+        }
+    }
+
+    /**
+     * Keeps the right edge of a zoomed/panning timeline reachable while content grows.
+     */
+    private void ensureViewCovers(double end)
+    {
+        if (end > this.xAxis.getMaxValue())
+        {
+            this.xAxis.view(this.xAxis.getMinValue(), end + Math.max(0.1D, end * 0.01D));
         }
     }
 
@@ -2441,7 +2485,7 @@ public class UICompTrackTimeline extends UIElement
         if (this.dragMode == MODE_MOVE)
         {
             float length = Math.max(frame, this.dragOut - this.dragIn);
-            float newIn = this.clamp(this.quantize(this.dragIn + delta), 0F, Math.max(0F, duration - length));
+            float newIn = Math.max(0F, this.quantize(this.dragIn + delta));
 
             if (snap)
             {
@@ -2462,15 +2506,13 @@ public class UICompTrackTimeline extends UIElement
                 }
             }
 
-            newIn = this.clamp(newIn, 0F, Math.max(0F, duration - length));
+            newIn = Math.max(0F, newIn);
 
             if (this.dragLayers.size() > 1)
             {
-                /* Group move: one delta for the whole selection, clamped so every member stays
-                 * inside [0, duration] (the tightest member wins). Snapping nudges the group so
-                 * the primary bar's edge lands on the guide. */
+                /* Group move: one delta for the whole selection. There is no right-hand wall any
+                 * more; only the 0 wall (nothing may start before the composition) constrains it. */
                 float minDelta = -Float.MAX_VALUE;
-                float maxDelta = Float.MAX_VALUE;
 
                 for (CompLayer moving : this.dragLayers)
                 {
@@ -2481,13 +2523,10 @@ public class UICompTrackTimeline extends UIElement
                         continue;
                     }
 
-                    float memberLength = Math.max(frame, origin[1] - origin[0]);
-
                     minDelta = Math.max(minDelta, -origin[0]);
-                    maxDelta = Math.min(maxDelta, duration - memberLength - origin[0]);
                 }
 
-                float groupDelta = this.clamp(this.quantize(delta), minDelta, maxDelta);
+                float groupDelta = Math.max(minDelta, this.quantize(delta));
 
                 if (snap && !this.dragLayers.isEmpty())
                 {
@@ -2501,11 +2540,13 @@ public class UICompTrackTimeline extends UIElement
 
                         if (Math.abs(adjust) > 0.0001F)
                         {
-                            groupDelta = this.clamp(this.quantize(groupDelta + adjust), minDelta, maxDelta);
+                            groupDelta = Math.max(minDelta, this.quantize(groupDelta + adjust));
                             this.snapGuide = primaryOrigin[0] + groupDelta;
                         }
                     }
                 }
+
+                float end = 0F;
 
                 for (CompLayer moving : this.dragLayers)
                 {
@@ -2514,12 +2555,16 @@ public class UICompTrackTimeline extends UIElement
                     if (origin != null)
                     {
                         moving.moveTo(origin[0] + groupDelta, fps, duration);
+                        end = Math.max(end, moving.out);
                     }
                 }
+
+                this.extendDurationForLayers(end);
             }
             else
             {
                 layer.moveTo(newIn, fps, duration);
+                this.extendDurationForLayers(layer.out);
             }
         }
         else if (this.dragMode == MODE_TRIM_IN)
@@ -2541,7 +2586,7 @@ public class UICompTrackTimeline extends UIElement
         }
         else if (this.dragMode == MODE_TRIM_OUT)
         {
-            float newOut = this.clamp(this.quantize(this.dragOut + delta), layer.in + frame, duration);
+            float newOut = Math.max(layer.in + frame, this.quantize(this.dragOut + delta));
 
             if (snap)
             {
@@ -2554,7 +2599,8 @@ public class UICompTrackTimeline extends UIElement
                 }
             }
 
-            layer.trimOutTo(Math.min(duration, Math.max(layer.in + frame, newOut)), fps, duration);
+            layer.trimOutTo(Math.max(layer.in + frame, newOut), fps, duration);
+            this.extendDurationForLayers(layer.out);
         }
     }
 

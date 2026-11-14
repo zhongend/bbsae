@@ -1111,9 +1111,14 @@ public final class CompStore
     {
         for (CompDocument comp : project.comps)
         {
-            if (comp == null || comp.layers == null)
+            if (comp == null)
             {
                 continue;
+            }
+
+            if (comp.layers == null)
+            {
+                comp.layers = new ArrayList<>();
             }
 
             for (CompLayer layer : comp.layers)
@@ -1126,6 +1131,11 @@ public final class CompStore
                 layer.ensureInitialized();
                 layer.loadTracks();
             }
+
+            /* Older projects were persisted with a 12s duration while their real layers/audio
+             * extended past it. Grow on load so the timeline and export immediately cover the
+             * content instead of waiting for the first render tick. */
+            comp.extendDurationToContent();
         }
     }
 

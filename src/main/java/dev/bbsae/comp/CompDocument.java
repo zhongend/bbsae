@@ -131,8 +131,72 @@ public class CompDocument
 
         layer.id = CompStore.uniqueId(layer.id == null || layer.id.isEmpty() ? layer.type : layer.id, this.layers, (l) -> l.id);
         this.layers.add(layer);
+        this.extendDurationToContent();
 
         return layer;
+    }
+
+    /**
+     * End of the last piece of timeline content, in seconds. Includes every layer (visual,
+     * camera, audio on the layer track) and every audio clip, visible or not: trimming a layer
+     * out of view must not silently shorten the project either.
+     */
+    public float contentEnd()
+    {
+        float end = 0F;
+
+        for (CompLayer layer : this.layers == null ? java.util.Collections.<CompLayer>emptyList() : this.layers)
+        {
+            if (layer != null)
+            {
+                end = Math.max(end, Math.max(layer.in, layer.out));
+            }
+        }
+
+        for (CompAudio clip : this.audio == null ? java.util.Collections.<CompAudio>emptyList() : this.audio)
+        {
+            if (clip != null)
+            {
+                end = Math.max(end, clip.start + Math.max(0F, clip.length(this.duration)));
+            }
+        }
+
+        return Math.max(0.1F, end);
+    }
+
+    /**
+     * Grows the composition so its last layer/audio clip is fully reachable. Never shrinks: a
+     * deliberately longer canvas (markers, empty tail, export padding) is editorial state, while
+     * the old 12s clamp silently cut real content.
+     */
+    public boolean extendDurationToContent()
+    {
+        return this.setDurationAtLeast(this.contentEnd());
+    }
+
+    /** Grows duration/work area to at least {@code minimum}; returns true when it changed. */
+    public boolean setDurationAtLeast(float minimum)
+    {
+        float wanted = Math.max(0.1F, minimum);
+
+        if (wanted <= this.duration + 0.0001F)
+        {
+            return false;
+        }
+
+        float old = this.duration;
+
+        this.duration = wanted;
+
+        /* Follow the end only when the work area was the untouched default (or already invalid).
+         * A deliberately shorter loop must survive this; only the old 12s barrier is removed. */
+        if (this.workAreaOut <= 0F || Math.abs(this.workAreaOut - old) <= 0.0001F
+            || this.workAreaOut > this.duration)
+        {
+            this.workAreaOut = this.duration;
+        }
+
+        return true;
     }
 
     public boolean removeLayer(String layerId)

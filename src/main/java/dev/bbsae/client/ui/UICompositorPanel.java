@@ -223,6 +223,11 @@ public class UICompositorPanel extends UIDashboardPanel
     private CompLayer selectedLayer;
     /** Multi-selection, in click order; {@link #selectedLayer} is always its primary member. */
     private final java.util.LinkedHashSet<String> selectedIds = new java.util.LinkedHashSet<>();
+    /** Detached layer templates for Ctrl+C / Ctrl+V, scoped to the project they came from. */
+    private final java.util.List<CompLayer> layerClipboard = new java.util.ArrayList<>();
+    private String layerClipboardProjectId = "";
+    /** Last composition duration whose BBS loop / film clip side effects were synchronized. */
+    private float lastDurationSync = -1F;
     private CompRenderJob selectedJob;
     private dev.bbsae.comp.CompAudio selectedAudio;
     private mchorse.bbs_mod.ui.film.UIFilmPanel filmPanel;
@@ -7055,6 +7060,71 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /**
+     * Grows the composition to the last layer/audio clip and synchronizes everything that cached
+     * the old end: BBS loop range, the film composition clip, timeline rows and the project file.
+     *
+     * <p>This is deliberately separate from the per-frame path: during a drag only the model is
+     * extended, so the UI does not rebuild its track list on every mouse move.</p>
+     */
+    void contentDurationChanged()
+    {
+        if (this.doc == null)
+        {
+            return;
+        }
+
+        /* The timeline grows doc.duration directly during a drag (so the gesture is not clamped),
+         * then calls this on mouse release. Comparing against the last synchronized duration is
+         * therefore necessary; re-running extendDurationToContent alone would see "no change" and
+         * skip the film clip/BBS loop update. */
+        this.doc.extendDurationToContent();
+
+        boolean changed = this.lastDurationSync < 0F
+            || this.lastDurationSync > this.doc.duration + 0.0001F
+            || Math.abs(this.lastDurationSync - this.doc.duration) > 0.0001F;
+
+        this.lastDurationSync = this.doc.duration;
+
+        if (!changed)
+        {
+            return;
+        }
+
+        normalizeWorkArea(this.doc);
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.ensureDurationVisible();
+        }
+
+        if (this.film != null && this.filmPanel != null && this.project != null)
+        {
+            this.syncBbsLoopToDocument();
+            CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+            this.filmPanel.forceSave();
+        }
+
+        this.refreshLayers();
+        this.refreshSheets();
+        this.save();
+    }
+
+    /** Catches loaded/edited content that already extends past the stored duration. */
+    private void tickContentDuration()
+    {
+        if (this.doc == null || mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0))
+        {
+            return;
+        }
+
+        if (this.doc.contentEnd() > this.doc.duration + 0.0001F
+            || Math.abs(this.lastDurationSync - this.doc.duration) > 0.0001F)
+        {
+            this.contentDurationChanged();
+        }
+    }
+
+    /**
      * The timeline's drag range is {@code doc.duration}. If a duration field is raised, the
      * composition itself has to grow first; otherwise the user sees a barrier at the old end
      * (the reported "20s wall") even though the export field says 40.
@@ -8827,8 +8897,8 @@ public class UICompositorPanel extends UIDashboardPanel
         layer.height = this.doc.height * 0.6F;
         layer.x = this.doc.width / 2F;
         layer.y = this.doc.height / 2F;
-        layer.in = Math.max(0F, Math.min(this.doc.duration, time));
-        layer.out = Math.min(this.doc.duration, layer.in + frames / Math.max(1F, this.doc.fps));
+        layer.in = Math.max(0F, time);
+        layer.out = layer.in + frames / Math.max(1F, this.doc.fps);
         layer.imageFit = 0;
         this.fitLayerToSource(layer, item.path);
 
@@ -9634,7 +9704,7 @@ public class UICompositorPanel extends UIDashboardPanel
                         layer.x = target.width / 2F;
                         layer.y = target.height / 2F;
                         layer.in = 0F;
-                        layer.out = Math.min(target.duration, Math.max(1F / fps, frames / fps));
+                        layer.out = Math.max(1F / fps, frames / fps);
                         layer.imageFit = 0;
                         layer.name = file.getName();
 
@@ -12866,6 +12936,7 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Timing edits do not rebuild the inspector: that would destroy the field the user is typing in. */
     private void commitLayerTiming()
     {
+        this.contentDurationChanged();
         this.save();
 
         if (this.trackTimeline != null)
@@ -12879,6 +12950,7 @@ public class UICompositorPanel extends UIDashboardPanel
     public void onTrackEdited()
     {
         this.resetTimelineView = false;
+        this.contentDurationChanged();
         this.refreshInspector();
         this.refreshSheets();
 
@@ -13070,13 +13142,94 @@ public class UICompositorPanel extends UIDashboardPanel
 
         copy.id = CompStore.uniqueId(layer.id + "_copy", this.doc.layers, (candidate) -> candidate.id);
         copy.name = this.layerLabel(layer) + " 副本";
-        dev.bbsae.comp.CompLayerOps.offsetCopy(copy, 24F, 24F);
         this.doc.layers.add(this.doc.layers.indexOf(layer) + 1, copy);
+        this.doc.extendDurationToContent();
         this.setSingleSelection(copy);
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
+        this.contentDurationChanged();
         this.save();
+        this.setStatus("已复制图层：" + copy.name + "（原位，可拖动）");
+    }
+
+    /* ---------------------------------------------------------------- layer clipboard */
+
+    /** Ctrl+C: detach a snapshot of the selected layers. Copying never mutates the document. */
+    public void copySelectedLayers()
+    {
+        List<CompLayer> layers = this.getSelectedLayers();
+
+        if (layers.isEmpty())
+        {
+            this.setStatus("先在时间轴选择要复制的图层");
+
+            return;
+        }
+
+        this.layerClipboard.clear();
+
+        for (CompLayer layer : layers)
+        {
+            this.layerClipboard.add(layer.duplicate());
+        }
+
+        this.layerClipboardProjectId = this.project == null ? "" : this.project.id;
+        this.setStatus("已复制 " + this.layerClipboard.size() + " 个图层（Ctrl+V 粘贴，原位）");
+    }
+
+    /** Ctrl+V: insert the detached clipboard above the current layer, with remapped references. */
+    public void pasteLayerClipboard()
+    {
+        if (this.doc == null || this.project == null)
+        {
+            return;
+        }
+
+        if (this.layerClipboard.isEmpty())
+        {
+            this.setStatus("剪贴板为空：先 Ctrl+C 复制图层");
+
+            return;
+        }
+
+        if (!this.layerClipboardProjectId.isEmpty() && !this.layerClipboardProjectId.equals(this.project.id))
+        {
+            this.layerClipboard.clear();
+            this.layerClipboardProjectId = "";
+            this.setStatus("剪贴板来自另一个工程，已清空");
+
+            return;
+        }
+
+        int index = this.selectedLayer == null || this.doc.layers.indexOf(this.selectedLayer) < 0
+            ? this.doc.layers.size()
+            : this.doc.layers.indexOf(this.selectedLayer) + 1;
+
+        this.beginAction("粘贴图层");
+        List<CompLayer> copies = dev.bbsae.comp.CompLayerOps.paste(this.doc, this.layerClipboard, index);
+
+        if (copies.isEmpty())
+        {
+            this.setStatus("粘贴失败：剪贴板没有有效图层");
+
+            return;
+        }
+
+        this.selectedIds.clear();
+
+        for (CompLayer copy : copies)
+        {
+            this.selectedIds.add(copy.id);
+        }
+
+        this.applySelection(copies.get(copies.size() - 1));
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.contentDurationChanged();
+        this.save();
+        this.setStatus("已粘贴 " + copies.size() + " 个图层（原位）");
     }
 
     /* ---------------------------------------------------------------- multi selection */
@@ -13137,6 +13290,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.beginAction("复制所选图层");
         List<CompLayer> copies = dev.bbsae.comp.CompLayerOps.duplicate(this.doc, this.getSelectedLayers());
+        this.contentDurationChanged();
 
         this.selectedIds.clear();
 
@@ -13522,6 +13676,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.beginAction("微移图层");
         layer.moveTo(layer.in + frames / Math.max(1F, this.doc.fps), Math.max(1F, this.doc.fps), this.doc.duration);
+        this.contentDurationChanged();
         this.refreshInspector();
         this.save();
     }
@@ -16454,7 +16609,9 @@ public class UICompositorPanel extends UIDashboardPanel
     private void layerContextMenu(ContextMenuManager manager)
     {
         manager.action(Icons.ADD, IKey.constant("添加图层…"), this::showAddLayerMenu);
-        manager.action(Icons.COPY, IKey.constant("复制图层"), this::duplicateSelected);
+        manager.action(Icons.COPY, IKey.constant("复制图层（Ctrl+C）"), this::copySelectedLayers);
+        manager.action(Icons.COPY, IKey.constant("粘贴图层（Ctrl+V）"), this::pasteLayerClipboard);
+        manager.action(Icons.COPY, IKey.constant("复制图层（Ctrl+D，原位）"), this::duplicateSelected);
         manager.action(Icons.TRASH, IKey.constant("删除"), this::deleteSelected);
 
         if (this.selectedLayer != null && "precomp".equals(this.selectedLayer.type)
@@ -18626,10 +18783,11 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(UI.label(IKey.constant(this.layerLabel(layer) + "  ·  " + layer.type), 16));
 
         float frame = 1F / Math.max(1F, this.doc.fps);
-        float max = this.doc.duration;
+        float max = 36000F;
 
         /* Direct numeric editing. Dragging the bar edges is fast, but "make this exactly 3 s"
-         * was previously impossible without arithmetic on the ruler. */
+         * was previously impossible without arithmetic on the ruler. The field is not capped by
+         * the current composition duration: typing a longer out point grows the document. */
         section.fields.add(this.numberRow("入点（秒）", layer.in, 0F, max, false, (value) ->
         {
             layer.trimInTo((float) Math.max(0D, Math.min(layer.out - frame, value)), this.doc.fps);
@@ -18637,14 +18795,14 @@ public class UICompositorPanel extends UIDashboardPanel
         }));
         section.fields.add(this.numberRow("出点（秒）", layer.out, 0, max, false, (value) ->
         {
-            layer.trimOutTo((float) Math.max(layer.in + frame, Math.min(max, value)), this.doc.fps, max);
+            layer.trimOutTo((float) Math.max(layer.in + frame, value), this.doc.fps, max);
             this.commitLayerTiming();
         }));
         section.fields.add(this.numberRow("时长（秒）", Math.max(frame, layer.out - layer.in), frame, max, false, (value) ->
         {
             float duration = Math.max(frame, (float) value.doubleValue());
 
-            layer.trimOutTo(Math.min(max, layer.in + duration), this.doc.fps, max);
+            layer.trimOutTo(layer.in + duration, this.doc.fps, max);
             this.commitLayerTiming();
         }));
 
@@ -18667,7 +18825,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
                 else
                 {
-                    layer.trimOutTo(Math.min(this.doc.duration, layer.in + duration), this.doc.fps, this.doc.duration);
+                    layer.trimOutTo(layer.in + duration, this.doc.fps, this.doc.duration);
                 }
 
                 this.commitLayerTiming();
@@ -20125,10 +20283,11 @@ public class UICompositorPanel extends UIDashboardPanel
             storedPath
         );
 
-        clip.start = Math.max(0F, Math.min(targetDoc.duration, start));
+        clip.start = Math.max(0F, start);
         clip.name = name.substring(0, name.lastIndexOf('.') > 0 ? name.lastIndexOf('.') : name.length());
 
         targetDoc.audio.add(clip);
+        targetDoc.extendDurationToContent();
         this.selectAudioClip(clip);
         dev.bbsae.client.audio.CompAudioPlayer.invalidate();
         this.refreshInspector();
@@ -20193,6 +20352,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     }
 
                     dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+                    this.contentDurationChanged();
                     this.refreshInspector();
                     this.refreshMediaViews();
                     this.save();
@@ -24447,6 +24607,8 @@ public class UICompositorPanel extends UIDashboardPanel
             case "selection.delete" -> { this.deleteSelected(); return true; }
             case "edit.undo" -> { this.undo(); return true; }
             case "edit.redo" -> { this.redo(); return true; }
+            case "layer.copy" -> { this.copySelectedLayers(); return true; }
+            case "layer.paste" -> { this.pasteLayerClipboard(); return true; }
             case "layer.duplicate" -> { this.duplicateSelected(); return true; }
             case "select.all" -> { this.selectAllLayers(); this.setStatus("已全选 " + this.getSelectionCount() + " 个图层"); return true; }
             case "tool.select" -> { this.setStatus("选择工具：本合成器始终为选择模式"); return true; }
@@ -24863,7 +25025,8 @@ public class UICompositorPanel extends UIDashboardPanel
         list.add(new String[] {"Alt + K", "在播放头添加变换关键帧"});
         list.add(new String[] {"Ctrl + ↑ / ↓", "选择上一条 / 下一条轨道"});
         list.add(new String[] {"Alt + ↑ / ↓", "轨道上移 / 下移一层"});
-        list.add(new String[] {premiere ? "Ctrl + Shift + D" : "Ctrl + D", "复制轨道"});
+        list.add(new String[] {premiere ? "Ctrl + Shift + D" : "Ctrl + D", "复制轨道（原位）"});
+        list.add(new String[] {"Ctrl + C / Ctrl + V", "复制 / 粘贴图层（原位）"});
         list.add(new String[] {"Delete", "删除轨道"});
         list.add(new String[] {"Ctrl + Z / Ctrl + Shift + Z", "撤销 / 重做"});
         list.add(new String[] {"Ctrl + S", "保存工程"});
@@ -25310,6 +25473,7 @@ public class UICompositorPanel extends UIDashboardPanel
     public void render(UIContext context)
     {
         this.tickMasterTransformSync();
+        this.tickContentDuration();
 
         /* Coalesced inspector rebuild: at most one per frame, right before the tree is drawn.
          * A page switch therefore starts its transition immediately instead of rebuilding the
