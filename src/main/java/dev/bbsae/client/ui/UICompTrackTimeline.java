@@ -412,6 +412,32 @@ public class UICompTrackTimeline extends UIElement
         return hit;
     }
 
+    /** Screen-space hit helpers for external file drops. */
+    public boolean containsScreen(int x, int y)
+    {
+        return x >= this.area.x && x < this.area.ex() && y >= this.area.y && y < this.area.ey();
+    }
+
+    public float timeAtScreen(int x)
+    {
+        return this.fromX(x);
+    }
+
+    public int rowAtScreen(int y)
+    {
+        return this.rowAt(y);
+    }
+
+    public boolean isAudioRowAt(int y)
+    {
+        return this.rowAt(y) == this.audioRowIndex();
+    }
+
+    public CompLayer layerAtScreen(int y)
+    {
+        return this.rowLayer(this.rowAt(y));
+    }
+
     private int rowAt(int mouseY)
     {
         if (mouseY < this.laneArea.y || mouseY >= this.laneArea.ey())

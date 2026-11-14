@@ -646,6 +646,8 @@ public class UICompositorPanel extends UIDashboardPanel
         }));
         assetSection.fields.add(new UICompButton(IKey.constant("导入视频…"), (button) -> this.importVideo())
             .tooltip(IKey.constant("把 mp4/mov/mkv/webm 拆成逐帧图片，并新建一条 footage 轨道（按合成帧率、合成尺寸）")));
+        assetSection.fields.add(new UICompButton(IKey.constant("导入音频…"), (button) -> this.importAudioFile())
+            .tooltip(IKey.constant("WAV/OGG 默认外部链接；MP3/FLAC/M4A 用 FFmpeg 转 WAV。也可以直接拖到时间轴音频轨")));
         this.assetPanel.add(assetSection);
 
         this.leftTabs = new UICompTabBar();
@@ -8553,6 +8555,11 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Links a video in place and extracts frames on demand; nothing is copied into the project. */
     private void importVideoLink(java.io.File file)
     {
+        this.importVideoLink(file, this.time);
+    }
+
+    private void importVideoLink(java.io.File file, float start)
+    {
         if (this.doc == null)
         {
             return;
@@ -8574,7 +8581,7 @@ public class UICompositorPanel extends UIDashboardPanel
         layer.height = Math.max(2, Math.round(size[1] * scale) & ~1);
         layer.x = this.doc.width / 2F;
         layer.y = this.doc.height / 2F;
-        layer.in = 0F;
+        layer.in = Math.max(0F, Math.min(this.doc.duration, start));
         layer.out = this.doc.duration;
         layer.imageFit = 0;
         layer.name = file.getName();
@@ -15332,7 +15339,8 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         try
         {
-            String name = this.copyIntoProjectImages(file);
+            String path = this.imageImportPath(file);
+            String name = file.getName();
 
             /* Importing into a text/shape/solid layer used to write imagePath that the renderer
              * ignored, so the button looked dead. Promote the layer to an image layer; transform,
@@ -15342,10 +15350,9 @@ public class UICompositorPanel extends UIDashboardPanel
                 layer.type = "image";
             }
 
-            layer.imagePath = "assets/images/" + name;
+            layer.imagePath = path;
 
-            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(
-                CompStore.assetRoot(this.project.id).resolve("images").resolve(name).toFile());
+            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(file);
 
             if (image != null)
             {
@@ -15357,7 +15364,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
             this.refreshInspector();
             this.save();
-            this.setStatus("已导入到图层：" + name);
+            this.setStatus("已导入到图层：" + name
+                + (path.startsWith("external:") ? "（外部链接）" : ""));
         }
         catch (Exception e)
         {
@@ -18583,6 +18591,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void addAudioClip(java.io.File file)
     {
+        this.addAudioClip(file, this.time);
+    }
+
+    private void addAudioClip(java.io.File file, float start)
+    {
         try
         {
             java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve("audio");
@@ -18629,7 +18642,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 storedPath
             );
 
-            clip.start = this.time;
+            clip.start = Math.max(0F, Math.min(this.doc.duration, start));
             clip.name = name.substring(0, name.lastIndexOf('.') > 0 ? name.lastIndexOf('.') : name.length());
 
             /* Store the real length now: the timeline draws it and the mixer plays it, so a clip
@@ -23044,11 +23057,29 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     public void handleDroppedFiles(java.util.List<java.nio.file.Path> files)
     {
+        this.handleDroppedFiles(files, -1, -1);
+    }
+
+    /**
+     * Drop with the screen mouse position. Inside the timeline the file lands at the row/time
+     * under the pointer (Premiere/AE style); elsewhere it falls back to the playhead/centre.
+     */
+    public void handleDroppedFiles(java.util.List<java.nio.file.Path> files, int mouseX, int mouseY)
+    {
         if (this.project == null || this.doc == null)
         {
             this.setStatus("先打开一个工程，再把文件拖进来");
 
             return;
+        }
+
+        float dropTime = this.time;
+        int dropRow = -1;
+
+        if (this.trackTimeline != null && this.trackTimeline.containsScreen(mouseX, mouseY))
+        {
+            dropTime = Math.max(0F, Math.min(this.doc.duration, this.trackTimeline.timeAtScreen(mouseX)));
+            dropRow = this.trackTimeline.rowAtScreen(mouseY);
         }
 
         int imported = 0;
@@ -23066,18 +23097,38 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".gif"))
                 {
-                    this.importDroppedImage(path.toFile());
+                    this.importDroppedImage(path.toFile(), dropTime);
+
+                    if (dropRow >= 0 && this.selectedLayer != null)
+                    {
+                        this.moveLayerToDisplayIndex(this.selectedLayer, dropRow);
+                    }
+
                     imported++;
                 }
                 else if (name.endsWith(".mp4") || name.endsWith(".mov") || name.endsWith(".mkv")
                     || name.endsWith(".webm") || name.endsWith(".avi") || name.endsWith(".m4v"))
                 {
-                    this.importVideoFile(path.toFile());
+                    if (CompPrefs.get().linkExternalAssets)
+                    {
+                        this.importVideoLink(path.toFile(), dropTime);
+
+                        if (dropRow >= 0 && this.selectedLayer != null)
+                        {
+                            this.moveLayerToDisplayIndex(this.selectedLayer, dropRow);
+                        }
+                    }
+                    else
+                    {
+                        this.importVideoFile(path.toFile());
+                    }
+
                     imported++;
                 }
-                else if (name.endsWith(".wav") || name.endsWith(".ogg"))
+                else if (name.endsWith(".wav") || name.endsWith(".ogg")
+                    || name.endsWith(".mp3") || name.endsWith(".flac") || name.endsWith(".m4a"))
                 {
-                    this.addAudioClip(path.toFile());
+                    this.addAudioClip(path.toFile(), dropTime);
                     imported++;
                 }
                 else if (name.endsWith(".ttf") || name.endsWith(".otf"))
@@ -23102,23 +23153,30 @@ public class UICompositorPanel extends UIDashboardPanel
             this.refreshLayers();
             this.refreshInspector();
             this.save();
-            this.setStatus("已从拖放导入 " + imported + " 个文件");
+            this.setStatus("已从拖放导入 " + imported + " 个文件"
+                + (dropRow >= 0 ? String.format(java.util.Locale.ROOT, " · 入点 %.2fs", dropTime) : ""));
         }
     }
 
     /** A dropped picture becomes an image layer sized to fit the composition. */
     private void importDroppedImage(java.io.File file) throws java.io.IOException
     {
-        String name = this.copyIntoProjectImages(file);
+        this.importDroppedImage(file, this.time);
+    }
+
+    private void importDroppedImage(java.io.File file, float start) throws java.io.IOException
+    {
+        String path = this.imageImportPath(file);
+        String name = file.getName();
         CompLayer layer = new CompLayer("image", name, "image");
 
-        layer.imagePath = "assets/images/" + name;
+        layer.imagePath = path;
         layer.x = this.doc.width / 2F;
         layer.y = this.doc.height / 2F;
+        layer.in = Math.max(0F, Math.min(this.doc.duration, start));
         layer.out = this.doc.duration;
 
-        java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(
-            CompStore.assetRoot(this.project.id).resolve("images").resolve(name).toFile());
+        java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(file);
 
         if (image != null)
         {
@@ -23130,7 +23188,18 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.doc.addLayer(layer);
         this.selectLayer(layer);
-        this.setStatus("已拖入图片：" + name);
+        this.setStatus("已拖入图片：" + name + (path.startsWith("external:") ? "（外部链接）" : ""));
+    }
+
+    /** Linked imports keep the source in place; the fallback copies it into assets/images. */
+    private String imageImportPath(java.io.File file) throws java.io.IOException
+    {
+        if (CompPrefs.get().linkExternalAssets)
+        {
+            return "external:" + file.getAbsoluteFile();
+        }
+
+        return "assets/images/" + this.copyIntoProjectImages(file);
     }
 
     /** A dropped font applies to the selected text layer, or creates one. */

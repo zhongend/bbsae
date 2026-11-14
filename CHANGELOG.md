@@ -1,5 +1,47 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix59 — 2026-11-14
+
+音频入口、OS 拖入、外链素材、按轨道落点导入。
+
+### 音频导入入口
+
+- 左栏「素材」页新增「导入音频…」，不再只藏在「合成」页的音频区；
+- 支持 WAV/OGG/MP3/FLAC/M4A；WAV/OGG 按「链接外部素材」设置外链，其它格式经 FFmpeg
+  转 WAV（BBS 解码器只读 WAV/OGG）。
+
+### 外部窗口拖入
+
+- 之前 `CompFileDrop` 在客户端初始化时窗口还没创建，`install` 直接返回且不再重试，导致 OS
+  拖入从未生效；
+- 现在改用原版 `Screen.filesDragged -> UIScreen.acceptFilePaths` 路径：新增
+  `UIScreenFileDropMixin`，在 bbsae 合成器可见时先交给 bbsae，`cancel()` 掉 BBS 原版
+  importer；其它 BBS 界面保持原行为；
+- 删除 `CompFileDrop` 的安装调用，避免与 vanilla 拖放回调重复/抢占。
+
+### 拖到轨道 / 链接素材
+
+- `UICompTrackTimeline` 新增屏幕坐标命中：`containsScreen/timeAtScreen/rowAtScreen/
+  isAudioRowAt/layerAtScreen`；
+- 拖放时若鼠标在时间轴内，入点时间 = 鼠标 X 对应时间，图片/视频层会移动到鼠标所在轨道行；
+- 图片拖入默认 `external:<绝对路径>`（不复制）；关闭「链接外部素材」后才复制到
+  `assets/images`；
+- 视频拖入在链接模式下走 `importVideoLink`（按需拆帧，不复制源文件）；
+- 音频拖入设置 `clip.start = 鼠标时间`，不再固定播放头；
+- 「导入图片到图层」在链接设置下也直接写 `external:`，并显示状态。
+
+### 验证
+
+- 全量测试：**165 套件 / 1007 项 / 0 failures / 0 errors / 1 skipped**。
+- 未启动客户端；请重点验证：
+  1. 左栏素材页可见「导入音频…」并能导入；
+  2. 从 Windows 资源管理器拖 png/mp4/wav 到 bbsae 窗口；
+  3. 拖到时间轴不同轨道/不同 X 位置，入点与轨道行是否正确；
+  4. BBS 原版 importer 在 bbsae 界面不再复制/转换，其它 BBS 界面仍正常；
+  5. 外链图片/视频在工程移动/重启后仍能解析（以及源文件删除时给出缺失状态）。
+- 候选包：`bbsae-0.99-hotfix59.jar`（3,956,151 bytes，SHA-256
+  `F749193E113E0DAB84A8CAB7EC4664CAA5A2534492880FAD158B38B44D5C9296`）。
+
 ## 0.99-hotfix58 — 2026-11-14
 
 wiggle 平滑/种子、连续一元符号、3D 视口模型透明度。

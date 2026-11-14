@@ -1287,7 +1287,7 @@ public class UICompSettings extends UIElement
         {
             CompPrefs.get().linkExternalAssets = value;
             CompPrefs.save();
-        }), 170, "WAV/OGG 音频直接引用原文件而不复制；关闭后导入会复制到工程 assets/audio"));
+        }), 170, "图片/视频/WAV/OGG 直接引用原文件（external: 路径）而不复制；关闭后拖入的图片/音频会复制到工程 assets"));
 
         UIElement background = this.segmented(new String[] {"合成底色", "BBS 画面"},
             settings.previewBackground, (value) ->

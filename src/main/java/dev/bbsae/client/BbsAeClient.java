@@ -36,6 +36,53 @@ import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 public class BbsAeClient implements BBSAddonMod
 {
     private static UICompositorPanel compositorPanel;
+
+    /**
+     * File drop hook for {@code UIScreen.acceptFilePaths}. BBS normally runs its importer and
+     * converts/copies files into the assets folder; in the bbsae compositor that is both
+     * duplicate work and the wrong destination. Returning true means "bbsae consumed the drop",
+     * so the screen mixin cancels BBS's importer only here — other BBS screens keep their
+     * original drop behaviour.
+     */
+    public static boolean acceptDroppedFilePaths(String[] paths)
+    {
+        if (paths == null || paths.length == 0 || compositorPanel == null || !compositorPanel.isVisible())
+        {
+            return false;
+        }
+
+        java.util.List<java.nio.file.Path> files = new java.util.ArrayList<>(paths.length);
+
+        for (String path : paths)
+        {
+            if (path == null || path.isBlank())
+            {
+                continue;
+            }
+
+            files.add(java.nio.file.Path.of(path));
+        }
+
+        if (files.isEmpty())
+        {
+            return false;
+        }
+
+        int mouseX = -1;
+        int mouseY = -1;
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+
+        if (client != null && client.mouse != null)
+        {
+            mouseX = (int) client.mouse.getX();
+            mouseY = (int) client.mouse.getY();
+        }
+
+        compositorPanel.handleDroppedFiles(files, mouseX, mouseY);
+        BbsAeAddon.LOGGER.info("bbsae consumed {} dropped file(s)", files.size());
+
+        return true;
+    }
     /** The 3D replay editor panel; registered next to the compositor so the dashboard bar shows it. */
     private static dev.bbsae.client.replay.UIReplayModePanel replayModePanel;
 
@@ -267,28 +314,6 @@ public class BbsAeClient implements BBSAddonMod
                 }
             });
         }
-
-        /* OS drag & drop: one GLFW callback, routed to the compositor when it is the open screen. */
-        dev.bbsae.client.ui.CompFileDrop.install((files) ->
-        {
-            if (compositorPanel == null)
-            {
-                BbsAeAddon.LOGGER.info("Ignored a file drop: the compositor panel was never built");
-
-                return;
-            }
-
-            /* Only when the compositor is the panel on screen: dropping a file into a dashboard
-             * page the user is not looking at would edit a project invisibly. */
-            if (compositorPanel.isVisible())
-            {
-                compositorPanel.handleDroppedFiles(files);
-            }
-            else
-            {
-                BbsAeAddon.LOGGER.info("Ignored a file drop: open the compositor first");
-            }
-        });
 
         ClientTickEvents.END_CLIENT_TICK.register((client) -> CompExportManager.tick());
         ClientLifecycleEvents.CLIENT_STOPPING.register((client) ->

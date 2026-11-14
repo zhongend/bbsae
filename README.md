@@ -1,9 +1,9 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix58**：`wiggle` 改为按 fps 的平滑值噪声（频率真正控制变化速率），并把
-> 图层+属性路径混入种子，不同属性不再锁步；连续一元符号（`--5`、`+-5`、`-(2+3)`）恢复；
-> 3D 视口回放模型透明度改用 `opacityFrame` 关键帧值，与导出一致。详见
-> [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix59**：素材导入重构：左栏新增「导入音频…」；OS 拖入走 `UIScreen` 文件
+> 拖放钩子并只在 bbsae 界面取消 BBS 原版转换；拖到时间轴时按鼠标行/时间落点，图片/视频
+> 用 `external:` 链接（不复制），WAV/OGG 也链接；素材库/选中图层导入按「链接外部素材」
+> 设置统一。详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">

@@ -6,7 +6,8 @@
     "FilmEntityRendererLightMixin",
     "IrisFinalizeMixin",
     "TimelineRulerRendererMixin",
-    "UIDockLayoutMixin"
+    "UIDockLayoutMixin",
+    "UIScreenFileDropMixin"
   ],
   "injectors": {
     "defaultRequire": 0
