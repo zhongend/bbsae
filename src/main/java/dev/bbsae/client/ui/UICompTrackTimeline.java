@@ -115,6 +115,12 @@ public class UICompTrackTimeline extends UIElement
     private float dragAudioRawDuration;
     private double dragShift;
     private float snapGuide = Float.NaN;
+    /** Post-drop landing marker: row, insertion time and start timestamp of the pulse. */
+    private int dropHintRow = -1;
+    private float dropHintTime;
+    private long dropHintAt;
+    private boolean dropHintAudio;
+    private static final long DROP_HINT_MS = 950L;
 
     private boolean snapping = true;
     private String contextLayerId;
@@ -433,9 +439,32 @@ public class UICompTrackTimeline extends UIElement
         return this.rowAt(y) == this.audioRowIndex();
     }
 
+    public int audioRow()
+    {
+        return this.audioRowIndex();
+    }
+
     public CompLayer layerAtScreen(int y)
     {
         return this.rowLayer(this.rowAt(y));
+    }
+
+    /**
+     * Pulses the drop row/time after an OS import. GLFW/Screen only reports the drop itself (no
+     * drag-over event), so this is the landing confirmation the pointer sees: a breathing row,
+     * a bright insertion line at the computed in-point and an audio-row tint when relevant.
+     */
+    public void showDropTarget(int row, float time, boolean audio)
+    {
+        if (row < 0 || row >= this.rowCount())
+        {
+            return;
+        }
+
+        this.dropHintRow = row;
+        this.dropHintTime = time;
+        this.dropHintAt = System.currentTimeMillis();
+        this.dropHintAudio = audio;
     }
 
     private int rowAt(int mouseY)
@@ -807,6 +836,7 @@ public class UICompTrackTimeline extends UIElement
         this.renderGrid(context);
         this.renderRows(context);
         this.renderMarkers(context);
+        this.renderDropHint(context);
         this.renderPlayhead(context);
         this.renderSnapGuide(context);
         this.renderScrollbar(context);
@@ -1642,6 +1672,50 @@ public class UICompTrackTimeline extends UIElement
         {
             context.batcher.unclip(context);
         }
+    }
+
+    private void renderDropHint(UIContext context)
+    {
+        if (this.dropHintRow < 0)
+        {
+            return;
+        }
+
+        long elapsed = System.currentTimeMillis() - this.dropHintAt;
+
+        if (elapsed < 0L || elapsed > DROP_HINT_MS)
+        {
+            this.dropHintRow = -1;
+            return;
+        }
+
+        int y = this.rowY(this.dropHintRow);
+
+        if (y + this.rowHeight <= this.laneArea.y || y >= this.laneArea.ey())
+        {
+            return;
+        }
+
+        float progress = elapsed / (float) DROP_HINT_MS;
+        float pulse = 0.55F + 0.45F * (float) Math.sin(elapsed * 0.018D);
+        int alpha = Math.max(0, Math.min(180, (int) ((1F - progress) * pulse * 180F)));
+        int fill = (alpha << 24) | (this.dropHintAudio ? 0x39D98A : 0x2F8CFF);
+        int line = (Math.min(255, alpha + 75) << 24) | (this.dropHintAudio ? 0x7CFFC4 : 0x9BD2FF);
+
+        int top = Math.max(this.laneArea.y, y + 1);
+        int bottom = Math.min(this.laneArea.ey(), y + this.rowHeight - 1);
+
+        if (bottom <= top)
+        {
+            return;
+        }
+
+        context.batcher.box(this.laneArea.x + 1, top, this.laneArea.ex() - 1, bottom, fill);
+        context.batcher.outline(this.laneArea.x + 1, top, this.laneArea.ex() - 1, bottom, line);
+
+        int x = Math.max(this.laneArea.x + 1, Math.min(this.laneArea.ex() - 2, this.toX(this.dropHintTime)));
+
+        context.batcher.box(x - 1, top, x + 2, bottom, line);
     }
 
     private void renderPlayhead(UIContext context)

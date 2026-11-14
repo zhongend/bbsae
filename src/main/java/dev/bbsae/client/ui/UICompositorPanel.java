@@ -8191,6 +8191,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void openAssetBrowser(boolean replaceMode)
     {
+        dev.bbsae.client.audio.CompAudioPreview.stop();
+        this.syncExternalAssets();
+
         if (this.assetBrowser != null)
         {
             this.assetBrowser.removeFromParent();
@@ -8215,6 +8218,8 @@ public class UICompositorPanel extends UIDashboardPanel
             this::importSoundId,
             () ->
             {
+                dev.bbsae.client.audio.CompAudioPreview.stop();
+
                 if (this.assetBrowser != null)
                 {
                     this.assetBrowser.setVisible(false);
@@ -8226,6 +8231,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.assetBrowser.externalAssets(() -> this.project == null || this.project.settings == null
             ? java.util.Collections.emptyList() : this.project.settings.externalAssets);
+        this.assetBrowser.onAudio(this::addExternalAudio);
 
         this.assetBrowser.relative(this).x(0).y(0).w(1F).h(1F);
         this.add(this.assetBrowser);
@@ -18607,6 +18613,27 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
+    /** Inserts an asset-browser external audio link at the playhead. */
+    private void addExternalAudio(String path)
+    {
+        if (path == null || path.isBlank())
+        {
+            return;
+        }
+
+        String raw = path.startsWith("external:") ? path.substring("external:".length()) : path;
+        java.io.File file = new java.io.File(raw);
+
+        if (!file.isFile())
+        {
+            this.notifyError("外链音频不存在：" + raw);
+
+            return;
+        }
+
+        this.addAudioClip(file);
+    }
+
     private void addAudioClip(java.io.File file)
     {
         this.addAudioClip(file, this.time);
@@ -18632,6 +18659,7 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 target = file.toPath().toAbsolutePath();
                 storedPath = "external:" + target;
+                this.registerExternalAsset(file);
             }
             else if (direct)
             {
@@ -18678,6 +18706,12 @@ public class UICompositorPanel extends UIDashboardPanel
             this.selectAudioClip(clip);
             dev.bbsae.client.audio.CompAudioPlayer.invalidate();
             this.refreshInspector();
+
+            if (this.assetBrowser != null)
+            {
+                this.assetBrowser.refresh();
+            }
+
             this.save();
             this.setStatus("已导入音频：" + name + (link ? "（外部链接）" : "（已复制/转换）")
                 + " · 入点 " + String.format(java.util.Locale.ROOT, "%.2fs", clip.start));
@@ -23095,6 +23129,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
         float dropTime = this.time;
         int dropRow = -1;
+        boolean dropHasAudio = false;
+        boolean dropHasVisual = false;
 
         if (this.trackTimeline != null && this.trackTimeline.containsScreen(mouseX, mouseY))
         {
@@ -23118,6 +23154,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".gif"))
                 {
                     this.importDroppedImage(path.toFile(), dropTime);
+                    dropHasVisual = true;
 
                     if (CompPrefs.get().linkExternalAssets)
                     {
@@ -23148,6 +23185,7 @@ public class UICompositorPanel extends UIDashboardPanel
                         this.importVideoFile(path.toFile());
                     }
 
+                    dropHasVisual = true;
                     imported++;
                 }
                 else if (name.endsWith(".wav") || name.endsWith(".ogg")
@@ -23156,6 +23194,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     || name.endsWith(".aiff") || name.endsWith(".aif"))
                 {
                     this.addAudioClip(path.toFile(), dropTime);
+                    dropHasAudio = true;
                     imported++;
                 }
                 else if (name.endsWith(".ttf") || name.endsWith(".otf"))
@@ -23175,10 +23214,23 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         }
 
+        if (dropRow >= 0 && this.trackTimeline != null)
+        {
+            int hintRow = dropHasAudio && !dropHasVisual ? this.trackTimeline.audioRow() : dropRow;
+
+            this.trackTimeline.showDropTarget(hintRow, dropTime, dropHasAudio);
+        }
+
         if (imported > 0)
         {
             this.refreshLayers();
             this.refreshInspector();
+
+            if (this.assetBrowser != null)
+            {
+                this.assetBrowser.refresh();
+            }
+
             this.save();
             this.setStatus("已从拖放导入 " + imported + " 个文件"
                 + (dropRow >= 0 ? String.format(java.util.Locale.ROOT, " · 入点 %.2fs", dropTime) : ""));
@@ -23216,6 +23268,49 @@ public class UICompositorPanel extends UIDashboardPanel
         this.doc.addLayer(layer);
         this.selectLayer(layer);
         this.setStatus("已拖入图片：" + name + (path.startsWith("external:") ? "（外部链接）" : ""));
+    }
+
+    /** Migrates pre-existing external layer/audio paths into the new asset-library index. */
+    private void syncExternalAssets()
+    {
+        if (this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        if (this.project.settings.externalAssets == null)
+        {
+            this.project.settings.externalAssets = new java.util.ArrayList<>();
+        }
+
+        int before = this.project.settings.externalAssets.size();
+
+        if (this.doc != null)
+        {
+            for (CompLayer layer : this.doc.layers)
+            {
+                this.addExternalIndex(layer.imagePath);
+            }
+
+            for (dev.bbsae.comp.CompAudio clip : this.doc.audio)
+            {
+                this.addExternalIndex(clip.path);
+            }
+        }
+
+        if (this.project.settings.externalAssets.size() > before)
+        {
+            this.save();
+        }
+    }
+
+    private void addExternalIndex(String path)
+    {
+        if (path != null && path.startsWith("external:")
+            && !this.project.settings.externalAssets.contains(path))
+        {
+            this.project.settings.externalAssets.add(path);
+        }
     }
 
     /** Adds an absolute media path to the project's external library; nothing is copied. */

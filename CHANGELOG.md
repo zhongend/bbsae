@@ -1,5 +1,48 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix63 — 2026-11-14
+
+素材库音频预览、拖放落点动效、外链导入 bug 排查。
+
+### 素材库音频预览
+
+- 新增 `CompAudioPreview`：用与合成相同的 `CompAudioMixer` 解码，外链 WAV/OGG 原生、
+  MP3/FLAC/M4A/AAC/OPUS/WMA/AIFF 走 FFmpeg raw PCM；
+- 素材库项目分类列出外链音频（`external:`），显示音效图标、独立的「试听」按钮；
+  再点同一项停止，切换音频会先停上一段；
+- 双击外链音频或「加入音轨」把剪辑加到播放头；BBS 音效分类的「加入音轨」与「试听」
+  现在分开，不再把试听误当插入；
+- 打开素材库时把已有的外链图层/音频路径迁移进 `externalAssets`，旧工程也能列出。
+
+### 拖放落点动效
+
+- `UICompTrackTimeline.showDropTarget(row,time,audio)` + `renderDropHint`：
+  - 目标轨道整行做约 0.95 秒呼吸高亮；
+  - 鼠标 X 对应入点画一条亮色插入线；
+  - 纯音频落点高亮音频轨（绿色），图片/视频落点高亮鼠标所在轨道（蓝色）。
+- 说明：GLFW/`Screen.filesDragged` 只在松手时给回调，没有 drag-over 事件；因此动效是
+  “落点确认”，不是拖动过程中的悬停预览。
+
+### 外链导入排查与修复
+
+- `externalAssets()` 设置后立即 `refresh()`，修复素材库首次打开看不到外链条目的 bug；
+- `addAudioClip` 外链成功后刷新素材库；
+- 拖放导入成功后刷新素材库；
+- 素材库 `isImageFile/isAudioFile` 统一扩展名判断（大小写不敏感）；
+- BBS 文件拖入只接管 bbsae 当前面板且当前 Screen 是 `UIScreen`，避免误吞其它界面。
+
+### 验证
+
+- 全量测试：**166 套件 / 1009 项 / 0 failures / 0 errors / 1 skipped**。
+- 新增 `UIAssetBrowserAssetTypeTest` 覆盖音频/图片扩展名。
+- 未启动客户端；请重点验证：
+  1. 素材库外链音频条目与「试听」按钮、停止/切换；
+  2. 外链 MP3/FLAC 试听是否与导出一致；
+  3. OS 拖入后的轨道呼吸高亮/插入线位置；
+  4. 旧工程外链路径迁移。
+- 候选包：`bbsae-0.99-hotfix63.jar`（3,962,646 bytes，SHA-256
+  `41BE9BD470DC217E85E0B6411FD90D8E0CD73FAD7E2AF25BC1B67C74089DCC8B`）。
+
 ## 0.99-hotfix62 — 2026-11-14
 
 外链音频导入不再触碰工程目录。

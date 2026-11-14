@@ -48,7 +48,8 @@ public class BbsAeClient implements BBSAddonMod
     {
         if (paths == null || paths.length == 0 || compositorPanel == null || !compositorPanel.isVisible()
             || compositorPanel.dashboard == null
-            || compositorPanel.dashboard.getPanels().panel != compositorPanel)
+            || compositorPanel.dashboard.getPanels().panel != compositorPanel
+            || !(net.minecraft.client.MinecraftClient.getInstance().currentScreen instanceof UIScreen))
         {
             return false;
         }

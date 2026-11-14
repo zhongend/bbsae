@@ -96,6 +96,7 @@ public class UIAssetBrowser extends UIElement
     private final UILabel countLabel;
     private final UIButton importButton;
     private final UIButton pathButton;
+    private final UIButton previewButton;
     private final UIButton insertButton;
     private final UIButton replaceButton;
     private final UIButton refreshButton;
@@ -123,6 +124,8 @@ public class UIAssetBrowser extends UIElement
         public final String label;
         public final boolean project;
         public final boolean sound;
+        /** An absolute external audio link: audition with the project mixer, insert on demand. */
+        public boolean externalAudio;
         public final String category;
 
         Asset(String path, String label, boolean project, String category)
@@ -142,6 +145,15 @@ public class UIAssetBrowser extends UIElement
 
     /** Sound ids are imported into the composition's audio track; null = clipboard only. */
     private final java.util.function.Consumer<String> onSound;
+    private java.util.function.Consumer<String> onAudio;
+
+    /** Adds an external audio file to the timeline (path is {@code external:...}). */
+    public UIAssetBrowser onAudio(java.util.function.Consumer<String> consumer)
+    {
+        this.onAudio = consumer;
+
+        return this;
+    }
 
     public UIAssetBrowser(Supplier<String> projectId, BiConsumer<String, Boolean> onUse, Runnable onImport, java.util.function.Consumer<String> onImportPath, java.util.function.Consumer<String> onSound, Runnable onClose, boolean replaceMode)
     {
@@ -200,8 +212,21 @@ public class UIAssetBrowser extends UIElement
 
         this.importButton = this.button("导入图片…", this::importAction);
         this.pathButton = this.button("按路径…", this::importByPath);
+        this.previewButton = this.button("试听", this::previewSelected);
         this.insertButton = this.button("插入为新图层", () -> this.useSelected(false));
-        this.replaceButton = this.button("替换当前图层", () -> this.useSelected(true));
+        this.replaceButton = this.button("替换当前图层", () ->
+        {
+            Asset selected = this.grid.selected();
+
+            if (selected != null && selected.externalAudio)
+            {
+                this.previewSelected();
+            }
+            else
+            {
+                this.useSelected(true);
+            }
+        });
         this.refreshButton = this.button("刷新", this::refresh);
         this.closeButton = this.button("关闭", this.onClose);
 
@@ -209,11 +234,12 @@ public class UIAssetBrowser extends UIElement
         this.replaceButton.tooltip(IKey.constant("替换所选图片图层的素材"));
         this.importButton.tooltip(IKey.constant("打开导入浏览器（游戏内选择文件）"));
         this.pathButton.tooltip(IKey.constant("直接粘贴完整路径导入"));
+        this.previewButton.tooltip(IKey.constant("试听所选外链音频或 BBS 音效；再点一次会停止上一段"));
         this.refreshButton.tooltip(IKey.constant("重新扫描项目素材与资源包"));
         this.closeButton.tooltip(IKey.constant("关闭素材库"));
 
         this.box.add(this.title, this.hint, this.search, this.strip, this.grid, this.countLabel,
-            this.importButton, this.pathButton, this.insertButton, this.replaceButton,
+            this.importButton, this.pathButton, this.previewButton, this.insertButton, this.replaceButton,
             this.refreshButton, this.closeButton);
 
         this.add(this.box);
@@ -295,23 +321,27 @@ public class UIAssetBrowser extends UIElement
         {
             this.importButton.label = IKey.constant("导入");
             this.pathButton.label = IKey.constant("路径");
+            this.previewButton.label = IKey.constant("试听");
             this.insertButton.label = IKey.constant("插入");
             this.replaceButton.label = IKey.constant("替换");
-            this.importButton.relative(this.box).x(x).y(footerY).w(44).h(h); x += 48;
-            this.pathButton.relative(this.box).x(x).y(footerY).w(44).h(h); x += 48;
-            this.insertButton.relative(this.box).x(x).y(footerY).w(44).h(h); x += 48;
-            this.replaceButton.relative(this.box).x(x).y(footerY).w(44).h(h);
+            this.importButton.relative(this.box).x(x).y(footerY).w(40).h(h); x += 44;
+            this.pathButton.relative(this.box).x(x).y(footerY).w(40).h(h); x += 44;
+            this.previewButton.relative(this.box).x(x).y(footerY).w(40).h(h); x += 44;
+            this.insertButton.relative(this.box).x(x).y(footerY).w(40).h(h); x += 44;
+            this.replaceButton.relative(this.box).x(x).y(footerY).w(40).h(h);
         }
         else
         {
             this.importButton.label = IKey.constant("导入图片…");
             this.pathButton.label = IKey.constant("按路径…");
+            this.previewButton.label = IKey.constant("试听");
             this.insertButton.label = IKey.constant("插入为新图层");
             this.replaceButton.label = IKey.constant("替换当前图层");
-            this.importButton.relative(this.box).x(x).y(footerY).w(92).h(h); x += 96;
-            this.pathButton.relative(this.box).x(x).y(footerY).w(72).h(h); x += 76;
-            this.insertButton.relative(this.box).x(x).y(footerY).w(106).h(h); x += 110;
-            this.replaceButton.relative(this.box).x(x).y(footerY).w(106).h(h);
+            this.importButton.relative(this.box).x(x).y(footerY).w(88).h(h); x += 92;
+            this.pathButton.relative(this.box).x(x).y(footerY).w(68).h(h); x += 72;
+            this.previewButton.relative(this.box).x(x).y(footerY).w(64).h(h); x += 68;
+            this.insertButton.relative(this.box).x(x).y(footerY).w(100).h(h); x += 104;
+            this.replaceButton.relative(this.box).x(x).y(footerY).w(100).h(h);
         }
 
         this.box.resize();
@@ -497,10 +527,14 @@ public class UIAssetBrowser extends UIElement
     private void updateButtons()
     {
         boolean sounds = this.category == SOUND_CATEGORY;
+        Asset selected = this.grid.selected();
+        boolean externalAudio = selected != null && selected.externalAudio;
 
         this.importButton.label = IKey.constant(sounds ? "BBS 音效库…" : (this.laidOutWidth < 560 ? "导入" : "导入图片…"));
-        this.insertButton.label = IKey.constant(sounds ? "试听" : (this.laidOutWidth < 560 ? "插入" : "插入为新图层"));
-        this.replaceButton.label = IKey.constant(sounds ? "复制 ID" : (this.laidOutWidth < 560 ? "替换" : "替换当前图层"));
+        this.insertButton.label = IKey.constant(externalAudio ? "加入音轨"
+            : sounds ? "加入音轨" : (this.laidOutWidth < 560 ? "插入" : "插入为新图层"));
+        this.replaceButton.label = IKey.constant(externalAudio ? "试听"
+            : sounds ? "复制 ID" : (this.laidOutWidth < 560 ? "替换" : "替换当前图层"));
     }
 
     private void importAction()
@@ -603,6 +637,7 @@ public class UIAssetBrowser extends UIElement
         this.externalAssets = supplier == null ? java.util.Collections::emptyList : supplier;
         this.projectCache = "";
         this.externalCache = "";
+        this.refresh();
 
         return this;
     }
@@ -662,18 +697,43 @@ public class UIAssetBrowser extends UIElement
                 String name = link.substring("external:".length()).replace('\\', '/');
                 String base = name.substring(name.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
 
-                if (!(base.endsWith(".png") || base.endsWith(".jpg") || base.endsWith(".jpeg") || base.endsWith(".gif")))
+                String label = name.substring(name.lastIndexOf('/') + 1);
+                boolean image = isImageFile(base);
+                boolean audio = isAudioFile(base);
+
+                if (!image && !audio)
                 {
                     continue;
                 }
 
-                String label = name.substring(name.lastIndexOf('/') + 1);
+                Asset asset = new Asset(link, stripExtension(label), true, false,
+                    image ? "项目（外链）" : "项目（外链音频）");
+                asset.externalAudio = audio;
 
-                this.projectAssets.add(new Asset(link, stripExtension(label), true, "项目（外链）"));
+                this.projectAssets.add(asset);
             }
         }
 
         return this.projectAssets;
+    }
+
+    /** Extension-only checks shared by the library index and tests. */
+    static boolean isImageFile(String name)
+    {
+        String lower = name.toLowerCase(Locale.ROOT);
+
+        return lower.endsWith(".png") || lower.endsWith(".jpg")
+            || lower.endsWith(".jpeg") || lower.endsWith(".gif");
+    }
+
+    static boolean isAudioFile(String name)
+    {
+        String lower = name.toLowerCase(Locale.ROOT);
+
+        return lower.endsWith(".wav") || lower.endsWith(".ogg") || lower.endsWith(".mp3")
+            || lower.endsWith(".flac") || lower.endsWith(".m4a") || lower.endsWith(".aac")
+            || lower.endsWith(".opus") || lower.endsWith(".wma")
+            || lower.endsWith(".aiff") || lower.endsWith(".aif");
     }
 
     private static String stripExtension(String name)
@@ -771,6 +831,21 @@ public class UIAssetBrowser extends UIElement
         this.hint.label = IKey.constant((asset.project ? "项目：" : "") + asset.path);
         this.hint.color(0xFF8A94A6, false);
 
+        if (asset.externalAudio)
+        {
+            if (this.onAudio != null)
+            {
+                this.onAudio.accept(asset.path);
+                this.hint.label = IKey.constant("已加入音频轨：" + asset.label);
+            }
+            else
+            {
+                this.previewSelected();
+            }
+
+            return;
+        }
+
         if (asset.sound)
         {
             if (replace)
@@ -793,6 +868,66 @@ public class UIAssetBrowser extends UIElement
         }
 
         this.onUse.accept(asset.path, replace);
+    }
+
+    /** Auditions the selected external audio or BBS sound; images report why they cannot play. */
+    private void previewSelected()
+    {
+        Asset asset = this.grid.selected();
+
+        if (asset == null)
+        {
+            this.hint.label = IKey.constant("先在网格里选择一个音频素材");
+            this.hint.color(0xFFB06A6A, false);
+
+            return;
+        }
+
+        if (asset.externalAudio)
+        {
+            String path = asset.path.startsWith("external:")
+                ? asset.path.substring("external:".length()) : asset.path;
+
+            try
+            {
+                java.nio.file.Path file = java.nio.file.Path.of(path);
+
+                if (dev.bbsae.client.audio.CompAudioPreview.isPlaying(file))
+                {
+                    dev.bbsae.client.audio.CompAudioPreview.stop();
+                    this.hint.label = IKey.constant("已停止试听：" + asset.label);
+                    this.hint.color(0xFF8A94A6, false);
+
+                    return;
+                }
+
+                boolean playing = dev.bbsae.client.audio.CompAudioPreview.play(file);
+
+                this.hint.label = IKey.constant(playing
+                    ? "正在试听：" + asset.label + "（再点试听停止）"
+                    : "无法试听：" + asset.label + "（文件不存在或 FFmpeg 不可用）");
+                this.hint.color(playing ? 0xFF8A94A6 : 0xFFB06A6A, false);
+            }
+            catch (Exception e)
+            {
+                this.hint.label = IKey.constant("无法试听：" + asset.label + "（路径无效）");
+                this.hint.color(0xFFB06A6A, false);
+            }
+
+            return;
+        }
+
+        if (asset.sound)
+        {
+            dev.bbsae.client.audio.CompAudioPreview.stop();
+            playSound(asset);
+            this.hint.label = IKey.constant("试听音效：" + asset.label);
+
+            return;
+        }
+
+        this.hint.label = IKey.constant("当前选中的不是音频素材");
+        this.hint.color(0xFFB06A6A, false);
     }
 
     /* ------------------------------------------------------------- category strip */
@@ -1385,7 +1520,7 @@ public class UIAssetBrowser extends UIElement
 
             float contentAlpha = Math.max(0.25F, intro);
 
-            if (asset.sound)
+            if (asset.sound || asset.externalAudio)
             {
                 context.batcher.box(x + (TILE_W - 32) / 2, drawY + 6, x + (TILE_W + 32) / 2, drawY + 38,
                     UiGfx.mulA(0xFF2A3442, contentAlpha));
@@ -1541,6 +1676,7 @@ public class UIAssetBrowser extends UIElement
 
             this.selected = index;
             this.lastIndex = index;
+            UIAssetBrowser.this.updateButtons();
             this.lastClick = now;
 
             Asset asset = this.selected();
