@@ -1,6 +1,6 @@
 # Round 116 — 回放实体抠像完整性 / 全屏清晰度
 
-> 版本 `0.99-hotfix81`。全量：**192 套件 / 1179 项 / 0 failures / 0 errors / 1 skipped**。
+> 版本 `0.99-hotfix82`。全量：**192 套件 / 1179 项 / 0 failures / 0 errors / 1 skipped**。
 
 ## 1. 回放实体抠像：主体像穿模、不完整
 
@@ -8,7 +8,8 @@
 
 1. **演员-only 重绘的自遮挡错误**：覆盖蒙版原来的 unoccluded 目标没有深度附件，而且关闭了深度
    写入与背面剔除。所有面（包括背脸）按提交顺序 alpha 混合，背脸可以盖在正脸上；看起来就是
-   模型内部穿模/缺面。
+   模型内部穿模/缺面。旧主路径又直接用这张蒙版的 RGB 当演员图像，所以错误的面色/层次直接进入
+   成片。
 2. **姿态与世界演员不一致**：
    - `FilmEditorController.updateEntities()` 在播放时使用 `cursor + 1`，蒙版却用裸 cursor；
    - `captureActorState` 对每个演员调用都会被洋葱皮覆盖，`lastActorTransition` 可能变成 0；
@@ -16,16 +17,14 @@
    这些都会让抠像演员比世界演员早/晚一个 tick，边缘和面被深度比较裁掉。
 3. **半透明部件被推迟**：BBS 的 `FormTranslucentQueue` 在 `AFTER_ENTITIES` 仍激活，蒙版重绘的
    半透明像素被排到世界 flush，蒙版缺外层皮肤/披风/半透明盔甲。
-4. **旧主路径是蒙版 RGB**：蒙版重绘的颜色来自第二个演员实例，即使 alpha 完整，内部面的颜色/
-   层次也可能来自错误的面。
 
 ### 修复
 
 - **完整抠像优先**：`ReplayEntityKey.drawCutout()` 使用**世界帧里演员自己的颜色** + **未遮挡覆盖
   alpha** 做全屏 shader 抠像。世界帧已经有正确的自遮挡、半透明排序和光照，不会再出现第二个
   演员实例的背脸/穿模。世界帧不可用时才退回演员-only 图像。
-- **覆盖目标自深度**：`plainTarget` 现在带 DEPTH24；unoccluded pass 清深度、开深度测试与写入，
-  背脸不再盖住正脸。occluded pass 继续使用世界深度 + polygon offset。
+- **覆盖保持并集**：未遮挡目标继续不写自深度。它只提供 alpha；若写自深度，半透明外层会把
+  身后的身体挡掉，反而在抠像里挖出身体形状的洞。
 - **姿态对齐**：
   - `actorTick(controller)` 对 `FilmEditorController` 在 runner 运行时 `+1`；
   - `captureActorState` 每个世界帧只接受第一次演员捕获，洋葱皮不再覆盖当前姿态；

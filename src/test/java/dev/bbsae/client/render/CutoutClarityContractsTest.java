@@ -52,15 +52,15 @@ public class CutoutClarityContractsTest
     }
 
     @Test
-    public void theActorOnlyFallbackHasSelfDepth() throws IOException
+    public void theCoverageIsAUnionNotADepthImage() throws IOException
     {
         String mask = source("client", "render", "ReplayEntityMask.java");
 
-        assertTrue(mask.contains("plainTarget = new Target(true)"),
-            "the unoccluded actor image needs its own depth attachment; without it back faces "
-                + "blend over front ones and the body looks like it clips through itself");
-        assertTrue(mask.contains("GL11.glDepthMask(true)"),
-            "the unoccluded pass must write actor self-depth");
+        assertTrue(mask.contains("plainTarget = new Target(false)"),
+            "the unoccluded cutout coverage must be a union; self depth would hide body parts "
+                + "behind semi-transparent outer layers and create holes");
+        assertTrue(mask.contains("GL11.glDepthMask(false)"),
+            "the unoccluded pass must not write self depth");
     }
 
     @Test

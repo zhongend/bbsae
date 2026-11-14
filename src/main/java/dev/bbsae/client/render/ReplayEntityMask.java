@@ -87,11 +87,12 @@ public final class ReplayEntityMask
     private static boolean requestOccluded;
     private static boolean requestUnoccluded;
 
-    /* Two coverage targets: with and without the world depth test. Both carry a depth attachment:
-     * the unoccluded target uses its own depth for actor self-occlusion, so back faces can no longer
-     * be painted over front faces (the "subject clips through itself" cutout). */
+    /* Two coverage targets: with and without the world depth test. The unoccluded target is a
+     * coverage union (no self depth writes): it feeds the complete world-colour cutout, where only
+     * the alpha matters. Writing self depth here would hide the part behind a semi-transparent
+     * outer layer and carve body-shaped holes out of the cutout. */
     private static final Target occludedTarget = new Target(true);
-    private static final Target plainTarget = new Target(true);
+    private static final Target plainTarget = new Target(false);
 
     /* Frame bookkeeping. */
     private static int serial;
@@ -842,15 +843,12 @@ public final class ReplayEntityMask
             }
             else
             {
-                /* Unoccluded coverage: clear the target's own depth and write the actor's nearest
-                 * surfaces. With depth writes off and culling disabled, every back face blended over
-                 * the front ones in submission order, which is exactly the "internal clipping /
-                 * incomplete body" the user reported. Self-depth gives a complete, correctly
-                 * layered actor silhouette; translucent texels are alpha-tested/discarded by the
-                 * form shader, so they do not punch body-shaped holes. */
-                GL11.glEnable(GL11.GL_DEPTH_TEST);
-                GL11.glDepthFunc(GL11.GL_LEQUAL);
-                GL11.glDepthMask(true);
+                /* Unoccluded coverage is a union, not a depth image. Do not write self depth:
+                 * a semi-transparent outer layer would otherwise hide the body behind it and
+                 * punch body-shaped holes into the cutout. The complete world-colour path only
+                 * needs the union alpha. */
+                GL11.glDisable(GL11.GL_DEPTH_TEST);
+                GL11.glDepthMask(false);
                 GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
             }
 
