@@ -437,6 +437,12 @@ final class LayerContentRenderer
     static void drawFullscreenActors(CompRenderContext context, Batcher2D batcher, GlFramebuffer actors,
                                      int width, int height)
     {
+        drawFullscreenActors(context, batcher, actors, width, height, 1F);
+    }
+
+    static void drawFullscreenActors(CompRenderContext context, Batcher2D batcher, GlFramebuffer actors,
+                                     int width, int height, float opacity)
+    {
         MatrixStack stack = batcher.getContext().getMatrices();
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
         boolean depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
@@ -518,7 +524,8 @@ final class LayerContentRenderer
             GlStateManager._viewport(0, 0, Math.max(1, width), Math.max(1, height));
             RenderSystem.setProjectionMatrix(GlStateGuard.ortho(width, height),
                 com.mojang.blaze3d.systems.VertexSorter.BY_Z);
-            batcher.texturedBox(actors.color.id, 0xFFFFFFFF,
+            int alpha = Math.max(0, Math.min(255, Math.round(Math.max(0F, Math.min(1F, opacity)) * 255F)));
+            batcher.texturedBox(actors.color.id, 0xFFFFFF | (alpha << 24),
                 0F, 0F, width, height,
                 0F, height, width, 0F,
                 width, height);

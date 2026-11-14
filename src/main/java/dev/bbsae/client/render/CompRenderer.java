@@ -1309,8 +1309,12 @@ public final class CompRenderer
             float scale = Math.max(0.0001F, maskWidth / (float) Math.max(1, context.comp.width));
             Matrix4f maskModel = new Matrix4f(CompScene.model(context, layer)).scale(scale, scale, 1F);
 
+            /* maskModel already contains the preview raster scale for the point transform. Do not
+             * feed it to maskLayerScale again: that squared the raster factor (and hid the layer's
+             * own scale compensation) for feather/expansion. Use the unscaled layer model once. */
             mask = MaskCache.get(layer, maskWidth, maskHeight, maskModel, context.frame,
-                maskLayerScale(maskModel, scale), MaskCache.cacheScope(context.project, context.comp));
+                maskLayerScale(CompScene.model(context, layer), scale),
+                MaskCache.cacheScope(context.project, context.comp));
         }
 
         if (mask == null)
@@ -1891,6 +1895,8 @@ public final class CompRenderer
              * off the stack order is the only correct answer.
              */
             boolean boundary = i == order.size() || current.independent
+                || current.blendMode == CompLayer.BLEND_MASK
+                || current.blendMode == CompLayer.BLEND_EXCLUDE
                 || !CompScene.sortsIn3D(context, current);
 
             if (!boundary)
@@ -1906,9 +1912,11 @@ public final class CompRenderer
             start = i + 1;
         }
 
-        /* Independent models are ordinary layers in the composition stack: keeping them in the
-         * same 3D sort run is what lets a text/shape plane in front occlude them, and a model in
-         * front cover the plane. The old split forced every model to the top. */
+        /* Independent replay models are composition-stack boundaries, not entries in the flat
+         * plane sort: their layer-origin depth is not the depth of the volume. Mask/Exclude
+         * layers are boundaries too, because they operate on the whole backdrop by stack order
+         * (a depth-sorted mask would only catch farther planes). The shared per-pixel depth
+         * buffer still resolves model fragments against text/shape planes. */
         return order;
     }
 
@@ -1926,8 +1934,8 @@ public final class CompRenderer
                 return depth;
             }
 
-            /* Coplanar layers tie: stable sort keeps the composition stack order, so a model does
-             * not jump above a text/shape layer that is stacked over it. */
+            /* Coplanar planes tie: stable sort keeps their composition stack order. Models never
+             * enter this run, so they cannot jump above a stacked plane here. */
             return 0;
         });
     }

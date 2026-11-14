@@ -213,7 +213,7 @@ public final class AmEffectLibrary
                 float radius = max(u_radius, 0.0001) * max(LayerSize.x, LayerSize.y);
                 float feather = clamp(u_feather, 0.0, 1.0);
                 float edge = 1.0 - smoothstep(radius * (1.0 - feather), radius, dist);
-                float wave = sin(dist / max(u_frequency, 0.0001) * 6.2831853 + u_phase) * u_strength * edge;
+                float wave = sin(dist / max(u_frequency, 0.0001) * 6.2831853 + radians(u_phase)) * u_strength * edge;
                 vec2 offset = dist > 0.0001 ? (d / dist) * wave / max(LayerSize, vec2(1.0)) : vec2(0.0);
                 vec2 warped = uv + offset;
                 vec4 c = sampleLayer(clamp(warped, 0.0, 1.0));
@@ -459,10 +459,14 @@ public final class AmEffectLibrary
                 mat2 rotation = rot(angle);
                 p = rotation * p;
                 vec2 cell = p / max(u_cell, 1.0);
-                vec2 line = abs(fract(cell) - 0.5);
-                float thickness = max(u_thickness, 0.001);
-                vec2 mask = 1.0 - smoothstep(vec2(0.5 - thickness), vec2(0.5), line * 2.0);
-                float grid = max(mask.x, mask.y) * clamp(u_alpha, 0.0, 1.0);
+                /* Same construction as the native grid (ShaderSources Type==3): distance to the
+                 * cell centre in pixels, then a one-sided smoothstep whose WIDTH is thickness.
+                 * The old inverted/×2 version made larger values thinner and filled ~40% of the
+                 * cell at the default, which read as a checkerboard. */
+                vec2 g = abs(fract(cell) - 0.5);
+                float thickness = clamp(u_thickness, 0.001, 0.49);
+                float line = 1.0 - smoothstep(0.0, thickness, min(g.x, g.y));
+                float grid = line * clamp(u_alpha, 0.0, 1.0);
                 fragColor = vec4(mix(c.rgb, u_color.rgb, grid), c.a);
             }
             """, 0F, "alpha")
@@ -750,7 +754,9 @@ public final class AmEffectLibrary
                 float offset = u_distance / max(LayerSize.y, 1.0);
                 vec2 mirrored = vec2(luv.x, 2.0 - luv.y + offset);
                 vec4 m = sampleLayer(mirrored);
-                float fade = 1.0 - clamp((mirrored.y - 1.0) / max(u_fade, 0.001), 0.0, 1.0);
+                /* Reflect is below the layer, where mirrored.y < 1. Distance from the bottom edge
+                 * is (1 - mirrored.y), not (mirrored.y - 1) (which was always negative/clamped 0). */
+                float fade = 1.0 - clamp((1.0 - mirrored.y) / max(u_fade, 0.001), 0.0, 1.0);
                 float amount = m.a * fade * clamp(u_strength, 0.0, 1.0) * (1.0 - c.a);
                 vec3 rgb = c.rgb + m.rgb * amount;
                 fragColor = vec4(clamp(rgb, 0.0, 1.0), clamp(c.a + amount, 0.0, 1.0));
@@ -1052,11 +1058,13 @@ public final class AmEffectLibrary
                 vec4 c = sampleLayer(luv);
                 float count = max(u_count, 1.0);
                 bool vertical = u_vertical > 0.5;
-                float axis = vertical ? luv.y : luv.x;
-                float other = vertical ? luv.x : luv.y;
+                /* "vertical" means vertical bands: vary along X. The old mapping varied along Y
+                 * and produced horizontal strips under a vertical label. */
+                float axis = vertical ? luv.x : luv.y;
+                float other = vertical ? luv.y : luv.x;
                 float coord = fract(axis * count);
                 float line = step(coord, clamp(u_duty, 0.01, 1.0));
-                vec2 uv = vertical ? vec2(fract(other * count), luv.y) : vec2(luv.x, fract(other * count));
+                vec2 uv = vertical ? vec2(luv.x, fract(other * count)) : vec2(fract(other * count), luv.y);
                 vec4 repeated = sampleLayer(uv);
                 float amount = clamp(u_amount, 0.0, 1.0) * line;
                 fragColor = vec4(mix(c.rgb, repeated.rgb, amount), mix(c.a, repeated.a, amount));
@@ -1236,7 +1244,7 @@ public final class AmEffectLibrary
             {
                 vec2 luv = layerUv(vUv);
                 vec4 c = sampleLayer(luv);
-                float tick = floor(Time * max(u_speed, 0.0) * 30.0);
+                float tick = floor(Time * max(u_speed, 0.0));
                 float rnd = hash(vec2(tick, u_seed));
                 float alpha = clamp(c.a * (1.0 - u_amount * rnd), 0.0, 1.0);
                 fragColor = vec4(c.rgb, alpha);
@@ -1279,7 +1287,7 @@ public final class AmEffectLibrary
                 float offset = u_offset * LayerSize.y;
                 float width = max(u_width, 0.5);
                 float beam = exp(-pow((rotated.y - offset) / width, 2.0));
-                float ends = smoothstep(0.0, 0.15, abs(rotated.x) / max(LayerSize.x, 1.0));
+                float ends = smoothstep(0.35, 0.5, abs(rotated.x) / max(LayerSize.x, 1.0));
                 float intensity = beam * (1.0 - ends) * clamp(u_intensity, 0.0, 4.0);
                 fragColor = vec4(clamp(c.rgb + u_color.rgb * intensity, 0.0, 1.0), c.a);
             }
@@ -1295,10 +1303,12 @@ public final class AmEffectLibrary
             {
                 vec2 luv = layerUv(vUv);
                 vec4 c = sampleLayer(luv);
-                vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 0.5);
-                vec2 p = luv * LayerSize / spacing;
+                /* Isotropic unit space: the √3 belongs in the lattice period only, not in the
+                 * pixel-to-cell conversion. The old spacing divided y by 1.732 here AND the mod
+                 * period multiplied it again, making the hexagons 3:1 tall. */
+                vec2 p = luv * LayerSize / max(u_size, 0.5);
                 vec2 a = mod(p, vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
-                vec2 b = mod(p + vec2(0.5, 0.0), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
+                vec2 b = mod(p + vec2(0.5, 0.8660254), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
                 vec2 local = dot(a, a) < dot(b, b) ? a : b;
                 float edge = max(abs(local.x) / 0.5, abs(local.y) / 0.8660254);
                 float glow = smoothstep(1.0 - clamp(u_glow, 0.01, 1.0), 1.0, edge);
@@ -1382,14 +1392,16 @@ public final class AmEffectLibrary
             {
                 vec2 luv = layerUv(vUv);
                 vec4 c = sampleLayer(luv);
-                vec2 p = luv * max(u_spacing, 1.0) + vec2(u_offset_x, u_offset_y);
+                /* spacing is authored in pixels (like am_halftone_dots), not as a fixed number
+                 * of cells across the layer. */
+                vec2 p = luv * LayerSize / max(u_spacing, 1.0) + vec2(u_offset_x, u_offset_y);
                 vec2 local = fract(p) - 0.5;
                 float radius = clamp(u_size, 0.01, 0.9);
                 float dotMask = smoothstep(radius, radius * 0.6, length(local));
                 fragColor = vec4(mix(c.rgb, u_color.rgb, dotMask * clamp(u_alpha, 0.0, 1.0)), c.a);
             }
             """, 0F, "alpha")
-            .p("spacing", "间距", 2F, 200F, 24F, 1F)
+            .p("spacing", "间距（像素）", 2F, 200F, 24F, 1F)
             .p("size", "点大小", 0.01F, 0.9F, 0.35F, 0.01F)
             .p("offset_x", "偏移 X", -1F, 1F, 0F, 0.01F)
             .p("offset_y", "偏移 Y", -1F, 1F, 0F, 0.01F)
@@ -1448,13 +1460,15 @@ public final class AmEffectLibrary
                 vec2 luv = layerUv(vUv);
                 vec4 c = sampleLayer(luv);
                 float y = luma(c.rgb);
-                float coord = luv.y * max(u_spacing, 1.0) + y * u_modulation;
+                /* Pixel spacing, matching am_halftone_dots; the old UV multiplier made the line
+                 * count independent of the layer resolution. */
+                float coord = luv.y * LayerSize.y / max(u_spacing, 1.0) + y * u_modulation;
                 float wave = abs(fract(coord) - 0.5) * 2.0;
                 float line = 1.0 - smoothstep(u_width, u_width + max(u_softness, 0.001), wave);
                 fragColor = vec4(mix(c.rgb, u_color.rgb, line * clamp(u_alpha, 0.0, 1.0)), c.a);
             }
             """, 0F, "alpha")
-            .p("spacing", "线密度", 2F, 200F, 40F, 1F)
+            .p("spacing", "线间距（像素）", 2F, 200F, 40F, 1F)
             .p("modulation", "亮度调制", 0F, 40F, 12F, 0.1F)
             .p("width", "线宽", 0.01F, 0.99F, 0.4F, 0.01F)
             .p("softness", "柔和", 0.001F, 0.5F, 0.05F, 0.001F)
@@ -1970,9 +1984,10 @@ public final class AmEffectLibrary
             {
                 vec2 luv = layerUv(vUv);
                 vec2 spacing = vec2(1.0, 1.7320508);
-                vec2 p = luv * LayerSize / max(u_size, 0.5) / spacing;
+                /* Isotropic size units; spacing is only the lattice period (see am_hex_array). */
+                vec2 p = luv * LayerSize / max(u_size, 0.5);
                 vec2 a = mod(p, spacing) - spacing * 0.5;
-                vec2 b = mod(p + vec2(0.5, 0.0), spacing) - spacing * 0.5;
+                vec2 b = mod(p + vec2(0.5, 0.8660254), spacing) - spacing * 0.5;
                 vec2 local = dot(a, a) < dot(b, b) ? a : b;
                 vec2 center = p - local;
                 float h = hash(center + u_seed) * 6.2831853;
@@ -2107,13 +2122,13 @@ public final class AmEffectLibrary
             void main()
             {
                 vec2 luv = layerUv(vUv);
-                vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 0.5);
-                vec2 p = luv * LayerSize / spacing;
+                vec2 p = luv * LayerSize / max(u_size, 0.5);
                 vec2 a = mod(p, vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
-                vec2 b = mod(p + vec2(0.5, 0.0), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
+                vec2 b = mod(p + vec2(0.5, 0.8660254), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
                 vec2 local = dot(a, a) < dot(b, b) ? a : b;
                 vec2 center = p - local;
-                vec2 sourceUv = center * spacing / max(LayerSize, vec2(1.0));
+                /* center is in isotropic size units now, so undo only the size scale, not √3. */
+                vec2 sourceUv = center * max(u_size, 0.5) / max(LayerSize, vec2(1.0));
                 vec4 c = sampleLayer(clamp(sourceUv, 0.0, 1.0));
                 float edge = max(abs(local.x) / 0.5, abs(local.y) / 0.8660254);
                 float gap = smoothstep(1.0 - clamp(u_gap, 0.0, 0.9), 1.0, edge);
@@ -3228,10 +3243,9 @@ public final class AmEffectLibrary
                     return;
                 }
 
-                vec2 spacing = vec2(1.0, 1.7320508) * max(u_size, 0.5);
-                vec2 p = luv * max(LayerSize, vec2(1.0)) / spacing;
+                vec2 p = luv * max(LayerSize, vec2(1.0)) / max(u_size, 0.5);
                 vec2 a = mod(p, vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
-                vec2 b = mod(p + vec2(0.5, 0.0), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
+                vec2 b = mod(p + vec2(0.5, 0.8660254), vec2(1.0, 1.7320508)) - vec2(0.5, 0.8660254);
                 vec2 local = dot(a, a) < dot(b, b) ? a : b;
                 vec2 center = p - local;
                 vec2 norm = local / vec2(0.5, 0.8660254);
@@ -3241,7 +3255,8 @@ public final class AmEffectLibrary
                     + radians(u_twirl) * length(norm);
                 vec2 rotated = rot(angle) * (norm * vec2(max(u_stretch_x, 0.01), max(u_stretch_y, 0.01)));
                 vec2 sourceLocal = rotated * vec2(0.5, 0.8660254) + center;
-                vec2 sourceUv = sourceLocal * spacing / max(LayerSize, vec2(1.0)) + vec2(u_position_x, u_position_y);
+                vec2 sourceUv = sourceLocal * max(u_size, 0.5) / max(LayerSize, vec2(1.0))
+                    + vec2(u_position_x, u_position_y);
                 fragColor = sampleLayer(sourceUv);
             }
             """, 0F, null)
@@ -3471,8 +3486,10 @@ public final class AmEffectLibrary
                 st = rot(a) * st;
 
                 float amount = max(u_amount, 0.5);
-                float px = floor(st.x * amount / max(u_stretch_y, 0.01));
-                float py = floor(st.y * amount / max(u_stretch_x, 0.01));
+                /* Each axis uses its own stretch, like the other tile/warp shaders. The crossed
+                 * pair made X follow stretch_y and Y follow stretch_x. */
+                float px = floor(st.x * amount / max(u_stretch_x, 0.01));
+                float py = floor(st.y * amount / max(u_stretch_y, 0.01));
                 float dx = rand21(vec2(px, py + 3937.7249 * u_seed));
                 float dy = rand21(vec2(px + 328.7319 + 432.7249 * u_seed, py - 971.382));
                 vec2 dv = (vec2(dx, dy) - 0.5) * 2.0;

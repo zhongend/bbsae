@@ -1,5 +1,54 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix57 — 2026-11-14
+
+19 项已确认 bug 的最小修复（A/B/C 组）。
+
+### 渲染/数据逻辑
+
+- **父子绑定**：`applyDelta` 补 `AXIS_SCALE_Y` 关键帧补偿，Y 缩放动画绑父级不再错乱。
+- **视口回放模型 repeat**：`drawReplayModels` 使用 `Replicate3D.find/transforms` 逐复制渲染
+  N 份，透明度乘复制器 alpha；无复制器保持 1 份。
+- **倒影渐隐**：距离项改为 `(1 - mirrored.y)`，渐隐长度真正生效。
+- **六边形**：`am_hex_array/am_hex_tile/am_hex_rotate`（以及同族的 `am_hex_shift`）改为
+  `p = luv * LayerSize / size` 的各向同性单位；b 偏移 `(0.5, 0.8660254)`；tile/rotate 的
+  sourceUv 按新单位回算。不再被 √3 算两次成 3:1 竖长菱形。
+- **网格线**：按原生 grid Type==3 重写，thickness 正向控制线宽，不再反向/占半格。
+- **圆形波纹**：`u_phase` 用 `radians()`，度参数不再当弧度。
+- **闪烁**：删除 `* 30.0`，默认 8 次/秒而不是 240 次/秒。
+- **能量束**：端点渐隐锚点从 `0.0..0.15` 移到 `0.35..0.5`，不再截成短桩。
+- **wiggle**：频率用于 `frame * frequency`，振幅乘到结果；两个参数都生效。
+- **2D 蒙版羽化/扩展**：`applyModelMask` 的 layer-space 分支不再把已含 raster scale 的
+  `maskModel` 再传给 `maskLayerScale`（会平方 raster 因子）；改用未缩放 model 乘一次。
+  `applyLayerMask` 原路径本来就是一次，保持不动。缓存状态继续由 world 矩阵参与。
+- **表达式**：一元负号低于乘方，`-2^2 = -4`；指数右结合、支持 `2^-2`。
+
+### hotfix56 遗留
+
+- 更新 `orderLayers`/`sortSegment` 过时注释；独立模型与 Mask/Exclude 层都是栈序边界。
+- **3D Mask/Exclude 选择方案 a**：3D 蒙版层也按栈序作为边界，按钮文案“所有下方图层”
+  与行为一致；普通 3D 层仍按深度排序。
+- 删除死代码 `applyMatteToBelow`（旧单目标 track matte 入口仍用 `chooseMatte` UI）。
+- `setBlendMask` 把原混合模式存到 `CompLayer.maskPreviousBlendMode`（transient），
+  `clearBlendMask` 恢复，而不是一律 NORMAL。
+
+### 低优先级/健壮性
+
+- `am_dots`、`am_halftone_lines` 间距改为像素单位（与 `am_halftone_dots` 一致），UI 标签
+  改为“间距（像素）/线间距（像素）”。
+- `am_tileshift_2` 的 X/Y stretch 不再交叉使用。
+- `am_line_repeat` 的“垂直方向”改为垂直条带（沿 X 变化）。
+- `CompAudioMixer.resample` 空数据直接返回空 Source，避免 `left[-1]`。
+- `CompExpression` 一元负号优先级修正（见上）。
+
+### 验证
+
+- 全量测试：**165 套件 / 1005 项 / 0 failures / 0 errors / 1 skipped**。
+- 未启动客户端；请重点验证 Y 缩放绑父级、3D 视口模型 repeat、倒影/六边形/网格线/波纹/
+  闪烁/能量束、wiggle、蒙版羽化缩放、3D 蒙版作用范围和多选显示。
+- 候选包：`bbsae-0.99-hotfix57.jar`（3,953,128 bytes，SHA-256
+  `25739590A52B18134C2A651D5E16A000CF4D6F50ED38C604F05051CB9A2E32AF`）。
+
 ## 0.99-hotfix56 — 2026-11-14
 
 3D 重复视口、模型层级、AM 蒙版混合模式、多选可见性。

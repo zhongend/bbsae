@@ -135,6 +135,8 @@ public class CompLayer
     public float anchorY = 0.5F;
     public float opacity = 1F;
     public int blendMode = BLEND_NORMAL;
+    /** Blend mode before the Mask/Exclude quick action; transient editor state, not saved. */
+    public transient int maskPreviousBlendMode = BLEND_NORMAL;
 
     /** ARGB. */
     public int color = 0xFFFFFFFF;

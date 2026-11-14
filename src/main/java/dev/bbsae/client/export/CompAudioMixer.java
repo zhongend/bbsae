@@ -515,6 +515,12 @@ public final class CompAudioMixer
      */
     private static Source resample(float[] left, float[] right, int sourceRate)
     {
+        /* Empty clips must not index left[-1] (index >= length-1 is true for 0 and -1). */
+        if (left.length == 0 || right.length == 0)
+        {
+            return new Source(left, right, 0);
+        }
+
         double ratio = SAMPLE_RATE / (double) sourceRate;
         int frames = Math.max(1, (int) Math.floor(left.length * ratio));
         float[] outLeft = new float[frames];

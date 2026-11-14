@@ -257,45 +257,79 @@ public final class CompViewportRenderer
                 continue;
             }
 
-            GlFramebuffer model;
+            CompEffect replication = context.renderEffects ? Replicate3D.find(layer, context) : null;
+            List<Matrix4f> copies;
 
-            try
+            if (replication == null)
             {
-                model = ReplayActorPass.renderModel(layer, context, batcher,
-                    camera.view, camera.projection, width, height);
+                copies = java.util.Collections.singletonList(new Matrix4f());
             }
-            catch (RuntimeException e)
+            else
             {
-                dev.bbsae.BbsAeAddon.LOGGER.warn("3D viewport could not render replay model " + layer.id, e);
+                copies = Replicate3D.transforms(replication, layer, context, 0F, 0F);
+            }
+
+            if (copies.isEmpty())
+            {
                 continue;
             }
 
-            if (model == null)
-            {
-                continue;
-            }
-
-            /* renderModel blends the form into a transparent target, so its RGB is premultiplied.
-             * The composition path unpremultiplies before compositing; do the same here or the
-             * model's antialiased edges turn dark when the free camera sees it. */
-            GlFramebuffer straight = PassRenderer.unpremultiply(model);
+            float alpha = replication == null ? 1F
+                : Math.max(0F, Math.min(1F, replication.valueF("alpha", replication.valueF("amount", 1F))));
+            float copyOpacity = Math.max(0F, Math.min(1F, layer.opacity)) * alpha;
 
             try
             {
-                /* unpremultiply() leaves its own target bound and blending off. */
-                target.bindOnly();
-                com.mojang.blaze3d.platform.GlStateManager._enableBlend();
-                org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_BLEND);
-                com.mojang.blaze3d.platform.GlStateManager._blendFunc(
-                    org.lwjgl.opengl.GL11.GL_SRC_ALPHA, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA);
-                LayerContentRenderer.drawFullscreenActors(context, batcher, straight, width, height);
+                for (Matrix4f copy : copies)
+                {
+                    context.modelPixelOffset = copy;
+
+                    GlFramebuffer model;
+
+                    try
+                    {
+                        model = ReplayActorPass.renderModel(layer, context, batcher,
+                            camera.view, camera.projection, width, height);
+                    }
+                    catch (RuntimeException e)
+                    {
+                        dev.bbsae.BbsAeAddon.LOGGER.warn("3D viewport could not render replay model " + layer.id, e);
+                        continue;
+                    }
+
+                    if (model == null)
+                    {
+                        continue;
+                    }
+
+                    /* renderModel blends the form into a transparent target, so its RGB is
+                     * premultiplied. The composition path unpremultiplies before compositing; do
+                     * the same here or the model's antialiased edges turn dark. */
+                    GlFramebuffer straight = PassRenderer.unpremultiply(model);
+
+                    try
+                    {
+                        /* unpremultiply() leaves its own target bound and blending off. */
+                        target.bindOnly();
+                        com.mojang.blaze3d.platform.GlStateManager._enableBlend();
+                        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_BLEND);
+                        com.mojang.blaze3d.platform.GlStateManager._blendFunc(
+                            org.lwjgl.opengl.GL11.GL_SRC_ALPHA, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA);
+                        LayerContentRenderer.drawFullscreenActors(context, batcher, straight, width, height,
+                            copyOpacity);
+                    }
+                    finally
+                    {
+                        if (straight != model)
+                        {
+                            FboPool.release(straight);
+                        }
+                    }
+                }
             }
             finally
             {
-                if (straight != model)
-                {
-                    FboPool.release(straight);
-                }
+                context.modelPixelOffset = null;
             }
         }
     }

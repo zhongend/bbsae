@@ -81,6 +81,38 @@ public class CompParentingTest
         assertEquals(400F, child.y, 0.05F);
     }
 
+    /**
+     * Y-scale keys must receive the same parent-basis compensation as X. Missing AXIS_SCALE_Y
+     * made a child with vertical scale animation change height as soon as it was parented.
+     */
+    @Test
+    public void bindingKeepsAnimatedYScaleIntact()
+    {
+        CompDocument doc = doc();
+        CompLayer parent = layer(doc, "parent", 400F, 300F);
+        CompLayer child = layer(doc, "child", 800F, 600F);
+
+        parent.scaleY = 2F;
+        child.scaleY = 1F;
+        child.insertAxisKey(CompCurves.AXIS_SCALE_Y, 0F, 1F);
+        child.insertAxisKey(CompCurves.AXIS_SCALE_Y, 20F, 1.8F);
+
+        float before0 = worldScaleY(doc, child, 0F);
+        float before20 = worldScaleY(doc, child, 20F);
+
+        assertTrue(CompParenting.bind(doc, child, parent.id, 0F));
+
+        assertEquals(before0, worldScaleY(doc, child, 0F), 0.01F, "Y scale at frame 0");
+        assertEquals(before20, worldScaleY(doc, child, 20F), 0.01F, "Y scale at frame 20");
+    }
+
+    private static float worldScaleY(CompDocument doc, CompLayer layer, float frame)
+    {
+        Matrix4f matrix = CompParenting.worldMatrix(doc, layer, frame);
+
+        return (float) Math.sqrt(matrix.m10() * matrix.m10() + matrix.m11() * matrix.m11());
+    }
+
     @Test
     public void bindingToARotatedScaledParentKeepsTheChildInPlace()
     {

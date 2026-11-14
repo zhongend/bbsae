@@ -202,6 +202,7 @@ public final class CompParenting
         applyAxis(layer, CompCurves.AXIS_Y, dy, 1F);
         applyAxis(layer, CompCurves.AXIS_ROTATION, drz, 1F);
         applyAxis(layer, CompCurves.AXIS_SCALE_X, 0F, ratioX);
+        applyAxis(layer, CompCurves.AXIS_SCALE_Y, 0F, ratioY);
 
         if (layer.threeD)
         {

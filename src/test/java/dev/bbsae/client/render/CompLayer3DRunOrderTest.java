@@ -201,6 +201,29 @@ public class CompLayer3DRunOrderTest
         assertEquals("plane", order.get(3).id);
     }
 
+    /** Mask/Exclude operate on the backdrop in stack order, so a 3D mask layer is a boundary too. */
+    @Test
+    public void maskLayersKeepCompositionStackOrder()
+    {
+        CompProject project = project(false);
+        CompDocument comp = comp(project);
+        CompLayer back = layer("back", "solid", true, -400F);
+        CompLayer mask = layer("mask", "shape", true, 400F);
+        CompLayer front = layer("front", "solid", true, 400F);
+
+        mask.blendMode = CompLayer.BLEND_MASK;
+
+        comp.addLayer(back);
+        comp.addLayer(mask);
+        comp.addLayer(front);
+
+        List<CompLayer> order = ordered(project, comp);
+
+        assertEquals("back", order.get(1).id);
+        assertEquals("mask", order.get(2).id);
+        assertEquals("front", order.get(3).id);
+    }
+
     /** A 2D layer between two 3D groups is not picked up by either run. */
     @Test
     public void a2DLayerBetweenTwoRunsIsNeverMoved()

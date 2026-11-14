@@ -305,6 +305,8 @@ final class DepthPlanePixelHarness
         for (int i = 0; i <= ordered.size(); i++)
         {
             boolean boundary = i == ordered.size() || ordered.get(i).independent
+                || ordered.get(i).blendMode == CompLayer.BLEND_MASK
+                || ordered.get(i).blendMode == CompLayer.BLEND_EXCLUDE
                 || !CompScene.sortsIn3D(context, ordered.get(i));
 
             if (!boundary)

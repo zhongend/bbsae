@@ -23718,6 +23718,12 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.beginAction(exclude ? "用作排除蒙版" : "用作蒙版");
+
+        if (source.blendMode != CompLayer.BLEND_MASK && source.blendMode != CompLayer.BLEND_EXCLUDE)
+        {
+            source.maskPreviousBlendMode = source.blendMode;
+        }
+
         source.blendMode = exclude ? CompLayer.BLEND_EXCLUDE : CompLayer.BLEND_MASK;
         source.visible = true;
         this.selectLayer(source);
@@ -23735,7 +23741,8 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.beginAction("取消蒙版模式");
-        source.blendMode = CompLayer.BLEND_NORMAL;
+        source.blendMode = source.maskPreviousBlendMode;
+        source.maskPreviousBlendMode = CompLayer.BLEND_NORMAL;
         this.refreshInspector();
         this.save();
         this.setStatus("已取消蒙版/排除模式");
@@ -23793,40 +23800,6 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         return null;
-    }
-
-    private void applyMatteToBelow(CompLayer source, boolean exclude)
-    {
-        if (this.doc == null || source == null)
-        {
-            return;
-        }
-
-        int index = this.doc.layers.indexOf(source);
-        CompLayer target = index > 0 ? this.doc.layers.get(index - 1) : null;
-
-        if (target == null)
-        {
-            this.setStatus("这一层下面没有图层：把形状层放到要蒙版的图层上方");
-
-            return;
-        }
-
-        this.beginAction(exclude ? "排除蒙版" : "蒙版");
-        target.trackMatteId = source.id;
-        target.trackMatteEnabled = true;
-        target.trackMatteMode = exclude ? CompLayer.MATTE_ALPHA_INVERTED : CompLayer.MATTE_ALPHA;
-
-        /* The shape becomes a guide: visible while editing, never part of the frame. */
-        source.guide = true;
-        source.visible = false;
-
-        this.selectLayer(target);
-        this.refreshLayers();
-        this.refreshInspector();
-        this.save();
-        this.setStatus((exclude ? "排除" : "蒙版") + "：" + this.layerLabel(target)
-            + " ← " + this.layerLabel(source) + "（已切到目标层；在蒙版页点“编辑蒙版来源”可改形状）");
     }
 
     private static String matteName(int mode)

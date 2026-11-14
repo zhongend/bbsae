@@ -85,7 +85,7 @@ public final class CompExpression
 
     private float term()
     {
-        float value = power();
+        float value = unary();
 
         while (true)
         {
@@ -93,16 +93,16 @@ public final class CompExpression
 
             if (this.eat('*'))
             {
-                value *= power();
+                value *= unary();
             }
             else if (this.eat('/'))
             {
-                float right = power();
+                float right = unary();
                 value = right == 0F ? 0F : value / right;
             }
             else if (this.eat('%'))
             {
-                float right = power();
+                float right = unary();
                 value = right == 0F ? 0F : value % right;
             }
             else
@@ -112,13 +112,17 @@ public final class CompExpression
         }
     }
 
+    /**
+     * Exponentiation binds tighter than unary minus: {@code -2^2} is {@code -(2^2)} = -4,
+     * not {@code (-2)^2}. The exponent is right-associative and may itself be signed.
+     */
     private float power()
     {
-        float value = unary();
+        float value = primary();
 
         if (this.eat('^'))
         {
-            value = (float) Math.pow(value, power());
+            value = (float) Math.pow(value, unary());
         }
 
         return value;
@@ -130,15 +134,15 @@ public final class CompExpression
 
         if (this.eat('-'))
         {
-            return -unary();
+            return -power();
         }
 
         if (this.eat('+'))
         {
-            return unary();
+            return power();
         }
 
-        return primary();
+        return power();
     }
 
     private float primary()
@@ -227,7 +231,7 @@ public final class CompExpression
             case "sqrt": return (float) Math.sqrt(Math.max(0F, a));
             case "pow": return (float) Math.pow(a, b);
             case "noise": return deterministicNoise(a, b);
-            case "wiggle": return deterministicNoise(this.context.frame() * 0.35F, a + b * 37F) * 2F - 1F;
+            case "wiggle": return (deterministicNoise(this.context.frame() * a, 37F) * 2F - 1F) * b;
             case "deg": return (float) Math.toDegrees(a);
             case "rad": return (float) Math.toRadians(a);
             default: return 0F;
