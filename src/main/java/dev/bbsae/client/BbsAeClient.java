@@ -46,7 +46,9 @@ public class BbsAeClient implements BBSAddonMod
      */
     public static boolean acceptDroppedFilePaths(String[] paths)
     {
-        if (paths == null || paths.length == 0 || compositorPanel == null || !compositorPanel.isVisible())
+        if (paths == null || paths.length == 0 || compositorPanel == null || !compositorPanel.isVisible()
+            || compositorPanel.dashboard == null
+            || compositorPanel.dashboard.getPanels().panel != compositorPanel)
         {
             return false;
         }

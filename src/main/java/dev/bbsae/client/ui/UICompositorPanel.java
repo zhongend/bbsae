@@ -647,7 +647,8 @@ public class UICompositorPanel extends UIDashboardPanel
         assetSection.fields.add(new UICompButton(IKey.constant("导入视频…"), (button) -> this.importVideo())
             .tooltip(IKey.constant("把 mp4/mov/mkv/webm 拆成逐帧图片，并新建一条 footage 轨道（按合成帧率、合成尺寸）")));
         assetSection.fields.add(new UICompButton(IKey.constant("导入音频…"), (button) -> this.importAudioFile())
-            .tooltip(IKey.constant("WAV/OGG 默认外部链接；MP3/FLAC/M4A 用 FFmpeg 转 WAV。也可以直接拖到时间轴音频轨")));
+            .tooltip(IKey.constant("WAV/OGG/MP3/FLAC/M4A/AAC/OPUS/WMA/AIFF 默认外部链接；"
+                + "压缩格式用 FFmpeg 在内存中解码，不复制到工程。也可以直接拖到时间轴音频轨")));
         this.assetPanel.add(assetSection);
 
         this.leftTabs = new UICompTabBar();
@@ -8223,6 +8224,9 @@ public class UICompositorPanel extends UIDashboardPanel
             },
             replaceMode);
 
+        this.assetBrowser.externalAssets(() -> this.project == null || this.project.settings == null
+            ? java.util.Collections.emptyList() : this.project.settings.externalAssets);
+
         this.assetBrowser.relative(this).x(0).y(0).w(1F).h(1F);
         this.add(this.assetBrowser);
         this.resize();
@@ -8764,17 +8768,25 @@ public class UICompositorPanel extends UIDashboardPanel
                 return;
             }
 
-            String name = this.copyIntoProjectImages(file);
+            boolean linked = CompPrefs.get().linkExternalAssets;
+            String name = linked ? file.getName() : this.copyIntoProjectImages(file);
+
+            if (linked)
+            {
+                this.registerExternalAsset(file);
+            }
 
             if (this.assetBrowser != null)
             {
                 this.assetBrowser.refresh();
                 /* Show the file that was just imported, selected. Without this the library simply
                  * re-listed itself and the new picture was one anonymous tile among hundreds. */
-                this.assetBrowser.selectPath("assets/images/" + name);
+                this.assetBrowser.selectPath(linked ? "external:" + file.getAbsoluteFile()
+                    : "assets/images/" + name);
             }
 
-            this.setStatus("已导入：" + name + "（已在素材库选中，双击插入）");
+            this.setStatus((linked ? "已链接：" : "已导入：") + name
+                + (linked ? "（外部素材，不复制）" : "（已在素材库选中，双击插入）"));
             this.save();
         }
         catch (Exception e)
@@ -15283,6 +15295,7 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
 
                 layer.imagePath = "external:" + file.getAbsoluteFile();
+                this.registerExternalAsset(file);
 
                 try
                 {
@@ -15351,6 +15364,11 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             layer.imagePath = path;
+
+            if (path.startsWith("external:"))
+            {
+                this.registerExternalAsset(file);
+            }
 
             java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(file);
 
@@ -18446,7 +18464,7 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         NativeFileDialog.pickFile(
             "重新链接外部音频",
-            new String[] {"wav", "ogg"},
+            new String[] {"wav", "ogg", "mp3", "flac", "m4a", "aac", "opus", "wma", "aiff", "aif"},
             (file) ->
             {
                 if (file == null || !file.isFile())
@@ -18520,7 +18538,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         NativeFileDialog.pickFile(
             "导入音频",
-            new String[] {"wav", "ogg", "mp3", "flac", "m4a"},
+            new String[] {"wav", "ogg", "mp3", "flac", "m4a", "aac", "opus", "wma", "aiff", "aif"},
             (file) ->
             {
                 if (file != null && file.isFile())
@@ -18542,7 +18560,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.importBrowser = new UIImportBrowser(
             "导入音频",
-            new String[] {"wav", "ogg", "mp3", "flac", "m4a"},
+            new String[] {"wav", "ogg", "mp3", "flac", "m4a", "aac", "opus", "wma", "aiff", "aif"},
             (file) ->
             {
                 if (file != null && file.isFile())
@@ -18605,7 +18623,10 @@ public class UICompositorPanel extends UIDashboardPanel
             String rawName = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
             String lower = rawName.toLowerCase(java.util.Locale.ROOT);
             boolean direct = lower.endsWith(".wav") || lower.endsWith(".ogg");
-            boolean link = direct && CompPrefs.get().linkExternalAssets;
+            boolean supported = direct || lower.endsWith(".mp3") || lower.endsWith(".flac")
+                || lower.endsWith(".m4a") || lower.endsWith(".aac") || lower.endsWith(".opus")
+                || lower.endsWith(".wma") || lower.endsWith(".aiff") || lower.endsWith(".aif");
+            boolean link = supported && CompPrefs.get().linkExternalAssets;
             java.nio.file.Path target;
             String storedPath;
 
@@ -23099,6 +23120,11 @@ public class UICompositorPanel extends UIDashboardPanel
                 {
                     this.importDroppedImage(path.toFile(), dropTime);
 
+                    if (CompPrefs.get().linkExternalAssets)
+                    {
+                        this.registerExternalAsset(path.toFile());
+                    }
+
                     if (dropRow >= 0 && this.selectedLayer != null)
                     {
                         this.moveLayerToDisplayIndex(this.selectedLayer, dropRow);
@@ -23126,7 +23152,9 @@ public class UICompositorPanel extends UIDashboardPanel
                     imported++;
                 }
                 else if (name.endsWith(".wav") || name.endsWith(".ogg")
-                    || name.endsWith(".mp3") || name.endsWith(".flac") || name.endsWith(".m4a"))
+                    || name.endsWith(".mp3") || name.endsWith(".flac") || name.endsWith(".m4a")
+                    || name.endsWith(".aac") || name.endsWith(".opus") || name.endsWith(".wma")
+                    || name.endsWith(".aiff") || name.endsWith(".aif"))
                 {
                     this.addAudioClip(path.toFile(), dropTime);
                     imported++;
@@ -23189,6 +23217,27 @@ public class UICompositorPanel extends UIDashboardPanel
         this.doc.addLayer(layer);
         this.selectLayer(layer);
         this.setStatus("已拖入图片：" + name + (path.startsWith("external:") ? "（外部链接）" : ""));
+    }
+
+    /** Adds an absolute media path to the project's external library; nothing is copied. */
+    private void registerExternalAsset(java.io.File file)
+    {
+        if (this.project == null || this.project.settings == null || file == null)
+        {
+            return;
+        }
+
+        String path = "external:" + file.getAbsoluteFile();
+
+        if (this.project.settings.externalAssets == null)
+        {
+            this.project.settings.externalAssets = new java.util.ArrayList<>();
+        }
+
+        if (!this.project.settings.externalAssets.contains(path))
+        {
+            this.project.settings.externalAssets.add(path);
+        }
     }
 
     /** Linked imports keep the source in place; the fallback copies it into assets/images. */

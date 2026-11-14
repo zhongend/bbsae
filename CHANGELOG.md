@@ -1,5 +1,36 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix60 — 2026-11-14
+
+真正外链素材 + 更多音频格式（不复制到工程）。
+
+### 素材库外链索引
+
+- `CompProject.CompSettings.externalAssets` 保存 `external:<绝对路径>` 列表；
+- 素材库新增 `externalAssets(Supplier<List<String>>)`，项目分类直接列出外链图片，
+  缩略图走 `ImageTextureCache` 的 `external:` 支持；
+- 图片导入（素材库/拖入/导入图层/链接外部图片）在「链接外部素材」开启时只登记外链，
+  **不再复制**；关闭时才回退到 `assets/images` 复制。
+
+### 音频格式
+
+- 支持 WAV/OGG/MP3/FLAC/M4A/AAC/OPUS/WMA/AIFF/AIF；
+- WAV/OGG 仍用 BBS 原生 Wave/Vorbis 解码；
+- 其它格式由 FFmpeg 解码到 **stdout 的 WAV**，再在内存中解析；临时/缓存不写入工程；
+- 外链压缩音频不再转 WAV 复制到 `assets/audio`，`CompAudio.path` 保存 `external:`；
+- 音频对话框、拖放、时间轴音频轨、素材库按钮都接受这些扩展名。
+
+### 验证与边界
+
+- 全量测试：**165 套件 / 1007 项 / 0 failures / 0 errors / 1 skipped**。
+- 外链视频仍由 `CompVideoFrames` 在 `config/bbsae/cache/video` 写帧缓存（不属于工程素材）；
+  源文件被移动/删除时素材会显示缺失。
+- 音频压缩格式依赖 FFmpeg；没有 FFmpeg 时无法解码/探测时长。
+- 未启动客户端；请重点验证素材库外链列表、拖入图片/视频/音频不产生 `assets` 副本、
+  MP3/FLAC 预览与导出、源文件移动后的缺失提示。
+- 候选包：`bbsae-0.99-hotfix60.jar`（3,958,154 bytes，SHA-256
+  `30DAA3C469A995A99197014E2C180C266161A25412A491B021C4A87963CBCFD3`）。
+
 ## 0.99-hotfix59 — 2026-11-14
 
 音频入口、OS 拖入、外链素材、按轨道落点导入。

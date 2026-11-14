@@ -112,6 +112,8 @@ public class UIAssetBrowser extends UIElement
     private final List<Asset> filtered = new ArrayList<>();
     private final List<Asset> projectAssets = new ArrayList<>();
     private String projectCache = "";
+    private Supplier<List<String>> externalAssets = java.util.Collections::emptyList;
+    private String externalCache = "";
 
     private static final Map<Integer, List<Asset>> RESOURCE_CACHE = new java.util.HashMap<>();
 
@@ -595,16 +597,29 @@ public class UIAssetBrowser extends UIElement
         }
     }
 
+    /** Supplies the project's absolute external image links (never copied into assets). */
+    public UIAssetBrowser externalAssets(Supplier<List<String>> supplier)
+    {
+        this.externalAssets = supplier == null ? java.util.Collections::emptyList : supplier;
+        this.projectCache = "";
+        this.externalCache = "";
+
+        return this;
+    }
+
     private List<Asset> projectAssets()
     {
         String id = this.projectId.get();
+        List<String> external = this.externalAssets.get();
+        String externalKey = external == null ? "" : String.join("\n", external);
 
-        if (id.equals(this.projectCache))
+        if (id.equals(this.projectCache) && externalKey.equals(this.externalCache))
         {
             return this.projectAssets;
         }
 
         this.projectCache = id;
+        this.externalCache = externalKey;
         this.projectAssets.clear();
 
         Path root = CompStore.assetRoot(id);
@@ -634,6 +649,29 @@ public class UIAssetBrowser extends UIElement
         }
         catch (Exception ignored)
         {}
+
+        if (external != null)
+        {
+            for (String link : external)
+            {
+                if (link == null || !link.startsWith("external:"))
+                {
+                    continue;
+                }
+
+                String name = link.substring("external:".length()).replace('\\', '/');
+                String base = name.substring(name.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
+
+                if (!(base.endsWith(".png") || base.endsWith(".jpg") || base.endsWith(".jpeg") || base.endsWith(".gif")))
+                {
+                    continue;
+                }
+
+                String label = name.substring(name.lastIndexOf('/') + 1);
+
+                this.projectAssets.add(new Asset(link, stripExtension(label), true, "项目（外链）"));
+            }
+        }
 
         return this.projectAssets;
     }

@@ -203,6 +203,8 @@ public class CompProject
     public static final class CompSettings
     {
         public boolean autoSave = true;
+        /** Absolute external media links shown in the project asset browser; never copied. */
+        public List<String> externalAssets = new ArrayList<>();
         public boolean showSafeArea = true;
         public boolean showGrid = false;
         public int gridSize = 80;

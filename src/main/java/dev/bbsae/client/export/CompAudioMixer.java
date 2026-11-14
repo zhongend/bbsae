@@ -314,7 +314,7 @@ public final class CompAudioMixer
 
             if (wave == null)
             {
-                warn(log, "无法解码音频（支持 WAV / OGG）：" + clip.path);
+                warn(log, "无法解码音频（WAV/OGG 原生；MP3/FLAC/M4A/AAC/OPUS/WMA/AIFF 需 FFmpeg）：" + clip.path);
 
                 return null;
             }
@@ -369,7 +369,60 @@ public final class CompAudioMixer
             }
         }
 
+        /*
+         * More formats without copying the source into the project: ask FFmpeg for a WAV on
+         * stdout and decode those bytes in memory. The link stays external: no file is written
+         * under assets/. MP3/FLAC/M4A/AAC/OPUS/WMA/AIFF are all handled by the same path.
+         */
+        byte[] decoded = decodeWithFfmpeg(file);
+
+        if (decoded != null && decoded.length > 4 && startsWith(decoded, 'R', 'I', 'F', 'F'))
+        {
+            return readWave(file, decoded);
+        }
+
         return null;
+    }
+
+    /** Decodes any FFmpeg-readable audio file to a stereo 48 kHz WAV byte array (stdout only). */
+    private static byte[] decodeWithFfmpeg(Path file)
+    {
+        String ffmpeg = mchorse.bbs_mod.utils.FFMpegUtils.getFFMPEG();
+
+        if (ffmpeg == null || ffmpeg.isBlank())
+        {
+            return null;
+        }
+
+        try
+        {
+            Process process = new ProcessBuilder(
+                ffmpeg,
+                "-nostdin",
+                "-v", "error",
+                "-i", file.toAbsolutePath().toString(),
+                "-vn",
+                "-f", "wav",
+                "-acodec", "pcm_s16le",
+                "-ar", String.valueOf(SAMPLE_RATE),
+                "-ac", String.valueOf(CHANNELS),
+                "-"
+            ).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+
+            byte[] output = process.getInputStream().readAllBytes();
+            int exit = process.waitFor();
+
+            if (exit != 0 || output.length == 0)
+            {
+                return null;
+            }
+
+            return output;
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
     }
 
     /**

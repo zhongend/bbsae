@@ -1,9 +1,9 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix59**：素材导入重构：左栏新增「导入音频…」；OS 拖入走 `UIScreen` 文件
-> 拖放钩子并只在 bbsae 界面取消 BBS 原版转换；拖到时间轴时按鼠标行/时间落点，图片/视频
-> 用 `external:` 链接（不复制），WAV/OGG 也链接；素材库/选中图层导入按「链接外部素材」
-> 设置统一。详见 [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix60**：真正外链：项目 `CompSettings.externalAssets` 记录绝对路径，素材库
+> 直接列出外链图片（`external:`），图片/视频/音频导入不再复制；音频新增 MP3/FLAC/M4A/
+> AAC/OPUS/WMA/AIFF，FFmpeg 在内存中解码（stdout，不写工程），WAV/OGG 仍原生解码；
+> 外链素材在素材库可直接拖用。详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">
