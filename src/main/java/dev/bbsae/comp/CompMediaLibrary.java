@@ -392,12 +392,8 @@ public final class CompMediaLibrary
     {
         CompProject.CompSettings settings = settings(project);
 
-        java.util.Set<String> tokens = new java.util.HashSet<>();
-
         for (Item item : items)
         {
-            tokens.add(item.path);
-
             String assigned = settings.mediaBinAssignments.get(item.path);
 
             if (assigned != null && findBin(project, assigned) == null)
@@ -406,7 +402,9 @@ public final class CompMediaLibrary
             }
         }
 
-        settings.mediaBinAssignments.keySet().removeIf((token) -> !tokens.contains(token));
+        /* Do not prune assignments for tokens that are not in this scan: a temporarily
+         * unavailable folder (external drive, permissions) must not silently reset the user's
+         * bins. Orphaned entries are harmless and disappear when the file comes back. */
     }
 
     /* --------------------------------------------------------------- lookup */

@@ -148,7 +148,7 @@ export** without touching the `.dat` film format.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix64.jar` SHA-256: `C53675F6789BD712A7AC6CE06AD2670F58F144CE8228E938CDB97CBA5A80767E` (4,013,201 bytes).
+`bbsae-0.99-hotfix64.jar` SHA-256: `3C20047539454080F100B6C698C9FD9D14194D87DDC65E7548480B7BF8BE4080` (4,012,997 bytes).
 
 ## Gallery
 
