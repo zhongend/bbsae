@@ -152,6 +152,27 @@ public final class CompScene
         return ctx.cameraView;
     }
 
+    /**
+     * Binding point of one layer this frame, resolved exactly once.
+     *
+     * <p>{@link BindingResolver} applies temporal smoothing, so resolving twice per frame (once for
+     * the local translation, once for the parent correction) would advance the filter twice and make
+     * a smoothed binding lag differently from the preview.</p>
+     */
+    static Vector2f boundPoint(CompRenderContext ctx, CompLayer layer)
+    {
+        if (ctx.bindingCache.containsKey(layer))
+        {
+            return ctx.bindingCache.get(layer);
+        }
+
+        Vector2f point = BindingResolver.resolve(layer, ctx);
+
+        ctx.bindingCache.put(layer, point);
+
+        return point;
+    }
+
     /** Local matrix: translate · rotateZ · rotateX · rotateY · scale, in comp space. */
     public static Matrix4f local(CompRenderContext ctx, CompLayer layer)
     {
@@ -194,7 +215,7 @@ public final class CompScene
             rotation += shake.rotation;
         }
 
-        Vector2f bound = BindingResolver.resolve(layer, ctx);
+        Vector2f bound = boundPoint(ctx, layer);
 
         if (bound != null)
         {
@@ -271,7 +292,24 @@ public final class CompScene
             return local;
         }
 
-        return world(ctx, parent, seen).mul(local);
+        Matrix4f parentWorld = world(ctx, parent, seen);
+        Vector2f bound = boundPoint(ctx, layer);
+
+        if (bound != null)
+        {
+            /* The binding point is in composition space, but the layer is a child: its translation
+             * lives in parent space. Solve for the local translation whose parent-transformed
+             * position is exactly the bound point. Without this a parented tracked layer was offset
+             * by the parent's transform (the binding looked wrong/duplicated). */
+            org.joml.Vector3f target = new org.joml.Vector3f(bound.x, bound.y, local.m32());
+
+            new Matrix4f(parentWorld).invert().transformPosition(target);
+            local.m30(target.x);
+            local.m31(target.y);
+            local.m32(target.z);
+        }
+
+        return parentWorld.mul(local);
     }
 
     public static CompLayer parentOf(CompRenderContext ctx, CompLayer layer)
@@ -450,6 +488,14 @@ public final class CompScene
             return false;
         }
 
+        /* A bound layer is pinned to a projected BBS point in composition space. Letting the camera
+         * affect it would project that point a second time, so bindings are screen-space by design
+         * (HUD labels, actor tags). */
+        if (BindingResolver.isBound(layer))
+        {
+            return false;
+        }
+
         if (legacy3D(ctx))
         {
             return true;
@@ -493,6 +539,14 @@ public final class CompScene
             return false;
         }
 
+        /* A binding pins the layer to a screen point: it is a flat overlay at that point, not a
+         * plane at its old local Z. Sorting it as a 3D plane would let it disappear behind geometry
+         * it is supposed to be drawn over. */
+        if (BindingResolver.isBound(layer))
+        {
+            return false;
+        }
+
         return layer.threeD || isModelVolume(layer)
             || "bbs".equals(layer.type) && hasCameraOverride()
             || (legacy3D(ctx) && spatial(ctx));
@@ -501,6 +555,14 @@ public final class CompScene
     public static boolean usePerspective(CompRenderContext ctx, CompLayer layer)
     {
         if (layer == null || "camera".equals(layer.type) || "adjustment".equals(layer.type))
+        {
+            return false;
+        }
+
+        /* Keep the projection consistent with {@link #cameraAffects}: a bound layer's world matrix
+         * already is the composition-space anchor, so a perspective projection would transform it a
+         * second time. */
+        if (BindingResolver.isBound(layer))
         {
             return false;
         }

@@ -232,6 +232,8 @@ public class UICompositorPanel extends UIDashboardPanel
      * Opening the compositor never creates one; the comp page shows the state and the add action.
      */
     private boolean filmClipLinked;
+    /** True when the current bind repaired a duration; keeps the repair notice on the status bar. */
+    private boolean durationRepairedOnBind;
     private CompLayer selectedLayer;
     /** Multi-selection, in click order; {@link #selectedLayer} is always its primary member. */
     private final java.util.LinkedHashSet<String> selectedIds = new java.util.LinkedHashSet<>();
@@ -6934,6 +6936,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.flushSave();
         }
 
+        this.durationRepairedOnBind = false;
         this.precompStack.clear();
 
         if (this.precompBack != null)
@@ -6997,7 +7000,11 @@ public class UICompositorPanel extends UIDashboardPanel
              * doc.duration, so a 30-minute camera placeholder stretched every composition and the
              * timeline fitted to the empty tail. Only a project that was damaged that way is
              * repaired; a composition with real content keeps its editorial duration. */
-            this.repairInflatedDuration(this.doc, duration);
+            /* Fallback for a project that was damaged by an older build and whose film has changed
+             * since: the composition is still a whole-minute placeholder but no longer equals the
+             * current film length, so the film-fingerprint repair above cannot recognise it. */
+            this.durationRepairedOnBind = this.repairInflatedDuration(this.doc, duration)
+                | this.repairImplausibleLongDuration(this.doc);
             normalizeWorkArea(this.doc);
 
             /* A linked replay may have been re-formed in the BBS film editor while this project
@@ -7040,7 +7047,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             /* Opening the compositor is a view action: it must not add a clip to the film timeline.
              * Only an existing clip is kept in sync. */
-            if (this.updateFilmClip(this.doc.duration) == null)
+            if (this.updateFilmClip(this.doc.duration) == null && !this.durationRepairedOnBind)
             {
                 this.setStatus("合成器已打开：这个合成还没有加入 BBS 影片轨道（在「合成」页可添加）");
             }
@@ -7351,18 +7358,18 @@ public class UICompositorPanel extends UIDashboardPanel
      * film duration, is longer than a minute, and the real content ends far earlier. A composition
      * that actually uses its length (audio, layers or work area near the end) is left untouched.</p>
      */
-    private void repairInflatedDuration(CompDocument doc, float filmDuration)
+    private boolean repairInflatedDuration(CompDocument doc, float filmDuration)
     {
         if (doc == null)
         {
-            return;
+            return false;
         }
 
         float repaired = dev.bbsae.comp.CompDurationRepair.fromFilm(doc, filmDuration);
 
         if (Float.isNaN(repaired))
         {
-            return;
+            return false;
         }
 
         float previous = doc.duration;
@@ -7387,6 +7394,8 @@ public class UICompositorPanel extends UIDashboardPanel
             "已修正被影片时长拉长的合成时长：%.0fs → %.0fs", previous, repaired));
         BbsAeAddon.LOGGER.info("Repaired inflated composition duration: comp={} film={}s {}s -> {}s (content {}s)",
             doc.id, filmDuration, previous, repaired, content);
+
+        return true;
     }
 
     /**
@@ -7433,18 +7442,18 @@ public class UICompositorPanel extends UIDashboardPanel
      * duration of ten minutes or more, an end-to-end work area, and less than a minute of real
      * content (layers and audio both count via {@link CompDocument#contentEnd()}).
      */
-    private void repairImplausibleLongDuration(CompDocument doc)
+    private boolean repairImplausibleLongDuration(CompDocument doc)
     {
         if (doc == null)
         {
-            return;
+            return false;
         }
 
         float repaired = dev.bbsae.comp.CompDurationRepair.implausibleLong(doc);
 
         if (Float.isNaN(repaired))
         {
-            return;
+            return false;
         }
 
         float previous = doc.duration;
@@ -7461,6 +7470,8 @@ public class UICompositorPanel extends UIDashboardPanel
             previous, doc.duration, content));
         BbsAeAddon.LOGGER.info("Repaired implausible composition duration: comp={} {}s -> {}s (content {}s)",
             doc.id, previous, doc.duration, content);
+
+        return true;
     }
 
     private void syncBbsLoop(int ticks)
@@ -7657,6 +7668,7 @@ public class UICompositorPanel extends UIDashboardPanel
          * be written into the newly opened project (or lost). */
         this.flushProjectBeforeSwitch();
         this.hideStartScreen();
+        this.durationRepairedOnBind = false;
         this.precompStack.clear();
         this.forgetTransientTimelineExpansion();
 
@@ -7748,6 +7760,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.flushProjectBeforeSwitch();
         this.hideStartScreen();
+        this.durationRepairedOnBind = false;
         this.precompStack.clear();
 
         if (this.precompBack != null)
@@ -7797,7 +7810,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             /* Opening the compositor is a view action: it must not add a clip to the film timeline.
              * Only an existing clip is kept in sync. */
-            if (this.updateFilmClip(this.doc.duration) == null)
+            if (this.updateFilmClip(this.doc.duration) == null && !this.durationRepairedOnBind)
             {
                 this.setStatus("合成器已打开：这个合成还没有加入 BBS 影片轨道（在「合成」页可添加）");
             }
@@ -10593,6 +10606,8 @@ public class UICompositorPanel extends UIDashboardPanel
         mchorse.bbs_mod.film.Film exportFilm = this.filmPanel.getData();
         String projectId = this.project == null ? null : this.project.id;
         String compId = this.doc == null ? null : this.doc.id;
+        boolean hadClip = projectId == null || compId == null
+            || CompositionClip.findForFilm(exportFilm, projectId, compId) != null;
         CompositionClip exportClip = projectId == null || compId == null
             ? null
             : CompositionClip.prepareForExport(exportFilm, projectId, compId, exportSeconds);
@@ -10624,8 +10639,24 @@ public class UICompositorPanel extends UIDashboardPanel
         final boolean previousLoop = mchorse.bbs_mod.BBSSettings.editorLoop.get();
 
         mchorse.bbs_mod.BBSSettings.editorLoop.set(false);
+
+        /* Export needs the clip while the recorder runs, but it must not leave a new clip on the
+         * film timeline when the user never added the composition. A clip that existed before the
+         * export is user content and stays. */
+        final boolean removeExportClip = exportClip != null && !hadClip;
+
         this.filmPanel.recorder.setFinishedListener((cancelled) ->
-            mchorse.bbs_mod.BBSSettings.editorLoop.set(previousLoop));
+        {
+            mchorse.bbs_mod.BBSSettings.editorLoop.set(previousLoop);
+
+            if (removeExportClip && (this.film != exportFilm || !this.filmClipLinked))
+            {
+                exportFilm.camera.remove(exportClip);
+                this.filmPanel.forceSave();
+                this.refreshFilmClipState();
+                BbsAeAddon.LOGGER.info("Removed the temporary export clip for comp {}", compId);
+            }
+        });
 
         BbsAeAddon.LOGGER.info("Compositor export duration: {} ticks ({}s), loop disabled for export",
             exportTicks, String.format(java.util.Locale.ROOT, "%.3f", exportTicks / 20F));
@@ -10757,6 +10788,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.save();
         /* Remember the outgoing replay composition's time-axis size before the document changes. */
         this.rememberCurrentTimelineView();
+        this.durationRepairedOnBind = false;
         this.replay = replay;
 
         if (this.project != null && replay != null)
@@ -10776,7 +10808,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
             this.doc = CompStore.ensureReplayComp(this.project, replayKey, replay.getName(), width, height, fps, duration);
             /* Switching replays must not stretch the composition to the film's length. */
-            this.repairInflatedDuration(this.doc, duration);
+            /* Fallback for a project that was damaged by an older build and whose film has changed
+             * since: the composition is still a whole-minute placeholder but no longer equals the
+             * current film length, so the film-fingerprint repair above cannot recognise it. */
+            this.durationRepairedOnBind = this.repairInflatedDuration(this.doc, duration)
+                | this.repairImplausibleLongDuration(this.doc);
             normalizeWorkArea(this.doc);
             this.time = 0F;
             this.setSingleSelection(this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1));
@@ -25051,8 +25087,14 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (first || this.resetTimelineView)
         {
-            this.resetTimelineView = true;
-            this.refreshSheets();
+            /* Refit only when the view was deferred for a new document. Reopening the drawer must
+             * keep the per-composition time-axis size the user set; the old unconditional reset
+             * re-fitted it to the full duration on every open. */
+            if (this.keyframeViewNeedsFit)
+            {
+                this.resetTimelineView = true;
+                this.refreshSheets();
+            }
         }
     }
 

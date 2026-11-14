@@ -18,8 +18,9 @@ import java.util.List;
  *   <li>Composition space is X right, Y down, Z towards the viewer; a slice at {@code z = 0} is the
  *       layer's own artwork plane.</li>
  *   <li>{@link Direction#BACK} pushes the volume away from the viewer (the artwork stays the front
- *       face); {@link Direction#FRONT} extrudes towards the viewer (the artwork becomes the back
- *       face); {@link Direction#BOTH} centres the volume on the artwork plane.</li>
+ *       face); {@link Direction#FRONT} extrudes towards the viewer (the artwork becomes the near face
+ *       and the volume sits behind it); {@link Direction#BOTH} centres the volume on the artwork
+ *       plane.</li>
  *   <li>Slices are returned <b>farthest first</b>, so a caller can paint them in list order and get
  *       the correct alpha/painter order without knowing which direction was chosen.</li>
  * </ul>

@@ -2105,6 +2105,41 @@ public final class CompRenderer
     private static final int BAKED_CELLS = 16;
 
     /**
+     * Paints extrusion slices in true view order (farthest first).
+     *
+     * <p>{@link dev.bbsae.comp.CompExtrusion} authors its stack far-to-near for the default camera,
+     * which is correct when the volume's artwork plane faces the camera. A layer rotated past 90°
+     * (or viewed from behind in the free camera) swaps which end is nearer, and drawing the authored
+     * order made the artwork — now the farthest plane — cover the whole volume, so the extrusion
+     * looked flat from the back. Sorting by the actual clip-space depth fixes every orientation.</p>
+     *
+     * <p>Both projection types sort descending: for a perspective projection the clip {@code w} grows
+     * with distance, and for an orthographic one the NDC {@code z} does (near = -1, far = +1).</p>
+     */
+    static void sortSlicesForCamera(java.util.List<dev.bbsae.comp.CompExtrusion.Slice> slices,
+                                    Matrix4f model, Matrix4f projection)
+    {
+        if (slices == null || slices.size() < 2 || model == null || projection == null)
+        {
+            return;
+        }
+
+        boolean perspective = projection.m23() < -0.5F;
+        java.util.IdentityHashMap<dev.bbsae.comp.CompExtrusion.Slice, Float> depths = new java.util.IdentityHashMap<>();
+
+        for (dev.bbsae.comp.CompExtrusion.Slice slice : slices)
+        {
+            org.joml.Vector4f point = new org.joml.Vector4f(0F, 0F, slice.z(), 1F);
+
+            model.transform(point);
+            projection.transform(point);
+            depths.put(slice, perspective ? point.w : point.z);
+        }
+
+        slices.sort((a, b) -> Float.compare(depths.get(b), depths.get(a)));
+    }
+
+    /**
      * Draws a 3D layer from its layer-space raster (content + masks + effects + styles), or returns
      * null when none of those pixel operations exist (the direct path is cheaper and already
      * correct).
@@ -2215,6 +2250,17 @@ public final class CompRenderer
                 /* The geometry has been drawn from this effect; it must not also run as a pixel
                  * effect later in the stack. */
                 context.consumedEffectIds.add(extrusion.id);
+            }
+
+            /* The authored list is far-to-near for the default camera, but the layer can be rotated
+             * (or seen from behind in the free camera). Sort by actual clip-space depth so the
+             * painter order stays correct from every angle; drawing the authored order made an
+             * extruded layer seen from the back look flat because its artwork face was painted last
+             * even though it was the farthest plane. */
+            if (volumes.size() > 1)
+            {
+                volumes = new java.util.ArrayList<>(volumes);
+                sortSlicesForCamera(volumes, model, layerProjection);
             }
 
             int iterations = hasCopies ? copies.size() : Math.max(1, volumes.size());

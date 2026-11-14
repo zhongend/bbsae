@@ -41,6 +41,14 @@ public final class BindingResolver
         }
     }
 
+    /** True when the layer has a binding switch that actually asks for an external position. */
+    public static boolean isBound(CompLayer layer)
+    {
+        return layer != null && layer.binding != null && layer.binding.enabled
+            && !CompBinding.NONE.equals(layer.binding.type)
+            && !CompBinding.SCREEN.equals(layer.binding.type);
+    }
+
     public static Vector2f resolve(CompLayer layer, CompRenderContext context)
     {
         CompBinding binding = layer.binding;
@@ -150,6 +158,14 @@ public final class BindingResolver
 
         for (BaseFilmController controller : BBSModClient.getFilms().getControllers())
         {
+            /* Prefer the film the compositor is bound to. Another film playing in the world could
+             * contain a replay with the same id, and projecting through it put the layer at a
+             * different actor's position. */
+            if (boundFilm != null && controller.film != boundFilm)
+            {
+                continue;
+            }
+
             IEntity entity = controller.getEntities().get(binding.target);
 
             if (entity == null)
@@ -203,22 +219,41 @@ public final class BindingResolver
             return null;
         }
 
-        if (replay.keyframes.x == null || replay.keyframes.y == null || replay.keyframes.z == null
-            || replay.keyframes.x.isEmpty() || replay.keyframes.y.isEmpty()
-            || replay.keyframes.z.isEmpty())
+        double tick = Math.max(0D, context.time * 20D);
+        /* Channels are independent: a replay that only animates X is common (Y/Z keep their static
+         * value). Requiring all three to have keys made the fallback silently unavailable — and the
+         * export fell back to the layer's own X/Y — for those replays. */
+        double x = channel(replay.keyframes.x, (float) tick);
+        double y = channel(replay.keyframes.y, (float) tick);
+        double z = channel(replay.keyframes.z, (float) tick);
+
+        if (Double.isNaN(x) || Double.isNaN(y) || Double.isNaN(z))
         {
             return null;
         }
-
-        double tick = Math.max(0D, context.time * 20D);
-        double x = replay.keyframes.x.interpolate((float) tick);
-        double y = replay.keyframes.y.interpolate((float) tick);
-        double z = replay.keyframes.z.interpolate((float) tick);
 
         Vector4f projected = project(context.projection, context.camera, x,
             y + 1.6F + binding.worldOffsetY, z, context.width, context.height);
 
         return projected == null ? null : new Vector2f(projected.x, projected.y);
+    }
+
+    /** Value of one replay position channel at a tick; 0 when it has no keys. */
+    private static double channel(mchorse.bbs_mod.utils.keyframes.KeyframeChannel<Double> channel, float tick)
+    {
+        if (channel == null)
+        {
+            return 0D;
+        }
+
+        if (channel.isEmpty())
+        {
+            return 0D;
+        }
+
+        Double value = channel.interpolate(tick);
+
+        return value == null ? Double.NaN : value;
     }
 
     private static Vector4f project(Matrix4f projection, Camera camera, double x, double y, double z, float width, float height)

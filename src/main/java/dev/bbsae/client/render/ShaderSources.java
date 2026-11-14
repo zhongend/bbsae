@@ -1258,10 +1258,10 @@ public final class ShaderSources
             return mat2(c, -s, s, c);
         }
 
-        /* Fractal noise for 鍒嗗舰鏉傝壊. Each octave is rotated by the evolution angle before being
-         * sampled, so a keyed 婕斿寲 MORPHS the clouds (AE's Evolution) instead of sliding the whole
-         * field diagonally. Normalising by the summed amplitudes keeps 瀵规瘮搴?浜害 meaningful at
-         * every 缁嗚妭 level. */
+        /* Fractal noise for 分形杂色. Each octave is rotated by the evolution angle before being
+         * sampled, so a keyed 演化 MORPHS the clouds (AE's Evolution) instead of sliding the whole
+         * field diagonally. Normalising by the summed amplitudes keeps 对比度 / 亮度 meaningful at
+         * every 细节 level. */
         float fbmMorph(vec2 p, float evo, int octaves)
         {
             float value = 0.0;
@@ -1907,7 +1907,7 @@ public final class ShaderSources
      * nothing outside it. This pass therefore runs in <b>composition space</b> on the finished
      * layer image, sampling the source once per copy. Copies are placed across the composition,
      * each keeps the layer's own size (scaled by {@code Scale}) and none of them is clipped by the
-     * original rectangle, which is what "鏃犻檺" means here: only the composition bounds remain.</p>
+     * original rectangle, which is what "无限" means here: only the composition bounds remain.</p>
      */
     public static final String REPLICATE = """
         #version 150 core

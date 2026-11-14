@@ -45,6 +45,7 @@ public class UICompositionClip extends UIClip<CompositionClip>
     public UIButton edit;
     public UIButton useCurrent;
     public UIButton chooseProject;
+    public UIButton chooseComp;
     public mchorse.bbs_mod.ui.framework.elements.utils.UILabel info;
 
     public UICompositionClip(CompositionClip clip, IUIClipsDelegate editor)
@@ -76,6 +77,7 @@ public class UICompositionClip extends UIClip<CompositionClip>
         this.info.color(0xFF8A94A6, false);
 
         this.chooseProject = new UICompButton(IKey.constant("选择工程…"), (button) -> this.openProjectPicker());
+        this.chooseComp = new UICompButton(IKey.constant("选择合成…"), (button) -> this.openCompPicker());
 
         this.useCurrent = new UICompButton(IKey.constant("绑定到当前回放工程"), (button) ->
         {
@@ -83,19 +85,51 @@ public class UICompositionClip extends UIClip<CompositionClip>
 
             if (panel == null || panel.getData() == null)
             {
+                this.info.label = IKey.constant("没有打开的影片：先在影片编辑器打开一个影片");
+
                 return;
             }
 
             Film film = panel.getData();
+            int width = Math.max(1, mchorse.bbs_mod.BBSSettings.videoWidth.get());
+            int height = Math.max(1, mchorse.bbs_mod.BBSSettings.videoHeight.get());
+            float fps = Math.max(1F, mchorse.bbs_mod.BBSSettings.videoFrameRate.get());
+            float duration = Math.max(0.1F, film.calculateDuration() / 20F);
+
+            /* Make the binding actually resolvable instead of pointing at ids that may not exist
+             * yet: a film project is created lazily, and a replay composition only appears the
+             * first time that replay is opened. The old button computed the ids and left the clip
+             * pointing at a missing project/comp, so "绑定" appeared to do nothing. */
             String projectId = "film_" + CompStore.safe(film.getId());
+            CompProject project = CompStore.loadFilmProject(film.getId(), film.getId(), width, height, fps, duration);
+
             mchorse.bbs_mod.film.replays.Replay replay = panel.replayEditor == null ? null : panel.replayEditor.getReplay();
-            String compId = replay == null ? "main" : CompStore.replayCompId(replay.getId(), replay.getName());
+            CompDocument comp = replay == null
+                ? project.getCompOrFirst(CompStore.DEFAULT_COMP)
+                : CompStore.ensureReplayComp(project, replay.getId(), replay.getName(), width, height, fps, duration);
+
+            CompStore.save(project);
 
             this.clip.project.set(projectId);
-            this.clip.comp.set(compId);
             this.project.setText(projectId);
-            this.comp.setText(compId);
+
+            if (comp != null)
+            {
+                this.clip.comp.set(comp.id);
+                this.comp.setText(comp.id);
+            }
+
             this.refreshInfo();
+            panel.forceSave();
+
+            if (comp != null)
+            {
+                this.info.label = IKey.constant("已绑定到 " + projectId + " / " + comp.id);
+            }
+            else if (this.info != null)
+            {
+                this.info.label = IKey.constant("工程已建立，但没有合成可绑定：打开合成器新建一个合成");
+            }
         });
         this.useCurrent.tooltip(IKey.constant("把片段指向当前影片/回放的工程"));
 
@@ -158,6 +192,55 @@ public class UICompositionClip extends UIClip<CompositionClip>
             + String.format(java.util.Locale.ROOT, "%.1fs", comp.duration) + "  ·  " + comp.layers.size() + " 图层");
     }
 
+    private void openCompPicker()
+    {
+        CompProject project = CompStore.get(this.clip.project.get());
+
+        if (project == null || project.comps == null || project.comps.isEmpty())
+        {
+            this.info.label = IKey.constant("这个工程没有合成：先在合成器里新建一个合成");
+
+            return;
+        }
+
+        List<String> labels = new ArrayList<>();
+        List<String> ids = new ArrayList<>();
+
+        for (CompDocument comp : project.comps)
+        {
+            if (comp == null)
+            {
+                continue;
+            }
+
+            labels.add(comp.name + "  ·  " + comp.id + "  ·  " + comp.width + "×" + comp.height
+                + "  ·  " + String.format(java.util.Locale.ROOT, "%.1fs", comp.duration));
+            ids.add(comp.id);
+        }
+
+        if (labels.isEmpty())
+        {
+            return;
+        }
+
+        UIListOverlayPanel panel = new UIListOverlayPanel(IKey.constant("选择合成"), (value) ->
+        {
+            int index = labels.indexOf(value);
+
+            if (index < 0)
+            {
+                return;
+            }
+
+            this.clip.comp.set(ids.get(index));
+            this.comp.setText(ids.get(index));
+            this.refreshInfo();
+        });
+
+        panel.addValues(labels);
+        UIOverlay.addOverlay(this.getContext(), panel, 0.45F, 0.7F);
+    }
+
     private void openProjectPicker()
     {
         List<String> labels = new ArrayList<>();
@@ -210,7 +293,7 @@ public class UICompositionClip extends UIClip<CompositionClip>
         super.registerPanels();
 
         this.panels.add(this.section(IKey.constant("合成器"), this.project, this.comp, this.chooseProject,
-            this.useCurrent, this.edit, this.info));
+            this.chooseComp, this.useCurrent, this.edit, this.info));
         this.panels.add(this.section(IKey.constant("时间"), this.offset, this.timeScale, this.opacity));
         this.panels.add(this.section(IKey.constant("适配"), this.fit, this.hold));
     }

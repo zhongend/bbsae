@@ -117,6 +117,14 @@ public final class CompRenderContext
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> worldCache = new java.util.IdentityHashMap<>();
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> modelCache = new java.util.IdentityHashMap<>();
     public final java.util.IdentityHashMap<CompLayer, Float> depthCache = new java.util.IdentityHashMap<>();
+    /**
+     * Resolved binding point per layer, including "no point" (null value).
+     *
+     * <p>Binding resolution can advance the smoothing state, so it must happen exactly once per
+     * layer per frame. The scene graph asks for the same point in {@code local()} (translation) and
+     * {@code world()} (parent-chain compensation); caching here keeps both answers identical.</p>
+     */
+    public final java.util.IdentityHashMap<CompLayer, org.joml.Vector2f> bindingCache = new java.util.IdentityHashMap<>();
 
     public CompRenderContext(CompProject project, CompDocument comp, float time, Matrix4f projection, Camera camera, SceneDepth depth)
     {
