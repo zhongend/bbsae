@@ -1,5 +1,13 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix69**：3D 预合成的深层修复。
+> - hotfix68 已让 3D 工作区渲染真实嵌套合成并修正父/子相机双重投影；本轮继续修复
+>   预合成图层本身的 3D 标志：多选 3D 图层预合成后，新预合成层现在保持 `threeD=true`，
+>   不会在 3D 视口里退化成屏幕固定的 2D 贴片；单层预合成同样继承源图层的 3D 状态。
+> - 普通预合成仍按自己的合成相机压平（透明底），3D 平面跟随父级摄像机；折叠变换
+>   仍是显式可选项。
+> - 详见 [`docs/ROUND105-PRECOMP-3D-FLAG.zh.md`](docs/ROUND105-PRECOMP-3D-FLAG.zh.md)。
+>
 > **0.99-hotfix68**：3D 世界 / 回放编辑器里的预合成图层修复。
 > - 3D 自由视口不再用不透明的蓝色「预合成（草稿）」色板代替预合成：真实嵌套合成
 >   会在预览、3D 工作区、回放编辑器的自由/环绕/摄像机预览和导出中渲染；
@@ -189,16 +197,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download `bbsae-0.99-hotfix68.jar` from the repository's
+1. Download `bbsae-0.99-hotfix69.jar` from the repository's
    [releases](https://github.com/zhongend/bbsae/releases), or build it with
-   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix68.jar`).
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix69.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99-hotfix68.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix69.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix68.jar` SHA-256: `F8CC4D8E993ADC9500D3763FEAF6A34BBEA0C8B6937073E505D5635E877190AB` (4,027,156 bytes).
+`bbsae-0.99-hotfix69.jar` SHA-256: `08D0AC17B1B9AEB4C4E42441AB2DAE81EC84ACE2EF5B6C2015C7A5581BF6A1BD` (4,027,248 bytes).
 
 ## Gallery
 

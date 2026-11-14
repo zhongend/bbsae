@@ -118,6 +118,7 @@ public class CompLayerOpsTest
         CompDocument sub = project.getComp(precomp.precompId);
 
         assertNotNull(sub);
+        assertTrue(precomp.threeD, "precomposing a 3D layer must keep the precomp in 3D space");
         assertNotNull(sub.getLayer(sub.activeCameraId));
         assertEquals(960F, sub.getLayer(sub.activeCameraId).x, 0.001F);
         assertEquals(-900F, sub.getLayer(sub.activeCameraId).z, 0.001F);
@@ -225,6 +226,23 @@ public class CompLayerOpsTest
         assertTrue(sub.layers.get(0).activeAt(0F), "inner time 0 is the group's 5 s");
         assertTrue(sub.layers.get(1).activeAt(0.5F), "inner time is rebased, not absolute");
         assertFalse(sub.layers.get(1).activeAt(4.9F));
+    }
+
+    @Test
+    public void aPrecomposed3DSelectionStays3D()
+    {
+        CompProject project = project();
+        CompDocument doc = project.getCompOrFirst("main");
+        CompLayer a = layer(doc, "a", 400F, 300F);
+        CompLayer b = layer(doc, "b", 800F, 500F);
+
+        a.threeD = true;
+        b.threeD = true;
+
+        CompLayer precomp = CompLayerOps.precompose(project, doc, List.of(a, b), "3D 组");
+
+        assertTrue(precomp.threeD,
+            "the replacement layer must not become a screen-fixed 2D plate in the 3D workspace");
     }
 
     @Test

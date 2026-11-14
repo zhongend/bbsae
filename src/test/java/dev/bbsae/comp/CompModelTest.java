@@ -527,6 +527,7 @@ public class CompModelTest
         assertEquals(5F, precomp.in, 0.0001F);
         assertEquals(8F, precomp.out, 0.0001F);
         assertEquals(0F, precomp.startTime, 0.0001F);
+        assertFalse(precomp.threeD, "a 2D source stays a 2D precomp");
         assertEquals(precomp.id, child.parentId);
         assertEquals(precomp.id, matte.trackMatteId);
 

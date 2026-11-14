@@ -362,6 +362,20 @@ public final class CompLayerOps
         precomp.out = end;
         precomp.startTime = 0F;
 
+        /* A group of 3D layers must remain a 3D layer in the parent. Leaving it at the default
+         * twoD made the precomp screen-fixed in the free 3D workspace: it did not follow the
+         * camera, which read as the pre-rendered layer being wrong. The nested content is still
+         * flattened (Collapse Transformations is a separate opt-in), but the resulting plane now
+         * belongs to the same 3D space as the layers it replaced. */
+        for (CompLayer layer : ordered)
+        {
+            if (layer.threeD)
+            {
+                precomp.threeD = true;
+                break;
+            }
+        }
+
         /* The group must keep the parent/matte context of the layer it replaces. Losing a parent
          * moves the whole nested composition (often off-screen), which reads as "precompose made
          * my graphics disappear"; losing a matte silently changes the alpha. Only transfer a

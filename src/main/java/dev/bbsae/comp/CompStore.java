@@ -2033,6 +2033,7 @@ public final class CompStore
         precomp.in = in;
         precomp.out = out;
         precomp.startTime = 0F;
+        precomp.threeD = source.threeD;
 
         precomp.parentId = source.id.equals(source.parentId) ? "" : source.parentId;
         precomp.trackMatteId = source.id.equals(source.trackMatteId) ? "" : source.trackMatteId;
