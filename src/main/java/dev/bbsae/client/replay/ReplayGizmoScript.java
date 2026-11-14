@@ -126,8 +126,20 @@ public final class ReplayGizmoScript
                 break;
 
             case 100:
-                BbsAeAddon.LOGGER.info("Replay gizmo script: part settled [{}]", this.panel.debugPartSummary());
+                BbsAeAddon.LOGGER.info("Replay gizmo script: part settled [{}] pickRenders={}",
+                    this.panel.debugPartSummary(), this.panel.debugPickRenders());
                 BbsAeClient.debugScreenshot("gizmo-part", false);
+
+                /* Two frames apart with no input change: the id pass is cached, so this is exactly
+                 * the case where the deferred gizmo used to lose its placement at the world-frame
+                 * boundary and disappear. Both screenshots must still show the handles. */
+                BbsAeClient.debugScreenshot("gizmo-still-a", false);
+                break;
+
+            case 104:
+                BbsAeAddon.LOGGER.info("Replay gizmo script: still frame pickRenders={} (cache hits if unchanged)",
+                    this.panel.debugPickRenders());
+                BbsAeClient.debugScreenshot("gizmo-still-b", false);
                 break;
 
             case 112:

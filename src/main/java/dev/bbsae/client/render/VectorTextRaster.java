@@ -12,6 +12,7 @@ import java.awt.Shape;
 import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphVector;
 import java.awt.geom.AffineTransform;
+import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.Iterator;
@@ -32,14 +33,26 @@ import java.util.Map;
  * {@link GlyphVector}), rasterizes the whole block at the target pixel density with antialiasing,
  * and draws it as one linear-filtered texture. The glyphs are therefore vector at every zoom, and
  * the text layer's effects/masks still see a normal RGBA source. It deliberately falls back to the
- * existing BBS path when a glyph is not covered by the chosen font (CJK/emoji fallback), when the
- * text uses a per-glyph animator, or when the block would exceed the texture budget.</p>
+ * existing BBS path when a glyph is not covered by the chosen font (CJK/emoji fallback only when no
+ * system font covers them), when the text uses a per-glyph animator, or when the block would exceed
+ * the texture budget.</p>
+ *
+ * <h2>Why the raster is measured from glyph outlines</h2>
+ * <p>The first version sized the texture as {@code lines * lineHeight * fontHeightFactor}. That is
+ * the BBS line box, not the glyphs: AWT's ascent + descent (and accents or descenders in a CJK
+ * fallback) can exceed it, so the baseline placed the last line's descent below the texture edge and
+ * the bottom of the text was cut off — the "文字下半部像被裁切了一样" report. The block is now
+ * measured from the real outlines ({@link #plan}) and the texture always contains every ink pixel.
+ * The pivot/anchoring math is unchanged: the extra space is transparent padding around the same
+ * lines.</p>
  */
 final class VectorTextRaster
 {
     private static final int MAX_TEXTURE = 4096;
     private static final int MAX_ENTRIES = 32;
     private static final long MAX_BYTES = 96L * 1024L * 1024L;
+
+    private static final FontRenderContext FRC = new FontRenderContext(null, true, true);
 
     private static final Map<Key, Entry> CACHE = new LinkedHashMap<>(16, 0.75F, true);
     private static final Map<File, LoadedFont> FONTS = new LinkedHashMap<>(4, 0.75F, true);
@@ -77,10 +90,6 @@ final class VectorTextRaster
             return false;
         }
 
-        /* Identity comes from the cached load, not from a stat per layer per frame. A replaced
-         * font reaches this cache through clear() (the font import/reload path already clears
-         * FontCoverage and the layout cache). */
-
         /* The final text pixel size is the font size times the layer scale times the composition
          * render scale. Render at 2x that (capped at 4x) so linear downsampling never reveals a
          * stair step even when the viewport is zoomed. */
@@ -92,15 +101,6 @@ final class VectorTextRaster
          * the stack scale. Texture pixels and AWT font size are both in final composition pixels. */
         float unitScale = fontSize / Math.max(1F, fontHeight);
         float unitPixels = unitScale * pixelScale;
-        float strokeComp = Math.max(0F, textStroke * unitScale);
-        int imagePad = Math.max(2, (int) Math.ceil(Math.max(2F, strokeComp) * pixelScale + 2F));
-        int imageW = (int) Math.ceil(layout.width * unitPixels) + imagePad * 2;
-        int imageH = (int) Math.ceil(layout.lines.length * lineHeight * unitPixels) + imagePad * 2;
-
-        if (imageW <= 2 || imageH <= 2 || imageW > MAX_TEXTURE || imageH > MAX_TEXTURE)
-        {
-            return false;
-        }
 
         /* BBS' fallback glyphs are Minecraft bitmap glyphs. Use a real system font for those
          * codepoints too, so Chinese text drawn with a Latin display font is vector as well.
@@ -122,17 +122,25 @@ final class VectorTextRaster
             fallbackFamily = chosen[0].getFamily();
         }
 
+        Geometry geometry = plan(loaded.font, fallbackFont, layout, customRenderer, fallbackRenderer,
+            fontSize, fontHeight, lineHeight, textStroke, pixelScale, unitPixels, layer.align);
+
+        if (geometry == null)
+        {
+            return false;
+        }
+
         Key key = new Key(layout.text, fontFile.getAbsolutePath(), loaded.modified,
             loaded.length, fontSize, fontHeight, lineHeight, textStroke,
-            fillColor, strokeColor, layer.align, pixelScale, imageW, imageH, fallbackFamily);
+            fillColor, strokeColor, layer.align, pixelScale, geometry.width, geometry.height,
+            fallbackFamily);
 
         Entry entry = CACHE.get(key);
 
         if (entry == null)
         {
             entry = rasterize(loaded.font, fallbackFont, customRenderer, fallbackRenderer, layout,
-                fontSize, fontHeight, lineHeight, textStroke, fillColor, strokeColor, layer.align,
-                pixelScale, unitPixels, imageW, imageH, imagePad);
+                fillColor, strokeColor, layer.align, geometry);
 
             if (entry == null)
             {
@@ -144,14 +152,212 @@ final class VectorTextRaster
             trim();
         }
 
-        float padComp = imagePad / pixelScale;
+        float leftPadComp = geometry.leftPad / pixelScale;
+        float padComp = geometry.pad / pixelScale;
 
         batcher.texturedBox(entry.texture.id, 0xFFFFFFFF,
-            baseX * unitScale - padComp, baseY * unitScale - padComp,
-            imageW / pixelScale, imageH / pixelScale,
-            0F, 0F, imageW, imageH, imageW, imageH);
+            baseX * unitScale - leftPadComp, baseY * unitScale - padComp,
+            geometry.width / pixelScale, geometry.height / pixelScale,
+            0F, 0F, geometry.width, geometry.height, geometry.width, geometry.height);
 
         return true;
+    }
+
+    /**
+     * Measures the raster the block needs from the real glyph outlines.
+     *
+     * <p>Pure Java2D: no GL, no game state. It is package-private so a headless test can assert
+     * that descending glyphs and CJK fallback ink fit inside the returned raster.</p>
+     */
+    static Geometry plan(Font base, Font fallbackFont,
+                         LayerContentRenderer.TextLayout layout,
+                         mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer customRenderer,
+                         mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer fallbackRenderer,
+                         float fontSize, float fontHeight, float lineHeight, float textStroke,
+                         float pixelScale, float unitPixels, int align)
+    {
+        try
+        {
+            float awtSize = Math.max(1F, fontSize * pixelScale);
+            Font font = base.deriveFont(awtSize);
+            BufferedImage probe = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = probe.createGraphics();
+            FontMetrics metrics;
+
+            try
+            {
+                metrics = g.getFontMetrics(font);
+            }
+            finally
+            {
+                g.dispose();
+            }
+
+            float strokePx = Math.max(0F, textStroke * (fontSize / Math.max(1F, fontHeight))) * pixelScale;
+            float lineGap = lineHeight * unitPixels;
+            int pad = Math.max(2, (int) Math.ceil(strokePx * 0.5F + 2F));
+
+            float minX = Float.MAX_VALUE;
+            float maxX = -Float.MAX_VALUE;
+            float minY = Float.MAX_VALUE;
+            float maxY = -Float.MAX_VALUE;
+
+            for (int lineIndex = 0; lineIndex < layout.lines.length; lineIndex++)
+            {
+                LayerContentRenderer.TextLine line = layout.lines[lineIndex];
+                float lineOffset = lineOffsetFor(align, layout, line);
+
+                for (LayerContentRenderer.Glyph glyph : line.glyphs)
+                {
+                    if (glyph.text == null || glyph.text.isEmpty())
+                    {
+                        continue;
+                    }
+
+                    Font glyphFont = glyph.font == fallbackRenderer && fallbackFont != null
+                        ? fallbackFont : font;
+
+                    if (!glyphFont.canDisplay(glyph.codePoint))
+                    {
+                        return null;
+                    }
+
+                    GlyphVector vector = glyphFont.createGlyphVector(FRC, glyph.text);
+                    Rectangle2D bounds = vector.getVisualBounds();
+
+                    float x = (lineOffset + glyph.x) * unitPixels;
+                    float left = x + (float) bounds.getMinX() - strokePx * 0.5F;
+                    float right = x + (float) bounds.getMaxX() + strokePx * 0.5F;
+                    float top = (float) bounds.getMinY() - strokePx * 0.5F;
+                    float bottom = (float) bounds.getMaxY() + strokePx * 0.5F;
+
+                    minX = Math.min(minX, left);
+                    maxX = Math.max(maxX, right);
+                    minY = Math.min(minY, top);
+                    maxY = Math.max(maxY, bottom);
+                }
+            }
+
+            if (minY == Float.MAX_VALUE)
+            {
+                return null;
+            }
+
+            float ascent = Math.max(metrics.getAscent(), -minY) + 1F;
+            float descent = Math.max(metrics.getDescent(), maxY) + 1F;
+
+            /* Alignment can move glyphs left of the layout origin; reserve the same transparent
+             * margin on the left so those glyphs are not clipped either. */
+            int leftPad = Math.max(pad, (int) Math.ceil(Math.max(0F, -minX) + pad));
+
+            float contentRight = Math.max(layout.width * unitPixels, maxX);
+            int width = (int) Math.ceil(contentRight + leftPad + pad);
+            int height = (int) Math.ceil((layout.lines.length - 1) * lineGap + ascent + descent + pad * 2);
+
+            if (width <= 2 || height <= 2 || width > MAX_TEXTURE || height > MAX_TEXTURE)
+            {
+                return null;
+            }
+
+            return new Geometry(width, height, pad, leftPad, ascent, descent, lineGap, unitPixels,
+                strokePx, awtSize);
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    /** {@link LayerContentRenderer}'s alignment rules, in layout units. */
+    private static float lineOffsetFor(int align, LayerContentRenderer.TextLayout layout,
+                                       LayerContentRenderer.TextLine line)
+    {
+        return switch (align)
+        {
+            case 1 -> (layout.width - line.width) * 0.5F;
+            case 2 -> layout.width - line.width;
+            default -> 0F;
+        };
+    }
+
+    private static Entry rasterize(Font base, Font fallbackFont,
+                                   mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer customRenderer,
+                                   mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer fallbackRenderer,
+                                   LayerContentRenderer.TextLayout layout, int fillColor, int strokeColor,
+                                   int align, Geometry geometry)
+    {
+        try
+        {
+            float awtSize = Math.max(1F, geometry.awtSize);
+            Font font = base.deriveFont(awtSize);
+            BufferedImage image = new BufferedImage(geometry.width, geometry.height, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = image.createGraphics();
+
+            try
+            {
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+                java.awt.Color fill = new java.awt.Color(fillColor, true);
+                java.awt.Color stroke = new java.awt.Color(strokeColor, true);
+
+                for (int lineIndex = 0; lineIndex < layout.lines.length; lineIndex++)
+                {
+                    LayerContentRenderer.TextLine line = layout.lines[lineIndex];
+                    float lineOffset = lineOffsetFor(align, layout, line);
+                    float baseline = geometry.pad + lineIndex * geometry.lineGap + geometry.ascent;
+
+                    for (LayerContentRenderer.Glyph glyph : line.glyphs)
+                    {
+                        if (glyph.text == null || glyph.text.isEmpty())
+                        {
+                            continue;
+                        }
+
+                        Font glyphFont = glyph.font == fallbackRenderer && fallbackFont != null
+                            ? fallbackFont : font;
+
+                        if (!glyphFont.canDisplay(glyph.codePoint))
+                        {
+                            return null;
+                        }
+
+                        GlyphVector vector = glyphFont.createGlyphVector(FRC, glyph.text);
+                        Shape outline = vector.getOutline();
+                        AffineTransform transform = AffineTransform.getTranslateInstance(
+                            geometry.leftPad + (lineOffset + glyph.x) * geometry.unitPixels, baseline);
+                        Shape placed = transform.createTransformedShape(outline);
+
+                        if (geometry.strokePx > 0F && (strokeColor >>> 24) != 0)
+                        {
+                            g.setColor(stroke);
+                            g.setStroke(new BasicStroke(geometry.strokePx, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                            g.draw(placed);
+                        }
+
+                        g.setColor(fill);
+                        g.fill(placed);
+                    }
+                }
+            }
+            finally
+            {
+                g.dispose();
+            }
+
+            int[] pixels = image.getRGB(0, 0, geometry.width, geometry.height, null, 0, geometry.width);
+            GlTexture texture = new GlTexture();
+
+            texture.allocate(geometry.width, geometry.height).uploadRaw(pixels);
+
+            return new Entry(texture, (long) geometry.width * geometry.height * 4L);
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
     }
 
     /** True when every glyph is one the chosen font or BBS' fallback produced. */
@@ -268,97 +474,6 @@ final class VectorTextRaster
         }
     }
 
-    private static Entry rasterize(Font base, Font fallbackFont,
-                                   mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer customRenderer,
-                                   mchorse.bbs_mod.ui.framework.elements.utils.FontRenderer fallbackRenderer,
-                                   LayerContentRenderer.TextLayout layout,
-                                   float fontSize, float fontHeight, float lineHeight,
-                                   float textStroke, int fillColor, int strokeColor, int align,
-                                   float pixelScale, float unitPixels, int imageW, int imageH, int pad)
-    {
-        try
-        {
-            float awtSize = Math.max(1F, fontSize * pixelScale);
-            Font font = base.deriveFont(awtSize);
-            BufferedImage image = new BufferedImage(imageW, imageH, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D g = image.createGraphics();
-
-            try
-            {
-                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-                g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-
-                FontRenderContext frc = g.getFontRenderContext();
-                FontMetrics metrics = g.getFontMetrics(font);
-                float strokePx = Math.max(0F, textStroke * (fontSize / Math.max(1F, fontHeight))) * pixelScale;
-                java.awt.Color fill = new java.awt.Color(fillColor, true);
-                java.awt.Color stroke = new java.awt.Color(strokeColor, true);
-                float lineGap = lineHeight * unitPixels;
-
-                for (int lineIndex = 0; lineIndex < layout.lines.length; lineIndex++)
-                {
-                    LayerContentRenderer.TextLine line = layout.lines[lineIndex];
-                    float lineOffset = switch (align)
-                    {
-                        case 1 -> (layout.width - line.width) * 0.5F;
-                        case 2 -> layout.width - line.width;
-                        default -> 0F;
-                    };
-                    float baseline = pad + lineIndex * lineGap + metrics.getAscent();
-
-                    for (LayerContentRenderer.Glyph glyph : line.glyphs)
-                    {
-                        if (glyph.text == null || glyph.text.isEmpty())
-                        {
-                            continue;
-                        }
-
-                        Font glyphFont = glyph.font == fallbackRenderer && fallbackFont != null
-                            ? fallbackFont : font;
-
-                        if (!glyphFont.canDisplay(glyph.codePoint))
-                        {
-                            return null;
-                        }
-
-                        GlyphVector vector = glyphFont.createGlyphVector(frc, glyph.text);
-                        Shape outline = vector.getOutline();
-                        AffineTransform transform = AffineTransform.getTranslateInstance(
-                            pad + (lineOffset + glyph.x) * unitPixels, baseline);
-                        Shape placed = transform.createTransformedShape(outline);
-
-                        if (strokePx > 0F && (strokeColor >>> 24) != 0)
-                        {
-                            g.setColor(stroke);
-                            g.setStroke(new BasicStroke(strokePx, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                            g.draw(placed);
-                        }
-
-                        g.setColor(fill);
-                        g.fill(placed);
-                    }
-                }
-            }
-            finally
-            {
-                g.dispose();
-            }
-
-            int[] pixels = image.getRGB(0, 0, imageW, imageH, null, 0, imageW);
-            GlTexture texture = new GlTexture();
-
-            texture.allocate(imageW, imageH).uploadRaw(pixels);
-
-            return new Entry(texture, (long) imageW * imageH * 4L);
-        }
-        catch (Exception e)
-        {
-            return null;
-        }
-    }
-
     private static void trim()
     {
         while (!CACHE.isEmpty() && (CACHE.size() > MAX_ENTRIES || bytes > MAX_BYTES))
@@ -393,6 +508,37 @@ final class VectorTextRaster
         CACHE.clear();
         FONTS.clear();
         bytes = 0L;
+    }
+
+    /** Raster dimensions and the baseline placement, in raster pixels. */
+    static final class Geometry
+    {
+        final int width;
+        final int height;
+        final int pad;
+        final int leftPad;
+        final float ascent;
+        final float descent;
+        final float lineGap;
+        final float unitPixels;
+        final float strokePx;
+        /** AWT font size the geometry was measured for; cached with the raster. */
+        final float awtSize;
+
+        Geometry(int width, int height, int pad, int leftPad, float ascent, float descent,
+                 float lineGap, float unitPixels, float strokePx, float awtSize)
+        {
+            this.width = width;
+            this.height = height;
+            this.pad = pad;
+            this.leftPad = leftPad;
+            this.ascent = ascent;
+            this.descent = descent;
+            this.lineGap = lineGap;
+            this.unitPixels = unitPixels;
+            this.strokePx = strokePx;
+            this.awtSize = awtSize;
+        }
     }
 
     /** Font base plus file identity, so a replaced font cannot serve old glyphs. */

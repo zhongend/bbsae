@@ -328,10 +328,18 @@ public class BbsAeClient implements BBSAddonMod
             });
         }
 
-        ClientTickEvents.END_CLIENT_TICK.register((client) -> CompExportManager.tick());
+        ClientTickEvents.END_CLIENT_TICK.register((client) ->
+        {
+            /* Composition audio in BBS' original film page: drain mixes and release sources that
+             * left the screen. The per-frame playback itself is driven from AudioClientClip so it
+             * uses BBS' film clock. */
+            dev.bbsae.client.audio.CompFilmAudio.tick();
+            CompExportManager.tick();
+        });
         ClientLifecycleEvents.CLIENT_STOPPING.register((client) ->
         {
             BbsPreviewBridge.detach();
+            dev.bbsae.client.audio.CompFilmAudio.releaseAll();
             dev.bbsae.client.export.CompExportManager.shutdown();
 
             /* The 600 ms debounce and the 60 s autosave are the only writers otherwise; a normal

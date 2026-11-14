@@ -372,6 +372,50 @@ public final class CompLayerSourceCache
                 rect.height = Math.max(1F, maxY - minY);
             }
         }
+        else if ("text".equals(layer.type))
+        {
+            /* A 3D text layer is rasterized into its box (+effect padding). The glyph line box is
+             * usually smaller than the box, but a large font or a stroke can exceed it, and then
+             * the raster chopped the bottom of the text. Grow the raster to the authored text
+             * block (plus its stroke), never shrink it. This only affects the baked 3D path: 2D
+             * text is drawn straight into the composition-sized target. */
+            String text = layer.text == null ? "" : layer.text;
+            int lines = 1;
+
+            for (int i = 0; i < text.length(); i += 1)
+            {
+                if (text.charAt(i) == '\n')
+                {
+                    lines += 1;
+                }
+            }
+
+            float font = layer.fontSizeAt(frame);
+            float stroke = layer.textStrokeAt(frame);
+            float block = lines * font * Math.max(1F, layer.lineHeightAt(frame)) + stroke * 2F + 4F;
+            float top = -block * layer.anchorY;
+            float bottom = top + block;
+            float minY = Math.min(rect.y, top);
+            float maxY = Math.max(rect.y + rect.height, bottom);
+
+            rect.y = minY;
+            rect.height = Math.max(1F, maxY - minY);
+
+            if (!layer.wrap)
+            {
+                /* Without wrapping a long line can be much wider than the box (the 3D raster
+                 * clipped a wide line on both sides). */
+                float needed = estimatedTextWidth(text, font, stroke);
+
+                if (needed > rect.width)
+                {
+                    float grow = needed - rect.width;
+
+                    rect.x -= grow * 0.5F;
+                    rect.width = needed;
+                }
+            }
+        }
 
         /* The raster is the effect kernel's support. Without this margin a glow/blur/shadow is
          * cut at the layer rectangle — the effects looked "not applied" on 3D layers because the
@@ -387,6 +431,50 @@ public final class CompLayerSourceCache
         }
 
         return rect;
+    }
+
+    /**
+     * Conservative advance estimate for an unwrapped line.
+     *
+     * <p>Used only to size a 3D text raster, where the real font metrics are not available without
+     * a GL/font renderer. CJK and full-width punctuation take about one em; Latin (including the
+     * wider capitals) is estimated above its average advance so the raster errs on the large side.
+     * A too-wide raster is transparent padding; a too-narrow one visibly cuts the text.</p>
+     */
+    static float estimatedTextWidth(String text, float fontSize, float stroke)
+    {
+        if (text == null || text.isEmpty())
+        {
+            return Math.max(1F, stroke * 2F + 4F);
+        }
+
+        float estimate = 0F;
+
+        for (int i = 0; i < text.length(); )
+        {
+            int codePoint = text.codePointAt(i);
+            estimate += (isWideCodePoint(codePoint) ? 0.98F : 0.62F) * fontSize;
+            i += Character.charCount(codePoint);
+        }
+
+        return estimate + stroke * 2F + 4F;
+    }
+
+    /** CJK/full-width ranges occupy roughly one em in a mixed-script line. */
+    private static boolean isWideCodePoint(int codePoint)
+    {
+        Character.UnicodeBlock block = Character.UnicodeBlock.of(codePoint);
+
+        return block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+            || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+            || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS
+            || block == Character.UnicodeBlock.HIRAGANA
+            || block == Character.UnicodeBlock.KATAKANA
+            || block == Character.UnicodeBlock.HANGUL_SYLLABLES
+            || block == Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS
+            || block == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION
+            || block == Character.UnicodeBlock.GENERAL_PUNCTUATION
+            || codePoint >= 0x1F300;
     }
 
     private static Entry rasterize(CompLayer layer, CompRenderContext context, Batcher2D batcher,

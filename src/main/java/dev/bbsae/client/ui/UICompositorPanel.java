@@ -11882,6 +11882,95 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.toggleRenderView();
                 break;
 
+            case "textclip":
+            {
+                /* Pixel verification for the "text bottom is cut off" report. Renders, at full
+                 * composition resolution through the real CompRenderer:
+                 *   1. the default BBS bitmap font,
+                 *   2. the imported vector font (when the test client has one),
+                 *   3. a 3D text layer with effects and a font larger than its box,
+                 * each with descenders (gjpqy) and CJK fallback ink. */
+                if (this.viewportMode)
+                {
+                    this.exit3DSpace();
+                }
+
+                this.cameraPreviewMode = false;
+                this.doc.layers.clear();
+
+                CompLayer background = new CompLayer("textclip_bg", "BG", "solid");
+
+                background.x = this.doc.width / 2F;
+                background.y = this.doc.height / 2F;
+                background.width = this.doc.width;
+                background.height = this.doc.height;
+                background.color = 0xFF151A22;
+                background.out = this.doc.duration;
+                this.doc.layers.add(background);
+
+                CompLayer def = new CompLayer("textclip_default", "Default 2D", "text");
+
+                def.x = this.doc.width / 2F;
+                def.y = this.doc.height * 0.18F;
+                def.width = Math.min(1180F, this.doc.width * 0.9F);
+                def.height = 220F;
+                def.fontSize = 76F;
+                def.text = "gjpqy AQ 中文 TEST 0123 —— Default";
+                def.color = 0xFFFFFFFF;
+                def.out = this.doc.duration;
+                this.doc.layers.add(def);
+
+                java.io.File fontFolder = mchorse.bbs_mod.fonts.FontManager.getFolder();
+                String font = null;
+
+                if (fontFolder != null)
+                {
+                    for (String candidate : new String[] {"msyh-face0.ttf", "timesbd.ttf", "cambriai.ttf", "Anton-Regular.ttf"})
+                    {
+                        if (new java.io.File(fontFolder, candidate).isFile())
+                        {
+                            font = candidate;
+                            break;
+                        }
+                    }
+                }
+
+                CompLayer vector = new CompLayer("textclip_vector", "Imported font 2D", "text");
+
+                vector.x = this.doc.width / 2F;
+                vector.y = this.doc.height * 0.39F;
+                vector.width = Math.min(1180F, this.doc.width * 0.9F);
+                vector.height = 240F;
+                vector.fontSize = 84F;
+                vector.fontName = font == null ? "" : font;
+                vector.text = "gjpqy 中文 字体 TEST 0123 — " + (font == null ? "default" : font);
+                vector.color = 0xFFFFFFFF;
+                vector.out = this.doc.duration;
+                this.doc.layers.add(vector);
+
+                CompLayer threeD = new CompLayer("textclip_3d", "3D text + effects", "text");
+
+                threeD.x = this.doc.width / 2F;
+                threeD.y = this.doc.height * 0.72F;
+                threeD.width = Math.min(900F, this.doc.width * 0.7F);
+                threeD.height = 120F;
+                threeD.fontSize = 150F;
+                threeD.lineHeight = 1.05F;
+                threeD.threeD = true;
+                threeD.rotationY = 18F;
+                threeD.text = "gjpqy 中文 BIG 123";
+                threeD.color = 0xFFFFFFFF;
+                threeD.out = this.doc.duration;
+                threeD.effects.add(CompEffectRegistry.create("glow", 1));
+                threeD.effects.add(CompEffectRegistry.create("blur", 1));
+                this.doc.layers.add(threeD);
+
+                this.selectLayer(vector);
+                this.time = 0F;
+                this.setStatus("验证：默认字体 / 导入字体 / 3D 文字（含下伸部与中文）不得被裁切");
+                break;
+            }
+
             case "textfx":
             {
                 /* Verification view for the "text layer + effect is upside down" report: a text

@@ -41,6 +41,7 @@
 | 渲染 | 每层独立 FBO、straight-alpha 合成、mask/matte/effects/styles、ping-pong 效果链、GlStateGuard、BBS BufferRenderer 缓存同步 |
 | 输出 | 渲染队列（新增/移除/重试/取消/串行）、render settings 与 output module 分离、输出模块 UI 可编辑、PNG 序列、H.264 审阅、ProRes 422 HQ、ProRes 4444 Alpha、输出模板持久化、打开输出文件夹 |
 | 影片集成 | 一个影片一个项目；每个 replay 一个独立 composition；**打开合成器不会自动往影片轨道加片段**（合成页显式添加/移除；导出时按需准备片段并在导出结束后移除临时片段）；合成器片段检查器可「选择工程/合成」或「绑定到当前回放工程」（自动建工程与 replay 合成）；`ClipContext.clipData` → `FrameOverlays` → BBS recorder；不修改 `.dat` |
+| BBS 原版音频 | `CompositionClip` 的合成音轨通过 `CompFilmAudio` 跟随 BBS 原版影片时钟播放（`AudioClientClip.manageSounds` 之后；播放/暂停/拖动/循环与画面同源），并通过 `CompFilmAudioExport` 混入 BBS 导出/“渲染音频”的 WAV（时间映射与画面相同的 `(ticks * timeScale + offset)/20`；影片没有 `AudioClip` 时也能生成音轨） |
 | 回放实体抠像 | **`回放实体` 图层**：把选中的 BBS 回放实体按**深度**从世界帧里抠出来（背景透明），可整层做变换/蒙版/效果/混合并随工程导出 alpha；判断依据是"实体深度 = 世界深度"，因此**方块或未选中的实体挡在前面时会正确遮挡**，且不比较颜色（换光影、换材质不影响）；检查器里有"抠出所有回放实体"开关 + 逐回放勾选表（勾选/取消会自动在"全部/仅勾选"之间切换）、羽化/收缩/深度容差、遮挡开关与实时状态行 |
 | BBS 预览 | 合成器面板内通过 `BbsPreviewBridge` 重新启用 BBS customSize + film runner + `FilmEditorController`：`BBS 预览` 图层与预览背景 `BBS` 开关显示真实的影片/世界帧，机位与回放随合成播放头移动 |
 | UI 密度 | **三档（小/中/大）+ 自动跟随 BBS 的 GUI 缩放**：控件高度 14/16/20、行高 16/18/22、标签列 62/76/92、左右栏与时间轴宽度全部由 `CompUi` 一张表推导；设置里可切换，随工程保存 |

@@ -1,5 +1,57 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix86 — 2026-11-14
+
+BBS 原版界面/导出没有声音、回放编辑器 gizmo 闪与 Alt 选择、合成器文字下半部被裁切。
+
+### 声音：接进 BBS 原版播放与 BBS 导出
+
+- **根因**：合成器音频只走了 `CompAudioPlayer`（合成器预览）。BBS 原版影片页逐帧只播放
+  `AudioClip`（`AudioClientClip.manageSounds`），BBS 导出只解码 `AudioClip`；`CompositionClip`
+  不是 `AudioClip`，所以原版界面无声、F6/影片页导出也无声。
+- 新增 `CompMixCache`：按音频 clip 内容缓存混音，工作线程解码，客户端线程交给 OpenAL。
+- 新增 `CompFilmAudio` + `AudioClientClipMixin`：在 BBS 处理完自己的音频后，按同一帧
+  `CompInstance.time()` 定位合成窗口；播放/暂停/拖动/循环跟随 BBS 的 `context.playing` 与影片时钟。
+- 新增 `CompFilmAudioExport` + `AudioRendererMixin`：把合成窗口按
+  `(ticks * timeScale + offset)/20` 混入 BBS 导出的 WAV；影片只有合成音频时也会生成 WAV 并让
+  `renderAudio` 返回 true。`PanelVideoExportSessionMixin` / `WorldVideoExportSessionMixin`
+  在 `prepare()` 期间绑定正在导出的影片。
+- 验证日志：原版播放 `compAudioSources=1 status='播放中 · 1 个合成音频窗口 · 播放中'`；
+  BBS 导出（测试影片没有任何 `AudioClip`）`ok=true ... frames=7478400 peak=0.36621094`。
+- 截图：`docs/verify/round119-film-audio.png`。
+
+### 回放 gizmo：不再闪；Alt 选择与部位高亮按原版
+
+- **闪烁根因**：`Gizmo.forgetPlacement()` 每世界帧清空摆放，而 gizmo 的 capture 只在 pick pass
+  里发生；pick pass 命中输入缓存时没有任何 capture，gizmo 当帧整体消失。
+- `UIReplayViewport` 每帧调用 `ReplayPickPass.captureGizmoVisual()`，与 stencil 共用同一个
+  `gizmoStack()`；id pass 仍保持缓存。验证：静止两帧 `pickRenders=9` 不变，但每帧都有
+  `Replay gizmo capture` / `Replay gizmo draw ... placed=true`。
+- **Alt 逻辑**：抽出 `ReplayClickRules`——Alt+左键选其他回放；普通左键不再抢其他演员，也不会把
+  其他演员的 Form 当成当前演员的部位；当前演员的部位用普通左键或 Alt+左键都可选。
+- **高亮**：补上 BBS 原版 `StencilFormFramebuffer.renderPreview()` 合成；悬停/选中的部位按
+  `stencilHighlightColor` 亮起，其他回放仅 Alt 时亮。鼠标离开后选中骨骼保持点亮。
+- **点击 head 落 anchor**：`pickForm` 后强制 pose editor 选中被点击骨骼；session 只在编辑器骨骼
+  真正变化时同步，切换回放时清空 `lastEditorBone`。
+
+### 文字：下半部不再被裁切
+
+- **根因**：`VectorTextRaster` 的纹理高度按 BBS 行盒
+  `lines * lineHeight * fontSize/fontHeight` 计算；Java2D 字形的 `ascent + descent` 常大于行盒，
+  最后一行/下伸部（`g j p q y`、中文回退字体）落到纹理之外，被水平切掉。
+- `VectorTextRaster.plan()` 改用 `GlyphVector.getVisualBounds()` 的真实墨迹求
+  ascent/descent/最小最大 X（含描边），栅格高度/宽度、baseline、leftPad 全部由墨迹决定；测量与
+  绘制共用同一 `Geometry`。
+- 3D 文字栅格不再局限于图层矩形：按完整文本块高度 + 描边扩展，未换行时按字符宽度保守扩宽。
+- 验证截图：`docs/verify/round119-textclip.png`（默认字体 / 导入矢量字体 / 150 px 3D 文字的下伸部
+  均完整）。
+
+### 测试
+
+- 新增 `CompMixCacheKeyTest`、`CompFilmAudioMappingTest`、`ReplayClickRulesTest`、
+  `VectorTextRasterGeometryTest`、`TextLayerBoundsTest`、`Round119AudioGizmoContractsTest`。
+- 全量：**200 个测试套件 / 1218 项测试 / 0 失败 / 0 错误 / 1 跳过**。
+
 ## 0.99-hotfix85 — 2026-11-14
 
 ### 回放编辑器：Alt / 组件选择真正修复

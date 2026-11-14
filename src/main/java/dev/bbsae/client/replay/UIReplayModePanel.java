@@ -131,6 +131,16 @@ public class UIReplayModePanel extends UIDashboardPanel
     /** Part pick waiting for the keyframe editor to finish relayout before it selects a track. */
     private Form pendingPartForm;
     private String pendingPartBone;
+    /**
+     * The bone the keyframe editor reported on the previous frame.
+     *
+     * <p>The editor is the authority while the user clicks tracks, but it must not overwrite a bone
+     * that just came from a viewport pick: BBS' pose editor can keep its previous current bone for
+     * a frame while the picked sheet is being rebuilt, and blindly copying {@code getBone()} back
+     * every frame turned a click on the head into "anchor" (the demo's default bone). Only a real
+     * change in the editor selection is mirrored into the session.</p>
+     */
+    private String lastEditorBone = "";
     /** Cursor adapter: BBS' pick logic seeks through this, and it must move our playhead. */
     private final mchorse.bbs_mod.ui.film.ICursor replayCursor = new mchorse.bbs_mod.ui.film.ICursor()
     {
@@ -1247,6 +1257,18 @@ public class UIReplayModePanel extends UIDashboardPanel
             /* The original helper selects the closest keyframe/climbs to the pose editor. Without
              * it the part's rows appear but the timeline still edits whatever was selected before. */
             UIReplaysEditorUtils.pickForm(this.keyframeEditor, this.replayCursor, form, bone);
+
+            /* A viewport pick names a specific bone, but pickForm can leave the pose editor on its
+             * previous group when the sheet itself did not change. Force the named bone so the
+             * gizmo/timeline both point at what the user clicked (clicking "head" used to settle
+             * on "anchor"). */
+            if (this.keyframeEditor.editor instanceof mchorse.bbs_mod.ui.framework.elements.input.keyframes.factories.UIPoseKeyframeFactory poseFactory)
+            {
+                if (!bone.equals(this.boneGizmoPath()))
+                {
+                    poseFactory.poseEditor.selectBone(bone);
+                }
+            }
         }
         catch (RuntimeException e)
         {
@@ -1328,6 +1350,7 @@ public class UIReplayModePanel extends UIDashboardPanel
                     this.session.setBoneTransform(null);
                     this.pendingPartForm = null;
                     this.pendingPartBone = null;
+                    this.lastEditorBone = "";
                 }
             }
 
@@ -1531,13 +1554,19 @@ public class UIReplayModePanel extends UIDashboardPanel
 
             if (this.session.selectedPartForm() != null && !bone.isEmpty())
             {
-                this.session.setSelectedBone(bone);
-                this.session.setBoneTransform(this.boneGizmoTransform());
+                /* Mirror only an actual editor selection change; see lastEditorBone. */
+                if (!bone.equals(this.lastEditorBone))
+                {
+                    this.session.setSelectedBone(bone);
+                    this.session.setBoneTransform(this.boneGizmoTransform());
+                }
             }
             else
             {
                 this.session.setBoneTransform(null);
             }
+
+            this.lastEditorBone = bone;
         }
 
         this.applyDebugSetup();

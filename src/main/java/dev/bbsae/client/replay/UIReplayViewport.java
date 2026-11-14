@@ -1475,6 +1475,13 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.renderCompositionWindow(context);
 
         this.pick.render(context, this.session, this.interactionArea());
+
+        /* The pick pass caches its id buffer, but BBS clears the gizmo placement at every world
+         * frame boundary. Re-capturing the (cheap) placement every displayed frame is what keeps
+         * the handles visible on cache-hit frames instead of flickering at the pick rate. */
+        this.pick.setSelectedPart(this.session.selectedPartForm(), this.session.selectedBone());
+        this.pick.captureGizmoVisual(this.session, interaction.h);
+        this.pick.renderHighlight(context, interaction, Window.isAltPressed());
         this.renderPickHint(context);
 
         if (this.session.canEditPlacement())
@@ -1482,6 +1489,19 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             this.gizmo.renderGizmo(context);
             this.gizmo.renderSphereHighlight(context);
             this.gizmo.renderReadout(context);
+
+            if (Boolean.getBoolean("bbsae.debugGizmoCapture"))
+            {
+                Area gizmoArea = this.getGizmoArea();
+                Matrix4f projection = this.getGizmoProjection();
+                org.joml.Vector2f center = new org.joml.Vector2f();
+                boolean placed = Gizmo.INSTANCE.computeScreenCenter(projection,
+                    gizmoArea.x, gizmoArea.y, gizmoArea.w, gizmoArea.h, center);
+
+                dev.bbsae.BbsAeAddon.LOGGER.info("Replay gizmo draw: area={}x{}@{},{} projection={} placed={} center={},{}",
+                    gizmoArea.w, gizmoArea.h, gizmoArea.x, gizmoArea.y,
+                    projection == null ? "-" : projection.hashCode(), placed, center.x, center.y);
+            }
         }
 
         this.gizmo.update(context);
@@ -1760,36 +1780,26 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         if (context.mouseButton == 0)
         {
             int picked = this.pick.pickedReplay();
-
-            /* Alt has the original meaning: hovering another actor and clicking selects that
-             * replay. On the selected actor the stencil still carries its form parts, so the Alt
-             * click there selects a body part instead (see below). */
-            if (Window.isAltPressed() && picked >= 0)
-            {
-                if (this.pickHandler != null)
-                {
-                    this.pickHandler.accept(picked);
-                }
-
-                return true;
-            }
-
-            /* A whole-actor id belongs to one of the other actors (the selected actor's parts use
-             * ids past the replay range). Select that replay first: passing its form to the
-             * current replay's part picker would select the wrong actor's part. */
-            if (picked >= 0)
-            {
-                if (this.pickHandler != null)
-                {
-                    this.pickHandler.accept(picked);
-                }
-
-                return true;
-            }
-
             Pair<Form, String> part = this.pick.pickedForm();
+            ReplayClickRules.Action action = ReplayClickRules.action(
+                Window.isAltPressed(), picked, part != null && part.a != null);
 
-            if (part != null && part.a != null)
+            /* Alt has the original BBS meaning: hovering ANOTHER actor and clicking selects that
+             * replay. Without Alt the original editor never changes the selected actor from the
+             * viewport — a plain click belongs to the body part under the cursor. The old code
+             * selected other replays on a plain click too, which made body-part picks impossible
+             * whenever another actor overlapped the current one. */
+            if (action == ReplayClickRules.Action.SELECT_REPLAY)
+            {
+                if (this.pickHandler != null)
+                {
+                    this.pickHandler.accept(picked);
+                }
+
+                return true;
+            }
+
+            if (action == ReplayClickRules.Action.SELECT_PART)
             {
                 if (this.partHandler != null)
                 {
@@ -1816,7 +1826,11 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             this.gizmo.mouseReleased(context);
             this.gizmo.stop();
             this.gizmoActive = false;
-            this.pick.clear();
+
+            /* Keep the stencil and its index for this frame's highlight; the next frame re-picks
+             * from the new selection. Clearing it here blanked the highlight for one frame on every
+             * click, which read as the part "flashing" off right after it was selected. */
+            this.pick.invalidate();
             this.invalidatePreview();
         }
 
@@ -2226,7 +2240,9 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
             if (replay != null)
             {
-                label = (Window.isAltPressed() ? "Alt · 选择回放：" : "选择回放：")
+                /* Another actor is only a candidate under Alt (the original editor's stencil shows
+                 * the other actors only in that mode). */
+                label = (Window.isAltPressed() ? "Alt · 选择回放：" : "按住 Alt 选择回放：")
                     + CompReplayBridge.displayName(replay);
             }
         }

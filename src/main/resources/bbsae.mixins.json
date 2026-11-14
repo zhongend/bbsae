@@ -3,8 +3,11 @@
   "package": "dev.bbsae.mixin",
   "compatibilityLevel": "JAVA_17",
   "client": [
+    "AudioClientClipMixin",
+    "AudioRendererMixin",
     "FilmEntityRendererLightMixin",
     "IrisFinalizeMixin",
+    "PanelVideoExportSessionMixin",
     "TimelineRulerRendererMixin",
     "UIDockLayoutMixin",
     "UIFilmPanelAudioMixin",
@@ -12,7 +15,8 @@
     "UIFilmControllerMixin",
     "UIReplayListMixin",
     "UIReplaysEditorMixin",
-    "UIScreenFileDropMixin"
+    "UIScreenFileDropMixin",
+    "WorldVideoExportSessionMixin"
   ],
   "injectors": {
     "defaultRequire": 0

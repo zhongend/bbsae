@@ -240,7 +240,7 @@ public final class ReplayPickPass
                     true, replays.size() + ReplayPickIds.offsetFor(Gizmo.STENCIL_MAX));
             }
 
-            this.renderGizmoStencil(session, viewCamera, transition);
+            this.renderGizmoStencil(session, viewCamera, transition, area.h);
 
             /* The readback has to happen while the pick framebuffer is still bound. A pointer
              * outside the viewport means "no hover", not a clamped readback. */
@@ -260,7 +260,10 @@ public final class ReplayPickPass
 
             this.gizmoHandlePicked = ReplayPickIds.isGizmoHandle(picked, Gizmo.STENCIL_X, Gizmo.STENCIL_MAX);
             this.pickedReplay = ReplayPickIds.indexFor(picked, Gizmo.STENCIL_MAX, replays.size());
-            this.pickedForm = cursorInside && !this.gizmoHandlePicked ? this.stencil.getPicked() : null;
+            /* A whole-actor id belongs to another replay; its pair must not be offered to the
+             * current actor's part picker (the pair's form is that other actor). */
+            this.pickedForm = cursorInside && !this.gizmoHandlePicked && this.pickedReplay < 0
+                ? this.stencil.getPicked() : null;
         }
         catch (RuntimeException e)
         {
@@ -346,20 +349,147 @@ public final class ReplayPickPass
         }
     }
 
-    private void renderGizmoStencil(ReplayEditSession session, Camera camera, float transition)
+    /**
+     * Lights up the model/body part under the cursor, exactly like BBS' film editor.
+     *
+     * <p>BBS' {@code FilmStencilPicker} composites the pick buffer with the picker-preview shader,
+     * which paints every pixel carrying the hovered id into the highlight colour. The replay page
+     * implemented the id pass but never drew that composite, so a click selected a part with no
+     * visible feedback. When nothing is hovered, the currently selected bone stays lit (the same
+     * behaviour the model editor gives a bone picked from its list).</p>
+     */
+    public void renderHighlight(UIContext context, Area area, boolean alt)
+    {
+        if (Boolean.getBoolean("bbsae.disableReplayPick") || context == null || area == null
+            || this.stencil.getFramebuffer() == null)
+        {
+            return;
+        }
+
+        if (this.stencil.hasPicked())
+        {
+            /* Another actor is in the buffer for Alt only. Without Alt the original editor does
+             * not light it up (it is not even in its stencil), so fall through to the selected
+             * part instead of painting a model the user is not selecting. */
+            if (this.pickedReplay < 0 || alt)
+            {
+                this.stencil.renderPreview(context, area);
+
+                return;
+            }
+        }
+
+        SelectedPart part = this.selectedPart;
+
+        if (part == null || part.form == null || part.bone == null || part.bone.isEmpty())
+        {
+            return;
+        }
+
+        int index = this.stencil.indexOf(part.form, part.bone);
+
+        if (index > 0)
+        {
+            this.stencil.renderPreview(context, area, index);
+        }
+    }
+
+    /** Keeps the selected body part available for the persistent highlight. */
+    public void setSelectedPart(Form form, String bone)
+    {
+        if (form == null || bone == null || bone.isEmpty())
+        {
+            this.selectedPart = null;
+
+            return;
+        }
+
+        this.selectedPart = new SelectedPart(form, bone);
+    }
+
+    private static final class SelectedPart
+    {
+        final Form form;
+        final String bone;
+
+        SelectedPart(Form form, String bone)
+        {
+            this.form = form;
+            this.bone = bone;
+        }
+    }
+
+    private SelectedPart selectedPart;
+
+    private void renderGizmoStencil(ReplayEditSession session, Camera camera, float transition, float areaHeight)
+    {
+        MatrixStack stack = this.gizmoStack(session, areaHeight);
+
+        if (stack == null)
+        {
+            return;
+        }
+
+        Gizmo.INSTANCE.renderStencil(stack, UIReplayPropTransform.MASK);
+    }
+
+    /**
+     * Captures the gizmo's placement for the UI visual pass on <b>every</b> displayed frame.
+     *
+     * <p>BBS calls {@code Gizmo.forgetPlacement()} at the start of every world frame, and the
+     * deferred UI pass can only draw a gizmo that was captured this frame. The pick pass caches its
+     * whole stencil render (that is what keeps the replay page cheap), so on cache-hit frames no
+     * capture happened at all and the handles/rings disappeared for exactly those frames — the
+     * "gizmo flickers" report. The capture itself costs a matrix multiplication, so it is done
+     * here unconditionally while the expensive id readback stays cached.</p>
+     */
+    public void captureGizmoVisual(ReplayEditSession session, float areaHeight)
+    {
+        if (Boolean.getBoolean("bbsae.disableReplayPick") || session == null)
+        {
+            return;
+        }
+
+        MatrixStack stack = this.gizmoStack(session, areaHeight);
+
+        if (stack == null)
+        {
+            return;
+        }
+
+        Gizmo.INSTANCE.captureVisual(stack, UIReplayPropTransform.MASK);
+
+        if (Boolean.getBoolean("bbsae.debugGizmoCapture"))
+        {
+            org.joml.Vector3f translation = stack.peek().getPositionMatrix().getTranslation(new org.joml.Vector3f());
+
+            BbsAeAddon.LOGGER.info("Replay gizmo capture: origin=({}, {}, {}) bone={} areaH={} mask={}",
+                translation.x, translation.y, translation.z,
+                session.isBoneGizmo() ? session.selectedBone() : "-", areaHeight, UIReplayPropTransform.MASK);
+        }
+    }
+
+    /**
+     * The frame the original film gizmo is drawn in: camera view times the actor's camera-relative
+     * placement, reoriented to the edit space. Shared by the visual capture and the stencil pass so
+     * the drawn handles and their hitboxes cannot drift apart.
+     */
+    private MatrixStack gizmoStack(ReplayEditSession session, float areaHeight)
     {
         if (!session.canEditPlacement())
         {
-            return;
+            return null;
         }
 
         IEntity entity = session.selectedEntity();
 
         if (entity == null)
         {
-            return;
+            return null;
         }
 
+        Camera camera = session.viewCamera();
+        float transition = session.transition();
         MatrixStack stack = new MatrixStack();
         Matrix4f placement = null;
         String bone = session.isBoneGizmo() ? session.selectedBone() : "";
@@ -384,9 +514,11 @@ public final class ReplayPickPass
         stack.peek().getPositionMatrix().set(camera.view);
         MatrixStackUtils.multiply(stack, placement);
 
+        Gizmo.INSTANCE.setViewportHeight(areaHeight);
         Gizmo.INSTANCE.reorientForSpace(stack, TransformSpace.GLOBAL, camera.view,
             FilmMatrices.getReplayWorldAxes(entity, transition));
-        Gizmo.INSTANCE.renderStencil(stack, UIReplayPropTransform.MASK);
+
+        return stack;
     }
 
     private void ensureStencil(Area area)
