@@ -370,22 +370,19 @@ public final class CompAudioMixer
         }
 
         /*
-         * More formats without copying the source into the project: ask FFmpeg for a WAV on
-         * stdout and decode those bytes in memory. The link stays external: no file is written
-         * under assets/. MP3/FLAC/M4A/AAC/OPUS/WMA/AIFF are all handled by the same path.
+         * More formats without copying the source into the project: ask FFmpeg for raw PCM on
+         * stdout and build the Wave in memory. The link stays external: no file is written under
+         * assets/. MP3/FLAC/M4A/AAC/OPUS/WMA/AIFF are all handled by the same path.
          */
-        byte[] decoded = decodeWithFfmpeg(file);
-
-        if (decoded != null && decoded.length > 4 && startsWith(decoded, 'R', 'I', 'F', 'F'))
-        {
-            return readWave(file, decoded);
-        }
-
-        return null;
+        return decodeWithFfmpeg(file);
     }
 
-    /** Decodes any FFmpeg-readable audio file to a stereo 48 kHz WAV byte array (stdout only). */
-    private static byte[] decodeWithFfmpeg(Path file)
+    /**
+     * Decodes any FFmpeg-readable audio file to raw stereo 16-bit 48 kHz PCM on stdout. Raw PCM
+     * avoids the non-seekable WAV header problem (FFmpeg writes 0xFFFFFFFF sizes on a pipe, which
+     * BBS's WaveReader correctly rejects); the Wave object is constructed directly.
+     */
+    private static Wave decodeWithFfmpeg(Path file)
     {
         String ffmpeg = mchorse.bbs_mod.utils.FFMpegUtils.getFFMPEG();
 
@@ -402,7 +399,7 @@ public final class CompAudioMixer
                 "-v", "error",
                 "-i", file.toAbsolutePath().toString(),
                 "-vn",
-                "-f", "wav",
+                "-f", "s16le",
                 "-acodec", "pcm_s16le",
                 "-ar", String.valueOf(SAMPLE_RATE),
                 "-ac", String.valueOf(CHANNELS),
@@ -417,7 +414,17 @@ public final class CompAudioMixer
                 return null;
             }
 
-            return output;
+            int blockAlign = CHANNELS * 2;
+
+            /* Drop a partial final frame; every sample must be a complete L/R pair. */
+            if (output.length % blockAlign != 0)
+            {
+                byte[] aligned = new byte[output.length - output.length % blockAlign];
+                System.arraycopy(output, 0, aligned, 0, aligned.length);
+                output = aligned;
+            }
+
+            return new Wave(1, CHANNELS, SAMPLE_RATE, SAMPLE_RATE * blockAlign, blockAlign, 16, output);
         }
         catch (Exception e)
         {

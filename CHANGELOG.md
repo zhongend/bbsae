@@ -1,5 +1,29 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix61 — 2026-11-14
+
+修复外链压缩音频在真实 FFmpeg 输出下的解码 bug。
+
+### 根因
+
+hotfix60 让 FFmpeg 向 stdout 输出 WAV。stdout 不可 seek，FFmpeg 会把 RIFF/data chunk
+长度写成 `0xFFFFFFFF`；`WaveReader` 用该长度分配数组会抛异常，`parseWav` 也因 `size < 0`
+返回 null，结果 MP3/FLAC/M4A 等外链音频仍然没有声音。
+
+### 修复
+
+- FFmpeg 改为输出 raw `s16le` PCM（48 kHz / 双声道），stdout 没有容器头；
+- 直接在内存中构造 `Wave(1, 2, 48000, 192000, 4, 16, pcm)`；
+- 丢弃末尾不完整的采样帧，保证 L/R 成对；
+- 不写工程、不写临时 WAV；外链路径仍保持 `external:`。
+
+### 验证
+
+- 全量测试：**165 套件 / 1007 项 / 0 failures / 0 errors / 1 skipped**。
+- 未启动客户端；请验证 MP3/FLAC/M4A/AAC/OPUS/WMA/AIFF 外链的预览、时间轴长度、导出混音。
+- 候选包：`bbsae-0.99-hotfix61.jar`（3,958,194 bytes，SHA-256
+  `309001A21E0586FC20E2641FDE70E909616EC6706D933AC2648FF8A8813CB57C`）。
+
 ## 0.99-hotfix60 — 2026-11-14
 
 真正外链素材 + 更多音频格式（不复制到工程）。

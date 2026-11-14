@@ -1,5 +1,9 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix61**：修复外链压缩音频解码：FFmpeg 不再输出到不可 seek 的 WAV（头尺寸为
+> `0xFFFFFFFF`，BBS WaveReader 会拒绝），改为输出 raw `s16le` PCM 并直接构造 `Wave`；
+> 同时保留 hotfix60 的真正外链与多格式支持。
+>
 > **0.99-hotfix60**：真正外链：项目 `CompSettings.externalAssets` 记录绝对路径，素材库
 > 直接列出外链图片（`external:`），图片/视频/音频导入不再复制；音频新增 MP3/FLAC/M4A/
 > AAC/OPUS/WMA/AIFF，FFmpeg 在内存中解码（stdout，不写工程），WAV/OGG 仍原生解码；
