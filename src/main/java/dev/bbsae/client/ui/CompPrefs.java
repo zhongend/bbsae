@@ -89,6 +89,13 @@ public final class CompPrefs
         public boolean selectionBoxes = true;
         public boolean cameraGizmos = true;
         public boolean guides = true;
+        /** Composition-preview alignment: snap layer edges/centres to the comp and other layers. */
+        public boolean previewSnap = true;
+        /** Snap radius in screen pixels; converted to composition space at draw time. */
+        public float snapThresholdPx = 8F;
+        /** Keep X:Y scale ratio when dragging or typing one scale field. Default on: resizing a
+         *  layer should not silently deform it. */
+        public boolean scaleLock = true;
         /** Preview HUD text (mode/pose/camera readouts and the resolution strip). */
         public boolean previewHints = true;
         /** Contextual tips for multi-selection / precomp / empty states. */

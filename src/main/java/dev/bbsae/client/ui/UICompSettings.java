@@ -1052,6 +1052,9 @@ public class UICompSettings extends UIElement
         prefs.selectionBoxes = true;
         prefs.cameraGizmos = true;
         prefs.guides = true;
+        prefs.previewSnap = true;
+        prefs.snapThresholdPx = 8F;
+        prefs.scaleLock = true;
         prefs.previewHints = true;
         prefs.timelineRowHeight = 0;
         prefs.keyframeRowHeight = 0;
@@ -1088,8 +1091,24 @@ public class UICompSettings extends UIElement
             CompPrefs.markDirty();
         }), 170, "选择框、Gizmo、摄像机视锥与参考线的描边粗细"));
 
-        this.add(this.section("其他线框"));
-        this.add(this.row("选择框", this.toggle("", prefs.selectionBoxes, (value) ->
+        this.add(this.section("变换与吸附"));
+        this.add(this.row("预览对齐吸附", this.toggle("", prefs.previewSnap, (value) ->
+        {
+            prefs.previewSnap = value;
+            CompPrefs.save();
+        }), 170, "拖动图层时吸附到合成中心/边缘和其他图层的边缘/中心；按住 Alt 可临时关闭"));
+        this.add(this.row("吸附距离", this.slider(prefs.snapThresholdPx, 2F, 24F, (value) ->
+        {
+            prefs.snapThresholdPx = (float) value;
+            CompPrefs.markDirty();
+        }), 170, "屏幕像素；放大预览时仍按视觉距离吸附"));
+        this.add(this.row("锁定 X/Y 缩放", this.toggle("", prefs.scaleLock, (value) ->
+        {
+            prefs.scaleLock = value;
+            CompPrefs.save();
+        }), 170, "角点和边缘缩放保持原宽高比；关闭后才能单独拉宽或拉高"));
+
+        this.add(this.section("其他线框"));        this.add(this.row("选择框", this.toggle("", prefs.selectionBoxes, (value) ->
         {
             prefs.selectionBoxes = value;
             CompPrefs.save();

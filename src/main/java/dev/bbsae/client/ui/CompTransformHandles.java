@@ -32,12 +32,35 @@ public final class CompTransformHandles
                                  float startScaleX, float startScaleY,
                                  boolean proportional)
     {
+        return scaled(handle, startLocalX, startLocalY, localX, localY,
+            startScaleX, startScaleY, proportional, false);
+    }
+
+    /**
+     * @param lockAspect when true every handle scales both axes by one factor, preserving the
+     *                   layer's original X:Y ratio. This is the "don't deform it" mode: an edge
+     *                   drag that used to touch only one axis now changes both uniformly.
+     */
+    public static float[] scaled(int handle, float startLocalX, float startLocalY,
+                                 float localX, float localY,
+                                 float startScaleX, float startScaleY,
+                                 boolean proportional, boolean lockAspect)
+    {
         float ratioX = axisRatio(startLocalX, localX);
         float ratioY = axisRatio(startLocalY, localY);
         float sx = startScaleX * ratioX;
         float sy = startScaleY * ratioY;
 
-        if (handle == 20 || handle == 22)
+        if (lockAspect)
+        {
+            float uniform = (handle == 20 || handle == 22) ? ratioY
+                : (handle == 21 || handle == 23) ? ratioX
+                : (ratioX + ratioY) * 0.5F;
+
+            sx = startScaleX * uniform;
+            sy = startScaleY * uniform;
+        }
+        else if (handle == 20 || handle == 22)
         {
             /* Top / bottom edge: height only. The old code changed X here, so dragging a side
              * handle visibly stretched the wrong axis. */
@@ -51,7 +74,7 @@ public final class CompTransformHandles
         else if (proportional)
         {
             /* Average the two factors, not the final scales: layers may start with uneven X/Y
-             * scales (e.g. 2.0 × 1.0) and must keep that ratio. */
+             * scales (e.g. 2.0 x 1.0) and must keep that ratio. */
             float uniform = (ratioX + ratioY) * 0.5F;
 
             sx = startScaleX * uniform;
@@ -87,5 +110,18 @@ public final class CompTransformHandles
         }
 
         return current / start;
+    }
+
+    /**
+     * The value the other scale axis must take so the current X:Y ratio survives a typed edit.
+     */
+    public static float linkedScale(float edited, float original, float other)
+    {
+        if (Math.abs(original) < 0.00001F)
+        {
+            return other;
+        }
+
+        return other * (edited / original);
     }
 }

@@ -71,6 +71,14 @@ public class CompTransformHandlesTest
     }
 
     @Test
+    public void typedScaleLockPreservesTheCurrentRatio()
+    {
+        assertEquals(3F, CompTransformHandles.linkedScale(2F, 1F, 1.5F), 0.0001F);
+        assertEquals(1.5F, CompTransformHandles.linkedScale(1F, 2F, 3F), 0.0001F);
+        assertEquals(4F, CompTransformHandles.linkedScale(2F, 0.5F, 1F), 0.0001F);
+    }
+
+    @Test
     public void zeroSizedAxisDoesNotExplodeAndScalesStayClamped()
     {
         assertEquals(1F, CompTransformHandles.scaled(21, 0F, 0F, 50F, 50F, 1F, 1F, false)[0], 0.0001F);
@@ -78,5 +86,25 @@ public class CompTransformHandlesTest
             CompTransformHandles.scaled(10, 100F, 100F, 0F, 0F, 1F, 1F, true)[0], 0.0001F);
         assertEquals(CompTransformHandles.MAX_SCALE,
             CompTransformHandles.scaled(10, 1F, 1F, 10000F, 10000F, 1F, 1F, true)[0], 0.0001F);
+    }
+
+    @Test
+    public void scaleLockMakesAnEdgeHandleChangeBothAxes()
+    {
+        float[] result = CompTransformHandles.scaled(21, 100F, 50F, 200F, 50F, 2F, 1F, false, true);
+
+        assertEquals(4F, result[0], 0.0001F);
+        assertEquals(2F, result[1], 0.0001F);
+        assertEquals(2F, result[0] / result[1], 0.0001F, "the original aspect ratio is preserved");
+    }
+
+    @Test
+    public void scaleLockUsesTheAverageFactorOnACorner()
+    {
+        float[] result = CompTransformHandles.scaled(13, 100F, 50F, 150F, 100F, 2F, 1F, false, true);
+
+        assertEquals(3.5F, result[0], 0.0001F);
+        assertEquals(1.75F, result[1], 0.0001F);
+        assertEquals(2F, result[0] / result[1], 0.0001F);
     }
 }

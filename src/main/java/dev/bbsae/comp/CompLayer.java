@@ -7,6 +7,7 @@ import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.utils.keyframes.Keyframe;
 import mchorse.bbs_mod.utils.keyframes.KeyframeChannel;
 import mchorse.bbs_mod.utils.keyframes.factories.KeyframeFactories;
+import mchorse.bbs_mod.utils.interps.Interpolation;
 import mchorse.bbs_mod.utils.pose.Transform;
 
 import java.util.ArrayList;
@@ -288,6 +289,12 @@ public class CompLayer
     public Map<String, String> channels = new LinkedHashMap<>();
     public String transformData = "";
     public String opacityData = "";
+    /**
+     * Master transform/scale curve. Its keys are the synchronized pose; the independent axis
+     * channels are what the renderer evaluates. Keeping this second representation is what lets
+     * "key the master" reset every XYZ curve to one pose later without losing the master curve.
+     */
+    public String masterTransformData = "";
 
     /* First-slice demo helpers; harmless for new documents. */
     public boolean motion = false;
@@ -296,6 +303,7 @@ public class CompLayer
 
     private transient KeyframeChannel<Transform> transformChannel;
     private transient KeyframeChannel<Float> opacityChannel;
+    private transient KeyframeChannel<Transform> masterTransformChannel;
     private transient Map<String, KeyframeChannel<Float>> scalarChannels = new LinkedHashMap<>();
 
     public CompLayer()
@@ -413,6 +421,294 @@ public class CompLayer
         }
     }
 
+    /* Master transform --------------------------------------------------------
+     *
+     * The master is a real Transform curve, used only as an authoring control: the renderer keeps
+     * evaluating the independent axis channels. Keying the master mirrors its pose onto every
+     * axis, and syncing afterwards replaces the axis channels wholesale. That is the "one pose,
+     * many sub-curves" model: the sub-curves can drift independently, but the next master key is
+     * an explicit reset back to the master curve.
+     */
+
+    public KeyframeChannel<Transform> masterTransformChannel()
+    {
+        if (this.masterTransformChannel == null)
+        {
+            this.masterTransformChannel = new KeyframeChannel<>("masterTransform", KeyframeFactories.TRANSFORM);
+        }
+
+        return this.masterTransformChannel;
+    }
+
+    public boolean hasMasterTransformKeys()
+    {
+        return this.masterTransformChannel != null && !this.masterTransformChannel.getKeyframes().isEmpty();
+    }
+
+    /**
+     * Seeds the master curve from the existing axis animation, preserving every distinct tick.
+     *
+     * <p>This is the non-destructive migration path: a layer whose X and Y curves have different
+     * timings gets a master key at each union tick, evaluated from the actual axes. It is only a
+     * seed; once the user keys the master, {@link #syncAxesFromMaster()} becomes authoritative.</p>
+     */
+    public void ensureMasterFromAxes()
+    {
+        if (this.hasMasterTransformKeys())
+        {
+            return;
+        }
+
+        this.ensureIndependentAxes();
+
+        java.util.TreeSet<Float> ticks = new java.util.TreeSet<>();
+        int[] axes = CompCurves.axes(this.threeD);
+
+        for (int axis : axes)
+        {
+            KeyframeChannel<Float> channel = this.axisChannel(axis);
+
+            for (Object entry : channel.getKeyframes())
+            {
+                ticks.add(((Keyframe<?>) entry).getTick());
+            }
+        }
+
+        if (ticks.isEmpty())
+        {
+            return;
+        }
+
+        for (float tick : ticks)
+        {
+            Keyframe<Transform> master = this.masterTransformChannel().insertInheriting(tick, this.transformAt(tick));
+            Keyframe<Float> source = this.firstAxisKeyAt(axes, tick);
+
+            if (source != null)
+            {
+                master.copyOverExtra(source);
+            }
+        }
+    }
+
+    /** Adds a master key at {@code frame} using the pose the layer currently evaluates to. */
+    public Keyframe<Transform> insertMasterTransformKey(float frame)
+    {
+        this.ensureMasterFromAxes();
+
+        return this.masterTransformChannel().insertInheriting(frame, this.transformAt(frame));
+    }
+
+    /**
+     * Makes the axis curves an exact mirror of the master curve.
+     *
+     * <p>Every axis key is removed, then one key per master tick is inserted in each axis. The
+     * master's handles/interpolation are copied onto every sub-key, so the master curve's ease
+     * survives the split. This is intentionally destructive: that reset is the requested
+     * behaviour after the XYZ rows were edited independently.</p>
+     */
+    public void syncAxesFromMaster()
+    {
+        KeyframeChannel<Transform> master = this.masterTransformChannel();
+
+        if (master.getKeyframes().isEmpty())
+        {
+            return;
+        }
+
+        int[] axes = CompCurves.axes(true);
+
+        for (int axis : axes)
+        {
+            this.axisChannel(axis).removeAll();
+        }
+
+        for (Object entry : master.getKeyframes())
+        {
+            @SuppressWarnings("unchecked")
+            Keyframe<Transform> key = (Keyframe<Transform>) entry;
+
+            for (int axis : axes)
+            {
+                Keyframe<Float> target = this.axisChannel(axis).insertInheriting(
+                    key.getTick(), CompCurves.component(key.getValue(), axis));
+
+                target.copyOverExtra(key);
+            }
+        }
+
+        this.transformChannel().removeAll();
+        this.transformData = "";
+    }
+
+    /**
+     * True when the render-time axis curves still equal the master curve.
+     *
+     * <p>Compared on tick, value and bezier handles. Interpolation is deliberately not compared:
+     * BBS rebuilds an interpolation object for every key, so identity/toString comparisons would
+     * report a false divergence after a project reload.</p>
+     */
+    public boolean masterMatchesAxes()
+    {
+        if (!this.hasMasterTransformKeys())
+        {
+            return true;
+        }
+
+        List<Keyframe<Transform>> master = this.masterTransformChannel().getKeyframes();
+        int[] axes = CompCurves.axes(this.threeD);
+
+        for (int axis : axes)
+        {
+            List<Keyframe<Float>> keys = this.axisChannel(axis).getKeyframes();
+
+            if (keys.size() != master.size())
+            {
+                return false;
+            }
+
+            for (int index = 0; index < master.size(); index++)
+            {
+                Keyframe<Transform> masterKey = master.get(index);
+                Keyframe<Float> axisKey = keys.get(index);
+
+                if (Math.abs(masterKey.getTick() - axisKey.getTick()) > 0.0001F
+                    || Math.abs(CompCurves.component(masterKey.getValue(), axis) - axisKey.getValue()) > 0.0001F
+                    || !sameCurveExtra(masterKey, axisKey))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    public void clearMasterTransform()
+    {
+        if (this.masterTransformChannel != null)
+        {
+            this.masterTransformChannel.removeAll();
+        }
+
+        this.masterTransformData = "";
+    }
+
+    private Keyframe<Float> firstAxisKeyAt(int[] axes, float tick)
+    {
+        for (int axis : axes)
+        {
+            KeyframeChannel<Float> channel = this.axisChannel(axis);
+
+            for (Object entry : channel.getKeyframes())
+            {
+                Keyframe<Float> key = (Keyframe<Float>) entry;
+
+                if (Math.abs(key.getTick() - tick) <= 0.0001F)
+                {
+                    return key;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static boolean sameCurveExtra(Keyframe<?> a, Keyframe<?> b)
+    {
+        return Math.abs(a.rx - b.rx) <= 0.0001F
+            && Math.abs(a.ry - b.ry) <= 0.0001F
+            && Math.abs(a.lx - b.lx) <= 0.0001F
+            && Math.abs(a.ly - b.ly) <= 0.0001F
+            && Math.abs(a.getDuration() - b.getDuration()) <= 0.0001F
+            && sameInterpolation(a.getInterpolation(), b.getInterpolation());
+    }
+
+    /**
+     * Interpolation.equals() compares the owning value objects, not their content — every copied
+     * key therefore read as different. The stable identity of an interpolation is its key plus
+     * the four easing arguments.
+     */
+    private static boolean sameInterpolation(Interpolation a, Interpolation b)
+    {
+        if (a == null || b == null)
+        {
+            return a == b;
+        }
+
+        return a.getKey().equals(b.getKey())
+            && Math.abs(a.getV1() - b.getV1()) <= 0.0001D
+            && Math.abs(a.getV2() - b.getV2()) <= 0.0001D
+            && Math.abs(a.getV3() - b.getV3()) <= 0.0001D
+            && Math.abs(a.getV4() - b.getV4()) <= 0.0001D;
+    }
+
+    private static String interpolationFingerprint(Interpolation interpolation)
+    {
+        if (interpolation == null)
+        {
+            return "";
+        }
+
+        return interpolation.getKey() + ":" + interpolation.getV1() + ":" + interpolation.getV2()
+            + ":" + interpolation.getV3() + ":" + interpolation.getV4();
+    }
+
+    /** Stable content fingerprint of the master curve, used to detect native drawer edits. */
+    public String masterCurveFingerprint()
+    {
+        if (!this.hasMasterTransformKeys())
+        {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder();
+
+        for (Object entry : this.masterTransformChannel().getKeyframes())
+        {
+            Keyframe<Transform> key = (Keyframe<Transform>) entry;
+            Transform value = key.getValue();
+
+            builder.append(key.getTick()).append(':')
+                .append(value.translate.x).append(',').append(value.translate.y).append(',').append(value.translate.z)
+                .append(',').append(value.rotate.x).append(',').append(value.rotate.y).append(',').append(value.rotate.z)
+                .append(',').append(value.scale.x).append(',').append(value.scale.y).append(',').append(value.scale.z)
+                .append(':').append(key.rx).append(',').append(key.ry).append(',').append(key.lx).append(',').append(key.ly)
+                .append(':').append(key.getDuration())
+                .append(':').append(interpolationFingerprint(key.getInterpolation()))
+                .append(';');
+        }
+
+        return builder.toString();
+    }
+
+    /** Stable content fingerprint of every transform axis, used to detect independent edits. */
+    public String transformAxesFingerprint()
+    {
+        StringBuilder builder = new StringBuilder();
+
+        for (int axis : CompCurves.axes(true))
+        {
+            builder.append(axis).append('=');
+
+            for (Object entry : this.axisChannel(axis).getKeyframes())
+            {
+                Keyframe<Float> key = (Keyframe<Float>) entry;
+
+                builder.append(key.getTick()).append(':').append(key.getValue())
+                    .append(':').append(key.rx).append(',').append(key.ry)
+                    .append(',').append(key.lx).append(',').append(key.ly)
+                    .append(':').append(key.getDuration())
+                    .append(':').append(interpolationFingerprint(key.getInterpolation()))
+                    .append(';');
+            }
+
+            builder.append('|');
+        }
+
+        return builder.toString();
+    }
+
     public void clearTransformAxes()
     {
         for (int axis : CompCurves.axes(this.threeD))
@@ -424,6 +720,7 @@ public class CompLayer
          * otherwise its keys would resurface during ensureIndependentAxes() on the first insert. */
         this.transformChannel().removeAll();
         this.transformData = "";
+        this.clearMasterTransform();
     }
 
     /**
@@ -450,6 +747,7 @@ public class CompLayer
 
         this.transformChannel().removeAll();
         this.transformData = "";
+        this.clearMasterTransform();
     }
 
     /**
@@ -2243,6 +2541,9 @@ public class CompLayer
         this.transformData = this.transformChannel == null || this.transformChannel.getKeyframes().isEmpty()
             ? ""
             : DataToString.toString(this.transformChannel.toData(), false);
+        this.masterTransformData = this.masterTransformChannel == null || this.masterTransformChannel.getKeyframes().isEmpty()
+            ? ""
+            : DataToString.toString(this.masterTransformChannel.toData(), false);
         this.opacityData = this.opacityChannel == null || this.opacityChannel.getKeyframes().isEmpty()
             ? ""
             : DataToString.toString(this.opacityChannel.toData(), false);
@@ -2272,11 +2573,17 @@ public class CompLayer
 
         this.transformChannel = new KeyframeChannel<>("transform", KeyframeFactories.TRANSFORM);
         this.opacityChannel = new KeyframeChannel<>("opacity", KeyframeFactories.FLOAT);
+        this.masterTransformChannel = new KeyframeChannel<>("masterTransform", KeyframeFactories.TRANSFORM);
         this.scalarChannels = new LinkedHashMap<>();
 
         if (this.transformData != null && !this.transformData.isBlank())
         {
             this.transformChannel.fromData(DataToString.mapFromString(this.transformData));
+        }
+
+        if (this.masterTransformData != null && !this.masterTransformData.isBlank())
+        {
+            this.masterTransformChannel.fromData(DataToString.mapFromString(this.masterTransformData));
         }
 
         if (this.opacityData != null && !this.opacityData.isBlank())

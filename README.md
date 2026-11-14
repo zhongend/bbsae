@@ -1,5 +1,18 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix67**：总变换关键帧、预览吸附、X/Y 缩放锁定。
+> - 关键帧抽屉新增 **「总变换」**：一次 K 帧会把位置/旋转/缩放的全部 XYZ 轴在同一帧打键；
+>   总变换有独立的关键帧轨道（同步 XYZ），各 XYZ 子曲线仍可分别编辑。
+>   - 调整过 XYZ 子曲线后，总变换轨道会锁定并显示链接图标；再按总变换 K 或同步，
+>     会弹出确认窗口，确认后用总变换曲线**重置所有 XYZ 曲线**。
+>   - 总变换曲线本身改动时，所有 XYZ 轴自动重建/同步；删除总变换键也会同步。
+> - 预览框新增 **对齐吸附**：拖动图层时吸附到合成中心/四边，以及其它可见图层的
+>   边缘/中心；显示黄色对齐参考线。设置里可开关，吸附距离可调，按住 Alt 临时禁用。
+> - **X/Y 缩放锁定**：默认开启，拖角点/边缘、3D 缩放 Gizmo、检查器缩放数值或快捷
+>   缩放都会保持原宽高比，避免一拉就变形；设置和「运动」页都可开关。
+> - 详见 [`CHANGELOG.md`](CHANGELOG.md) 与
+>   [`docs/ROUND103-MASTER-TRANSFORM-SNAP-SCALELOCK.zh.md`](docs/ROUND103-MASTER-TRANSFORM-SNAP-SCALELOCK.zh.md)。
+>
 > **0.99-hotfix66**：预览框左右分栏的标签溢出提示。
 > - 预览左右两侧的分区标签（效果库/素材箱/预设/回放，以及调色/图层/影视/蒙版/效果/
 >   文字/合成/输出）在空间不足时不再只是静默截断：
@@ -162,16 +175,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download `bbsae-0.99-hotfix66.jar` from the repository's
+1. Download `bbsae-0.99-hotfix67.jar` from the repository's
    [releases](https://github.com/zhongend/bbsae/releases), or build it with
-   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix66.jar`).
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix67.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99-hotfix66.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix67.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix66.jar` SHA-256: `1CE1AAD4BF03D739BC3BF708FD07C663485DD9967923F70B5C6562192855358B` (4,016,560 bytes).
+`bbsae-0.99-hotfix67.jar` SHA-256: `EE97DBDFD34440A1095E59B0139D8ECFF0784FC1BFAB8D772FEF05297371C0A8` (4,027,393 bytes).
 
 ## Gallery
 

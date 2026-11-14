@@ -175,6 +175,13 @@ public class UICompositorPanel extends UIDashboardPanel
     private final UICompButton keyframeCurve;
     private final UIButton snapButton;
     private final UIButton keyframeButton;
+    /** Master transform key and "resync after independent XYZ edits" controls. */
+    private UIIcon masterKeyIcon;
+    private UIIcon masterSyncIcon;
+    private boolean masterDiverged;
+    private String lastMasterFingerprint = "";
+    private String lastAxesFingerprint = "";
+    private boolean masterCheckQueued;
     private UICompButton precacheButton;
     private final UIElement renderPanel;
     private UIAssetBrowser assetBrowser;
@@ -877,6 +884,10 @@ public class UICompositorPanel extends UIDashboardPanel
             private String vpCameraId;
             /** Start x/y of every selected layer, for a multi-layer drag. */
             private final java.util.LinkedHashMap<String, float[]> dragStarts = new java.util.LinkedHashMap<>();
+            /** Union of the selected layers' composition-space bounds when the move started. */
+            private float[] dragStartBounds;
+            private final java.util.List<Float> snapGuidesX = new java.util.ArrayList<>();
+            private final java.util.List<Float> snapGuidesY = new java.util.ArrayList<>();
 
             /* Mask point editing. The preview already knows how to project a layer-local point to
              * the screen (selectionCorners uses the same CompScene.project path), so the mask
@@ -918,6 +929,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     this.renderSafeArea(context);
                     this.renderGuides(context);
                     this.renderSelection(context);
+                    this.renderSnapGuides(context);
 
                     /* The pen overlay draws every masked path itself (closed or open, with its own
                      * anchor/handle state), so the old mask overlay would double-draw the same
@@ -2617,6 +2629,13 @@ public class UICompositorPanel extends UIDashboardPanel
                     if (this.gizmoAxisIndex == GIZMO_UNIFORM || this.gizmoAxisIndex == 1) sy *= factor;
                     if (this.gizmoAxisIndex == GIZMO_UNIFORM || this.gizmoAxisIndex == 2) sz *= factor;
 
+                    if (CompPrefs.get().scaleLock
+                        && (this.gizmoAxisIndex == 0 || this.gizmoAxisIndex == 1))
+                    {
+                        sx = this.gizmoStartScaleX * factor;
+                        sy = this.gizmoStartScaleY * factor;
+                    }
+
                     this.writeTransform(layer, sx, sy, null);
                     UICompositorPanel.this.setScalar(layer, "scaleZ", sz);
                     UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
@@ -3745,7 +3764,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
                     float[] scales = CompTransformHandles.scaled(this.dragHandle,
                         this.startLocalX, this.startLocalY, boxLocal[0], boxLocal[1],
-                        this.startScaleX, this.startScaleY, false);
+                        this.startScaleX, this.startScaleY, false, CompPrefs.get().scaleLock);
 
                     this.writeTransform(layer, scales[0], scales[1], null);
                     UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
@@ -3787,7 +3806,8 @@ public class UICompositorPanel extends UIDashboardPanel
                                 this.startLocalX, this.startLocalY,
                                 planeLocal[0], planeLocal[1],
                                 this.startScaleX, this.startScaleY,
-                                this.dragMode == DRAG_CORNER && Window.isShiftPressed()
+                                this.dragMode == DRAG_CORNER && Window.isShiftPressed(),
+                                CompPrefs.get().scaleLock
                             );
 
                             sx = scales[0];
@@ -3809,10 +3829,20 @@ public class UICompositorPanel extends UIDashboardPanel
                                 if (this.dragHandle == 20 || this.dragHandle == 22)
                                 {
                                     sy *= ratio;
+
+                                    if (CompPrefs.get().scaleLock)
+                                    {
+                                        sx *= ratio;
+                                    }
                                 }
                                 else
                                 {
                                     sx *= ratio;
+
+                                    if (CompPrefs.get().scaleLock)
+                                    {
+                                        sy *= ratio;
+                                    }
                                 }
                             }
                             else
@@ -3828,7 +3858,7 @@ public class UICompositorPanel extends UIDashboardPanel
                         this.writeTransform(layer, sx, sy, null);
                         UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
                             "缩放 X %.0f%%   Y %.0f%%%s", sx * 100F, sy * 100F,
-                            this.dragMode == DRAG_CORNER ? "（Shift 等比）" : ""));
+                            this.dragMode == DRAG_CORNER || this.dragMode == DRAG_EDGE ? this.scaleDragHint() : ""));
 
                         return;
                     }
@@ -3861,7 +3891,8 @@ public class UICompositorPanel extends UIDashboardPanel
                         this.startLocalX, this.startLocalY,
                         local[0], local[1],
                         this.startScaleX, this.startScaleY,
-                        this.dragMode == DRAG_CORNER && Window.isShiftPressed()
+                        this.dragMode == DRAG_CORNER && Window.isShiftPressed(),
+                        CompPrefs.get().scaleLock
                     );
                     float sx = scales[0];
                     float sy = scales[1];
@@ -3869,9 +3900,20 @@ public class UICompositorPanel extends UIDashboardPanel
                     this.writeTransform(layer, sx, sy, null);
                     UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
                         "缩放 X %.0f%%   Y %.0f%%%s", sx * 100F, sy * 100F,
-                        this.dragMode == DRAG_CORNER ? "（Shift 等比）" : ""));
+                        this.dragMode == DRAG_CORNER || this.dragMode == DRAG_EDGE ? this.scaleDragHint() : ""));
 
                     return;
+                }
+
+                if (this.dragMode == DRAG_MOVE)
+                {
+                    float[] snapped = this.snapMove(dx, dy);
+
+                    if (snapped != null)
+                    {
+                        dx = snapped[0];
+                        dy = snapped[1];
+                    }
                 }
 
                 if (Math.abs(dx) < 0.01F && Math.abs(dy) < 0.01F)
@@ -3938,7 +3980,8 @@ public class UICompositorPanel extends UIDashboardPanel
                     }
 
                     UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
-                        "移动 %d 个图层  Δ %.0f, %.0f", UICompositorPanel.this.getSelectionCount(), dx, dy));
+                        "移动 %d 个图层  Δ %.0f, %.0f%s", UICompositorPanel.this.getSelectionCount(), dx, dy,
+                        this.snapSuffix()));
 
                     return;
                 }
@@ -3947,7 +3990,8 @@ public class UICompositorPanel extends UIDashboardPanel
                 float y = this.layerStartY + localDelta.y;
 
                 this.writeTransform(layer, null, null, null, x, y);
-                UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT, "位置 X %.0f  Y %.0f", x, y));
+                UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
+                    "位置 X %.0f  Y %.0f%s", x, y, this.snapSuffix()));
 
                 if ("camera".equals(layer.type) && layer.cameraLookAt)
                 {
@@ -4875,6 +4919,141 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
             }
 
+            private String scaleDragHint()
+            {
+                if (CompPrefs.get().scaleLock)
+                {
+                    return "（X/Y 已锁定）";
+                }
+
+                return Window.isShiftPressed() ? "（Shift 等比）" : "";
+            }
+
+            /**
+             * Snaps the pending composition-space move to the composition's centre/edges and to
+             * the other visible layers' edges/centres. Returns null when snapping does not apply
+             * (3D layer, no start bounds, disabled, Alt held), otherwise the adjusted {dx, dy}.
+             */
+            private float[] snapMove(float dx, float dy)
+            {
+                this.snapGuidesX.clear();
+                this.snapGuidesY.clear();
+
+                CompPrefs.Data prefs = CompPrefs.get();
+
+                if (!prefs.previewSnap || Window.isAltPressed() || this.dragStartBounds == null
+                    || UICompositorPanel.this.doc == null)
+                {
+                    return null;
+                }
+
+                java.util.List<CompLayer> selected = UICompositorPanel.this.getSelectedLayers();
+
+                for (CompLayer layer : selected)
+                {
+                    /* A 3D layer's screen move is an unprojection, not a flat composition delta;
+                     * snapping its 2D bounds would make the cursor disagree with the plane. */
+                    if (layer == null || layer.threeD || "camera".equals(layer.type))
+                    {
+                        return null;
+                    }
+                }
+
+                java.util.List<float[]> targets = new java.util.ArrayList<>();
+                java.util.Set<String> selectedIds = new java.util.HashSet<>();
+
+                for (CompLayer layer : selected)
+                {
+                    if (layer != null)
+                    {
+                        selectedIds.add(layer.id);
+                    }
+                }
+
+                for (CompLayer layer : UICompositorPanel.this.doc.layers)
+                {
+                    if (layer == null || selectedIds.contains(layer.id) || !layer.visible
+                        || !layer.activeAt(UICompositorPanel.this.time)
+                        || "camera".equals(layer.type) || "null".equals(layer.type)
+                        || "adjustment".equals(layer.type))
+                    {
+                        continue;
+                    }
+
+                    targets.add(dev.bbsae.comp.CompLayerOps.bounds(
+                        UICompositorPanel.this.doc, layer, UICompositorPanel.this.getFrame()));
+                }
+
+                float scale = Math.max(0.0001F, this.fitScale());
+                float threshold = Math.max(1F, prefs.snapThresholdPx) / scale;
+                CompSnap.Result result = CompSnap.compute(
+                    CompSnap.translated(this.dragStartBounds, dx, dy),
+                    targets,
+                    UICompositorPanel.this.doc.width,
+                    UICompositorPanel.this.doc.height,
+                    threshold
+                );
+
+                if (result.snappedX)
+                {
+                    this.snapGuidesX.add(result.guideX);
+                }
+
+                if (result.snappedY)
+                {
+                    this.snapGuidesY.add(result.guideY);
+                }
+
+                return new float[] {dx + result.dx, dy + result.dy};
+            }
+
+            /** Alignment guides drawn while a preview drag is snapped. */
+            private void renderSnapGuides(UIContext context)
+            {
+                if ((this.snapGuidesX.isEmpty() && this.snapGuidesY.isEmpty())
+                    || UICompositorPanel.this.doc == null)
+                {
+                    return;
+                }
+
+                float scale = this.fitScale();
+                float ox = (this.area.w - UICompositorPanel.this.doc.width * scale) / 2F;
+                float oy = (this.area.h - UICompositorPanel.this.doc.height * scale) / 2F;
+                float left = this.area.x + ox;
+                float top = this.area.y + oy;
+                float right = left + UICompositorPanel.this.doc.width * scale;
+                float bottom = top + UICompositorPanel.this.doc.height * scale;
+                int color = 0xE6FFC14D;
+
+                context.batcher.clip(this.area, context);
+
+                try
+                {
+                    for (float guide : this.snapGuidesX)
+                    {
+                        float x = left + guide * scale;
+
+                        context.batcher.box(x, top, x + 1F, bottom, color);
+                    }
+
+                    for (float guide : this.snapGuidesY)
+                    {
+                        float y = top + guide * scale;
+
+                        context.batcher.box(left, y, right, y + 1F, color);
+                    }
+                }
+                finally
+                {
+                    context.batcher.unclip(context);
+                }
+            }
+
+            private String snapSuffix()
+            {
+                return this.snapGuidesX.isEmpty() && this.snapGuidesY.isEmpty() ? "" : " · 已对齐";
+            }
+
             private void endDrag()
             {
                 if (this.dragMode == DRAG_NONE)
@@ -4883,6 +5062,9 @@ public class UICompositorPanel extends UIDashboardPanel
                 }
 
                 this.dragMode = DRAG_NONE;
+                this.dragStartBounds = null;
+                this.snapGuidesX.clear();
+                this.snapGuidesY.clear();
                 UICompositorPanel.this.refreshInspector();
                 UICompositorPanel.this.save();
 
@@ -5156,13 +5338,21 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.dragStartX = context.mouseX;
                 this.dragStartY = context.mouseY;
                 this.dragStarts.clear();
+                this.snapGuidesX.clear();
+                this.snapGuidesY.clear();
+
+                java.util.List<float[]> moveBounds = new java.util.ArrayList<>();
 
                 for (CompLayer moving : UICompositorPanel.this.getSelectedLayers())
                 {
                     Transform movingTransform = moving.transformAt(UICompositorPanel.this.getFrame());
 
                     this.dragStarts.put(moving.id, new float[] {movingTransform.translate.x, movingTransform.translate.y});
+                    moveBounds.add(dev.bbsae.comp.CompLayerOps.bounds(
+                        UICompositorPanel.this.doc, moving, UICompositorPanel.this.getFrame()));
                 }
+
+                this.dragStartBounds = CompSnap.groupBounds(moveBounds);
 
                 Transform start = hit.transformAt(UICompositorPanel.this.getFrame());
 
@@ -5865,6 +6055,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.rebindInspectorValues();
+            this.masterCheckQueued = true;
             this.save();
         });
         this.keyframeEditor.setUndoId("bbsae_compositor_timeline");
@@ -5905,6 +6096,19 @@ public class UICompositorPanel extends UIDashboardPanel
         this.keyframeTitle = new UILabel(IKey.constant("属性关键帧"));
         this.keyframeTitle.color(0xFFB8C4D6, false);
         this.keyframeTitle.relative(this.keyframeDrawer).x(8).y(1).w(1F, -250).h(20);
+
+        this.masterKeyIcon = new UIIcon(Icons.KEY, (icon) -> this.keyMasterTransform());
+        this.masterKeyIcon.relative(this.keyframeDrawer).x(122).y(2).w(18).h(18);
+        this.masterKeyIcon.tooltip(IKey.constant("总变换关键帧：在播放头为位置/旋转/缩放的所有 XYZ 轴同步打键；如果 XYZ 已单独编辑，会先询问并重置"));
+
+        this.masterSyncIcon = new UIIcon(Icons.LINK, (icon) -> this.requestMasterResync());
+        this.masterSyncIcon.relative(this.keyframeDrawer).x(142).y(2).w(18).h(18);
+        this.masterSyncIcon.tooltip(IKey.constant("总变换与 XYZ 已不同步：点击确认后用总变换曲线重置所有 XYZ 曲线"));
+        this.masterSyncIcon.setVisible(false);
+
+        UILabel masterLabel = new UILabel(IKey.constant("总变换"));
+        masterLabel.relative(this.keyframeDrawer).x(82).y(2).w(40).h(18);
+        masterLabel.color(0xFFFFC14D, false);
 
         /* BBS's original curve picker, one click from the keyframe bar. It applies to the
          * selected keyframes (or the key at the playhead) and is the exact menu the film
@@ -5951,7 +6155,8 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.keyframeEditor.relative(this.keyframeDrawer).x(0).y(22).w(1F).h(1F, -22);
 
-        this.keyframeDrawer.add(this.keyframeTitle, this.keyframeCurve, prevKey, addKey, nextKey, fitKeys,
+        this.keyframeDrawer.add(this.keyframeTitle, masterLabel, this.masterKeyIcon, this.masterSyncIcon,
+            this.keyframeCurve, prevKey, addKey, nextKey, fitKeys,
             closeKeyframes, drawerZoomOut, drawerZoomIn, this.keyframeEditor);
 
         this.status = new UILabel(IKey.constant(""));
@@ -10297,6 +10502,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.documentDirty = true;
         this.saveRequested = true;
         this.saveRequestedMs = System.currentTimeMillis();
+        this.masterCheckQueued = true;
 
         /* Green frames are only trustworthy until the next edit. */
         dev.bbsae.client.render.CompPrecache.markDirty();
@@ -10676,6 +10882,7 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     void markCurveDirty()
     {
+        this.masterCheckQueued = true;
         dev.bbsae.client.render.CompPrecache.markDirty();
     }
 
@@ -18524,6 +18731,14 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.animatedNumberRow("位置 Y", layer, "y", transform.translate.y, (value) -> this.setTransformY(value)));
         section.fields.add(this.animatedNumberRow("缩放 X", layer, "scaleX", transform.scale.x, (value) -> this.setTransformScaleX(value)));
         section.fields.add(this.animatedNumberRow("缩放 Y", layer, "scaleY", transform.scale.y, (value) -> this.setTransformScaleY(value)));
+        section.fields.add(new UIToggle(IKey.constant("锁定 X/Y 缩放（保持宽高比）"), CompPrefs.get().scaleLock, (toggle) ->
+        {
+            CompPrefs.get().scaleLock = toggle.getValue();
+            CompPrefs.save();
+            this.setStatus(toggle.getValue()
+                ? "已锁定 X/Y 缩放：拖角点/边缘或输入一个缩放值都会等比例改另一轴"
+                : "已解锁 X/Y 缩放：可以单独拉伸 X 或 Y（容易变形）");
+        }));
         section.fields.add(this.animatedNumberRow("挤压 / 拉伸", layer, "squash", layer.scalarAt("squash", layer.squash, this.getFrame()), (value) ->
         {
             layer.squash = Math.max(-0.9F, Math.min(0.9F, value.floatValue()));
@@ -22027,6 +22242,160 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshSheets();
     }
 
+    /**
+     * Watches the native keyframe drawer for master-vs-axis edits.
+     *
+     * <p>The drawer mutates channels directly, so there is no "which row was edited" callback.
+     * Fingerprints are the honest signal: a changed master fingerprint means the master curve
+     * itself moved and every axis must be rebuilt from it; a changed axis fingerprint with an
+     * unchanged master means the artist went independent and the master sheet must be locked until
+     * they confirm a reset. Work is deferred until the mouse is released so a drag never rebuilds
+     * the sheets it is holding.</p>
+     */
+    private void tickMasterTransformSync()
+    {
+        if (this.restoring || this.selectedLayer == null || this.doc == null || this.keyframeEditor == null
+            || !this.keyframeOpen)
+        {
+            return;
+        }
+
+        CompLayer layer = this.selectedLayer;
+
+        if (!layer.hasMasterTransformKeys())
+        {
+            this.masterDiverged = false;
+
+            if (this.masterSyncIcon != null)
+            {
+                this.masterSyncIcon.setVisible(false);
+            }
+
+            this.lastMasterFingerprint = "";
+            this.lastAxesFingerprint = layer.transformAxesFingerprint();
+
+            return;
+        }
+
+        if (mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0))
+        {
+            return;
+        }
+
+        if (!this.masterCheckQueued)
+        {
+            return;
+        }
+
+        this.masterCheckQueued = false;
+
+        String master = layer.masterCurveFingerprint();
+        String axes = layer.transformAxesFingerprint();
+        boolean masterChanged = !master.equals(this.lastMasterFingerprint);
+        boolean axesChanged = !axes.equals(this.lastAxesFingerprint);
+
+        if (masterChanged)
+        {
+            /* The master curve is authoritative. Rebuild every axis and refresh the dope sheet so
+             * the master row stays visible and the sub-keys line up on the new ticks. */
+            layer.syncAxesFromMaster();
+            this.refreshSheets();
+            this.refreshInspector();
+            this.save();
+            this.setStatus("总变换曲线已同步到全部 XYZ 轴");
+
+            return;
+        }
+
+        if (axesChanged)
+        {
+            if (!layer.masterMatchesAxes())
+            {
+                this.masterDiverged = true;
+
+                if (this.masterSyncIcon != null)
+                {
+                    this.masterSyncIcon.setVisible(true);
+                }
+
+                this.refreshSheets();
+                this.setStatus("XYZ 曲线已单独调整；总变换已锁定。点关键帧栏的链接图标确认同步后才能再改总变换");
+            }
+            else
+            {
+                this.lastAxesFingerprint = axes;
+            }
+        }
+    }
+
+    /** Master K: one key on every transform axis, or a guarded reset after independent XYZ edits. */
+    private void keyMasterTransform()
+    {
+        CompLayer layer = this.selectedLayer;
+
+        if (layer == null)
+        {
+            return;
+        }
+
+        if (layer.hasMasterTransformKeys() && !layer.masterMatchesAxes())
+        {
+            this.requestMasterResync("总变换关键帧", "XYZ 曲线已经被单独调整。继续会给总变换打关键帧，并用总变换曲线重置所有 XYZ 曲线；此操作可用 Ctrl+Z 撤销。",
+                () -> this.doKeyMasterTransform(layer));
+
+            return;
+        }
+
+        this.doKeyMasterTransform(layer);
+    }
+
+    private void doKeyMasterTransform(CompLayer layer)
+    {
+        this.beginAction("总变换关键帧");
+        layer.ensureMasterFromAxes();
+        layer.insertMasterTransformKey(this.getFrame());
+        layer.syncAxesFromMaster();
+        this.masterDiverged = false;
+        this.refreshSheets();
+        this.refreshInspector();
+        this.save();
+        this.setStatus("已在播放头为总变换打关键帧，并同步全部 XYZ 轴");
+    }
+
+    private void requestMasterResync()
+    {
+        CompLayer layer = this.selectedLayer;
+
+        if (layer == null || !layer.hasMasterTransformKeys())
+        {
+            return;
+        }
+
+        this.requestMasterResync("同步总变换", "总变换曲线会覆盖并重置所有 XYZ 子曲线；XYZ 上的单独关键帧会丢失。确认继续？",
+            () ->
+            {
+                this.beginAction("同步总变换");
+                layer.syncAxesFromMaster();
+                this.masterDiverged = false;
+                this.refreshSheets();
+                this.refreshInspector();
+                this.save();
+                this.setStatus("已用总变换曲线重置全部 XYZ 曲线");
+            });
+    }
+
+    private void requestMasterResync(String title, String hint, Runnable confirmed)
+    {
+        UIOverlay.addOverlay(this.getContext(), new mchorse.bbs_mod.ui.framework.elements.overlay.UIConfirmOverlayPanel(
+            IKey.constant(title), IKey.constant(hint), (result) ->
+        {
+            if (Boolean.TRUE.equals(result))
+            {
+                confirmed.run();
+            }
+        }));
+    }
+
     private void refreshSheets()
     {
         /* BBS applies a cached KeyframeState by SHEET INDEX, so replaying it onto a different
@@ -22049,6 +22418,22 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.selectedLayer == null || this.doc == null)
         {
+            this.masterDiverged = false;
+
+            if (this.masterKeyIcon != null)
+            {
+                this.masterKeyIcon.setVisible(false);
+            }
+
+            if (this.masterSyncIcon != null)
+            {
+                this.masterSyncIcon.setVisible(false);
+            }
+
+            this.lastMasterFingerprint = "";
+            this.lastAxesFingerprint = "";
+            this.masterCheckQueued = false;
+
             if (selection != null)
             {
                 this.keyframeEditor.view.applyState(selection);
@@ -22060,6 +22445,40 @@ public class UICompositorPanel extends UIDashboardPanel
         CompLayer layer = this.selectedLayer;
 
         layer.ensureIndependentAxes();
+
+        if (this.masterKeyIcon != null)
+        {
+            this.masterKeyIcon.setVisible(true);
+        }
+
+        boolean hasMaster = layer.hasMasterTransformKeys();
+        boolean masterMatches = layer.masterMatchesAxes();
+
+        this.masterDiverged = hasMaster && !masterMatches;
+
+        if (this.masterSyncIcon != null)
+        {
+            this.masterSyncIcon.setVisible(this.masterDiverged);
+        }
+
+        /* The master sheet is the public face of the master curve. Once the artist edits an XYZ
+         * sub-curve it is hidden — otherwise a native drag of a master key would silently change
+         * all axes without the confirmation the feature promises. The link icon is the only way
+         * back and it asks first. */
+        if (hasMaster && masterMatches)
+        {
+            this.keyframeEditor.view.addSheet(new UIKeyframeSheet(
+                "master-transform",
+                IKey.constant("总变换 / 缩放（同步 XYZ）"),
+                0xFFFFC14D,
+                layer.masterTransformChannel(),
+                null
+            ).seed(() -> layer.transformAt(this.getFrame())));
+        }
+
+        this.lastMasterFingerprint = layer.masterCurveFingerprint();
+        this.lastAxesFingerprint = layer.transformAxesFingerprint();
+        this.masterCheckQueued = false;
 
         /* The native drawer gets one float channel per axis, not one shared Transform channel:
          * deleting Position X must not delete Position Y. The curve editor uses the same channels,
@@ -22709,6 +23128,13 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* Read the pose before writing the edited axis: after the insert, transformAt() already
+         * returns the new value and the ratio would always be 1. */
+        Transform before = CompPrefs.get().scaleLock
+            && (axis == dev.bbsae.comp.CompCurves.AXIS_SCALE_X
+                || axis == dev.bbsae.comp.CompCurves.AXIS_SCALE_Y)
+            ? layer.transformAt(this.getFrame()) : null;
+
         if (layer.hasAnyTransformKey())
         {
             /* Only this axis receives a key. X, Y and Z are independent channels now, so changing
@@ -22718,6 +23144,32 @@ public class UICompositorPanel extends UIDashboardPanel
         else
         {
             layer.putScalar(dev.bbsae.comp.CompCurves.axisPath(axis), value);
+        }
+
+        /* "Lock X/Y" is a property-edit contract, not just a canvas hint: typing 150% into Scale X
+         * must move Scale Y by the same factor, otherwise the layer deforms exactly as easily as
+         * before. The factor preserves the current ratio even when it is not 1:1. */
+        if (before != null)
+        {
+            float base = axis == dev.bbsae.comp.CompCurves.AXIS_SCALE_X ? before.scale.x : before.scale.y;
+            float other = axis == dev.bbsae.comp.CompCurves.AXIS_SCALE_X ? before.scale.y : before.scale.x;
+
+            if (Math.abs(base) > 0.00001F)
+            {
+                float linked = CompTransformHandles.linkedScale(value, base, other);
+                int linkedAxis = axis == dev.bbsae.comp.CompCurves.AXIS_SCALE_X
+                    ? dev.bbsae.comp.CompCurves.AXIS_SCALE_Y
+                    : dev.bbsae.comp.CompCurves.AXIS_SCALE_X;
+
+                if (layer.hasAnyTransformKey())
+                {
+                    layer.insertAxisKey(linkedAxis, this.getFrame(), linked);
+                }
+                else
+                {
+                    layer.putScalar(dev.bbsae.comp.CompCurves.axisPath(linkedAxis), linked);
+                }
+            }
         }
 
         /* Same invariant as setScalar(): mark the document dirty so the edit is undoable and
@@ -24857,6 +25309,8 @@ public class UICompositorPanel extends UIDashboardPanel
     @Override
     public void render(UIContext context)
     {
+        this.tickMasterTransformSync();
+
         /* Coalesced inspector rebuild: at most one per frame, right before the tree is drawn.
          * A page switch therefore starts its transition immediately instead of rebuilding the
          * whole page synchronously in the click handler. */

@@ -79,6 +79,19 @@ public final class CompLayerOps
      */
     public static float[] bounds(CompDocument doc, CompLayer layer)
     {
+        return bounds(doc, layer, 0F);
+    }
+
+    /**
+     * Composition-space bounds at a specific frame.
+     *
+     * <p>The original overload sampled the parent chain at frame 0. For snapping that is wrong the
+     * moment a parent is animated: the layer is visibly somewhere else, but the guide would target
+     * its old frame-0 rectangle. Alignment commands historically used frame 0 on purpose; they keep
+     * the old overload.</p>
+     */
+    public static float[] bounds(CompDocument doc, CompLayer layer, float frame)
+    {
         float[] local = localBounds(layer);
 
         if (doc == null)
@@ -88,7 +101,7 @@ public final class CompLayerOps
             };
         }
 
-        org.joml.Matrix4f world = CompParenting.worldMatrix(doc, layer, 0F);
+        org.joml.Matrix4f world = CompParenting.worldMatrix(doc, layer, frame);
         float minX = Float.MAX_VALUE;
         float minY = Float.MAX_VALUE;
         float maxX = -Float.MAX_VALUE;
