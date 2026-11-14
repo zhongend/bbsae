@@ -123,6 +123,8 @@ public class BbsAeClient implements BBSAddonMod
             localizeClipName(BBSModClient.getL10n());
         }
 
+        dev.bbsae.client.audio.FilmAudioAudition.install();
+
         BbsAeAddon.LOGGER.info("BBS AE client ready");
 
         /* Verification hook: force the OS window (and therefore the framebuffer) to an exact

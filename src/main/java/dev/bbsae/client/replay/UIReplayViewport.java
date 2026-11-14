@@ -1475,6 +1475,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.renderCompositionWindow(context);
 
         this.pick.render(context, this.session, this.interactionArea());
+        this.renderPickHint(context);
 
         if (this.session.canEditPlacement())
         {
@@ -2104,6 +2105,144 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         return true;
     }
 
+    /**
+     * Debug: pick and click at a screen point through the production pick/click path.
+     *
+     * <p>Used to verify Alt/component selection deterministically: the caller can project a known
+     * bone to the viewport, then compare the picked stencil id/pair with the resulting part
+     * selection without asking a human to aim the mouse.</p>
+     */
+    public String debugClickAt(int x, int y, boolean click)
+    {
+        UIContext context = this.getContext();
+
+        if (context == null || this.session == null)
+        {
+            return "no-context";
+        }
+
+        Area area = this.interactionArea();
+        int oldX = context.mouseX;
+        int oldY = context.mouseY;
+
+        context.mouseX = x;
+        context.mouseY = y;
+        context.mouseButton = 0;
+
+        try
+        {
+            int index = this.pick.debugPickAt(context, this.session, area, x, y);
+            Pair<Form, String> pair = this.pick.pickedForm();
+            String picked = "index=" + index + " replay=" + this.pick.pickedReplay()
+                + " form=" + (pair == null || pair.a == null ? "-" : pair.a.getFormIdOrName())
+                + " bone=" + (pair == null || pair.b == null ? "-" : pair.b);
+
+            if (click)
+            {
+                this.subMouseClicked(context);
+            }
+
+            return picked + " area=" + area.x + "," + area.y + "," + area.w + "," + area.h;
+        }
+        finally
+        {
+            context.mouseX = oldX;
+            context.mouseY = oldY;
+        }
+    }
+
+    /** Debug: number of full stencil passes (the rest are cache hits). */
+    public int debugPickRenders()
+    {
+        return this.pick.renderCount();
+    }
+
+    /** Debug: project a bone to the viewport and run the real pick + click path there. */
+    public String debugClickBone(String bone)
+    {
+        if (this.session == null)
+        {
+            return "no-session";
+        }
+
+        IEntity entity = this.session.entity(this.session.replay());
+
+        if (entity == null || entity.getForm() == null || bone == null || bone.isEmpty())
+        {
+            return "no-entity";
+        }
+
+        Matrix4f boneMatrix = mchorse.bbs_mod.film.FilmMatrices.getGizmoBoneCompositeMatrix(
+            this.session.entities(), entity, this.session.replay(),
+            0D, 0D, 0D, this.session.transition(), bone, true);
+
+        if (boneMatrix == null)
+        {
+            return "no-bone-matrix";
+        }
+
+        Vector3f world = boneMatrix.getTranslation(new Vector3f());
+        Vector3f comp = this.session.space().toComp(world.x, world.y, world.z);
+        Area area = this.interactionArea();
+        CompViewportCamera camera = this.session.camera();
+
+        camera.setViewport(area.w, area.h);
+        camera.update();
+
+        org.joml.Vector4f point = new org.joml.Vector4f(comp, 1F).mul(camera.viewProjection);
+
+        if (point.w <= 0.0001F)
+        {
+            return "behind-camera";
+        }
+
+        float ndcX = point.x / point.w;
+        float ndcY = point.y / point.w;
+        int x = Math.round(area.x + (ndcX * 0.5F + 0.5F) * area.w);
+        int y = Math.round(area.y + (1F - (ndcY * 0.5F + 0.5F)) * area.h);
+
+        return "bone=" + bone + " screen=" + x + "," + y + " " + this.debugClickAt(x, y, true);
+    }
+
+    /**
+     * Hover label for the stencil result. Without it the component pick is invisible until a
+     * click: the user cannot tell that Alt is hovering another actor or that a body part is
+     * available under the cursor.
+     */
+    private void renderPickHint(UIContext context)
+    {
+        if (this.session == null || !this.interactionArea().isInside(context))
+        {
+            return;
+        }
+
+        int picked = this.pick.pickedReplay();
+        Pair<Form, String> part = this.pick.pickedForm();
+        String label = null;
+
+        if (picked >= 0)
+        {
+            Replay replay = this.session.replayAt(picked);
+
+            if (replay != null)
+            {
+                label = (Window.isAltPressed() ? "Alt · 选择回放：" : "选择回放：")
+                    + CompReplayBridge.displayName(replay);
+            }
+        }
+        else if (part != null && part.a != null)
+        {
+            String bone = part.b == null ? "" : part.b;
+
+            label = "部位：" + (bone.isEmpty() ? part.a.getFormIdOrName() : bone);
+        }
+
+        if (label != null && !label.isEmpty())
+        {
+            context.batcher.textCard(label, context.mouseX + 12, context.mouseY + 10);
+        }
+    }
+
     /** Test hook: switch the preview without a mouse click (0 free, 1 orbit, 2 camera). */
     public void setViewModeFromHost(int mode)
     {
@@ -2144,6 +2283,11 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     {
         this.previewDirty = true;
         this.freePreviewDirty = true;
+
+        /* The picked bone/gizmo origin may have moved even when the pointer and camera did not
+         * (inspector value edit, auto-key, undo). Force one new id pass; the pass caches itself
+         * again immediately afterwards. */
+        this.pick.invalidate();
     }
 
     public void releasePreview()

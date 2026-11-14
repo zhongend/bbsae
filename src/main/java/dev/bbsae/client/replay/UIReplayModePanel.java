@@ -163,6 +163,8 @@ public class UIReplayModePanel extends UIDashboardPanel
         }
     };
     private String cachedStatus = "";
+    /** The virtual-only list filter is rebuilt only when the film/replay list changed. */
+    private boolean virtualFilterDirty = true;
     /** Visibility the borrowed film panel had before being attached hidden; restored on detach. */
     private boolean borrowedFilmPanelVisible = true;
     /** Invisible holder that keeps the borrowed film panel connected (see attach). */
@@ -874,6 +876,7 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.filmPanel = panel;
         this.film = film;
+        this.virtualFilterDirty = true;
         VirtualReplayVisibility.borrow(panel);
 
         /* Attach it before anything below can write into the film: BBS' undo data is collected
@@ -1284,6 +1287,7 @@ public class UIReplayModePanel extends UIDashboardPanel
         }
 
         this.selectingReplay = true;
+        this.virtualFilterDirty = true;
 
         try
         {
@@ -1561,10 +1565,12 @@ public class UIReplayModePanel extends UIDashboardPanel
      */
     private void applyVirtualReplayFilter()
     {
-        if (this.replaysList == null)
+        if (this.replaysList == null || !this.virtualFilterDirty)
         {
             return;
         }
+
+        this.virtualFilterDirty = false;
 
         if (this.film != null)
         {
@@ -1612,6 +1618,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             ? this.firstReplay(this.film)
             : ReplayListOps.selectionAfterChange(this.knownOrder, current, this.replay);
 
+        this.virtualFilterDirty = true;
         this.knownOrder.clear();
         this.knownOrder.addAll(current);
 
@@ -2118,6 +2125,18 @@ public class UIReplayModePanel extends UIDashboardPanel
     }
 
     /* ------------------------------------------------------------ interaction debug */
+
+    /** Debug: how many full pick passes actually ran (cache effectiveness). */
+    public int debugPickRenders()
+    {
+        return this.viewport == null ? -1 : this.viewport.debugPickRenders();
+    }
+
+    /** Debug: project a bone and run the real stencil pick + click path. */
+    public String debugClickBone(String bone)
+    {
+        return this.viewport == null ? "no-viewport" : this.viewport.debugClickBone(bone);
+    }
 
     /** Runs one real gizmo gesture; see {@link UIReplayViewport#debugDragGizmo}. */
     public boolean debugGizmoDrag(int handleIndex, int dx, int dy)

@@ -4,7 +4,7 @@
 > 它把 After Effects 式的合成器带进 BBS 影片编辑器：图层、关键帧、蒙版、效果、3D 摄像机、
 > 预合成与视频导出，都在 BBS 原本的影片/回放工作流里完成。
 
-当前版本：**0.99-hotfix84**。历史更新见 [`CHANGELOG.md`](CHANGELOG.md)。
+当前版本：**0.99-hotfix85**。历史更新见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 功能
 

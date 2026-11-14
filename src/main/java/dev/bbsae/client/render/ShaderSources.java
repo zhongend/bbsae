@@ -441,11 +441,11 @@ public final class ShaderSources
         {
             vec4 sum = vec4(0.0);
             float total = 0.0;
-            /* Tap count follows the radius instead of being fixed at 17. At radius 200 the old
-             * fixed kernel stepped 25 px and produced visible combing; that is what users read as
-             * "the blur stops working". The loop bound stays constant so this is valid GLSL 150,
-             * while the runtime break skips the unused taps. */
-            int taps = int(clamp(floor(Radius * 0.125), 8.0, 64.0));
+            /* Two samples per composition pixel: enough separation to stay smooth at radius 200,
+             * while the old radius*0.125 rule stepped 8 px and produced visible combing/bands.
+             * The loop bound is constant so this is valid GLSL 150; the runtime condition skips
+             * unused taps. */
+            int taps = int(clamp(ceil(Radius * 0.5), 8.0, 64.0));
 
             for (int i = -64; i <= 64; i++)
             {
@@ -463,7 +463,14 @@ public final class ShaderSources
                 total += weight;
             }
 
-            fragColor = sum / max(total, 0.0001);
+            vec4 result = sum / max(total, 0.0001);
+            /* 8-bit targets quantise a smooth falloff into visible bands at large radii. A
+             * sub-LSB dither, scaled by alpha so transparent regions stay clean, breaks the
+             * band edges without adding visible grain. */
+            float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+            result.rgb += (noise / 255.0) * result.a;
+
+            fragColor = clamp(result, 0.0, 1.0);
         }
         """;
 
@@ -507,10 +514,16 @@ public final class ShaderSources
             {
                 vec4 sum = src;
                 float total = 1.0;
+                int taps = int(clamp(ceil(r * 0.5), 8.0, 48.0));
 
-                for (int i = 1; i <= 8; i++)
+                for (int i = 1; i <= 48; i++)
                 {
-                    float t = float(i) / 8.0;
+                    if (i > taps)
+                    {
+                        break;
+                    }
+
+                    float t = float(i) / float(taps);
                     float w = (1.0 - t) * (1.0 - t);
                     vec2 dx = vec2(Texel.x * r * t, 0.0);
                     vec2 dy = vec2(0.0, Texel.y * r * t);
@@ -527,9 +540,9 @@ public final class ShaderSources
                 float total = 1.0;
                 float strength = clamp(r, 0.0, 1.0);
 
-                for (int i = 1; i <= 8; i++)
+                for (int i = 1; i <= 32; i++)
                 {
-                    float t = float(i) / 8.0;
+                    float t = float(i) / 32.0;
                     float w = 1.0 - t;
 
                     sum += tap(mix(vUv, Center, t * strength)) * w;
@@ -542,11 +555,14 @@ public final class ShaderSources
             {
                 vec4 sum = src;
                 float total = 1.0;
+                /* Rotate the golden-angle spiral per pixel: the fixed spiral's low sample count
+                 * was visible as rings/bands at large radii. */
+                float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
 
-                for (int i = 0; i < 24; i++)
+                for (int i = 0; i < 48; i++)
                 {
-                    float a = float(i) * 2.39996323;
-                    float rr = sqrt((float(i) + 0.5) / 24.0);
+                    float a = float(i) * 2.39996323 + jitter;
+                    float rr = sqrt((float(i) + 0.5) / 48.0);
                     vec2 offset = vec2(cos(a), sin(a)) * rr * r;
 
                     sum += tap(vUv + offset * Texel);
@@ -561,9 +577,9 @@ public final class ShaderSources
                 float alpha = 0.0;
                 float total = 0.0;
 
-                for (int i = -8; i <= 8; i++)
+                for (int i = -16; i <= 16; i++)
                 {
-                    float t = float(i) / 8.0;
+                    float t = float(i) / 16.0;
                     float w = 1.0 - abs(t);
                     vec4 hx = tap(vUv + vec2(Texel.x * r * t, 0.0));
                     vec4 hy = tap(vUv + vec2(0.0, Texel.y * r * t));
@@ -587,10 +603,16 @@ public final class ShaderSources
                 float rr = r * mix(1.0, map, clamp(MapSoftness, 0.0, 1.0));
                 vec4 sum = src;
                 float total = 1.0;
+                int taps = int(clamp(ceil(rr * 0.5), 8.0, 32.0));
 
-                for (int i = 1; i <= 8; i++)
+                for (int i = 1; i <= 32; i++)
                 {
-                    float t = float(i) / 8.0;
+                    if (i > taps)
+                    {
+                        break;
+                    }
+
+                    float t = float(i) / float(taps);
                     float w = (1.0 - t) * (1.0 - t);
                     vec2 dx = vec2(Texel.x * rr * t, 0.0);
                     vec2 dy = vec2(0.0, Texel.y * rr * t);
@@ -608,16 +630,16 @@ public final class ShaderSources
                 float sigma = max(r * 0.5, 0.5);
                 float range = max(Threshold, 0.001);
 
-                for (int j = -2; j <= 2; j++)
+                for (int j = -3; j <= 3; j++)
                 {
-                    for (int i = -2; i <= 2; i++)
+                    for (int i = -3; i <= 3; i++)
                     {
                         if (i == 0 && j == 0)
                         {
                             continue;
                         }
 
-                        vec2 offset = vec2(float(i), float(j)) * max(1.0, r * 0.25) * Texel;
+                        vec2 offset = vec2(float(i), float(j)) * max(1.0, r / 6.0) * Texel;
                         vec4 s = tap(vUv + offset);
                         float spatial = exp(-float(i * i + j * j) / (2.0 * sigma * sigma));
                         float diff = distance(s.rgb, src.rgb);
@@ -645,7 +667,12 @@ public final class ShaderSources
                 mixAmount = 1.0;
             }
 
-            fragColor = mix(src, result, mixAmount);
+            result = mix(src, result, mixAmount);
+            /* Break the 8-bit quantisation bands a smooth large-radius falloff leaves behind. */
+            float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+            result.rgb += (noise / 255.0) * result.a;
+
+            fragColor = clamp(result, 0.0, 1.0);
         }
         """;
 
@@ -918,15 +945,22 @@ public final class ShaderSources
         void main()
         {
             vec4 sum = vec4(0.0);
+            /* Dense, linearly interpolated samples: 12 taps over a large radial reach left
+             * concentric bands that read as pixelation. */
+            const int TAPS = 32;
 
-            for (int i = 0; i < 12; i++)
+            for (int i = 0; i < TAPS; i++)
             {
-                float t = float(i) / 11.0;
+                float t = float(i) / float(TAPS - 1);
                 vec2 uv = mix(vUv, Center, Amount * t);
                 sum += texture(Source, clamp(uv, vec2(0.0), vec2(1.0)));
             }
 
-            fragColor = sum / 12.0;
+            vec4 result = sum / 32.0;
+            float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+            result.rgb += (noise / 255.0) * result.a;
+
+            fragColor = clamp(result, 0.0, 1.0);
         }
         """;
 

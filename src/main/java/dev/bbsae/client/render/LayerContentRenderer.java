@@ -856,6 +856,22 @@ final class LayerContentRenderer
         float totalHeight = layout.lines.length * lineHeight;
         float baseX = -width * layer.anchorX;
         float baseY = -totalHeight * layer.anchorY;
+
+        /* Imported fonts go through a real vector raster at the target pixel density. The BBS
+         * glyph atlas is a point-sampled bitmap; any layer/camera/preview scale above 1 turns its
+         * edges into visible stair steps. Text animators keep the per-glyph path below because
+         * their transforms are applied per glyph after layout. */
+        if (chosen.custom() && context != null && !hasAnimator(layer)
+            && VectorTextRaster.draw(layer, layout, chosen.file, chosen.renderer, fallback,
+                fontSize, fontHeight, lineHeight, textStroke, layer.color, layer.strokeColor,
+                context.scale, context.frame, baseX, baseY, batcher))
+        {
+            noteTextPerf(layoutHit, layoutEnd - layoutStart, 0L, layout.lines.length,
+                layout.glyphCount, 0, 0, 0, 0);
+
+            return;
+        }
+
         MatrixStack stack = batcher.getContext().getMatrices();
         GlyphBatch batch = new GlyphBatch(batcher, stack);
         long drawStart = DEBUG_TEXT_PERF ? System.nanoTime() : 0L;
@@ -1233,6 +1249,7 @@ final class LayerContentRenderer
         FONT_WARNINGS.clear();
         LAYOUTS.clear();
         FontCoverage.clear();
+        VectorTextRaster.clear();
     }
 
     /** Custom fonts come from BBS's own TTF loader; an empty name keeps the default font. */

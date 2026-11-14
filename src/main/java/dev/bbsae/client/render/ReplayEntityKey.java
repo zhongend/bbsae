@@ -336,7 +336,14 @@ public final class ReplayEntityKey
             logDraw(world, mask, layer, inverse, width, height);
         }
 
-        program.drawFullscreen();
+        /* The fullscreen pass binds a program and the shared screen VAO. Restoring them here
+         * keeps the film editor's world/UI pass out of that state when the composition overlay
+         * is drawn over BBS' film preview (the symptom was a per-frame "Array object is not
+         * active" flood after switching from the replay page). */
+        try (GlStateGuard guard = new GlStateGuard())
+        {
+            program.drawFullscreen();
+        }
 
         if (Boolean.getBoolean("bbsae.debugEntityKeyLog"))
         {

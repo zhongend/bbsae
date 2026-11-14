@@ -64,6 +64,8 @@ public final class ReplayGizmoScript
         {
             case 60:
                 this.panel.debugSelectPlayableReplay();
+                BbsAeAddon.LOGGER.info("Replay gizmo script: idle pick passes before edit = {}",
+                    this.panel.debugPickRenders());
                 this.panel.session().seek(30F);
                 this.panel.session().applyPose(this.panel.session().entity(this.panel.replay()), this.panel.replay());
                 this.beforeDrag = this.panel.debugChannelSummary();
@@ -91,6 +93,13 @@ public final class ReplayGizmoScript
                     this.panel.debugApplyForm(steve));
                 break;
 
+            case 75:
+                /* Real stencil pick at the projected bone: proves the id map contains the
+                 * selected actor's parts, not only whole-replay ids. */
+                BbsAeAddon.LOGGER.info("Replay gizmo script: click head [{}] part=[{}]",
+                    this.panel.debugClickBone("head"), this.panel.debugPartSummary());
+                break;
+
             case 80:
                 String modelBone = this.panel.debugSelectModelBone();
 
@@ -101,6 +110,12 @@ public final class ReplayGizmoScript
 
                 BbsAeAddon.LOGGER.info("Replay gizmo script: part after click bone='{}' [{}]",
                     modelBone, this.panel.debugPartSummary());
+                break;
+
+            case 85:
+                /* Real stencil click on a bone after the model/entity has settled. */
+                BbsAeAddon.LOGGER.info("Replay gizmo script: stencil click anchor [{}] part=[{}]",
+                    this.panel.debugClickBone("anchor"), this.panel.debugPartSummary());
                 break;
 
             case 90:

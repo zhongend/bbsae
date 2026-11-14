@@ -342,6 +342,11 @@ public final class ReplayDebugHook
                 BbsPlaybackAudit.start(panel);
             }
 
+            if (Boolean.getBoolean("bbsae.filmAudioAudit"))
+            {
+                FilmAudioAudit.start(panel);
+            }
+
             /* Playback regression check: start the replay transport, let it run for a second of
              * wall time, then log the cursor. This catches the old "seek every frame restarts the
              * action" bug without needing a human to click play. */

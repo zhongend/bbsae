@@ -62,6 +62,16 @@ public final class ReplayPickPass
     private boolean gizmoHandlePicked;
     /** Form part/bone under the cursor on the selected actor, or null when none. */
     private Pair<Form, String> pickedForm;
+    /**
+     * Inputs of the last id pass. The pick scene is re-rendered only when one of them changes.
+     * Rendering every replay into a full-viewport stencil every display frame was the main cost
+     * of the replay page while scrubbing/editing with a parked mouse; BBS' FilmStencilPicker has
+     * the same cache for the same reason.
+     */
+    private long lastSignature = Long.MIN_VALUE;
+    private boolean lastValid;
+    /** How many full id passes were actually rendered (verification for the cache). */
+    private int renderCount;
 
     public StencilFormFramebuffer stencil()
     {
@@ -105,13 +115,29 @@ public final class ReplayPickPass
      */
     public void render(UIContext context, ReplayEditSession session, Area area)
     {
-        this.pickedReplay = -1;
-        this.gizmoHandlePicked = false;
+        if (Boolean.getBoolean("bbsae.disableReplayPick"))
+        {
+            return;
+        }
 
         if (context == null || session == null || area == null || area.w <= 0 || area.h <= 0)
         {
             return;
         }
+
+        long signature = signature(context, session, area);
+
+        if (this.lastValid && signature == this.lastSignature)
+        {
+            return;
+        }
+
+        this.lastSignature = signature;
+        this.lastValid = true;
+        this.renderCount += 1;
+        this.pickedReplay = -1;
+        this.gizmoHandlePicked = false;
+        this.pickedForm = null;
 
         boolean cursorInside = area.isInside(context);
 
@@ -157,9 +183,11 @@ public final class ReplayPickPass
         float transition = session.transition();
 
         int previousFramebuffer = GL11.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
+        int previousVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
         int[] previousViewport = new int[4];
         GL11.glGetIntegerv(GL11.GL_VIEWPORT, previousViewport);
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+        org.joml.Matrix3f previousInverse = new org.joml.Matrix3f(RenderSystem.getInverseViewRotationMatrix());
         int previousDepthFunc = GL11.glGetInteger(GL11.GL_DEPTH_FUNC);
         MatrixStack modelView = RenderSystem.getModelViewStack();
         boolean queued = FormRenderLast.suspend();
@@ -177,10 +205,16 @@ public final class ReplayPickPass
             GL11.glDisable(GL11.GL_SCISSOR_TEST);
             GL11.glDisable(GL11.GL_CULL_FACE);
 
+            /* The actors are built in composition space, so the pick pass must use the same
+             * camera view matrix the visible ReplayModelPass uses. The old identity model-view
+             * left the view rotation out entirely: the id buffer contained nothing under the
+             * model, every pick read back 0, and Alt/component selection could never work even
+             * though the id map itself was correct. */
             modelView.push();
-            modelView.peek().getPositionMatrix().identity();
+            modelView.peek().getPositionMatrix().set(viewCamera.view);
             RenderSystem.applyModelViewMatrix();
             RenderSystem.setProjectionMatrix(viewCamera.projection, VertexSorter.BY_Z);
+            RenderSystem.setInverseViewRotationMatrix(new org.joml.Matrix3f(viewCamera.view).invert());
 
             MatrixStack stack = new MatrixStack();
             List<Replay> replays = session.film().replays.getList();
@@ -240,6 +274,7 @@ public final class ReplayPickPass
             FormRenderLast.restore(queued);
 
             RenderSystem.setProjectionMatrix(previousProjection, VertexSorter.BY_Z);
+            RenderSystem.setInverseViewRotationMatrix(previousInverse);
             modelView.pop();
             RenderSystem.applyModelViewMatrix();
 
@@ -247,6 +282,12 @@ public final class ReplayPickPass
             GL11.glDepthMask(true);
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             BufferRenderer.resetCurrentVertexBuffer();
+
+            /* The actor renderer binds its own VAO. Restoring the UI/world VAO matters when the
+             * replay page is left for the film editor: the next BBS world pass draws through the
+             * VAO that was current before this pick pass, and a stale actor VAO produces the
+             * "Array object is not active" flood seen in the film page. */
+            com.mojang.blaze3d.platform.GlStateManager._glBindVertexArray(previousVao);
 
             client.getFramebuffer().beginWrite(true);
 
@@ -363,12 +404,100 @@ public final class ReplayPickPass
         }
     }
 
+    /**
+     * Debug: render the id pass with the cursor forced to a point and return the raw stencil id.
+     *
+     * <p>Distinct from a real click because it can be driven at a known bone projection. The
+     * subsequent fields ({@link #pickedReplay()}, {@link #pickedForm()}) describe that same
+     * point.</p>
+     */
+    public int debugPickAt(UIContext context, ReplayEditSession session, Area area, int x, int y)
+    {
+        int oldX = context.mouseX;
+        int oldY = context.mouseY;
+
+        context.mouseX = x;
+        context.mouseY = y;
+
+        try
+        {
+            this.render(context, session, area);
+
+            return this.stencil.getIndex();
+        }
+        finally
+        {
+            context.mouseX = oldX;
+            context.mouseY = oldY;
+        }
+    }
+
+    /** Forces the next render to rebuild the id pass. */
+    public void invalidate()
+    {
+        this.lastValid = false;
+    }
+
+    public int renderCount()
+    {
+        return this.renderCount;
+    }
+
+    /**
+     * Cheap fingerprint of everything that can change what the id pass would draw or read back.
+     * Deliberately includes the mouse, camera, playhead, selection and visibility counts; a
+     * heartbeat is unnecessary because a change in any of them forces a rebuild.
+     */
+    private static long signature(UIContext context, ReplayEditSession session, Area area)
+    {
+        Camera camera = session.viewCamera();
+        long h = 0x9E3779B97F4A7C15L;
+
+        h = mix(h, context.mouseX);
+        h = mix(h, context.mouseY);
+        h = mix(h, area.x);
+        h = mix(h, area.y);
+        h = mix(h, area.w);
+        h = mix(h, area.h);
+        h = mix(h, camera.view.hashCode());
+        h = mix(h, camera.projection.hashCode());
+        h = mix(h, Float.floatToIntBits(session.playhead()));
+        h = mix(h, session.isPlaying() ? 1 : 0);
+        h = mix(h, session.replayIndex(session.replay()));
+        h = mix(h, session.selectedBone() == null ? 0 : session.selectedBone().hashCode());
+        h = mix(h, session.isBoneGizmo() ? 1 : 0);
+        h = mix(h, session.visibleCount());
+        h = mix(h, session.culledCount());
+
+        java.util.Map<String, IEntity> entities = session.entities();
+        h = mix(h, entities == null ? -1 : entities.size());
+
+        if (session.film() != null && session.film().replays != null)
+        {
+            h = mix(h, session.film().replays.getList().size());
+        }
+
+        return h;
+    }
+
+    private static long mix(long hash, long value)
+    {
+        long h = hash ^ value;
+
+        h *= 0x100000001B3L;
+        h ^= h >>> 29;
+
+        return h;
+    }
+
     /** Forgets the last pick (selection changes make a stale id meaningless). */
     public void clear()
     {
         this.stencil.clearPicking();
         this.pickedReplay = -1;
         this.gizmoHandlePicked = false;
+        this.pickedForm = null;
+        this.lastValid = false;
     }
 
     public void resetLimiter()

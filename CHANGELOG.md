@@ -1,5 +1,56 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix85 — 2026-11-14
+
+### 回放编辑器：Alt / 组件选择真正修复
+
+- **根因**：`ReplayPickPass` 的 id pass 使用单位模型视图，而可见模型 pass 使用 `viewCamera.view`。
+  于是模型下方的 stencil 全是 0，`StencilMap` 再正确也读不到任何 actor/骨骼。现在 id pass
+  与 `ReplayModelPass` 使用同一个 view/projection，并恢复 `inverseViewRotationMatrix`。
+- 实测 pick 返回 `index=60 replay=-1 form=bbs:model bone=head`，Alt/普通点击都能落到具体部件。
+- 点击顺序保持原版语义：Alt 下先选其他回放；没有其他回放时选当前回放的部位。
+- 增加鼠标悬停提示（回放名 / 部位名），让 Alt 和其他回放的选择结果可见。
+- 恢复 pick pass 的 VAO，避免离开回放页后污染 BBS 的 UI/world pass。
+
+### 回放编辑器：编辑与卡顿
+
+- pick id pass 增加输入签名缓存：鼠标、相机、播放头、选择、可见性都不变时不再重绘整个
+  stencil 场景（验证日志 `idle pick passes before edit = 2`）。
+- 虚拟回放列表过滤只在列表/选择变化时执行，不再每帧重建 BBS 的 `UIReplayList`。
+- `invalidatePreview()` 会显式让 pick 缓存失效，姿势/关键帧编辑后 gizmo 位置不会过期。
+
+### 文字：真正的矢量栅格
+
+- 自定义字体不再走 BBS 的 bitmap/STB 图集。新增 `VectorTextRaster`：用 Java2D 的
+  `GlyphVector.getOutline()` 取字形轮廓，按最终像素密度（预览/图层缩放 ×2，最高 4×）
+  抗锯齿栅格化，线性采样绘制。
+- 缺少字形的回退（中文/标点）也改用系统矢量字体，因此“拉丁字体 + 中文”的图层同样平滑。
+- 默认 Minecraft 位图字体保持原样；带逐字动画的文本仍走原路径（动画需要逐字变换）。
+- 验证截图：`docs/verify/round118-font-vector.png`。
+
+### 模糊：去断层 / 去像素感
+
+- 标准模糊 tap 数从 `radius*0.125` 提到 `radius*0.5`（8–64），大半径不再出现明显梳状条纹。
+- AE 模糊族：交叉/复合自适应 tap、径向 32 tap、bokeh 48 tap 且逐像素旋转、通道模糊 33 tap、
+  双边 7×7；径向模糊 12→32 tap。
+- 所有模糊输出增加 1/255 亚 LSB dither（按 alpha 缩放），打散 8-bit 渐变条带。
+- 验证截图：`docs/verify/round118-text-blur.png`。
+
+### 影片页音频浏览
+
+- BBS 影片页预览右上角新增音频按钮（`Icons.SOUND`），打开 bbsae 音频浏览 overlay。
+- 列表包含：当前影片合成器工程的音频文件（工程素材目录递归扫描 + `CompAudio` 轨道），
+  以及“合成器混音（播放/停止）”条目。
+- 文件条目使用 `CompAudioPreview` 试听；混音条目使用 `CompAudioPlayer`，跟随影片播放头
+  （影片暂停时自由试听）。`/audio` 列表为空时显示明确提示。
+- 验证截图：`docs/verify/round118-film-audio.png`（测试音轨播放状态 `播放中 · 0.82s`）。
+
+### 测试
+
+- 194 个测试套件 / 1197 个测试 / 0 失败 / 0 错误 / 1 跳过。
+- 新增 `Round118QualityContractsTest` 锁定 view 矩阵、VAO、矢量文字、模糊 tap/dither
+  和影片页音频入口。
+
 ## 0.99-hotfix84 — 2026-11-14
 
 BBS 原版播放冻结、回放动画、Transform 拖拽、K 帧部位、回放页布局与抠像的一轮修复，
