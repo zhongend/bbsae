@@ -171,6 +171,36 @@ public class CompLayer3DRunOrderTest
         assertEquals("front", order.get(2).id);
     }
 
+    /**
+     * Replay models are volumes: sorting them by the flat layer-origin depth is how a lower model
+     * could render after and cover an upper model. They must keep composition-stack order; when
+     * per-pixel depth is on, the depth buffer still interleaves the volumes.
+     */
+    @Test
+    public void replayModelsKeepCompositionStackOrder()
+    {
+        CompProject project = project(false);
+        CompDocument comp = comp(project);
+        CompLayer lowerModel = layer("lower_model", "replay", true, 0F);
+        CompLayer upperModel = layer("upper_model", "replay", true, 400F);
+        CompLayer plane = layer("plane", "solid", true, -400F);
+
+        lowerModel.independent = true;
+        lowerModel.replayId = "r1";
+        upperModel.independent = true;
+        upperModel.replayId = "r2";
+
+        comp.addLayer(lowerModel);
+        comp.addLayer(upperModel);
+        comp.addLayer(plane);
+
+        List<CompLayer> order = ordered(project, comp);
+
+        assertEquals("lower_model", order.get(1).id);
+        assertEquals("upper_model", order.get(2).id);
+        assertEquals("plane", order.get(3).id);
+    }
+
     /** A 2D layer between two 3D groups is not picked up by either run. */
     @Test
     public void a2DLayerBetweenTwoRunsIsNeverMoved()

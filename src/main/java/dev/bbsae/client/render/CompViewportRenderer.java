@@ -731,142 +731,40 @@ public final class CompViewportRenderer
             return 0;
         }
 
-        int first = CompRenderer.firstProjectedEffect(layer.effects);
+        CompEffect resolved = Replicate3D.leading(layer, context);
 
-        if (first < 0 || first >= layer.effects.size())
+        if (resolved == null)
         {
             return 0;
         }
 
-        CompEffect effect = layer.effects.get(first);
-
-        if (effect == null || !effect.enabled || !EffectRenderer.isReplication(effect.type))
-        {
-            return 0;
-        }
-
-        CompEffect resolved = layer.resolveEffect(effect, context.frame);
-        String type = resolved.type;
-        float cx = source.localX + source.localWidth * 0.5F;
-        float cy = source.localY + source.localHeight * 0.5F;
-        int count = Math.max(1, Math.min(48, Math.round(resolved.valueF("count", 5F))));
-        float alpha = Math.max(0F, Math.min(1F, resolved.valueF("alpha", resolved.valueF("amount", 1F))));
+        float alpha = Math.max(0F, Math.min(1F,
+            resolved.valueF("alpha", resolved.valueF("amount", 1F))));
 
         if (alpha <= 0.001F)
         {
             return 0;
         }
 
-        int drawn = 0;
+        /*
+         * Use the same copy matrices as the composition and export path. This duplicated math was
+         * left behind after the composition copy-centre fix: the workspace still added the pivot
+         * twice, so the same repeat looked correct in the export but offset/overlapping in the 3D
+         * viewport. One source of truth also means line/grid/radial/scatter cannot drift again.
+         */
+        List<Matrix4f> copies = Replicate3D.transforms(resolved, layer, context, source);
 
-        if ("am_repeat".equals(type))
-        {
-            float ox = resolved.valueF("offset_x", 48F);
-            float oy = resolved.valueF("offset_y", 0F);
-            float angle = (float) Math.toRadians(resolved.valueF("angle", 0F));
-            float scale = Math.max(0.01F, resolved.valueF("scale", 1F));
-
-            for (int i = 0; i < count; i++)
-            {
-                float k = i - (count - 1) * 0.5F;
-                Matrix4f local = copyTransform(cx + ox * k, cy + oy * k, angle * i,
-                    (float) Math.pow(scale, i), cx, cy);
-
-                drawCopy(source, world, local, camera, opacity * alpha);
-                drawn++;
-            }
-        }
-        else if ("am_repeat_radial".equals(type))
-        {
-            float radius = Math.max(0F, resolved.valueF("radius", 300F));
-            float start = (float) Math.toRadians(resolved.valueF("orientation", 0F)
-                + resolved.valueF("start_angle", 0F));
-            float sweep = (float) Math.toRadians(resolved.valueF("sweep", 360F));
-            float angleStep = (float) Math.toRadians(resolved.valueF("angle", 0F));
-            float base = Math.max(0.01F, resolved.valueF("base_scale", 1F));
-            float scale = Math.max(0.01F, resolved.valueF("scale", 1F));
-            float ox = resolved.valueF("offset_x", 0F);
-            float oy = resolved.valueF("offset_y", 0F);
-
-            for (int i = 0; i < count; i++)
-            {
-                float t = count <= 1 ? 0F : i / (float) (count - 1);
-                float angle = start + sweep * t;
-
-                Matrix4f local = copyTransform(cx + (float) Math.cos(angle) * radius + ox,
-                    cy + (float) Math.sin(angle) * radius + oy, angleStep * i,
-                    base * (float) Math.pow(scale, i), cx, cy);
-
-                drawCopy(source, world, local, camera, opacity * alpha);
-                drawn++;
-            }
-        }
-        else if ("am_repeat_scatter".equals(type))
-        {
-            float radius = Math.max(0F, resolved.valueF("radius", 300F));
-            float seed = resolved.valueF("scatter_seed", 0F) + resolved.valueF("evolution", 0F) * 0.37F;
-            float angleStep = (float) Math.toRadians(resolved.valueF("angle", 0F));
-            float scale = Math.max(0.01F, resolved.valueF("scale", 1F));
-            float ox = resolved.valueF("offset_x", 0F);
-            float oy = resolved.valueF("offset_y", 0F);
-
-            for (int i = 0; i < count; i++)
-            {
-                float a = hash01(seed, i * 2 + 1) * 6.2831853F;
-                float r = (float) Math.sqrt(hash01(seed, i * 2 + 2)) * radius;
-
-                Matrix4f local = copyTransform(cx + (float) Math.cos(a) * r + ox,
-                    cy + (float) Math.sin(a) * r + oy, angleStep * i,
-                    (float) Math.pow(scale, i), cx, cy);
-
-                drawCopy(source, world, local, camera, opacity * alpha);
-                drawn++;
-            }
-        }
-        else if ("am_grid_repeat".equals(type))
-        {
-            int columns = Math.max(1, Math.min(8, Math.round(resolved.valueF("columns", 2F))));
-            int rows = Math.max(1, Math.min(8, Math.round(resolved.valueF("rows", 2F))));
-            float gap = Math.max(0F, Math.min(0.9F, resolved.valueF("gap", 0.05F)));
-            float cellW = context.width / (float) columns;
-            float cellH = context.height / (float) rows;
-
-            for (int j = 0; j < rows; j++)
-            {
-                for (int i = 0; i < columns; i++)
-                {
-                    /* The composition shader tiles across the whole frame, not across the layer
-                     * rectangle. Place the workspace copies on that same composition grid so the
-                     * viewport does not look like a clipped "repeat inside a box". */
-                    float px = (i + 0.5F) * cellW - layer.x;
-                    float py = (j + 0.5F) * cellH - layer.y;
-                    Matrix4f local = copyTransform(px - cx, py - cy, 0F,
-                        Math.max(0.001F, 1F - gap), cx, cy);
-
-                    drawCopy(source, world, local, camera, opacity * alpha);
-                    drawn++;
-                }
-            }
-        }
-        else if ("am_line_repeat".equals(type))
-        {
-            int vertical = Math.round(resolved.valueF("vertical", 1F));
-            float duty = Math.max(0.01F, Math.min(1F, resolved.valueF("duty", 0.7F)));
-
-            for (int i = 0; i < count; i++)
-            {
-                float t = i - (count - 1) * 0.5F;
-                float dx = vertical == 0 ? t * context.width / count : 0F;
-                float dy = vertical != 0 ? t * context.height / count : 0F;
-                Matrix4f local = copyTransform(cx + dx, cy + dy, 0F, duty, cx, cy);
-
-                drawCopy(source, world, local, camera, opacity * alpha);
-                drawn++;
-            }
-        }
-        else
+        if (copies.isEmpty())
         {
             return 0;
+        }
+
+        int drawn = 0;
+
+        for (Matrix4f local : copies)
+        {
+            drawCopy(source, world, local, camera, opacity * alpha);
+            drawn++;
         }
 
         return drawn;
@@ -925,15 +823,6 @@ public final class CompViewportRenderer
         return slices + 1;
     }
 
-    private static Matrix4f copyTransform(float x, float y, float rotation, float scale, float cx, float cy)
-    {
-        return new Matrix4f()
-            .translate(cx + x, cy + y, 0F)
-            .rotateZ(rotation)
-            .scale(scale, scale, 1F)
-            .translate(-cx, -cy, 0F);
-    }
-
     private static void drawCopy(CompLayerSourceCache.Entry source, Matrix4f world, Matrix4f local,
                                  CompViewportCamera camera, float opacity)
     {
@@ -942,19 +831,6 @@ public final class CompViewportRenderer
         Viewport3DRenderer.draw(source.texture.color, copyWorld, camera.viewProjection,
             source.localX, source.localY, source.localX + source.localWidth,
             source.localY + source.localHeight, opacity);
-    }
-
-    /** Stable 0..1 hash for the scatter replicator (no java.util.Random allocation per frame). */
-    private static float hash01(float seed, int i)
-    {
-        int x = Float.floatToIntBits(seed) ^ (i * 0x9E3779B9);
-        x ^= x >>> 16;
-        x *= 0x85EBCA6B;
-        x ^= x >>> 13;
-        x *= 0xC2B2AE35;
-        x ^= x >>> 16;
-
-        return (x & 0x7FFFFFFF) / (float) 0x7FFFFFFF;
     }
 
     /** Emits a screen-fixed layer quad; UVs match the layer-local raster (top row is v = 1). */

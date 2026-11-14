@@ -1038,20 +1038,22 @@ public class UICompTrackTimeline extends UIElement
             }
 
             CompLayer layer = this.rowLayer(i);
-            boolean selected = layer == this.panel.getSelectedLayer();
-            boolean alsoSelected = !selected && this.panel.isLayerSelected(layer);
+            boolean primary = layer == this.panel.getSelectedLayer();
+            boolean selected = primary || this.panel.isLayerSelected(layer);
 
-            if (alsoSelected)
+            if (!primary && selected)
             {
-                /* Secondary members of a multi-selection get a tinted band: the primary keeps the
-                 * full accent so "what the inspector edits" stays obvious. */
+                /* Secondary members get a visible band, not just a faint tint: with five selected
+                 * tracks the old band was easy to miss. The primary keeps the full accent and a
+                 * gold outline so "what the inspector edits" stays obvious. */
                 int bottom = Math.min(y + this.rowHeight, this.laneArea.ey());
 
-                context.batcher.box(this.headerArea.x, y, this.laneArea.ex(), bottom, 0x1655AAFF);
+                context.batcher.box(this.headerArea.x, y, this.laneArea.ex(), bottom, 0x2E55AAFF);
+                context.batcher.box(this.headerArea.x, y, this.headerArea.x + 4, bottom, 0xFF55AAFF);
             }
 
-            this.renderHeaderRow(context, layer, y, selected, context.mouseX < this.headerArea.ex());
-            this.renderLaneRow(context, layer, y, selected);
+            this.renderHeaderRow(context, layer, y, selected, primary, context.mouseX < this.headerArea.ex());
+            this.renderLaneRow(context, layer, y, selected, primary);
         }
 
         int audioIndex = this.audioRowIndex();
@@ -1205,7 +1207,8 @@ public class UICompTrackTimeline extends UIElement
         }
     }
 
-    private void renderHeaderRow(UIContext context, CompLayer layer, int y, boolean selected, boolean hover)
+    private void renderHeaderRow(UIContext context, CompLayer layer, int y, boolean selected,
+                                 boolean primary, boolean hover)
     {
         float sel = this.motion.select(this.channels(layer)[0], selected);
         int bottom = Math.min(y + this.rowHeight, this.laneArea.ey());
@@ -1224,8 +1227,12 @@ public class UICompTrackTimeline extends UIElement
 
             if (sel > 0.01F)
             {
-                context.batcher.box(this.headerArea.x, y, this.headerArea.x + 2, bottom,
-                    UiGfx.mulA(BBSSettings.primaryColor() | 0xFF000000, sel));
+                int accent = primary ? BBSSettings.primaryColor() | 0xFF000000 : 0xFF55AAFF;
+
+                context.batcher.box(this.headerArea.x, y, this.headerArea.ex(), y + 2,
+                    UiGfx.mulA(accent, sel));
+                context.batcher.box(this.headerArea.x, bottom - 2, this.headerArea.ex(), bottom,
+                    UiGfx.mulA(accent, sel));
             }
 
             context.batcher.box(this.headerArea.x, bottom - 1, this.headerArea.ex(), bottom, Colors.setA(BBSSettings.dividerColor(), 0.55F));
@@ -1287,7 +1294,7 @@ public class UICompTrackTimeline extends UIElement
         }
     }
 
-    private void renderLaneRow(UIContext context, CompLayer layer, int y, boolean selected)
+    private void renderLaneRow(UIContext context, CompLayer layer, int y, boolean selected, boolean primary)
     {
         String[] channels = this.channels(layer);
         float sel = this.motion.select(channels[1], selected);
@@ -1305,6 +1312,14 @@ public class UICompTrackTimeline extends UIElement
             if (rowBackground != 0)
             {
                 context.batcher.box(this.laneArea.x, y, this.laneArea.ex(), bottom, rowBackground);
+            }
+
+            if (sel > 0.01F)
+            {
+                int accent = primary ? BBSSettings.primaryColor() | 0xFF000000 : 0xFF55AAFF;
+
+                context.batcher.box(this.laneArea.x, y, this.laneArea.ex(), y + 2, UiGfx.mulA(accent, sel));
+                context.batcher.box(this.laneArea.x, bottom - 2, this.laneArea.ex(), bottom, UiGfx.mulA(accent, sel));
             }
 
             context.batcher.box(this.laneArea.x, bottom - 1, this.laneArea.ex(), bottom, 0x10FFFFFF);

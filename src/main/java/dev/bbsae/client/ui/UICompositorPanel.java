@@ -1125,8 +1125,19 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 if (CompPrefs.get().contextHints && UICompositorPanel.this.selectedIds.size() > 1)
                 {
-                    String hint = "多选 " + UICompositorPanel.this.selectedIds.size()
-                        + " 个图层 · 预合成 / 编组 / 对齐 / 删除 → 检查器「图层」页";
+                    StringBuilder names = new StringBuilder();
+                    int shown = 0;
+
+                    for (CompLayer selectedLayer : UICompositorPanel.this.getSelectedLayers())
+                    {
+                        if (shown >= 3) { names.append(" …"); break; }
+                        if (shown > 0) { names.append("、"); }
+                        names.append(UICompositorPanel.this.layerLabel(selectedLayer));
+                        shown++;
+                    }
+
+                    String hint = "多选 " + UICompositorPanel.this.selectedIds.size() + " 个图层："
+                        + names + " · 预合成 / 编组 / 对齐 → 检查器「图层」页";
                     int width = Math.min(this.area.w - 16, context.batcher.getFont().getWidth(hint) + 16);
                     int bx = this.area.x + 8;
                     int by = this.area.ey() - 30;
@@ -1617,8 +1628,11 @@ public class UICompositorPanel extends UIDashboardPanel
                     CompRenderContext renderContext = new CompRenderContext(project, doc, UICompositorPanel.this.time, null, null, null);
                     dev.bbsae.client.render.CompViewportCamera camera = UICompositorPanel.this.viewportCamera;
 
-                    for (CompLayer layer : CompPrefs.get().selectionBoxes
-                        ? UICompositorPanel.this.getSelectedLayers() : java.util.Collections.<CompLayer>emptyList())
+                    java.util.List<CompLayer> selectedForBoxes = CompPrefs.get().selectionBoxes
+                        ? UICompositorPanel.this.getSelectedLayers()
+                        : java.util.Collections.<CompLayer>emptyList();
+
+                    for (CompLayer layer : selectedForBoxes)
                     {
                         if (layer == null)
                         {
@@ -1633,7 +1647,8 @@ public class UICompositorPanel extends UIDashboardPanel
                             continue;
                         }
 
-                        int color = this.overlayColor(layer.locked ? 0xFF8A6A6A : 0xFF55AAFF);
+                        int color = this.overlayColor(layer.locked ? 0xFF8A6A6A
+                            : layer == UICompositorPanel.this.selectedLayer ? 0xFFFFC14D : 0xFF55AAFF);
 
                         for (int i = 0; i < 4; i++)
                         {
@@ -12264,7 +12279,10 @@ public class UICompositorPanel extends UIDashboardPanel
         UISection section = new UISection(IKey.constant("多选 · " + this.getSelectionCount() + " 个图层"));
         section.remember(this.sectionFolds, "multi", true);
 
-        section.fields.add(UI.label(IKey.constant("批量操作作用于所选全部图层；单层属性请只选一个。"), 14));
+        section.fields.add(UI.label(IKey.constant("已选 " + this.getSelectionCount()
+            + " 个图层；下面带勾选序号的才是选中项。"), 14));
+        section.fields.add(UI.label(IKey.constant("批量操作作用于所选全部图层；单层属性请只选一个。"), 13));
+        section.fields.add(this.smallButton("取消全选", this::clearSelection));
 
         UIElement row1 = new UIElement();
 
@@ -12316,9 +12334,13 @@ public class UICompositorPanel extends UIDashboardPanel
             this.smallButton("删除所选", this::deleteSelection)
         ));
 
+        int selectedIndex = 0;
+
         for (CompLayer layer : this.getSelectedLayers())
         {
-            UIButton jump = new UICompButton(IKey.constant("● " + this.layerLabel(layer) + "  ·  " + layer.type), (button) ->
+            selectedIndex++;
+            UIButton jump = new UICompButton(IKey.constant("✓ " + selectedIndex + ". "
+                + this.layerLabel(layer) + "  ·  " + layer.type), (button) ->
             {
                 this.selectLayer(layer);
                 this.trackTimeline.revealTime(layer.in);
@@ -18895,13 +18917,13 @@ public class UICompositorPanel extends UIDashboardPanel
         parent.tooltip(IKey.constant("选择一个空对象或其它图层作为父级；子级会继承父级的移动、缩放、旋转"));
         section.fields.add(this.fieldRow("父级", parent));
 
-        /* Mask / Exclude, the way Alight Motion presents it: pick the shape layer, press one button,
-         * and the layer underneath is clipped by it (intersection) or cut out of it (difference).
-         * The manual "track matte" rows below stay for advanced cases. */
-        section.fields.add(UI.label(IKey.constant("蒙版 / 排除：选中一个形状层，作用到它下面那一层"), 14));
+        /* AM's Mask/Exclude are blend modes: the selected layer masks every layer already
+         * accumulated below it, not just the adjacent one. The explicit track-matte rows below
+         * stay for advanced one-target mattes. */
+        section.fields.add(UI.label(IKey.constant("蒙版 / 排除：选中一个图层，作用于它下方所有图层"), 14));
         section.fields.add(UI.row(
-            this.smallButton("用作蒙版（交集）", () -> this.applyMatteToBelow(l, false)),
-            this.smallButton("用作排除（差集）", () -> this.applyMatteToBelow(l, true))
+            this.smallButton("用作蒙版（所有下方图层）", () -> this.setBlendMask(l, false)),
+            this.smallButton("用作排除（所有下方图层）", () -> this.setBlendMask(l, true))
         ));
 
         if (l.trackMatteEnabled && !l.trackMatteId.isEmpty())
@@ -19992,13 +20014,13 @@ public class UICompositorPanel extends UIDashboardPanel
          * The simple matte actions therefore live here first, and the manual path editor is folded
          * away behind an explicit advanced switch.
          */
-        section.fields.add(UI.label(IKey.constant("蒙版 / 排除（AM 风格）：形状层作用到下方图层"), 14));
+        section.fields.add(UI.label(IKey.constant("蒙版 / 排除（AM 风格）：作用于形状层下方的所有图层"), 14));
 
         if ("shape".equals(layer.type))
         {
             section.fields.add(UI.row(
-                this.smallButton("用作蒙版（交集）", () -> this.applyMatteToBelow(layer, false)),
-                this.smallButton("用作排除（差集）", () -> this.applyMatteToBelow(layer, true))
+                this.smallButton("用作蒙版（所有下方图层）", () -> this.setBlendMask(layer, false)),
+                this.smallButton("用作排除（所有下方图层）", () -> this.setBlendMask(layer, true))
             ));
         }
         else
@@ -20008,10 +20030,18 @@ public class UICompositorPanel extends UIDashboardPanel
             if (above != null)
             {
                 section.fields.add(UI.row(
-                    this.smallButton("上方形状 → 蒙版", () -> this.applyMatteToBelow(above, false)),
-                    this.smallButton("上方形状 → 排除", () -> this.applyMatteToBelow(above, true))
+                    this.smallButton("上方形状 → 蒙版（所有下方）", () -> this.setBlendMask(above, false)),
+                    this.smallButton("上方形状 → 排除（所有下方）", () -> this.setBlendMask(above, true))
                 ));
             }
+        }
+
+        if (layer.blendMode == CompLayer.BLEND_MASK || layer.blendMode == CompLayer.BLEND_EXCLUDE)
+        {
+            section.fields.add(UI.label(IKey.constant("当前："
+                + (layer.blendMode == CompLayer.BLEND_EXCLUDE ? "排除" : "蒙版")
+                + "模式 · 作用于此层下方的所有图层"), 13));
+            section.fields.add(this.smallButton("取消蒙版 / 排除模式", () -> this.clearBlendMask(layer)));
         }
 
         if (layer.trackMatteEnabled && layer.trackMatteId != null && !layer.trackMatteId.isEmpty())
@@ -23672,6 +23702,43 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         return null;
+    }
+
+    /**
+     * AM's Mask/Exclude are layer blend modes: the source layer's alpha masks the whole backdrop
+     * already accumulated below it, not only the immediately preceding layer. This is why one
+     * mask can affect every lower layer. The shader path is the existing BLEND_MASK/BLEND_EXCLUDE
+     * composite mode; no track-matte target is involved.
+     */
+    private void setBlendMask(CompLayer source, boolean exclude)
+    {
+        if (source == null)
+        {
+            return;
+        }
+
+        this.beginAction(exclude ? "用作排除蒙版" : "用作蒙版");
+        source.blendMode = exclude ? CompLayer.BLEND_EXCLUDE : CompLayer.BLEND_MASK;
+        source.visible = true;
+        this.selectLayer(source);
+        this.refreshInspector();
+        this.save();
+        this.setStatus((exclude ? "排除" : "蒙版") + "：" + this.layerLabel(source)
+            + " 以 AM 混合模式作用于其下方所有图层（不只下一层）");
+    }
+
+    private void clearBlendMask(CompLayer source)
+    {
+        if (source == null)
+        {
+            return;
+        }
+
+        this.beginAction("取消蒙版模式");
+        source.blendMode = CompLayer.BLEND_NORMAL;
+        this.refreshInspector();
+        this.save();
+        this.setStatus("已取消蒙版/排除模式");
     }
 
     /** Show the shape, select it, and leave the target matte active while editing. */

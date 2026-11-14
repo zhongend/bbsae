@@ -1,5 +1,53 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix56 — 2026-11-14
+
+3D 重复视口、模型层级、AM 蒙版混合模式、多选可见性。
+
+### 3D 重复：视口仍在用旧 copy 数学
+
+- 合成/导出路径上一轮已修 copy 中心，但 `CompViewportRenderer.drawReplicated3D` 保留了
+  一份重复实现：仍把 pivot 加两次，且只接受“第一个 projected effect 是 replicator”，
+  所以 3D 工作区里的 repeat 仍会偏移/只显示一层。
+- 现在视口直接调用 `Replicate3D.leading` + `Replicate3D.transforms`，与合成、导出共用
+  同一套 copy 矩阵和效果顺序；删除旧 `copyTransform/hash01`，避免再次分叉。
+
+### 回放模型穿透上层模型
+
+- 根因：`orderLayers` 把独立的 replay 模型当平面按 layer-origin 深度排序；模型体积的
+  真实前后关系不是这个深度，低层模型可能被排到上层模型之后并覆盖它。
+- 修复：`orderLayers` 把每个独立模型当作 composition-stack 边界，保持模型在图层栈中的
+  顺序；有逐像素深度时仍由共享深度缓冲把模型片段与平面互相遮挡，关闭深度时栈顺序就是
+  唯一正确结果。
+- 新增 `replayModelsKeepCompositionStackOrder` 回归。
+
+### 蒙版/排除：AM 的“作用于所有下方图层”
+
+- 根因：快捷按钮调用 `applyMatteToBelow`，只给相邻下一层设置 track matte；AM 的
+  Mask/Exclude 是**图层混合模式**，作用于当前 accumulation（所有已合成的下方图层）。
+- 修复：
+  - 蒙版页/图层页快捷按钮改为设置 `BLEND_MASK` / `BLEND_EXCLUDE`，保留形状可见和可编辑，
+    不再隐藏源、不再强制跳转；
+  - 这是现有 composite shader 的 alpha backdrop 模式，一次作用于全部下方图层；
+  - 3D 蒙版源绕开 `DepthPlaneCompositor` 的平面深度写入，避免后续图层把蒙版形状当成实体
+    遮挡；仍用 composite pass 输出。
+- 旧的手动轨道遮罩（单目标）保留在高级区域，不影响 AM 模式。
+
+### 多选可见性
+
+- 时间轴：所有选中行都显示 accent 边框；主选金色、次选蓝色，并加左侧 4px 色条；
+- 预览：所有选中层都画框，主选金色、次选蓝色；
+- 检查器多选区：显示“已选 N 个”，列表改成 `✓ 序号. 名称 · 类型`，并加“取消全选”；
+- 顶部多选提示附前 3 个图层名，避免只看到数量。
+
+### 验证
+
+- 全量测试：**163 套件 / 1000 项 / 0 failures / 0 errors / 1 skipped**。
+- 未启动客户端；请重点验证视口 repeat 与导出是否一致、上下模型遮挡、蒙版是否一次影响
+  所有下方图层、多选高亮/序号，以及 2D/3D 预览/导出。
+- 候选包：`bbsae-0.99-hotfix56.jar`（3,951,934 bytes，SHA-256
+  `2192CFB35EB1DAEE267E8C6F1FF0C25FF1AF60A07B5A6DDDEC0B03D7E2E61B84`）。
+
 ## 0.99-hotfix55 — 2026-11-14
 
 模型蒙版预乘、相机 override 栈、单层预合成相机。

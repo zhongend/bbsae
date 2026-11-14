@@ -1733,10 +1733,14 @@ public final class CompRenderer
 
                 GlFramebuffer blended;
 
-                if (perPixelDepthLayer(context, layer))
+                if (perPixelDepthLayer(context, layer)
+                    && layer.blendMode != CompLayer.BLEND_MASK
+                    && layer.blendMode != CompLayer.BLEND_EXCLUDE)
                 {
                     /* 3D layers carry a plane; per-pixel depth resolves crossings that whole-layer
-                     * painter order cannot. Blend mode/opacity still goes through PassRenderer. */
+                     * painter order cannot. Blend mode/opacity still goes through PassRenderer.
+                     * Mask/Exclude are full-backdrop alpha operations: they must not write the
+                     * source silhouette into the shared depth, or later layers treat it as solid. */
                     blended = context.spatialDepth.composite(content, CompScene.world(context, layer),
                         CompScene.camera(context), accumulation, layer.blendMode, opacity);
                 }
@@ -1877,7 +1881,17 @@ public final class CompRenderer
 
         for (int i = 0; i <= order.size(); i++)
         {
-            boolean boundary = i == order.size() || !CompScene.sortsIn3D(context, order.get(i));
+            CompLayer current = i == order.size() ? null : order.get(i);
+            /*
+             * Replay models are volumes, not flat planes: their layer-origin depth is not a
+             * valid painter-order key. Sorting them with the 3D planes let a lower model with a
+             * nearer origin render after (and therefore cover) an upper model. Keep every model
+             * as a boundary in composition-stack order; the shared per-pixel depth comparator
+             * still interleaves its fragments with planes when depth is on, and when depth is
+             * off the stack order is the only correct answer.
+             */
+            boolean boundary = i == order.size() || current.independent
+                || !CompScene.sortsIn3D(context, current);
 
             if (!boundary)
             {

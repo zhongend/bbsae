@@ -1,9 +1,10 @@
 # BBS AE (`bbsae`)
 
-> **0.99-hotfix55**：修复模型蒙版的**预乘/直通 alpha 不一致**（蒙版只改 alpha、RGB 仍是
-> 预乘值，边缘/半透明模型会发亮），现在先反预乘、在直通空间做蒙版、按直通合成；相机 override
-> 从单槽改为栈，折叠预合成/回放自由视角嵌套时外层相机不再被 pop 丢；单层预合成也继承活动
-> 摄像机并有回归测试。详见 [`CHANGELOG.md`](CHANGELOG.md)。
+> **0.99-hotfix56**：3D 重复的视口与合成共用 `Replicate3D` copy 变换（修掉视口仍把 pivot
+> 加两次/只取第一个 projected effect 的问题）；回放模型保持合成栈顺序，不再被平面深度排序
+> 到上层模型前面；蒙版/排除改为 AM 的**图层混合模式**，作用于该层下方所有图层（不再只裁
+> 下一层），且不写共享深度；多选在时间轴、预览、检查器里都有统一的高亮/序号。详见
+> [`CHANGELOG.md`](CHANGELOG.md)。
 
 <p align="center">
   <img src="docs/gallery/cover.png" alt="BBS AE (bbsae)" width="460">
