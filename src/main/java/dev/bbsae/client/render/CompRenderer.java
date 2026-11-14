@@ -72,8 +72,9 @@ public final class CompRenderer
      */
     public static void render(CompProject project, CompDocument doc, float time, float alpha, float frameWidth, float frameHeight, int fit, boolean preview, boolean captureDepth, boolean renderEffects, boolean renderMasks, Matrix4f projection, Batcher2D batcher, boolean cameraPreview)
     {
+        float outputScale = outputScale(doc, frameWidth, frameHeight, fit);
         GlFramebuffer composition = renderOffscreen(() ->
-            renderToTexture(project, doc, time, captureDepth, renderEffects, renderMasks, preview, projection));
+            renderToTexture(project, doc, time, captureDepth, renderEffects, renderMasks, preview, projection, outputScale));
 
         if (composition == null)
         {
@@ -290,10 +291,52 @@ public final class CompRenderer
             uniform *= INTERACTION_SCALE;
         }
 
-        uniform = Math.max(0.2F, Math.min(1F, uniform));
+        uniform = Math.max(0.2F, Math.min(MAX_PREVIEW_SCALE, uniform));
+
+        /* Fullscreen previews legitimately cover more device pixels than the composition has. BBS
+         * supersamples its own film preview; a compositor preview that stayed at 1× (and a text /
+         * effect raster capped below that) is exactly the "everything is mosaic when fullscreen"
+         * report. Cap the supersample by a 4K pixel budget so a 4K composition still renders 1:1
+         * and an 8K panel cannot allocate an 8K graph per frame. */
+        double budgetScale = Math.sqrt(MAX_PREVIEW_PIXELS / ((double) dw * (double) dh));
+        uniform = (float) Math.min(uniform, Math.max(0.2D, budgetScale));
 
         return Math.round(uniform * 16F) / 16F;
     }
+
+    /**
+     * Composition scale for the BBS film overlay/export.
+     *
+     * <p>The overlay is given a virtual frame (usually 1920x1080 units) and then stretches the
+     * composition texture into it. A BBS-default 1280x720 composition was therefore enlarged 1.5×
+     * at fullscreen/export resolution, which is indistinguishable from a low-resolution mosaic.
+     * Render the graph at the size it is actually displayed at, bounded by the same 2× / 4K pixel
+     * budget as the panel preview.</p>
+     */
+    static float outputScale(CompDocument doc, float frameWidth, float frameHeight, int fit)
+    {
+        if (doc == null)
+        {
+            return 1F;
+        }
+
+        float dw = Math.max(1F, doc.width);
+        float dh = Math.max(1F, doc.height);
+        float sx = Math.max(1F, frameWidth) / dw;
+        float sy = Math.max(1F, frameHeight) / dh;
+        float uniform = fit == 2 ? Math.max(sx, sy) : fit == 1 ? Math.max(sx, sy) : Math.min(sx, sy);
+
+        uniform = Math.max(0.2F, Math.min(MAX_PREVIEW_SCALE, uniform));
+        double budgetScale = Math.sqrt(MAX_PREVIEW_PIXELS / ((double) dw * (double) dh));
+        uniform = (float) Math.min(uniform, Math.max(0.2D, budgetScale));
+
+        return Math.round(uniform * 16F) / 16F;
+    }
+
+    /** Upper bound for a preview supersample. 2× is enough for GUI-scale-2 and fullscreen. */
+    public static final float MAX_PREVIEW_SCALE = 2F;
+    /** Pixel budget of one preview composition target; 4K UHD. */
+    private static final double MAX_PREVIEW_PIXELS = 3840D * 2160D;
 
     /** MC's GUI scale (device pixels per GUI pixel); 1 when it cannot be read (headless/tests). */
     private static float deviceScale()
@@ -1498,7 +1541,7 @@ public final class CompRenderer
         context.renderMasks = renderMasks;
 
         context.preview = preview;
-        context.scale = Math.max(0.05F, Math.min(1F, scale));
+        context.scale = Math.max(0.05F, Math.min(MAX_PREVIEW_SCALE, scale));
 
         if (perPixelDepthFrame(context))
         {

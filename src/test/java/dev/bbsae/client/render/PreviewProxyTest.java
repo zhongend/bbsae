@@ -29,13 +29,40 @@ public class PreviewProxyTest
     }
 
     @Test
-    public void previewNeverRendersAboveCompositionResolution()
+    public void previewSupersamplesUpToTwoWhenTheViewportIsLarger()
     {
         CompDocument doc = document(1920, 1080);
 
-        /* A viewport larger than the comp must not upscale the render target: a preview is not a
-         * render, and 4K pixels for a 1080p comp would be four times the cost for no detail. */
-        assertEquals(1F, CompRenderer.previewScale(doc, 4000F, 3000F, 0, 1F));
+        /* BBS supersamples its film preview; a 4K device viewport showing a 1080p composition can
+         * use up to 2×. The old clamp to 1× made every layer upscale and read as mosaic. */
+        assertEquals(2F, CompRenderer.previewScale(doc, 4000F, 3000F, 0, 1F), 0.001F);
+        assertEquals(1F, CompRenderer.previewScale(doc, 960F, 540F, 0, 2F), 0.001F,
+            "GUI scale 2 at half the composition size is still exactly 1:1");
+    }
+
+    @Test
+    public void theBbsOverlayRendersTheCompositionAtItsDisplayedSize()
+    {
+        CompDocument hd = document(1920, 1080);
+        CompDocument bbsDefault = document(1280, 720);
+        CompDocument uhd = document(3840, 2160);
+
+        assertEquals(1F, CompRenderer.outputScale(hd, 1920F, 1080F, 0), 0.001F);
+        assertEquals(1.5F, CompRenderer.outputScale(bbsDefault, 1920F, 1080F, 0), 0.001F,
+            "a 1280x720 BBS composition was stretched 1.5x into the 1920 overlay");
+        assertEquals(1F, CompRenderer.outputScale(uhd, 3840F, 2160F, 0), 0.001F);
+        assertEquals(2F, CompRenderer.outputScale(bbsDefault, 3840F, 2160F, 0), 0.001F,
+            "4K display of a 1280 composition can use the capped 2x preview size");
+    }
+
+    @Test
+    public void aDefault1280CompositionSupersamplesOnAFullHdPreview()
+    {
+        CompDocument doc = document(1280, 720);
+
+        assertEquals(1.5F, CompRenderer.previewScale(doc, 960F, 540F, 0, 2F), 0.001F,
+            "BBS' default 1280x720 video on a 1920 device-pixel panel must render at 1.5×, not "
+                + "stretch 1280 across 1920");
     }
 
     @Test

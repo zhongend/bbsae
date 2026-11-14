@@ -1,6 +1,6 @@
 # Round 116 — 回放实体抠像完整性 / 全屏清晰度
 
-> 版本 `0.99-hotfix82`。全量：**192 套件 / 1179 项 / 0 failures / 0 errors / 1 skipped**。
+> 版本 `0.99-hotfix83`。全量：**192 套件 / 1181 项 / 0 failures / 0 errors / 1 skipped**。
 
 ## 1. 回放实体抠像：主体像穿模、不完整
 
@@ -35,37 +35,49 @@
 
 ### 根因
 
-`CompLayerSourceCache.rasterMaxEdge()` 在 `context.preview` 时固定返回 `MAX_EDGE=1024`。小面板
-够用；但预览最大化/全屏后合成 FBO 是 1920+ 设备像素，所有 3D 图层、3D 文字、形状和烘焙效果
-仍然只栅格化到 1024，再被放大到合成尺寸，正好是用户看到的“一个个都是马赛克”。2D 文字/效果
-直接画在合成 FBO 上不受这个 cap 影响，所以问题集中在带 3D/烘焙路径的内容。
+三条分辨率链同时把画面放大，任何一条都会让全屏看起来像马赛克：
+
+1. `CompLayerSourceCache.rasterMaxEdge()` 在 `context.preview` 时固定返回 `MAX_EDGE=1024`。小面板
+   够用；预览最大化/全屏后合成 FBO 是 1920+ 设备像素，所有 3D 图层、3D 文字、形状和烘焙效果
+   仍然只栅格化到 1024，再被放大到合成尺寸。
+2. `CompRenderer.previewScale()` 把预览倍率硬限制在 1×。BBS 默认视频分辨率是 **1280×720**；
+   在 1920 全屏上它需要 1.5×，却被渲染成 1280 再拉伸，整张合成（包括 2D 文字/效果）都是软的。
+3. BBS 影片叠加/导出的 `CompositionOverlay` 把合成纹理画进 1920×1080 虚拟画布；1280 合成同样
+   被拉伸 1.5×。
+4. 自定义字体图集按 `fontSize` 栅格化；1.5× 预览把 54px 图集铺到 81 个合成像素上，文字发糊。
 
 ### 修复
 
-- 预览 raster cap 改为跟随实际渲染目标：
-  ```java
-  target = max(context.renderWidth(), context.renderHeight());
-  return max(MAX_EDGE, min(4096, target));
-  ```
-  小面板仍保留 1024 的内存/填充率保护；全屏 1920 合成按 1920 栅格化，4K 按 4K（硬上限 4096）。
-- 导出/叠加路径不受影响，仍至少使用合成长边；预渲染目标仍遵守自己的 1280 目标。
-- 指纹包含 raster 尺寸，低分辨率与高分辨率条目分开缓存，不会把旧的 1024 图当成全屏图复用。
+- **面板预览超采样**：倍率上限从 1× 提到 **2×**，并以 4K UHD 像素预算封顶；1280×720 合成在
+  1920 全屏按 1.5× 渲染，1920 合成在 4K 屏幕按 2× 渲染，4K 合成保持 1×。
+- **图层栅格跟随目标**：预览 raster cap = 实际 `renderWidth/renderHeight`（4K 硬上限），小面板
+  仍保 1024 保护；`rasterScaleFor()` 允许图层随输出倍率超采样，但不让 100px 小图层因 1920 目标
+  被放大 19 倍。
+- **叠加/导出按显示尺寸渲染**：`CompRenderer.render()` 用虚拟画布与合成尺寸算出 1×/1.5×/2×
+  的输出倍率，BBS 影片叠加和导出不再把 1280 合成拉进 1920。
+- **自定义文字超采样**：自定义字体按 `fontSize × outputScale` 请求 BBS 图集，再用
+  `fontSize / fontHeight` 的原有映射缩回相同合成尺寸；tracking/描边同步换算。Minecraft 默认
+  位图字体无法超采样，保持旧行为。
+- **抠像**保持 hotfix82 的并集 alpha 方案，不写自深度，避免半透明外层挖洞。
 
 ## 3. 验证
 
 新增/更新：
 
-- `CutoutClarityContractsTest`(4)：完整 cutout 优先、unoccluded 覆盖、蒙版 tick/首捕获、预览目标。
-- `EffectPipeline3DConsistencyTest`：全屏 1920 预览的 raster cap = 1920，1900 图层 scale = 1。
+- `CutoutClarityContractsTest`(4)：完整 cutout 优先、unoccluded 覆盖并集、蒙版 tick/首捕获、预览目标。
+- `PreviewProxyTest`：1280 合成在 1920 设备上 1.5×、1920 合成在大画布 2×、BBS 叠加 1280→1.5×。
+- `EffectPipeline3DConsistencyTest`：全屏 1920 预览的 raster cap = 1920，1900 图层 scale = 1；
+  超采样下 1280 图层按 1.5× 栅格化，100px 图层不超过 1.5×。
 - `RenderMemoryBudgetTest`：小预览 1024、全屏 4K 3840、导出 3840。
-- 保留 `ReplayEntityKeyPixelTest`（世界色 + 覆盖 alpha 的 GL 像素证明）。
+- `TextLayoutTest` 继续覆盖布局/换行/动画文字；保留 `ReplayEntityKeyPixelTest` 的世界色 + 覆盖 alpha
+  像素证明。
 
 ```text
-192 suites / 1179 tests / 0 failures / 0 errors / 1 skipped
+192 suites / 1181 tests / 0 failures / 0 errors / 1 skipped
 ```
 
 实机建议：
 1. 选中回放实体层，观察人物外层/四肢完整，旋转/移动时没有背脸盖住正脸；
-2. 3D 文字/形状/效果图层在全屏预览中边缘与笔画清楚，不再像 1024 放大；
+2. 3D 文字/形状/效果图层在全屏预览中边缘与笔画清楚，1280 合成不再像 1× 拉伸；
 3. 暂停时抠像人物与世界演员对齐（没有重影/缺半边）；
-4. 4K 合成全屏时注意显存；这档会按 4K 栅格化，必要时把合成分辨率降到 1920。
+4. 4K 合成全屏时注意显存；这档按 4K 栅格化，必要时把合成分辨率降到 1920。

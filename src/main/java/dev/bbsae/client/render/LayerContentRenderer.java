@@ -752,15 +752,28 @@ final class LayerContentRenderer
         }
 
         float fontSize = layer.fontSizeAt(context.frame);
+        /* Custom font atlases are rasterized at the requested size. Under a supersampled preview
+         * (a 1280 composition shown fullscreen at 1.5×/2×) a 54 px atlas is stretched over 81–108
+         * composition pixels and reads as mosaic. Ask BBS' FontManager for an oversampled atlas,
+         * then let the unchanged fontSize/fontHeight scale map it back to the same composition
+         * size. Default Minecraft bitmap glyphs cannot be oversampled and keep their old path. */
+        float textOversample = context == null ? 1F : Math.max(1F, Math.min(2F, context.scale));
         FontRenderer fallback = batcher.getFont() == null
             ? Batcher2D.getDefaultTextRenderer()
             : batcher.getFont();
-        LayerFont chosen = fontFor(layer, batcher, fontSize);
+        LayerFont chosen = fontFor(layer, batcher, fontSize * textOversample);
         FontRenderer font = chosen.renderer;
         int fontHeight = Math.max(1, font.getHeight());
-        float tracking = layer.trackingAt(context.frame);
+        /* Tracking/stroke are authored in composition pixels. They are applied inside the
+         * fontSize/fontHeight stack scale, so a custom font whose atlas was oversampled needs the
+         * same font-unit factor to keep the same on-screen spacing. The default Minecraft bitmap
+         * font is not oversampled and must keep the original values. */
+        float fontUnitScale = chosen.custom()
+            ? Math.max(1F, fontHeight / Math.max(1, fontSize))
+            : 1F;
+        float tracking = layer.trackingAt(context.frame) * fontUnitScale;
         float lineHeightFactor = layer.lineHeightAt(context.frame);
-        float textStroke = layer.textStrokeAt(context.frame);
+        float textStroke = layer.textStrokeAt(context.frame) * fontUnitScale;
         float scale = Math.max(0.001F, fontSize / fontHeight);
         float maxWidth = layer.textBoxWidth / scale;
 

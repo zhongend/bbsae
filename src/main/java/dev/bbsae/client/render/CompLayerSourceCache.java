@@ -114,7 +114,7 @@ public final class CompLayerSourceCache
 
         String key = cacheKey(context.project == null ? "" : context.project.id, context.comp.id, layer.id);
         Rect rect = bounds(layer, context);
-        float scale = rasterScaleFor(rect.width, rect.height, rasterMaxEdge(context));
+        float scale = rasterScaleFor(rect.width, rect.height, rasterMaxEdge(context), context.scale);
         int pixelWidth = Math.max(1, Math.round(rect.width * scale));
         int pixelHeight = Math.max(1, Math.round(rect.height * scale));
         long signature = signature(layer, context, pixelWidth, pixelHeight);
@@ -237,7 +237,9 @@ public final class CompLayerSourceCache
             return Math.max(MAX_EDGE, Math.min(4096, target));
         }
 
-        return Math.max(MAX_EDGE, Math.max(context.width, context.height));
+        return Math.max(MAX_EDGE, Math.min(4096,
+            Math.max(Math.max(context.width, context.height),
+                Math.max(context.renderWidth(), context.renderHeight()))));
     }
 
     /**
@@ -258,9 +260,24 @@ public final class CompLayerSourceCache
     /** Pure raster-scale helper (long edge cap / layer rectangle long edge). */
     static float rasterScaleFor(float rectWidth, float rectHeight, float maxEdge)
     {
-        float longest = Math.max(Math.max(1F, rectWidth), Math.max(1F, rectHeight));
+        return rasterScaleFor(rectWidth, rectHeight, maxEdge, 1F);
+    }
 
-        return Math.min(1F, Math.max(0F, maxEdge) / longest);
+    /**
+     * Raster pixels per layer pixel for a target long edge and a preview output scale.
+     *
+     * <p>At output scale 1 this is the historical "never upscale past the layer's own pixels" rule.
+     * A supersampled preview (1.5×/2×) needs the layer raster to grow with it, otherwise a 1280 px
+     * layer is baked at 1280 and then upscaled onto the 1920 px composition target. The scale is
+     * capped by the output scale, so a 100 px layer in a 1920 px target is not rasterized 19×
+     * larger. Export (scale 1) keeps its exact previous resolution.</p>
+     */
+    static float rasterScaleFor(float rectWidth, float rectHeight, float maxEdge, float outputScale)
+    {
+        float longest = Math.max(Math.max(1F, rectWidth), Math.max(1F, rectHeight));
+        float cap = Math.max(1F, Math.min(CompRenderer.MAX_PREVIEW_SCALE, outputScale));
+
+        return Math.max(0F, Math.min(cap, maxEdge / longest));
     }
 
     private static boolean hasPixels(CompLayer layer)

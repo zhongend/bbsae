@@ -585,6 +585,12 @@ public class EffectPipeline3DConsistencyTest
         assertEquals(1F, CompLayerSourceCache.rasterScaleFor(1900F, 600F,
             CompLayerSourceCache.rasterMaxEdge(preview)), 0.0001F,
             "a fullscreen preview must not upscale a 1900 px layer from a 1024 px bake");
+
+        /* A supersampled preview grows the layer raster with the composition target, but never
+         * beyond the output scale itself. */
+        assertEquals(1.5F, CompLayerSourceCache.rasterScaleFor(1280F, 720F, 1920F, 1.5F), 0.0001F);
+        assertEquals(1.5F, CompLayerSourceCache.rasterScaleFor(100F, 100F, 1920F, 1.5F), 0.0001F,
+            "a small layer must not be rasterized 19x just because the target is 1920");
     }
 
     /** P2-1: the classic displacement map's depth mode needs the depth buffer, so it cannot bake. */
