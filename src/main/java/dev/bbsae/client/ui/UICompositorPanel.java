@@ -7112,7 +7112,8 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Catches loaded/edited content that already extends past the stored duration. */
     private void tickContentDuration()
     {
-        if (this.doc == null || mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0))
+        if (this.restoring || this.doc == null
+            || mchorse.bbs_mod.graphics.window.Window.isMouseButtonPressed(0))
         {
             return;
         }
@@ -16741,12 +16742,12 @@ public class UICompositorPanel extends UIDashboardPanel
 
         layer.in = start;
         layer.out = preferred > 0F
-            ? Math.min(this.doc.duration, start + Math.max(frame, preferred))
+            ? start + Math.max(frame, preferred)
             : this.doc.duration;
 
         if (layer.out <= layer.in)
         {
-            layer.out = Math.min(this.doc.duration, layer.in + frame);
+            layer.out = layer.in + frame;
         }
 
         switch (preset)

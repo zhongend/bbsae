@@ -1,5 +1,17 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix71 — 2026-11-14
+
+复制/项目时长修复的审计补丁（接 hotfix70）。
+
+- `CompLayerOps.duplicate` 也调用 `doc.extendDurationToContent()`，复制长片段时
+  不会在保存后又被旧时长截断。
+- 新图层使用项目「默认图层时长」时不再 `min(doc.duration, start + preferred)`：
+  超出当前合成末尾会自动扩展；fallback 也不再压回旧时长。
+- 其余复制/paste/时长逻辑与 hotfix70 相同，全量测试保持
+  **176 套件 / 1071 项 / 0 failures / 0 errors / 1 skipped**。
+- 未启动客户端截图。
+
 ## 0.99-hotfix70 — 2026-11-14
 
 图层复制/粘贴错位与项目时长硬上限修复。

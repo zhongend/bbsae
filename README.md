@@ -1,5 +1,10 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix71**：复制/时长修复的审计补丁。
+> - 复制/粘贴路径也主动扩展项目时长，避免带长片段的副本被旧时长截断；
+> - 新图层使用自定义默认时长时不再被当前合成时长截断，超过旧结尾会自动扩展；
+> - 这是对 hotfix70 的补丁，核心功能与验证统计沿用 hotfix70。
+>
 > **0.99-hotfix70**：图层复制/粘贴与项目时长限制修复。
 > - **Ctrl+D / 图层副本原位**：不再自动偏移 24px，副本和原图层严格重合（AE 行为），
 >   父级/3D 图层也不会因为局部坐标偏移而错位。
@@ -208,16 +213,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download `bbsae-0.99-hotfix70.jar` from the repository's
+1. Download `bbsae-0.99-hotfix71.jar` from the repository's
    [releases](https://github.com/zhongend/bbsae/releases), or build it with
-   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix70.jar`).
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix71.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99-hotfix70.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix71.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix70.jar` SHA-256: `6FE65B14A20DAA22CDA28CCD2526AB922EA1FE13EA9026C226FFBB0C2E709CA1` (4,029,881 bytes).
+`bbsae-0.99-hotfix71.jar` SHA-256: `9DD36A58177F09656B4DE86E9E1490CF08366A57BD0EAE9AB20939C79F93B545` (4,029,898 bytes).
 
 ## Gallery
 

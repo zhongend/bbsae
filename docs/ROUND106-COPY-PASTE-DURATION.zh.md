@@ -90,7 +90,18 @@ offsetCopy(copy, 24F, 24F);
 - 全量测试：**176 套件 / 1071 项 / 0 failures / 0 errors / 1 skipped**。
 - 未启动客户端截图；快捷键/拖动/音频导入建议实机抽检。
 
-## 5. 建议实机检查
+## 6. hotfix71 审计补丁
+
+在 hotfix70 之后按“复制后保存会不会又被截断”的路径重新审计，补了两处：
+
+- `CompLayerOps.duplicate` 末尾调用 `doc.extendDurationToContent()`：复制一个
+  out 超过当前时长的片段时，模型层就扩展，不依赖后续刷新才修正。
+- 新建图层使用项目默认图层时长时不再被 `doc.duration` 截断：
+  `layer.out = start + preferred`，超过旧结尾时由 `doc.addLayer` 自动扩展。
+
+验证仍为 **176 套件 / 1071 项 / 0 failures / 0 errors / 1 skipped**。
+
+## 7. 建议实机检查
 
 1. Ctrl+D 复制一个带父级/3D 的图层，确认副本与原图层完全重合；
 2. Ctrl+C/Ctrl+V 复制粘贴，确认新图层出现、父子关系正确、重复粘贴独立；

@@ -587,6 +587,8 @@ public final class CompLayerOps
             }
         }
 
+        doc.extendDurationToContent();
+
         return copies;
     }
 
