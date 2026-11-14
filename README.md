@@ -1,5 +1,11 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix72**：复制预合成后的独立嵌套合成。
+> - 复制/粘贴/右键复制一个预合成图层时，不再只复制 `precompId` 字符串；
+>   副本会得到一棵完整的嵌套合成副本，编辑副本不会影响原预合成。
+> - 嵌套预合成会递归克隆；副本内部共享的嵌套引用仍指向同一份副本子树。
+> - 复制/粘贴、Ctrl+D、轨道菜单复制和预合成内部的复制都使用同一条深拷贝路径。
+>
 > **0.99-hotfix71**：复制/时长修复的审计补丁。
 > - 复制/粘贴路径也主动扩展项目时长，避免带长片段的副本被旧时长截断；
 > - 新图层使用自定义默认时长时不再被当前合成时长截断，超过旧结尾会自动扩展；
@@ -213,16 +219,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download `bbsae-0.99-hotfix71.jar` from the repository's
+1. Download `bbsae-0.99-hotfix72.jar` from the repository's
    [releases](https://github.com/zhongend/bbsae/releases), or build it with
-   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix71.jar`).
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix72.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99-hotfix71.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix72.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix71.jar` SHA-256: `9DD36A58177F09656B4DE86E9E1490CF08366A57BD0EAE9AB20939C79F93B545` (4,029,898 bytes).
+`bbsae-0.99-hotfix72.jar` SHA-256: `B0529515A4BEE49A2248F177C3DAB529E00760BF9654B9E2191B872C47B72B71` (4,031,009 bytes).
 
 ## Gallery
 

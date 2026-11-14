@@ -1,5 +1,40 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix72 — 2026-11-14
+
+复制预合成后的独立嵌套合成。
+
+### 根因
+
+`CompLayer.duplicate()` 只复制 `precompId` 字符串，副本仍指向原预合成的
+`CompDocument`。因此复制一个预合成后，两个图层共用同一份嵌套内容：改副本的
+子层、时间轴或效果，原预合成也会一起变。
+
+### 修复
+
+- `CompStore.duplicateDocument()`：通过快照序列化深拷贝一个 CompDocument
+  （包含 transient 关键帧轨道，先 `saveTracks`）。
+- `CompLayerOps.duplicateLayer(project, layer)`：
+  - 普通图层仍走 `duplicate()`；
+  - 预合成图层复制时递归克隆整个嵌套树，并给新 CompDocument 分配唯一 id/名称；
+  - 嵌套预合成逐层重指向克隆后的子合成；
+  - 循环引用安全返回空引用，避免复制出无限递归结构。
+- `CompLayerOps.duplicate(project, doc, selection)` 与
+  `CompLayerOps.paste(project, doc, templates, index)` 都使用深拷贝；旧的
+  `doc/selection` 重载保留给没有工程上下文的纯模型调用。
+- `UICompositorPanel.duplicateLayer`、`duplicateSelection`、`pasteLayerClipboard`
+  全部传入 project；Ctrl+D、Ctrl+C/V、轨道菜单复制都得到独立预合成。
+
+### 验证
+
+- `CompLayerOpsTest`：
+  - 复制预合成后 `precompId` 与原值不同；
+  - 项目里的 comp 数量增加，克隆子层的编辑不影响原预合成；
+  - 嵌套预合成递归克隆；
+  - Ctrl+V 路径同样克隆。
+- 全量测试：**176 套件 / 1075 项 / 0 failures / 0 errors / 1 skipped**。
+- 未启动客户端截图。
+
 ## 0.99-hotfix71 — 2026-11-14
 
 复制/项目时长修复的审计补丁（接 hotfix70）。

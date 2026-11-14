@@ -478,9 +478,39 @@ public final class CompStore
         return json;
     }
 
-    /** Rebuilds a project from an undo snapshot (same migration and track hydration as load). */
-    public static synchronized CompProject restore(String json)
+    /**
+     * Deep-copies one composition through the same serializer as undo snapshots.
+     *
+     * <p>A precomp layer's {@code precompId} is a reference, so a plain {@code CompLayer.duplicate()}
+     * makes two layers share one nested composition. This helper clones the document (including
+     * transient keyframe channels via {@code saveTracks}) so the copy can get its own nested tree.</p>
+     */
+    public static synchronized CompDocument duplicateDocument(CompDocument source)
     {
+        if (source == null)
+        {
+            return null;
+        }
+
+        CompProject temp = new CompProject();
+
+        temp.id = "__bbsae_copy__";
+        temp.comps.add(source);
+
+        String json = snapshot(temp);
+
+        if (json.isEmpty())
+        {
+            return null;
+        }
+
+        CompProject restored = restore(json);
+
+        return restored == null ? null : restored.getComp(source.id);
+    }
+
+    /** Rebuilds a project from an undo snapshot (same migration and track hydration as load). */
+    public static synchronized CompProject restore(String json)    {
         if (json == null || json.isBlank())
         {
             return null;

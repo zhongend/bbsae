@@ -13139,7 +13139,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.beginAction("复制图层");
-        CompLayer copy = layer.duplicate();
+        CompLayer copy = dev.bbsae.comp.CompLayerOps.duplicateLayer(this.project, layer);
 
         copy.id = CompStore.uniqueId(layer.id + "_copy", this.doc.layers, (candidate) -> candidate.id);
         copy.name = this.layerLabel(layer) + " 副本";
@@ -13208,7 +13208,7 @@ public class UICompositorPanel extends UIDashboardPanel
             : this.doc.layers.indexOf(this.selectedLayer) + 1;
 
         this.beginAction("粘贴图层");
-        List<CompLayer> copies = dev.bbsae.comp.CompLayerOps.paste(this.doc, this.layerClipboard, index);
+        List<CompLayer> copies = dev.bbsae.comp.CompLayerOps.paste(this.project, this.doc, this.layerClipboard, index);
 
         if (copies.isEmpty())
         {
@@ -13290,7 +13290,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.beginAction("复制所选图层");
-        List<CompLayer> copies = dev.bbsae.comp.CompLayerOps.duplicate(this.doc, this.getSelectedLayers());
+        List<CompLayer> copies = dev.bbsae.comp.CompLayerOps.duplicate(this.project, this.doc, this.getSelectedLayers());
         this.contentDurationChanged();
 
         this.selectedIds.clear();

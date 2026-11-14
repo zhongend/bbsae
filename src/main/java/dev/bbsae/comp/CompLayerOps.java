@@ -544,6 +544,16 @@ public final class CompLayerOps
     /** Duplicates the selection in place; the copies become the new selection. */
     public static List<CompLayer> duplicate(CompDocument doc, List<CompLayer> selection)
     {
+        return duplicate(null, doc, selection);
+    }
+
+    /**
+     * Duplicates the selection and gives every copied precomp layer its own nested composition
+     * tree. Without the project argument a precomp copy would keep the original {@code precompId}
+     * and edits to either copy would show up in both.
+     */
+    public static List<CompLayer> duplicate(CompProject project, CompDocument doc, List<CompLayer> selection)
+    {
         List<CompLayer> copies = new ArrayList<>();
 
         if (doc == null || selection == null)
@@ -562,7 +572,7 @@ public final class CompLayerOps
                 continue;
             }
 
-            CompLayer copy = layer.duplicate();
+            CompLayer copy = duplicateLayer(project, layer);
 
             copy.id = CompStore.uniqueId(layer.id + "_copy", doc.layers, (candidate) -> candidate.id);
             copy.name = layer.name + " 副本";
@@ -592,6 +602,92 @@ public final class CompLayerOps
         return copies;
     }
 
+    /** One layer duplicate, including a private copy of its precomp tree. */
+    public static CompLayer duplicateLayer(CompProject project, CompLayer source)
+    {
+        if (source == null)
+        {
+            return null;
+        }
+
+        CompLayer copy = source.duplicate();
+
+        if (project != null && "precomp".equals(source.type)
+            && source.precompId != null && !source.precompId.isEmpty())
+        {
+            copy.precompId = clonePrecompTree(project, source.precompId,
+                new java.util.HashMap<>(), new java.util.HashSet<>());
+        }
+
+        return copy;
+    }
+
+    /**
+     * Clones a composition and every precomp it references. Returns the new composition id, or the
+     * old id when the target is missing (a dangling precomp should stay visibly dangling, not
+     * silently become a different composition).
+     */
+    private static String clonePrecompTree(CompProject project, String sourceCompId,
+                                           java.util.Map<String, String> done,
+                                           java.util.Set<String> visiting)
+    {
+        String existing = done.get(sourceCompId);
+
+        if (existing != null)
+        {
+            return existing;
+        }
+
+        CompDocument source = project.getComp(sourceCompId);
+
+        if (source == null)
+        {
+            return sourceCompId;
+        }
+
+        if (!visiting.add(sourceCompId))
+        {
+            /* A cycle cannot be cloned safely; leaving the clone transparent is better than
+             * pointing it at the original tree and re-sharing it. */
+            return "";
+        }
+
+        CompDocument clone = CompStore.duplicateDocument(source);
+
+        if (clone == null)
+        {
+            visiting.remove(sourceCompId);
+
+            return sourceCompId;
+        }
+
+        if (project.comps == null)
+        {
+            project.comps = new ArrayList<>();
+        }
+
+        clone.id = CompStore.uniqueId(source.id + "_copy", project.comps, (comp) -> comp == null ? "" : comp.id);
+        clone.name = (source.name == null || source.name.isBlank() ? "预合成" : source.name) + " 副本";
+        project.comps.add(clone);
+        done.put(sourceCompId, clone.id);
+
+        if (clone.layers != null)
+        {
+            for (CompLayer layer : clone.layers)
+            {
+                if (layer != null && "precomp".equals(layer.type)
+                    && layer.precompId != null && !layer.precompId.isEmpty())
+                {
+                    layer.precompId = clonePrecompTree(project, layer.precompId, done, visiting);
+                }
+            }
+        }
+
+        visiting.remove(sourceCompId);
+
+        return clone.id;
+    }
+
     /**
      * Inserts clipboard templates as independent layers, without an artificial pixel offset.
      *
@@ -600,6 +696,12 @@ public final class CompLayerOps
      * as a copy bug. References between clipped layers are remapped to the pasted copies.</p>
      */
     public static List<CompLayer> paste(CompDocument doc, List<CompLayer> templates, int insertIndex)
+    {
+        return paste(null, doc, templates, insertIndex);
+    }
+
+    /** Paste variant that also gives copied precomp layers their own nested composition trees. */
+    public static List<CompLayer> paste(CompProject project, CompDocument doc, List<CompLayer> templates, int insertIndex)
     {
         List<CompLayer> copies = new ArrayList<>();
 
@@ -618,7 +720,7 @@ public final class CompLayerOps
                 continue;
             }
 
-            CompLayer copy = template.duplicate();
+            CompLayer copy = duplicateLayer(project, template);
 
             copy.id = CompStore.uniqueId(
                 (template.id == null || template.id.isEmpty() ? "layer" : template.id) + "_copy",

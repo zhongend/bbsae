@@ -390,6 +390,136 @@ public class CompLayerOpsTest
     }
 
     @Test
+    public void copyingAPrecompGivesTheCopyItsOwnNestedComposition()
+    {
+        CompProject project = new CompProject();
+        CompDocument main = new CompDocument();
+        CompDocument child = new CompDocument();
+
+        main.id = "main";
+        child.id = "child";
+        project.comps.add(main);
+        project.comps.add(child);
+
+        CompLayer inner = new CompLayer("inner", "Inner", "solid");
+
+        inner.x = 100F;
+        child.layers.add(inner);
+
+        CompLayer precomp = new CompLayer("pc", "Precomp", "precomp");
+
+        precomp.precompId = child.id;
+        main.layers.add(precomp);
+
+        List<CompLayer> copies = CompLayerOps.duplicate(project, main, List.of(precomp));
+        CompLayer copy = copies.get(0);
+
+        assertNotSame(child.id, copy.precompId, "the copy must not share the original precomp");
+        assertEquals(3, project.comps.size(), "main + original child + cloned child");
+
+        CompDocument clonedChild = project.getComp(copy.precompId);
+
+        assertNotNull(clonedChild);
+        assertEquals(1, clonedChild.layers.size());
+        assertNotSame(inner, clonedChild.layers.get(0));
+
+        clonedChild.layers.get(0).x = 999F;
+        assertEquals(100F, inner.x, 0.001F, "editing the copy must not edit the original nested layer");
+    }
+
+    @Test
+    public void pastingAPrecompAlsoClonesItsNestedComposition()
+    {
+        CompProject project = new CompProject();
+        CompDocument main = new CompDocument();
+        CompDocument child = new CompDocument();
+
+        main.id = "main";
+        child.id = "child";
+        project.comps.add(main);
+        project.comps.add(child);
+        child.layers.add(new CompLayer("inner", "Inner", "solid"));
+
+        CompLayer precomp = new CompLayer("pc", "Precomp", "precomp");
+
+        precomp.precompId = child.id;
+        main.layers.add(precomp);
+
+        List<CompLayer> copies = CompLayerOps.paste(project, main, List.of(precomp.duplicate()), main.layers.size());
+
+        assertNotEquals(child.id, copies.get(0).precompId);
+        assertNotNull(project.getComp(copies.get(0).precompId));
+        assertEquals(3, project.comps.size());
+    }
+
+    @Test
+    public void aClonedPrecompSurvivesProjectPersistence()
+    {
+        CompProject project = new CompProject();
+        CompDocument main = new CompDocument();
+        CompDocument child = new CompDocument();
+
+        main.id = "main";
+        child.id = "child";
+        project.comps.add(main);
+        project.comps.add(child);
+        child.layers.add(new CompLayer("inner", "Inner", "solid"));
+
+        CompLayer precomp = new CompLayer("pc", "Precomp", "precomp");
+
+        precomp.precompId = child.id;
+        main.layers.add(precomp);
+
+        CompLayer copy = CompLayerOps.duplicate(project, main, List.of(precomp)).get(0);
+        CompProject restored = CompStore.restore(CompStore.snapshot(project));
+
+        assertNotNull(restored);
+
+        CompLayer restoredCopy = restored.getCompOrFirst("main").getLayer(copy.id);
+
+        assertNotNull(restoredCopy);
+        assertNotNull(restored.getComp(restoredCopy.precompId),
+            "the cloned nested composition must be saved with the project");
+    }
+
+    @Test
+    public void copyingANestedPrecompClonesTheWholeTree()
+    {
+        CompProject project = new CompProject();
+        CompDocument main = new CompDocument();
+        CompDocument child = new CompDocument();
+        CompDocument grandchild = new CompDocument();
+
+        main.id = "main";
+        child.id = "child";
+        grandchild.id = "grandchild";
+        project.comps.add(main);
+        project.comps.add(child);
+        project.comps.add(grandchild);
+
+        CompLayer childPrecomp = new CompLayer("inner_pc", "Inner Precomp", "precomp");
+
+        childPrecomp.precompId = grandchild.id;
+        child.layers.add(childPrecomp);
+        grandchild.layers.add(new CompLayer("deep", "Deep", "solid"));
+
+        CompLayer precomp = new CompLayer("pc", "Precomp", "precomp");
+
+        precomp.precompId = child.id;
+        main.layers.add(precomp);
+
+        List<CompLayer> copies = CompLayerOps.duplicate(project, main, List.of(precomp));
+        CompDocument clonedChild = project.getComp(copies.get(0).precompId);
+
+        assertNotNull(clonedChild);
+        CompLayer clonedInnerPrecomp = clonedChild.layers.get(0);
+
+        assertNotEquals(grandchild.id, clonedInnerPrecomp.precompId);
+        assertNotNull(project.getComp(clonedInnerPrecomp.precompId));
+        assertEquals(5, project.comps.size(), "main, child, grandchild and two clones");
+    }
+
+    @Test
     public void pasteCreatesInPlaceCopiesWithRemappedRelations()
     {
         CompDocument doc = new CompDocument();
