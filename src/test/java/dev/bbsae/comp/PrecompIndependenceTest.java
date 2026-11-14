@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -215,5 +216,199 @@ public class PrecompIndependenceTest
         assertNotEquals(shared.id, pasted.get(0).precompId);
         assertNotEquals(copies.get(0).precompId, pasted.get(0).precompId,
             "every copy gets a fresh private tree, even when made the same way twice");
+    }
+
+    @Test
+    public void enteringALegacyCopyDetachesItFirst()
+    {
+        CompProject project = project();
+        CompDocument main = project.getCompOrFirst("main");
+        CompDocument shared = comp(project, "shared", "Shared");
+
+        shared.layers.add(new CompLayer("inner", "Inner", "text"));
+
+        precomp(main, "pc", shared.id);
+
+        CompLayer copy = precomp(main, "pc_copy", shared.id);
+
+        copy.name = "文字组 副本";
+
+        assertEquals(1, CompLayerOps.countSharedSiblings(main, copy));
+        assertTrue(CompLayerOps.detachIfSharedCopy(project, main, copy),
+            "opening a legacy copy is the last chance to make it independent");
+        assertEquals(0, CompLayerOps.countSharedSiblings(main, copy));
+        assertFalse(CompLayerOps.detachIfSharedCopy(project, main, copy),
+            "already independent");
+    }
+
+    @Test
+    public void detachOnlyTouchesCopyLookingLayers()
+    {
+        CompProject project = project();
+        CompDocument main = project.getCompOrFirst("main");
+        CompDocument shared = comp(project, "shared", "Shared");
+
+        shared.layers.add(new CompLayer("inner", "Inner", "solid"));
+
+        precomp(main, "pc", shared.id);
+
+        CompLayer second = precomp(main, "second_instance", shared.id);
+
+        assertFalse(CompLayerOps.detachIfSharedCopy(project, main, second),
+            "a deliberately shared instance must keep sharing");
+        assertEquals(shared.id, second.precompId);
+        assertEquals(0, CompLayerOps.countRepairableSharedPrecompCopies(project));
+    }
+
+    /* ------------------------------------------------- legacy shared-copy repair */
+
+    @Test
+    public void aLegacySharedCopyIsDetachedOnRepair()
+    {
+        CompProject project = project();
+        CompDocument main = project.getCompOrFirst("main");
+        CompDocument shared = comp(project, "shared", "Shared");
+        CompLayer inner = new CompLayer("inner", "Inner", "text");
+
+        inner.text = "original";
+        shared.layers.add(inner);
+
+        CompLayer source = precomp(main, "pc", shared.id);
+        CompLayer legacyCopy = precomp(main, "pc_copy", shared.id);
+
+        legacyCopy.name = "Precomp 副本";
+
+        assertEquals(2, main.layers.size());
+        assertEquals(1, CompLayerOps.countRepairableSharedPrecompCopies(project));
+
+        int repaired = CompLayerOps.repairSharedPrecompCopies(project);
+
+        assertEquals(1, repaired);
+        assertEquals(shared.id, source.precompId, "the first layer keeps the original target");
+        assertNotEquals(shared.id, legacyCopy.precompId, "the copy gets its own composition");
+
+        CompDocument copy = project.getComp(legacyCopy.precompId);
+
+        assertNotNull(copy);
+        assertNotEquals(shared, copy);
+
+        copy.layers.get(0).text = "copy only";
+
+        assertEquals("original", inner.text, "editing the detached copy must not edit the original");
+        assertEquals(0, CompLayerOps.repairSharedPrecompCopies(project), "repair is idempotent");
+    }
+
+    @Test
+    public void aDeliberatelySharedInstanceIsNotDetached()
+    {
+        CompProject project = project();
+        CompDocument main = project.getCompOrFirst("main");
+        CompDocument shared = comp(project, "shared", "Shared");
+
+        shared.layers.add(new CompLayer("inner", "Inner", "solid"));
+
+        /* Two ordinary layers (no copy marker) pointing at one comp: this is a legitimate
+         * "two instances of the same nested composition" setup. */
+        CompLayer a = precomp(main, "left", shared.id);
+        CompLayer b = precomp(main, "right", shared.id);
+
+        assertEquals(0, CompLayerOps.countRepairableSharedPrecompCopies(project));
+        assertEquals(0, CompLayerOps.repairSharedPrecompCopies(project));
+        assertEquals(shared.id, a.precompId);
+        assertEquals(shared.id, b.precompId);
+        assertEquals(2, project.comps.size(), "no composition was added");
+    }
+
+    @Test
+    public void everyLegacyCopyInAGroupGetsItsOwnTree()
+    {
+        CompProject project = project();
+        CompDocument main = project.getCompOrFirst("main");
+        CompDocument shared = comp(project, "shared", "Shared");
+
+        shared.layers.add(new CompLayer("inner", "Inner", "solid"));
+
+        CompLayer source = precomp(main, "pc", shared.id);
+        CompLayer second = precomp(main, "pc_copy", shared.id);
+        CompLayer third = precomp(main, "pc_copy_2", shared.id);
+
+        second.name = "A 副本";
+        third.name = "B 副本";
+
+        assertEquals(2, CompLayerOps.repairSharedPrecompCopies(project));
+        assertEquals(shared.id, source.precompId);
+        assertNotEquals(shared.id, second.precompId);
+        assertNotEquals(shared.id, third.precompId);
+        assertNotEquals(second.precompId, third.precompId);
+        assertEquals(4, project.comps.size(), "main + shared + two private copies");
+    }
+
+    @Test
+    public void crossCompositionReuseIsLeftAlone()
+    {
+        CompProject project = project();
+        CompDocument main = project.getCompOrFirst("main");
+        CompDocument other = comp(project, "other", "Other");
+        CompDocument shared = comp(project, "shared", "Shared");
+
+        shared.layers.add(new CompLayer("inner", "Inner", "solid"));
+
+        CompLayer inMain = precomp(main, "pc_copy", shared.id);
+        CompLayer inOther = precomp(other, "pc_copy_2", shared.id);
+
+        inMain.name = "副本";
+        inOther.name = "副本";
+
+        /* Sharing across compositions is project structure, not a duplicate inside one comp. */
+        assertEquals(0, CompLayerOps.repairSharedPrecompCopies(project));
+        assertEquals(shared.id, inMain.precompId);
+        assertEquals(shared.id, inOther.precompId);
+    }
+
+    @Test
+    public void aDanglingSharedTargetIsNotCloned()
+    {
+        CompProject project = project();
+        CompDocument main = project.getCompOrFirst("main");
+        CompLayer a = precomp(main, "pc", "missing");
+        CompLayer b = precomp(main, "pc_copy", "missing");
+
+        b.name = "副本";
+
+        assertEquals(0, CompLayerOps.countRepairableSharedPrecompCopies(project));
+        assertEquals(0, CompLayerOps.repairSharedPrecompCopies(project));
+        assertEquals("missing", a.precompId);
+        assertEquals("missing", b.precompId);
+    }
+
+    @Test
+    public void theRepairedCopySurvivesSaveAndReload()
+    {
+        CompProject project = project();
+        CompDocument main = project.getCompOrFirst("main");
+        CompDocument shared = comp(project, "shared", "Shared");
+
+        shared.layers.add(new CompLayer("inner", "Inner", "solid"));
+
+        CompLayer source = precomp(main, "pc", shared.id);
+        CompLayer legacyCopy = precomp(main, "pc_copy", shared.id);
+
+        legacyCopy.name = "副本";
+
+        assertEquals(1, CompLayerOps.repairSharedPrecompCopies(project));
+        assertEquals(shared.id, source.precompId);
+
+        String saved = CompStore.snapshot(project);
+        CompProject restored = CompStore.restore(saved);
+
+        assertNotNull(restored);
+
+        CompLayer reloaded = restored.getCompOrFirst("main").getLayer("pc_copy");
+        CompDocument detached = restored.getComp(reloaded.precompId);
+
+        assertNotNull(detached);
+        assertNotEquals(shared.id, detached.id);
+        assertEquals(0, CompLayerOps.repairSharedPrecompCopies(restored),
+            "a repaired project has nothing left to repair");
     }
 }

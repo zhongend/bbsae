@@ -7459,6 +7459,12 @@ public class UICompositorPanel extends UIDashboardPanel
         this.syncExternalAssets();
         this.probeMissingAudioMetadata();
 
+        /* Projects written before the deep-copy fix can contain a copied precomp layer that still
+         * points at the source composition. Data that is already shared cannot be un-shared by a
+         * new duplicate path, so it is repaired when the project is opened (copy-looking layers
+         * only; see CompLayerOps.repairSharedPrecompCopies). */
+        this.repairSharedPrecompCopies("打开工程");
+
         if (this.projectBin != null)
         {
             this.projectBin.refresh();
@@ -7569,6 +7575,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.applyPreviewBarState();
         this.loadPanelLayout();
         this.updateCompPath();
+        this.repairSharedPrecompCopies("打开工程");
 
         this.save();
     }
@@ -13221,6 +13228,22 @@ public class UICompositorPanel extends UIDashboardPanel
 
         copy.id = CompStore.uniqueId(layer.id + "_copy", this.doc.layers, (candidate) -> candidate.id);
         copy.name = this.layerLabel(layer) + " 副本";
+
+        /* Defensive independence check: creating a second layer that points at the SAME nested
+         * composition is the exact bug this command exists to prevent. If cloning could not produce
+         * a private target, refuse the duplicate instead of silently creating a shared one. A
+         * dangling target (the source composition is already missing) is allowed: there is nothing
+         * to clone and both layers render the same placeholder. */
+        if ("precomp".equals(layer.type) && layer.precompId != null && !layer.precompId.isEmpty()
+            && this.project != null && this.project.getComp(layer.precompId) != null
+            && layer.precompId.equals(copy.precompId))
+        {
+            this.discardCancelledAction();
+            this.setStatus("复制失败：无法克隆预合成目标，已取消（避免副本与原预合成共用同一合成）");
+
+            return;
+        }
+
         this.doc.layers.add(this.doc.layers.indexOf(layer) + 1, copy);
         this.doc.extendDurationToContent();
         this.setSingleSelection(copy);
@@ -13229,7 +13252,52 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshSheets();
         this.contentDurationChanged();
         this.save();
-        this.setStatus("已复制图层：" + copy.name + "（原位，可拖动）");
+
+        String target = "";
+
+        if ("precomp".equals(layer.type) && this.project != null)
+        {
+            CompDocument nested = this.project.getComp(copy.precompId);
+
+            if (nested != null)
+            {
+                target = " · 独立预合成：" + nested.name + "（" + nested.id + "）";
+            }
+        }
+
+        this.setStatus("已复制图层：" + copy.name + "（原位，可拖动）" + target);
+    }
+
+    /**
+     * Splits precomp copies that were saved in the pre-deep-copy "shared target" state.
+     *
+     * <p>Runs when a project is opened (and from the precomp inspector's repair button). Only
+     * copy-looking sibling layers are split; a deliberately shared precomp instance stays shared.
+     * The result is announced because it silently adds compositions to the project.</p>
+     */
+    private void repairSharedPrecompCopies(String context)
+    {
+        if (this.project == null)
+        {
+            return;
+        }
+
+        int repaired = dev.bbsae.comp.CompLayerOps.repairSharedPrecompCopies(this.project);
+
+        if (repaired <= 0)
+        {
+            return;
+        }
+
+        dev.bbsae.BbsAeAddon.LOGGER.info("Repaired {} shared precomp cop{} on {}",
+            repaired, repaired == 1 ? "y" : "ies", context);
+
+        this.refreshLayers();
+        this.refreshInspector();
+        this.refreshSheets();
+        this.save();
+        this.setStatus("已自动修复旧版本的预合成共享：" + repaired
+            + " 个副本获得独立预合成（" + context + "；可在预合成页再次检查）");
     }
 
     /* ---------------------------------------------------------------- layer clipboard */
@@ -13308,7 +13376,20 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshSheets();
         this.contentDurationChanged();
         this.save();
-        this.setStatus("已粘贴 " + copies.size() + " 个图层（原位）");
+
+        int pastedPrecomps = 0;
+
+        for (CompLayer copy : copies)
+        {
+            if (copy != null && "precomp".equals(copy.type) && copy.precompId != null
+                && !copy.precompId.isEmpty())
+            {
+                pastedPrecomps += 1;
+            }
+        }
+
+        this.setStatus("已粘贴 " + copies.size() + " 个图层（原位）"
+            + (pastedPrecomps > 0 ? "（" + pastedPrecomps + " 个预合成已获得独立副本）" : ""));
     }
 
     /* ---------------------------------------------------------------- multi selection */
@@ -13383,7 +13464,20 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshInspector();
         this.refreshSheets();
         this.save();
-        this.setStatus("已复制 " + copies.size() + " 个图层");
+
+        int precompCopies = 0;
+
+        for (CompLayer copy : copies)
+        {
+            if (copy != null && "precomp".equals(copy.type) && copy.precompId != null
+                && !copy.precompId.isEmpty())
+            {
+                precompCopies += 1;
+            }
+        }
+
+        this.setStatus("已复制 " + copies.size() + " 个图层"
+            + (precompCopies > 0 ? "（" + precompCopies + " 个预合成已获得独立副本）" : ""));
     }
 
     /** "Combine into one pre-render": the selection becomes a nested composition. */
@@ -17541,6 +17635,29 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* Last-responsibility independence: a legacy copy may still share its target (project not
+         * reopened yet, or an undo restored the old pair). Entering it is the moment before the user
+         * starts editing the nested content, so detach it here. If detaching fails, refuse to open:
+         * editing a shared target is exactly what the user is trying to avoid. */
+        boolean sharedCopy = dev.bbsae.comp.CompLayerOps.looksLikeCopyLayer(layer)
+            && dev.bbsae.comp.CompLayerOps.countSharedSiblings(this.doc, layer) > 0;
+        boolean detached = dev.bbsae.comp.CompLayerOps.detachIfSharedCopy(this.project, this.doc, layer);
+
+        if (sharedCopy && !detached)
+        {
+            this.setStatus("这个预合成副本仍与其它图层共用目标，且无法自动拆分；已取消进入，"
+                + "请先在预合成页点「复制目标预合成（独立副本）」");
+
+            return;
+        }
+
+        if (detached)
+        {
+            this.refreshLayers();
+            this.refreshInspector();
+            this.save();
+        }
+
         CompDocument sub = this.project.getComp(layer.precompId);
 
         if (sub == null)
@@ -17576,7 +17693,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.updatePlayLabel();
         dev.bbsae.client.overlay.BbsPreviewBridge.updateDocument(this.doc);
         this.updateCompPath();
-        this.setStatus("已进入预合成：" + sub.name);
+        this.setStatus("已进入预合成：" + sub.name + "（" + sub.id + "）"
+            + (detached ? " · 此副本原本与其它图层共用目标，已先建立独立合成" : ""));
     }
 
     public void exitPrecomp()
@@ -21335,6 +21453,36 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.setStatus("已创建预合成：" + sub.name);
             }));
             section.fields.add(this.smallButton("进入预合成", () -> this.enterPrecomp(l)));
+
+            /* Diagnose the shared-target state right where the target is chosen. A project saved
+             * before the deep-copy fix can have several siblings pointing at one composition; this
+             * line is the difference between "the copy is broken" and "this pair is a legacy
+             * copy". */
+            CompDocument target = l.precompId == null || l.precompId.isEmpty()
+                ? null : this.project.getComp(l.precompId);
+            int sharingSiblings = 0;
+
+            for (CompLayer sibling : this.doc.layers)
+            {
+                if (sibling != null && sibling != l && "precomp".equals(sibling.type)
+                    && l.precompId != null && l.precompId.equals(sibling.precompId))
+                {
+                    sharingSiblings += 1;
+                }
+            }
+
+            if (target != null && sharingSiblings > 0)
+            {
+                section.fields.add(UI.label(IKey.constant("注意：本合成里还有 " + sharingSiblings
+                    + " 个图层指向同一个预合成（" + target.name + "）。旧版本复制的副本会这样；"
+                    + "点下面的「复制目标预合成」会只把本层换成独立副本，其它层保持不动。"), 12));
+            }
+            else if (target != null)
+            {
+                section.fields.add(UI.label(IKey.constant("当前目标：" + target.name + " · " + target.id
+                    + "（只有本层使用）"), 12));
+            }
+
             section.fields.add(this.smallButton("复制目标预合成（独立副本）", () ->
             {
                 this.beginAction("复制预合成");
@@ -21348,7 +21496,27 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 this.refreshInspector();
                 this.save();
-                this.setStatus("已复制独立预合成：" + clone.name + "（改副本不会再影响原预合成）");
+                this.setStatus("已复制独立预合成：" + clone.name + "（" + clone.id + "）——改副本不会再影响原预合成");
+            }));
+            section.fields.add(this.smallButton("修复本工程所有旧共享副本", () ->
+            {
+                if (this.project == null)
+                {
+                    return;
+                }
+
+                int pending = dev.bbsae.comp.CompLayerOps.countRepairableSharedPrecompCopies(this.project);
+
+                if (pending <= 0)
+                {
+                    this.setStatus("没有需要修复的共享副本（本工程里的预合成要么独立，要么是刻意共用）");
+
+                    return;
+                }
+
+                this.beginAction("修复共享预合成");
+                this.repairSharedPrecompCopies("手动修复");
+                this.refreshInspector();
             }));
             section.fields.add(this.numberRow("预合成时间偏移", l.precompTimeOffset, -36000F, 36000F, false, (value) -> l.precompTimeOffset = value.floatValue()));
             section.fields.add(this.numberRow("预合成时间缩放", l.precompTimeScale, -10F, 10F, false, (value) -> l.precompTimeScale = value.floatValue()));

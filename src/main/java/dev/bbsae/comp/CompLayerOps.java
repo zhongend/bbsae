@@ -612,11 +612,27 @@ public final class CompLayerOps
 
         CompLayer copy = source.duplicate();
 
-        if (project != null && "precomp".equals(source.type)
-            && source.precompId != null && !source.precompId.isEmpty())
+        if ("precomp".equals(source.type) && source.precompId != null && !source.precompId.isEmpty())
         {
-            copy.precompId = clonePrecompTree(project, source.precompId,
-                new java.util.HashMap<>(), new java.util.HashSet<>());
+            if (project != null)
+            {
+                copy.precompId = clonePrecompTree(project, source.precompId,
+                    new java.util.HashMap<>(), new java.util.HashSet<>());
+
+                /* One log line per copied precomp: when a user reports a shared copy, the log
+                 * says which target the copy got. Cheap, and the alternative is guessing. */
+                dev.bbsae.BbsAeAddon.LOGGER.info("precomp duplicate: layer={} target {} -> {}",
+                    source.id, source.precompId,
+                    copy.precompId.isEmpty() ? "<copy failed>" : copy.precompId);
+            }
+            else
+            {
+                /* Legacy API without a project: this is the only case where a copy can still share
+                 * its target. The UI never takes this path; say so loudly if something does. */
+                dev.bbsae.BbsAeAddon.LOGGER.warn(
+                    "precomp duplicate without project context: layer={} keeps shared target {}",
+                    source.id, source.precompId);
+            }
         }
 
         return copy;
@@ -711,6 +727,15 @@ public final class CompLayerOps
 
         String id = clonePrecompTree(project, source.id,
             new java.util.HashMap<>(), new java.util.HashSet<>());
+
+        /* An empty id is the "clone failed" signal. project.getComp("") returns the FIRST
+         * composition by design (the default-comp fallback), so asking it here would hand back an
+         * unrelated document — and could even rename it through the lines below. */
+        if (id == null || id.isEmpty())
+        {
+            return null;
+        }
+
         CompDocument clone = project.getComp(id);
 
         if (clone == null || clone == source)
@@ -759,6 +784,191 @@ public final class CompLayerOps
         }
 
         return clone;
+    }
+
+    /** Number of other precomp layers in {@code doc} that point at the same composition. */
+    public static int countSharedSiblings(CompDocument doc, CompLayer layer)
+    {
+        if (doc == null || layer == null || layer.precompId == null || layer.precompId.isEmpty())
+        {
+            return 0;
+        }
+
+        int count = 0;
+
+        for (CompLayer sibling : doc.layers)
+        {
+            if (sibling != null && sibling != layer && "precomp".equals(sibling.type)
+                && layer.precompId.equals(sibling.precompId))
+            {
+                count += 1;
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Detaches a copy-looking precomp layer from a target it shares with a sibling.
+     *
+     * <p>Called right before the editor opens a nested composition. A project saved before the
+     * deep-copy fix can still contain such a pair until the load-time repair runs (or when the pair
+     * was created in a session whose snapshot is restored); opening the copy is the exact moment the
+     * user is about to edit it, so that is the last responsible place to guarantee independence.</p>
+     *
+     * @return true when the layer now owns a private composition
+     */
+    public static boolean detachIfSharedCopy(CompProject project, CompDocument doc, CompLayer layer)
+    {
+        if (project == null || doc == null || layer == null || !looksLikeCopyLayer(layer)
+            || countSharedSiblings(doc, layer) <= 0)
+        {
+            return false;
+        }
+
+        return duplicatePrecompTarget(project, layer) != null;
+    }
+
+    /**
+     * True for a layer that was produced by a duplicate command: its id or name carries the copy
+     * marker the editor has always written.
+     *
+     * <p>Used only by the legacy-share repair below. It is a heuristic on purpose: sharing one
+     * composition between two layers is a legitimate feature (two instances of the same nested
+     * comp), so the repair must not touch a relationship the user created deliberately. A layer
+     * named "… 副本" / "… copy" that points at the same target as a sibling is the exact shape the
+     * old duplicate command produced.</p>
+     */
+    public static boolean looksLikeCopyLayer(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return false;
+        }
+
+        String id = layer.id == null ? "" : layer.id.toLowerCase(java.util.Locale.ROOT);
+        String name = layer.name == null ? "" : layer.name.toLowerCase(java.util.Locale.ROOT);
+
+        return id.contains("_copy") || name.contains("副本") || name.contains("copy");
+    }
+
+    /**
+     * Repairs the legacy "copied precomp still shares its composition" state.
+     *
+     * <p>Before the deep-copy fix a duplicate only copied the {@code precompId} string, so a copy
+     * and its source pointed at one {@link CompDocument}: editing either changed both. Projects
+     * saved in that state still contain the shared pair, and no new code path can repair them
+     * because the data is already shared. This pass walks every composition, and for each precomp
+     * target used by more than one sibling layer it gives every <b>copy-looking</b> layer after the
+     * first one its own cloned tree.</p>
+     *
+     * <p>Scope is intentionally narrow:</p>
+     * <ul>
+     *   <li>only layers inside the <b>same</b> composition count as a duplicate pair (reuse across
+     *       compositions is normal project structure);</li>
+     *   <li>only layers whose id/name carries the duplicate marker are split, so a deliberately
+     *       shared instance is left alone;</li>
+     *   <li>the first layer of each group keeps the original target, so the "original" is stable
+     *       and references from other compositions do not change meaning.</li>
+     * </ul>
+     *
+     * @return number of layers that received a private composition
+     */
+    public static int repairSharedPrecompCopies(CompProject project)
+    {
+        return repairSharedPrecompCopies(project, true);
+    }
+
+    /** Count-only variant: how many layers the repair would detach. */
+    public static int countRepairableSharedPrecompCopies(CompProject project)
+    {
+        return repairSharedPrecompCopies(project, false);
+    }
+
+    private static int repairSharedPrecompCopies(CompProject project, boolean apply)
+    {
+        if (project == null || project.comps == null)
+        {
+            return 0;
+        }
+
+        int repaired = 0;
+
+        /* Index-based walk, not a snapshot: duplicateComposition appends the private copies and
+         * those copies can themselves contain a shared pair inherited from their source. Visiting
+         * the new documents in the same pass repairs the whole tree instead of only the first
+         * level. The hard stop is a cycle guard for pathological hand-edited projects. */
+        for (int index = 0; index < project.comps.size() && index < 4096; index++)
+        {
+            CompDocument comp = project.comps.get(index);
+
+            if (comp == null || comp.layers == null)
+            {
+                continue;
+            }
+
+            java.util.Map<String, java.util.List<CompLayer>> groups = new java.util.LinkedHashMap<>();
+
+            for (CompLayer layer : comp.layers)
+            {
+                if (layer == null || !"precomp".equals(layer.type)
+                    || layer.precompId == null || layer.precompId.isEmpty())
+                {
+                    continue;
+                }
+
+                groups.computeIfAbsent(layer.precompId, (key) -> new ArrayList<>()).add(layer);
+            }
+
+            for (java.util.Map.Entry<String, java.util.List<CompLayer>> entry : groups.entrySet())
+            {
+                if (entry.getValue().size() < 2)
+                {
+                    continue;
+                }
+
+                boolean first = true;
+
+                for (CompLayer layer : entry.getValue())
+                {
+                    if (first)
+                    {
+                        first = false;
+
+                        continue;
+                    }
+
+                    if (!looksLikeCopyLayer(layer))
+                    {
+                        continue;
+                    }
+
+                    CompDocument source = project.getComp(layer.precompId);
+
+                    if (source == null)
+                    {
+                        continue;
+                    }
+
+                    if (!apply)
+                    {
+                        repaired += 1;
+
+                        continue;
+                    }
+
+                    CompDocument clone = duplicateComposition(project, source);
+
+                    if (clone != null)
+                    {
+                        layer.precompId = clone.id;
+                        repaired += 1;
+                    }
+                }
+            }
+        }
+
+        return repaired;
     }
 
     /**

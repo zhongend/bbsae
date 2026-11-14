@@ -11,7 +11,7 @@
 | 图层 | solid/panel/rect、bar、text、image/footage（`%04d` 序列）、shape、null、adjustment、precomp、bbs 预览、**回放实体（深度抠像）**；**图层库**：搜索 + 分类 + 卡片（图标/名称/一句说明），「+」直接打开，双击添加 |
 | 时间 | in/out、start offset、time scale、freeze、precomp offset/scale、可关键帧 time remap、layer markers |
 | 3D 挤出 | 右侧 **「3D」分区**（图层开启 3D 时页签变白，否则灰色；预览右侧有同状态快捷图标）：厚度 0–400px、切片 2–48、方向（向后/向前/双向）、厚度颜色 + 取用图层颜色、侧面明暗、背面封盖、卡片/字块/厚板预设、重置；`CompExtrusion` 纯几何，合成预览、3D 自由视口、回放预览（相机/环绕/自由）与导出共用；旧 `extrude3d` 效果兼容。Z/旋转/缩放仍在「图层」页 |
-| 预合成 | 预合成图层可进入/新建/重定向；复制图层/Ctrl+D/Ctrl+C+V 自动深拷贝嵌套树；检查器「复制目标预合成（独立副本）」给单层换私有副本；工程级 `duplicateComposition` 深拷贝整棵嵌套树 |
+| 预合成 | 预合成图层可进入/新建/重定向；复制图层/Ctrl+D/Ctrl+C+V 自动深拷贝嵌套树；**打开工程时自动拆分旧版本遗留的共享副本**（只拆带复制标记的兄弟图层，刻意共用不动）；检查器「复制目标预合成（独立副本）」给单层换私有副本、「修复本工程所有旧共享副本」手动修复；工程级 `duplicateComposition` 深拷贝整棵嵌套树 |
 | 变换 | position、rotation、scale、anchor、父子链（**统一场景图**：2D/3D 同一套矩阵；换基绑定，绑定/解绑都不移动子级；3D 支持 z/rotationX/Y/scaleZ 与关键帧） |
 | 合成 | 13 种混合模式、不透明度、图层 solo/guide、调整层、轨道遮罩（alpha/luma，正/反） |
 | 动画 | BBS `KeyframeChannel<Transform>`、float 通道，BBS 原生 dope sheet + graph editor、插值/右键菜单/复制粘贴；文本字号/字距/行高/描边、蒙版羽化/不透明度/扩展/点/手柄、形状 trim/repeater/旋转/路径点、效果参数均可动画 |
