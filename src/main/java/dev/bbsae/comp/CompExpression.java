@@ -21,6 +21,12 @@ public final class CompExpression
         float fps();
         float value();
         float variable(String path);
+
+        /** Stable identity of the property being evaluated; separates wiggle seeds. */
+        default int seed()
+        {
+            return 0;
+        }
     }
 
     private final String source;
@@ -134,12 +140,12 @@ public final class CompExpression
 
         if (this.eat('-'))
         {
-            return -power();
+            return -unary();
         }
 
         if (this.eat('+'))
         {
-            return power();
+            return unary();
         }
 
         return power();
@@ -231,7 +237,14 @@ public final class CompExpression
             case "sqrt": return (float) Math.sqrt(Math.max(0F, a));
             case "pow": return (float) Math.pow(a, b);
             case "noise": return deterministicNoise(a, b);
-            case "wiggle": return (deterministicNoise(this.context.frame() * a, 37F) * 2F - 1F) * b;
+            case "wiggle":
+            {
+                float fps = Math.max(1F, this.context.fps());
+                float x = this.context.frame() / fps * a;
+                float seed = 37F + (this.context.seed() & 0xFFFF) * 0.6180339F;
+
+                return smoothNoise(x, seed) * b;
+            }
             case "deg": return (float) Math.toDegrees(a);
             case "rad": return (float) Math.toRadians(a);
             default: return 0F;
@@ -300,6 +313,22 @@ public final class CompExpression
         double value = Math.sin(x * 12.9898D + seed * 78.233D) * 43758.5453D;
 
         return (float) (value - Math.floor(value));
+    }
+
+    /**
+     * Smooth value noise for wiggle: two hashes at floor(x)/floor(x)+1, smoothstep-interpolated,
+     * mapped to [-1, 1]. The old code sampled deterministicNoise(floor(frame*freq)) directly, so
+     * every frame was an independent jump and frequency only changed the random sequence.
+     */
+    private static float smoothNoise(float x, float seed)
+    {
+        float floor = (float) Math.floor(x);
+        float fraction = x - floor;
+        float a = deterministicNoise(floor, seed) * 2F - 1F;
+        float b = deterministicNoise(floor + 1F, seed) * 2F - 1F;
+        float t = fraction * fraction * (3F - 2F * fraction);
+
+        return a + (b - a) * t;
     }
 
     /** Resolves {@code comp.foo} and {@code layer.id.prop} against a project/document. */

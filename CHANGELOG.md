@@ -1,5 +1,39 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix58 — 2026-11-14
+
+wiggle 平滑/种子、连续一元符号、3D 视口模型透明度。
+
+### wiggle 频率与种子
+
+- 旧实现直接用 `deterministicNoise(frame * frequency, 37)`：哈希点在相邻整数完全去相关，
+  所以每帧都是独立随机跳变，频率只是换序列；种子固定 37 让所有属性锁步。
+- 新实现：
+  - `x = frame / fps * frequency`（fps 来自 `Context.fps()`）；
+  - `floor(x)`/`floor(x)+1` 两点的 `deterministicNoise` 映射到 [-1,1]；
+  - 用 smoothstep 插值后乘振幅；
+  - 种子由 `layer.id + "/" + property` 的 hashCode 混入；`opacity` 用 `layer.id + "/opacity"`。
+- 结果：频率真正控制每秒变化次数，相邻帧连续；不同图层/属性序列不同；幅度受 b 限制。
+
+### 连续一元符号
+
+- `unary()` 的 `-`/`+` 分支改回递归 `unary()`（`power()` 底数仍是 `primary()`），恢复
+  `--5=5`、`+-5=-5`、`-(2+3)=-5`，同时保持 `-2^2=-4`、`2^-3=0.125`。
+
+### 3D 视口回放模型透明度
+
+- `CompViewportRenderer.drawReplayModels` 的 `copyOpacity` 从静态 `layer.opacity` 改为
+  `layer.opacityFrame(context.frame)`，视口与合成/导出使用同一关键帧值。
+
+### 验证
+
+- 全量测试：**165 套件 / 1007 项 / 0 failures / 0 errors / 1 skipped**。
+- 新增 `CompExpressionTest` 的连续帧、属性种子、幅度、连续一元符号用例。
+- 未启动客户端；请重点验证 wiggle 的视觉平滑度、不同属性不锁步、模型透明度关键帧在
+  3D 视口与导出中一致。
+- 候选包：`bbsae-0.99-hotfix58.jar`（3,954,041 bytes，SHA-256
+  `2BEC1F0B1B4FD3A0D4663C1DE734FD7457E0B806A2AF3D3EF5C368DF8429EF13`）。
+
 ## 0.99-hotfix57 — 2026-11-14
 
 19 项已确认 bug 的最小修复（A/B/C 组）。

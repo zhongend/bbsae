@@ -2703,6 +2703,12 @@ public final class CompRenderer
                 {
                     return dev.bbsae.comp.CompExpression.variable(context.project, context.comp, path, layer.opacityFrame(context.frame), context.frame);
                 }
+
+                @Override
+                public int seed()
+                {
+                    return (layer.id + "/opacity").hashCode();
+                }
             }, value);
         }
 

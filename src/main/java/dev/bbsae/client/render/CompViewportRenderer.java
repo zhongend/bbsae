@@ -276,7 +276,7 @@ public final class CompViewportRenderer
 
             float alpha = replication == null ? 1F
                 : Math.max(0F, Math.min(1F, replication.valueF("alpha", replication.valueF("amount", 1F))));
-            float copyOpacity = Math.max(0F, Math.min(1F, layer.opacity)) * alpha;
+            float copyOpacity = Math.max(0F, Math.min(1F, layer.opacityFrame(context.frame))) * alpha;
 
             try
             {

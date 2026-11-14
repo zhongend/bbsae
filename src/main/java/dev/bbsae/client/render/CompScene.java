@@ -169,15 +169,15 @@ public final class CompScene
 
         if (layer.expressionX != null && !layer.expressionX.isBlank())
         {
-            x = CompExpression.eval(layer.expressionX, expressionContext(layer, ctx, x), x);
+            x = CompExpression.eval(layer.expressionX, expressionContext(layer, ctx, x, "x"), x);
         }
         if (layer.expressionY != null && !layer.expressionY.isBlank())
         {
-            y = CompExpression.eval(layer.expressionY, expressionContext(layer, ctx, y), y);
+            y = CompExpression.eval(layer.expressionY, expressionContext(layer, ctx, y, "y"), y);
         }
         if (layer.expressionRotation != null && !layer.expressionRotation.isBlank())
         {
-            rotation = CompExpression.eval(layer.expressionRotation, expressionContext(layer, ctx, rotation), rotation);
+            rotation = CompExpression.eval(layer.expressionRotation, expressionContext(layer, ctx, rotation, "rotation"), rotation);
         }
 
         if (layer.motion)
@@ -830,7 +830,8 @@ public final class CompScene
         return null;
     }
 
-    private static CompExpression.Context expressionContext(CompLayer layer, CompRenderContext ctx, float value)
+    private static CompExpression.Context expressionContext(CompLayer layer, CompRenderContext ctx,
+                                                            float value, String property)
     {
         return new CompExpression.Context()
         {
@@ -862,6 +863,12 @@ public final class CompScene
             public float variable(String path)
             {
                 return CompExpression.variable(ctx.project, ctx.comp, path, value, ctx.frame);
+            }
+
+            @Override
+            public int seed()
+            {
+                return property == null ? 0 : (layer.id + "/" + property).hashCode();
             }
         };
     }
