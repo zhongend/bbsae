@@ -2126,6 +2126,16 @@ public final class CompRenderer
             return false;
         }
 
+        /* A collapsed precomp is already evaluated in the parent's camera space. Its raster would
+         * bake the nested scene in layer-local ortho space and project it again (double projection),
+         * and the layer-local bake would also decide the child's camera differently once an effect
+         * exists. The direct path applies pixel operations to the composed parent-space image
+         * instead, which keeps the precomp's projection (and size) independent of the effect stack. */
+        if (layer.collapse && "precomp".equals(layer.type))
+        {
+            return false;
+        }
+
         boolean masked = layer.masks != null && !layer.masks.isEmpty();
 
         /* Extrusion is a volume, so it always needs the layer-space raster path: the direct path

@@ -227,6 +227,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private CompProject project;
     private CompDocument doc;
+    /**
+     * True when the current composition has an explicit clip on the bound film's camera timeline.
+     * Opening the compositor never creates one; the comp page shows the state and the add action.
+     */
+    private boolean filmClipLinked;
     private CompLayer selectedLayer;
     /** Multi-selection, in click order; {@link #selectedLayer} is always its primary member. */
     private final java.util.LinkedHashSet<String> selectedIds = new java.util.LinkedHashSet<>();
@@ -6693,6 +6698,10 @@ public class UICompositorPanel extends UIDashboardPanel
             {
                 this.settingsOverlay.close();
             }
+
+            /* Release the binding resolver's film so a later standalone render cannot project
+             * through a film the editor no longer owns. */
+            dev.bbsae.client.render.BindingResolver.setFilm(null);
         }
 
         dev.bbsae.client.render.CompPrecache.stop();
@@ -6934,6 +6943,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.filmPanel = filmPanel;
         this.film = film;
+        dev.bbsae.client.render.BindingResolver.setFilm(film);
         this.replay = replay;
 
         if (this.replay == null && !film.replays.getList().isEmpty())
@@ -7028,7 +7038,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.doc != null)
         {
-            CompositionClip.ensureForFilm(film, this.project.id, this.doc.id, this.doc.duration);
+            /* Opening the compositor is a view action: it must not add a clip to the film timeline.
+             * Only an existing clip is kept in sync. */
+            if (this.updateFilmClip(this.doc.duration) == null)
+            {
+                this.setStatus("合成器已打开：这个合成还没有加入 BBS 影片轨道（在「合成」页可添加）");
+            }
+
             this.syncBbsLoopToDocument();
         }
 
@@ -7125,6 +7141,101 @@ public class UICompositorPanel extends UIDashboardPanel
     }
 
     /**
+     * Keeps an already-linked composition clip in sync and never adds one.
+     *
+     * <p>Every duration/edit path goes through here. {@link #addCompositionToFilm()} is the only
+     * place in the UI that creates the clip (plus export preparation, which is also explicit).</p>
+     *
+     * @return the updated clip, or null when this composition is not on the film timeline
+     */
+    private CompositionClip updateFilmClip(float seconds)
+    {
+        if (this.film == null || this.project == null || this.doc == null)
+        {
+            this.filmClipLinked = false;
+
+            return null;
+        }
+
+        CompositionClip clip = CompositionClip.updateForFilm(this.film, this.project.id, this.doc.id,
+            seconds > 0F ? seconds : this.doc.duration);
+
+        this.filmClipLinked = clip != null;
+
+        return clip;
+    }
+
+    /** Reads the clip state without creating anything. */
+    private void refreshFilmClipState()
+    {
+        this.filmClipLinked = this.film != null && this.project != null && this.doc != null
+            && CompositionClip.findForFilm(this.film, this.project.id, this.doc.id) != null;
+    }
+
+    /**
+     * Explicit "put this composition on the film timeline". The clip is what makes BBS sample the
+     * composition into the final frame, so it is document content and only the user can add it.
+     */
+    private void addCompositionToFilm()
+    {
+        if (this.film == null || this.project == null || this.doc == null)
+        {
+            this.setStatus("没有打开的影片：先在 BBS 影片编辑器打开一个影片");
+
+            return;
+        }
+
+        CompositionClip clip = CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id,
+            this.doc.duration);
+
+        this.filmClipLinked = clip != null;
+
+        if (clip != null)
+        {
+            this.syncBbsLoopToDocument();
+
+            if (this.filmPanel != null)
+            {
+                this.filmPanel.forceSave();
+            }
+
+            this.refreshInspector();
+            this.save();
+            this.setStatus("已把「" + this.doc.name + "」加入 BBS 影片轨道（合成器片段）");
+        }
+    }
+
+    /** Removes this composition's clip from the film timeline (explicit user action). */
+    private void removeCompositionFromFilm()
+    {
+        if (this.film == null || this.project == null || this.doc == null)
+        {
+            return;
+        }
+
+        CompositionClip clip = CompositionClip.findForFilm(this.film, this.project.id, this.doc.id);
+
+        if (clip == null)
+        {
+            this.setStatus("这个合成不在影片轨道上");
+
+            return;
+        }
+
+        this.film.camera.remove(clip);
+        this.filmClipLinked = false;
+
+        if (this.filmPanel != null)
+        {
+            this.filmPanel.forceSave();
+        }
+
+        this.refreshInspector();
+        this.save();
+        this.setStatus("已从 BBS 影片轨道移除「" + this.doc.name + "」（合成器工程本身保留）");
+    }
+
+    /**
      * Grows the composition to the last layer/audio clip and synchronizes everything that cached
      * the old end: BBS loop range, the film composition clip, timeline rows and the project file.
      *
@@ -7165,7 +7276,7 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.film != null && this.filmPanel != null && this.project != null)
         {
             this.syncBbsLoopToDocument();
-            CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+            this.updateFilmClip(this.doc.duration);
             this.filmPanel.forceSave();
         }
 
@@ -7213,7 +7324,7 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.film != null && this.filmPanel != null && this.project != null)
         {
             this.syncBbsLoop(Math.max(20, Math.round(seconds * 20F) + 1));
-            CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, seconds);
+            this.updateFilmClip(seconds);
             this.filmPanel.forceSave();
         }
 
@@ -7560,6 +7671,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.replay = null;
         this.filmPanel = null;
         this.film = null;
+        dev.bbsae.client.render.BindingResolver.setFilm(null);
         this.time = 0F;
         this.playing = false;
         this.playRate = 0F;
@@ -7645,6 +7757,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.filmPanel = filmPanel;
         this.film = film;
+        dev.bbsae.client.render.BindingResolver.setFilm(film);
         this.replay = null;
 
         CompProject requested = projectId == null || projectId.isBlank() ? null : CompStore.loadOrNull(projectId, true);
@@ -7682,7 +7795,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.doc != null)
         {
-            CompositionClip.ensureForFilm(film, this.project.id, this.doc.id, this.doc.duration);
+            /* Opening the compositor is a view action: it must not add a clip to the film timeline.
+             * Only an existing clip is kept in sync. */
+            if (this.updateFilmClip(this.doc.duration) == null)
+            {
+                this.setStatus("合成器已打开：这个合成还没有加入 BBS 影片轨道（在「合成」页可添加）");
+            }
+
             this.syncBbsLoopToDocument();
         }
 
@@ -8265,7 +8384,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
             if (this.film != null && this.filmPanel != null)
             {
-                CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, duration);
+                this.updateFilmClip(duration);
                 this.syncBbsLoop(Math.max(20, Math.round(duration * 20F) + 1));
                 this.filmPanel.forceSave();
             }
@@ -8540,7 +8659,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.doc.duration = Math.max(0.1F, seconds);
             this.doc.workAreaOut = this.doc.duration;
             this.syncBbsLoopToDocument();
-            CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+            this.updateFilmClip(this.doc.duration);
             this.filmPanel.forceSave();
             this.save();
             this.refreshSheets();
@@ -10408,7 +10527,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.doc.duration = Math.max(0.1F, seconds);
             this.doc.workAreaOut = this.doc.duration;
             this.syncBbsLoopToDocument();
-            CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+            this.updateFilmClip(this.doc.duration);
             this.filmPanel.forceSave();
             this.save();
             this.refreshSheets();
@@ -10670,7 +10789,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
             if (this.film != null)
             {
-                CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+                /* Switching replay only updates an already-linked composition; it never adds a
+                 * clip to the film timeline by itself. */
+                this.updateFilmClip(this.doc.duration);
                 this.syncBbsLoopToDocument();
             }
 
@@ -20586,9 +20707,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
             if (this.film != null && this.project != null && this.doc != null)
             {
-                /* The camera clip is what BBS's recorder uses for its length. Keep it in sync
-                 * with the composition as soon as the user edits the duration. */
-                CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id, this.doc.duration);
+                /* The clip is what BBS's recorder uses for its length, but editing the duration
+                 * must not add the composition to the film timeline. */
+                this.updateFilmClip(this.doc.duration);
                 this.syncBbsLoopToDocument();
 
                 if (this.filmPanel != null)
@@ -20614,6 +20735,30 @@ public class UICompositorPanel extends UIDashboardPanel
                     + "空尾会让时间轴适配到 30 分钟。", contentEnd, comp.duration)), 13));
             section.fields.add(this.smallButton("时长 = 内容结尾（清理空尾）", () ->
                 this.adoptCompositionDuration(Math.max(12F, comp.contentEnd()))));
+        }
+
+        /* Film-timeline link: opening the compositor no longer creates a clip behind the user's
+         * back. This is the one explicit place to add/remove it and to see the state. */
+        this.refreshFilmClipState();
+
+        if (this.film != null)
+        {
+            section.fields.add(UI.label(IKey.constant(this.filmClipLinked
+                ? "BBS 影片轨道：已加入（影片编辑器里有一段「合成器」片段）"
+                : "BBS 影片轨道：未加入（合成器预览/导出照常；影片编辑器轨道不会自动出现片段）"), 13));
+            section.fields.add(this.smallButton(this.filmClipLinked
+                ? "从 BBS 影片轨道移除"
+                : "＋ 添加到 BBS 影片轨道", () ->
+            {
+                if (this.filmClipLinked)
+                {
+                    this.removeCompositionFromFilm();
+                }
+                else
+                {
+                    this.addCompositionToFilm();
+                }
+            }));
         }
 
         section.fields.add(this.colorRow("背景", comp.background, (color) -> comp.background = color));
@@ -21302,6 +21447,12 @@ public class UICompositorPanel extends UIDashboardPanel
         extrude.setEnabled(pixelLayer);
         section.fields.add(extrude);
 
+        if ("precomp".equals(layer.type) && layer.collapse)
+        {
+            section.fields.add(UI.label(IKey.constant("这个预合成开启了「折叠变换」：它已在父合成空间里，"
+                + "挤出与图层本地效果不适用；需要挤出请先在图层页关闭折叠。"), 13));
+        }
+
         if (!pixelLayer)
         {
             section.fields.add(UI.label(IKey.constant(entityLayer
@@ -21806,8 +21957,8 @@ public class UICompositorPanel extends UIDashboardPanel
                 l.collapse = toggle.getValue();
                 this.save();
             }));
-            section.fields.add(UI.label(IKey.constant("仅当这个预合成层没有蒙版、效果和图层样式时生效；"
-                + "有这些内容时按普通预合成压平，避免把蒙版/效果复制到父合成。"), 12));
+            section.fields.add(UI.label(IKey.constant("始终生效：子层的 3D 内容直接进入父合成相机空间。"
+                + "本层的蒙版/效果/样式在合成后的画面上处理，不会再改变子层的投影或大小。"), 12));
         }
 
         return section;
@@ -22070,10 +22221,19 @@ public class UICompositorPanel extends UIDashboardPanel
         return false;
     }
 
+    /**
+     * Data binding: attach this layer to a BBS object instead of hand-animating its position.
+     *
+     * <p>The old UI was a type-cycling button plus a free-text id field, so "binding" was effectively
+     * impossible without knowing internal ids (replay UUIDs / layer ids) — the reported "can't bind
+     * at all". It now offers the actual candidates: the bound film's replays, the composition's
+     * layers, or a screen anchor. Choosing one enables the binding; a validation line says whether
+     * the stored target still resolves.</p>
+     */
     private UISection bindingSection(CompLayer layer)
     {
         UISection section = new UISection(IKey.constant("绑定 / 跟踪"));
-        section.remember(this.sectionFolds, "binding", false);
+        section.remember(this.sectionFolds, "binding", true);
 
         if (layer == null)
         {
@@ -22082,35 +22242,200 @@ public class UICompositorPanel extends UIDashboardPanel
 
         CompBinding binding = layer.binding;
 
-        UIToggle enabled = new UIToggle(IKey.constant("启用"), binding.enabled, (toggle) ->
+        String[] typeLabels = {"无（关闭）", "影片回放实体", "合成图层", "屏幕中心（摄像机）"};
+        String[] typeValues = {CompBinding.NONE, CompBinding.REPLAY, CompBinding.LAYER, CompBinding.CAMERA};
+        int currentType = 0;
+
+        for (int i = 0; i < typeValues.length; i++)
         {
-            this.beginAction("启用绑定");
-            binding.enabled = toggle.getValue();
-            this.save();
-        });
-        UIButton type = new UICompButton(IKey.constant(binding.type), (button) ->
-        {
-            this.beginAction("切换绑定类型");
-            binding.type = switch (binding.type)
+            if (typeValues[i].equals(binding.type))
             {
-                case CompBinding.CAMERA -> CompBinding.REPLAY;
-                case CompBinding.REPLAY -> CompBinding.LAYER;
-                case CompBinding.LAYER -> CompBinding.SCREEN;
-                default -> CompBinding.CAMERA;
-            };
-            button.label = IKey.constant(binding.type);
-            this.save();
-        });
-        section.fields.add(UI.row(enabled, type));
+                currentType = i;
+            }
+        }
 
-        UITextbox target = new UITextbox(64, (text) ->
+        final int initialType = currentType;
+        UIChoiceButton<String> typeChoice = new UIChoiceButton<>(
+            java.util.Arrays.asList(typeLabels), (value) -> Icons.LINK, IKey::constant);
+
+        typeChoice.setValue(typeLabels[initialType]);
+        typeChoice.callback((value) ->
         {
-            binding.target = text;
+            int index = Math.max(0, java.util.Arrays.asList(typeLabels).indexOf(value));
+
+            this.beginAction("切换绑定类型");
+            binding.type = typeValues[index];
+
+            if (CompBinding.NONE.equals(binding.type))
+            {
+                binding.enabled = false;
+            }
+
+            this.refreshInspector();
             this.save();
         });
+        section.fields.add(this.fieldRow("绑定到", typeChoice));
 
-        target.setText(binding.target);
-        section.fields.add(this.fieldRow("回放 / 图层目标", target));
+        boolean needsTarget = CompBinding.REPLAY.equals(binding.type) || CompBinding.LAYER.equals(binding.type);
+
+        if (CompBinding.REPLAY.equals(binding.type))
+        {
+            java.util.List<String> labels = new java.util.ArrayList<>();
+            java.util.Map<String, String> ids = new java.util.LinkedHashMap<>();
+            String current = "";
+
+            if (this.film != null)
+            {
+                for (mchorse.bbs_mod.film.replays.Replay replay : this.film.replays.getList())
+                {
+                    if (replay == null || replay.getId() == null || replay.getId().isBlank())
+                    {
+                        continue;
+                    }
+
+                    String label = this.replayLabel(replay) + "  ·  " + replay.getId();
+
+                    labels.add(label);
+                    ids.put(label, replay.getId());
+
+                    if (replay.getId().equals(binding.target))
+                    {
+                        current = label;
+                    }
+                }
+            }
+
+            if (labels.isEmpty())
+            {
+                section.fields.add(UI.label(IKey.constant(this.film == null
+                    ? "需要先通过 BBS 影片编辑器打开影片，才有可绑定的回放实体。"
+                    : "当前影片没有回放实体：先在 BBS 影片编辑器里添加一个回放。"), 13));
+            }
+            else
+            {
+                if (current.isEmpty())
+                {
+                    current = labels.get(0);
+                }
+
+                UIChoiceButton<String> targetChoice = new UIChoiceButton<>(labels,
+                    (value) -> Icons.PLAYER, IKey::constant);
+
+                targetChoice.setValue(current);
+                targetChoice.callback((value) ->
+                {
+                    String id = ids.getOrDefault(value, "");
+
+                    if (id.isEmpty())
+                    {
+                        return;
+                    }
+
+                    this.beginAction("绑定回放实体");
+                    binding.type = CompBinding.REPLAY;
+                    binding.target = id;
+                    binding.enabled = true;
+                    this.refreshInspector();
+                    this.save();
+                    this.setStatus("已绑定到回放实体：" + value + "（预览/导出会跟随它的世界位置投影）");
+                });
+                section.fields.add(this.fieldRow("回放实体", targetChoice));
+            }
+        }
+        else if (CompBinding.LAYER.equals(binding.type))
+        {
+            java.util.List<String> labels = new java.util.ArrayList<>();
+            java.util.Map<String, String> ids = new java.util.LinkedHashMap<>();
+            String current = "";
+
+            for (CompLayer candidate : this.doc.layers)
+            {
+                if (candidate == null || candidate == layer)
+                {
+                    continue;
+                }
+
+                String label = this.layerLabel(candidate) + "  ·  " + candidate.id;
+
+                labels.add(label);
+                ids.put(label, candidate.id);
+
+                if (candidate.id.equals(binding.target))
+                {
+                    current = label;
+                }
+            }
+
+            if (labels.isEmpty())
+            {
+                section.fields.add(UI.label(IKey.constant("这个合成里还没有其它图层可绑定。"), 13));
+            }
+            else
+            {
+                if (current.isEmpty())
+                {
+                    current = labels.get(0);
+                }
+
+                UIChoiceButton<String> targetChoice = new UIChoiceButton<>(labels,
+                    (value) -> Icons.STRUCTURE, IKey::constant);
+
+                targetChoice.setValue(current);
+                targetChoice.callback((value) ->
+                {
+                    String id = ids.getOrDefault(value, "");
+
+                    if (id.isEmpty())
+                    {
+                        return;
+                    }
+
+                    this.beginAction("绑定合成图层");
+                    binding.type = CompBinding.LAYER;
+                    binding.target = id;
+                    binding.enabled = true;
+                    this.refreshInspector();
+                    this.save();
+                    this.setStatus("已绑定到图层：" + value + "（跟随它的合成位置）");
+                });
+                section.fields.add(this.fieldRow("合成图层", targetChoice));
+            }
+        }
+        else if (CompBinding.CAMERA.equals(binding.type))
+        {
+            section.fields.add(UI.label(IKey.constant("屏幕中心锚点：图层固定在画面中心，可用下面的偏移量微调；"
+                + "跟随的是 BBS 预览画面，而不是合成摄像机。"), 13));
+            binding.target = "";
+        }
+
+        if (needsTarget)
+        {
+            boolean valid = false;
+
+            if (CompBinding.REPLAY.equals(binding.type) && this.film != null)
+            {
+                valid = this.film.replays.getById(binding.target) != null;
+            }
+            else if (CompBinding.LAYER.equals(binding.type) && this.doc != null)
+            {
+                valid = this.doc.getLayer(binding.target) != null;
+            }
+
+            section.fields.add(UI.label(IKey.constant(valid
+                ? "目标有效。启用后，图层位置由目标决定，X/Y 关键帧不再生效。"
+                : "目标无效或不存在：请重新选择上面的目标（影片回放可能已被删除/重建）。"), 13));
+        }
+
+        if (!CompBinding.NONE.equals(binding.type))
+        {
+            section.fields.add(new UIToggle(IKey.constant("启用绑定"), binding.enabled, (toggle) ->
+            {
+                this.beginAction("启用绑定");
+                binding.enabled = toggle.getValue();
+                this.save();
+            }));
+        }
+
         section.fields.add(this.numberRow("偏移 X", binding.offsetX, -10000F, 10000F, false, (value) -> binding.offsetX = value.floatValue()));
         section.fields.add(this.numberRow("偏移 Y", binding.offsetY, -10000F, 10000F, false, (value) -> binding.offsetY = value.floatValue()));
         section.fields.add(this.numberRow("世界 Y 偏移", binding.worldOffsetY, -16F, 16F, false, (value) -> binding.worldOffsetY = value.floatValue()));

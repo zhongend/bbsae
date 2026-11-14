@@ -21,9 +21,25 @@ import java.util.Map;
 public final class BindingResolver
 {
     private static final Map<String, Vector2f> SMOOTHED = new HashMap<>();
+    /**
+     * Film whose replays this resolver may bind to. Set by the compositor when it binds a film and
+     * cleared when the panel closes, so the fallback below cannot read a stale film.
+     */
+    private static mchorse.bbs_mod.film.Film boundFilm;
 
     private BindingResolver()
     {}
+
+    /** The film used for model-level replay fallback (null = standalone compositor). */
+    public static void setFilm(mchorse.bbs_mod.film.Film film)
+    {
+        boundFilm = film;
+
+        if (film == null)
+        {
+            SMOOTHED.clear();
+        }
+    }
 
     public static Vector2f resolve(CompLayer layer, CompRenderContext context)
     {
@@ -159,7 +175,50 @@ public final class BindingResolver
             return new Vector2f(projected.x, projected.y);
         }
 
-        return null;
+        /* No live controller (export frame, paused world, just-opened project): evaluate the
+         * replay's own position channels at the composition time. Without this a binding looked
+         * correct in the editor (live entities exist) and silently fell back to the layer's own
+         * X/Y in the encoded frame. */
+        return replayFromFilm(context, binding);
+    }
+
+    /**
+     * Model-level fallback: the replay's curated x/y/z channels at the film tick.
+     *
+     * <p>The compositor time is in seconds and BBS films are in 20 ticks per second, the same
+     * mapping the clip/loop synchronisation uses. Eye height is approximated (the model form is not
+     * instantiated here); it is a HUD anchor, not a physical contact point.</p>
+     */
+    private static Vector2f replayFromFilm(CompRenderContext context, CompBinding binding)
+    {
+        if (boundFilm == null)
+        {
+            return null;
+        }
+
+        mchorse.bbs_mod.film.replays.Replay replay = boundFilm.replays.getById(binding.target);
+
+        if (replay == null || replay.keyframes == null)
+        {
+            return null;
+        }
+
+        if (replay.keyframes.x == null || replay.keyframes.y == null || replay.keyframes.z == null
+            || replay.keyframes.x.isEmpty() || replay.keyframes.y.isEmpty()
+            || replay.keyframes.z.isEmpty())
+        {
+            return null;
+        }
+
+        double tick = Math.max(0D, context.time * 20D);
+        double x = replay.keyframes.x.interpolate((float) tick);
+        double y = replay.keyframes.y.interpolate((float) tick);
+        double z = replay.keyframes.z.interpolate((float) tick);
+
+        Vector4f projected = project(context.projection, context.camera, x,
+            y + 1.6F + binding.worldOffsetY, z, context.width, context.height);
+
+        return projected == null ? null : new Vector2f(projected.x, projected.y);
     }
 
     private static Vector4f project(Matrix4f projection, Camera camera, double x, double y, double z, float width, float height)

@@ -625,11 +625,12 @@ final class LayerContentRenderer
          * a nested comp is not the film canvas, so its background colour must not paint an opaque
          * rectangle over every layer below (that is what turned "预合成" into a black box). */
         /*
-         * EffectCraft/AE Collapse Transformations: a precomp with no masks/effects/styles lets its
-         * nested 3D layers join the parent's camera space instead of being projected through the
-         * child comp's camera and then flattened. This is what keeps a multi-layer 3D selection's
-         * relationship intact when it is grouped into a precomp. Masks/effects/styles force the
-         * normal flattened render, because they are applied to the precomp layer itself.
+         * EffectCraft/AE Collapse Transformations: a collapsed precomp lets its nested 3D layers
+         * join the parent's camera space instead of being projected through the child comp's camera
+         * and then flattened. This is what keeps a multi-layer 3D selection's relationship intact
+         * when it is grouped into a precomp. Collapse depends only on the user's switch; masks,
+         * effects and styles on the precomp layer are applied afterwards in composition space, so
+         * adding one can never change the nested projection (and its scale).
          */
         boolean collapse = usesParentCameraForPrecomp(layer);
 
@@ -705,17 +706,19 @@ final class LayerContentRenderer
     }
 
     /**
-     * True only for a precomp that opted into Collapse Transformations and has no per-layer pixels
-     * of its own. A normal precomp is flattened with its own camera; inheriting the parent viewport
-     * projection here would project the nested scene once into its raster and a second time when
-     * the raster becomes a quad (the 3D precomp bug).
+     * True for a precomp that opted into Collapse Transformations.
+     *
+     * <p>Collapse is a projection decision: the nested composition is evaluated in the parent's
+     * camera space instead of being flattened through its own camera. It must therefore depend only
+     * on the user's switch, <b>not</b> on whether the precomp layer later receives a mask, effect or
+     * layer style. Effect presence used to disable collapse, so adding any effect silently changed
+     * the nested 3D content's scale/projection — the reported "applying an effect to a precomp
+     * changes its size" jump. Pixel operations on a collapsed precomp are applied to the composed
+     * parent-space image (see {@code CompRenderer.shouldBake3D}).</p>
      */
     static boolean usesParentCameraForPrecomp(CompLayer layer)
     {
-        return layer != null && layer.collapse
-            && (layer.masks == null || layer.masks.isEmpty())
-            && (layer.effects == null || layer.effects.isEmpty())
-            && (layer.styles == null || layer.styles.isEmpty());
+        return layer != null && layer.collapse;
     }
 
     private static void drawPrecompPlaceholder(CompLayer layer, Batcher2D batcher, String hint)

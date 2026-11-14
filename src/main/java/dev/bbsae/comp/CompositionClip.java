@@ -33,9 +33,64 @@ public class CompositionClip extends CameraClip
     public final ValueBoolean hold = new ValueBoolean("hold", true);
 
     /**
-     * Makes sure a film's camera timeline actually carries the composition instance. Opening the
-     * compositor from a film is an explicit promise that this film should show it; without the
-     * clip the overlay is never sampled and the exported video silently has no compositor.
+     * Finds the composition clip for one project/comp without creating or modifying anything.
+     *
+     * <p>Opening the compositor is a view action; it must not add a clip to the film timeline. A
+     * clip is document content (it is what makes BBS sample the composition into the final frame),
+     * so it is only added by an explicit action or by an export that needs it.</p>
+     */
+    public static CompositionClip findForFilm(mchorse.bbs_mod.film.Film film, String projectId, String compId)
+    {
+        if (film == null || projectId == null || compId == null)
+        {
+            return null;
+        }
+
+        for (CompositionClip clip : film.camera.getClips(CompositionClip.class))
+        {
+            if (projectId.equals(clip.project.get()) && compId.equals(clip.comp.get()))
+            {
+                return clip;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Updates an existing composition clip's timing/title, and never creates one.
+     *
+     * <p>Used by every duration/edit path in the compositor: the film timeline is only touched when
+     * the composition is already on it. {@link #ensureForFilm} stays for the explicit "add to film
+     * timeline" action and for export preparation.</p>
+     */
+    public static CompositionClip updateForFilm(mchorse.bbs_mod.film.Film film, String projectId,
+                                                String compId, float compDurationSeconds)
+    {
+        CompositionClip clip = findForFilm(film, projectId, compId);
+
+        if (clip == null)
+        {
+            return null;
+        }
+
+        int duration = exportDurationTicks(film.calculateDuration(), compDurationSeconds);
+
+        clip.tick.set(0);
+        clip.duration.set(duration);
+
+        if (clip.title.get() == null || clip.title.get().isBlank() || "Compositor".equals(clip.title.get()))
+        {
+            clip.title.set("合成器");
+        }
+
+        return clip;
+    }
+
+    /**
+     * Adds the composition instance clip if it is missing (explicit "add to film timeline" and
+     * export preparation). Never called by merely opening the compositor; see
+     * {@link #updateForFilm}.
      */
     public static CompositionClip ensureForFilm(mchorse.bbs_mod.film.Film film, String projectId, String compId)
     {

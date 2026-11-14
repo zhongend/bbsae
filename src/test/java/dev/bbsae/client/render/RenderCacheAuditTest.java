@@ -355,9 +355,12 @@ public class RenderCacheAuditTest
         assertTrue(LayerContentRenderer.usesParentCameraForPrecomp(layer),
             "Collapse Transformations explicitly joins the parent camera");
 
+        /* Collapse is a projection decision. A mask/effect/style on the precomp layer is applied to
+         * the composed parent-space image, so it must not flip the child's camera (doing so made the
+         * precomp jump in size the moment an effect was added). */
         layer.masks.add(new CompMask("mask"));
-        assertFalse(LayerContentRenderer.usesParentCameraForPrecomp(layer),
-            "a precomp with its own mask must stay flattened");
+        assertTrue(LayerContentRenderer.usesParentCameraForPrecomp(layer),
+            "a pixel operation must not change the nested projection");
     }
 
     @Test
