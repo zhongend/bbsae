@@ -6722,7 +6722,13 @@ public class UICompositorPanel extends UIDashboardPanel
             CompReplayBridge.setVirtualEnabled(film, false);
         }
 
+        this.syncExternalAssets();
         this.probeMissingAudioMetadata();
+
+        if (this.projectBin != null)
+        {
+            this.projectBin.refresh();
+        }
 
         if (this.trackTimeline != null)
         {
@@ -7090,6 +7096,11 @@ public class UICompositorPanel extends UIDashboardPanel
         this.time = 0F;
         this.playing = false;
         this.playRate = 0F;
+
+        if (this.projectBin != null)
+        {
+            this.projectBin.refresh();
+        }
         this.setSingleSelection(comp == null || comp.layers.isEmpty() ? null : comp.layers.get(comp.layers.size() - 1));
         this.replaySelector.label = IKey.constant("工程：" + (project.name == null ? project.id : project.name));
 
@@ -7106,6 +7117,14 @@ public class UICompositorPanel extends UIDashboardPanel
         this.loadPanelLayout();
         this.primedWidth = -1;
         this.updateCompPath();
+        this.syncExternalAssets();
+        this.probeMissingAudioMetadata();
+
+        if (this.projectBin != null)
+        {
+            this.projectBin.refresh();
+        }
+
         this.save();
     }
 
