@@ -205,6 +205,19 @@ public class CompProject
         public boolean autoSave = true;
         /** Absolute external media links shown in the project asset browser; never copied. */
         public List<String> externalAssets = new ArrayList<>();
+        /**
+         * User-created project-panel bins. An empty list is shown as one implicit "项目素材" bin;
+         * the first rename/add materialises it so new projects stay uncluttered.
+         */
+        public List<CompMediaBin> mediaBins = new ArrayList<>();
+        /**
+         * Stable media token ("images/a.png" or "external:C:/media/a.png") to bin id.
+         *
+         * <p>A map instead of a bin-owned item list keeps media that was imported by another path
+         * (OS drop, "导入音频", an old project) in the panel automatically: an unassigned item is
+         * simply in the default bin.</p>
+         */
+        public java.util.Map<String, String> mediaBinAssignments = new java.util.LinkedHashMap<>();
         public boolean showSafeArea = true;
         public boolean showGrid = false;
         public int gridSize = 80;

@@ -39,11 +39,17 @@ public final class CompAudioPlayer
     private static String loadedKey = "";
     private static boolean wanted;
     private static float startTime;
+    /** Last playhead seen; a rebuilt mix starts here, not where playback originally began. */
+    private static float lastTime;
 
     private static Thread worker;
     private static volatile float[] pending;
     private static volatile String pendingKey;
     private static volatile int generation;
+    private static volatile boolean loading;
+    private static volatile String failure;
+    private static String failedKey = "";
+    private static String status = "无预览音频";
 
     private CompAudioPlayer()
     {}
@@ -72,6 +78,7 @@ public final class CompAudioPlayer
 
                 key.append(clip.path).append(',').append(clip.start).append(',').append(clip.offset)
                     .append(',').append(clip.duration).append(',').append(clip.gain).append(',')
+                    .append(clip.pitch).append(',').append(clip.speed).append(',').append(clip.pan).append(',')
                     .append(clip.fadeIn).append(',').append(clip.fadeOut).append(',')
                     .append(clip.muted ? 1 : 0).append(',').append(clip.loop ? 1 : 0).append(';');
             }
@@ -95,6 +102,7 @@ public final class CompAudioPlayer
 
         wanted = true;
         startTime = time;
+        lastTime = time;
 
         ensureBuffer(project, doc);
 
@@ -139,6 +147,7 @@ public final class CompAudioPlayer
     public static void seek(float time)
     {
         startTime = time;
+        lastTime = time;
 
         if (player != null)
         {
@@ -153,6 +162,8 @@ public final class CompAudioPlayer
      */
     public static void sync(float time)
     {
+        lastTime = time;
+
         if (!wanted || player == null)
         {
             return;
@@ -177,10 +188,24 @@ public final class CompAudioPlayer
     /** Drains the mixer thread on the client thread. Call once per frame. */
     public static void tick()
     {
+        String error = failure;
+
+        if (error != null && pending == null)
+        {
+            failure = null;
+            status = error;
+            failedKey = pendingKey == null ? keyOf(currentDoc) : pendingKey;
+        }
+
         float[] samples = pending;
 
         if (samples == null)
         {
+            if (loading)
+            {
+                status = "正在混音…";
+            }
+
             return;
         }
 
@@ -188,8 +213,24 @@ public final class CompAudioPlayer
 
         String key = pendingKey;
 
-        if (samples.length == 0 || key == null || !key.equals(keyOf(currentDoc)))
+        if (key == null || !key.equals(keyOf(currentDoc)))
         {
+            return;
+        }
+
+        loading = false;
+
+        if (samples.length == 0)
+        {
+            /* A clip exists but nothing could be decoded: this used to be indistinguishable from
+             * "no audio", leaving the user with a silent preview and no reason. Keep the key so
+             * the worker is not restarted every frame; invalidate() retries after an edit. */
+            loadedKey = key;
+            pendingKey = null;
+            failedKey = key;
+            status = "音频无法解码或文件缺失（检查素材路径 / FFmpeg）";
+            releaseBuffer();
+
             return;
         }
 
@@ -214,15 +255,21 @@ public final class CompAudioPlayer
                     samples.length, describe(), currentDoc == null ? 0 : currentDoc.audio.size());
             }
 
+            status = "预览音频 " + String.format(java.util.Locale.ROOT, "%.2fs", samples.length
+                / (float) CompAudioMixer.SAMPLE_RATE / CompAudioMixer.CHANNELS);
+
             if (wanted)
             {
-                player.setPlaybackPosition(Math.max(0F, startTime));
+                /* Start where the playhead is NOW. Rebuilding after a volume edit used to jump
+                 * back to the position playback started at, which sounded like a rewind. */
+                player.setPlaybackPosition(Math.max(0F, lastTime));
                 player.play();
             }
         }
         catch (Exception e)
         {
             dev.bbsae.BbsAeAddon.LOGGER.warn("Could not create the preview audio buffer", e);
+            status = "无法创建预览音频缓冲区";
             releaseBuffer();
         }
     }
@@ -235,6 +282,11 @@ public final class CompAudioPlayer
         currentDoc = doc;
 
         String key = keyOf(doc);
+
+        if (key.equals(failedKey))
+        {
+            return;
+        }
 
         if (key.equals(loadedKey) && player != null)
         {
@@ -250,7 +302,7 @@ public final class CompAudioPlayer
         }
 
         /* A mix for exactly this key is already on its way. */
-        if (pendingKey != null && pendingKey.equals(key) && worker != null && worker.isAlive())
+        if (pendingKey != null && pendingKey.equals(key) && loading)
         {
             return;
         }
@@ -259,6 +311,9 @@ public final class CompAudioPlayer
 
         pendingKey = key;
         pending = null;
+        failure = null;
+        loading = true;
+        status = "正在混音…";
 
         /* (Re)start even when the previous worker is still alive: its result is dropped by the
          * ticket check, and waiting for it here used to leave the new key without any worker at
@@ -268,18 +323,25 @@ public final class CompAudioPlayer
             try
             {
                 float[] samples = CompAudioMixer.mix(doc,
-                    (path) -> CompAudioMixer.resolver(dev.bbsae.comp.CompStore.assetRoot(project.id)).apply(path),
+                    CompAudioMixer.projectResolver(project.id),
                     0F, Math.max(0.05F, doc.duration),
                     (message) -> dev.bbsae.BbsAeAddon.LOGGER.warn("[bbsae] {}", message));
 
                 if (ticket == generation)
                 {
                     pending = samples;
+                    loading = false;
                 }
             }
             catch (Exception e)
             {
                 dev.bbsae.BbsAeAddon.LOGGER.warn("Could not mix preview audio", e);
+
+                if (ticket == generation)
+                {
+                    loading = false;
+                    failure = "预览音频混音失败：" + e.getMessage();
+                }
             }
         }, "bbsae-preview-audio");
 
@@ -295,6 +357,10 @@ public final class CompAudioPlayer
         pendingKey = null;
         loadedKey = "";
         wanted = false;
+        loading = false;
+        failure = null;
+        failedKey = "";
+        status = "无预览音频";
 
         releaseBuffer();
     }
@@ -335,12 +401,41 @@ public final class CompAudioPlayer
 
     public static String describe()
     {
-        if (player == null)
+        if (player != null)
         {
-            return pending != null ? "混音中…" : "无预览音频";
+            return "预览音频 " + String.format(java.util.Locale.ROOT, "%.2fs", player.getPlaybackPosition())
+                + (player.isPlaying() ? " 播放中" : " 已暂停");
         }
 
-        return "预览音频 " + String.format(java.util.Locale.ROOT, "%.2fs", player.getPlaybackPosition())
-            + (player.isPlaying() ? " 播放中" : " 已暂停");
+        return status;
+    }
+
+    /** Status for the inspector: mixing, playing, paused or a concrete failure. */
+    public static String status()
+    {
+        if (player != null && player.isPlaying())
+        {
+            return "播放中 · " + String.format(java.util.Locale.ROOT, "%.2fs", player.getPlaybackPosition());
+        }
+
+        if (loading)
+        {
+            return "混音中…";
+        }
+
+        return status;
+    }
+
+    /** True while a mix is being prepared or a buffer is ready. */
+    public static boolean isActive()
+    {
+        return loading || player != null
+            || (failedKey != null && !failedKey.isEmpty() && failedKey.equals(keyOf(currentDoc)));
+    }
+
+    /** True while a mix is being prepared on the worker thread. */
+    public static boolean isLoading()
+    {
+        return loading;
     }
 }

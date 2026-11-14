@@ -172,6 +172,120 @@ public final class CompStore
         return root().resolve(safe(projectId)).resolve("assets");
     }
 
+    /**
+     * Resolves any media token used by layers and audio clips to a file on disk.
+     *
+     * <h2>Why one resolver</h2>
+     * <p>Over the project's life three spellings appeared: {@code external:C:/...},
+     * project-relative {@code images/a.png}, and the older {@code assets/images/a.png}. Each
+     * consumer (texture cache, audio mixer, video frames, asset panel) used to guess separately;
+     * one of them guessing "external:" first while another treated a Windows drive as a namespace
+     * is how a perfectly valid import becomes a blank layer. The order here is explicit:</p>
+     * <ol>
+     *   <li>{@code external:} -> that absolute path, untouched;</li>
+     *   <li>an absolute path -> itself;</li>
+     *   <li>{@code assets/...} relative to the project folder, then the assets root;</li>
+     *   <li>project-relative, then the assets root.</li>
+     * </ol>
+     * Resource-pack ids ({@code mc:...}) are not files and intentionally return null.
+     */
+    public static Path resolveAsset(String projectId, String path)
+    {
+        if (path == null || path.isBlank())
+        {
+            return null;
+        }
+
+        try
+        {
+            if (path.startsWith("external:"))
+            {
+                return Path.of(path.substring("external:".length()));
+            }
+
+            if (isResourcePath(path))
+            {
+                return null;
+            }
+
+            Path raw = Path.of(path);
+
+            if (raw.isAbsolute())
+            {
+                return raw;
+            }
+
+            Path projectRoot = file(projectId).getParent();
+            Path projectRelative = projectRoot == null ? null : projectRoot.resolve(path);
+
+            if (projectRelative != null && Files.isRegularFile(projectRelative))
+            {
+                return projectRelative;
+            }
+
+            String assetPath = path.startsWith("assets/") ? path.substring("assets/".length()) : path;
+            Path asset = assetRoot(projectId).resolve(assetPath);
+
+            if (Files.isRegularFile(asset))
+            {
+                return asset;
+            }
+
+            /* Return the most likely target even when it does not exist yet: callers use the path
+             * to report "missing" and to know where a conversion is about to write. */
+            return projectRelative != null ? projectRelative : asset;
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    /** True for a resource-pack id such as {@code mc:textures/...}, not a Windows drive path. */
+    public static boolean isResourcePath(String path)
+    {
+        if (path == null || path.isBlank())
+        {
+            return false;
+        }
+
+        /* An external link is a file path even when it contains a colon (Windows drive) or a
+         * leading slash (POSIX). The prefix is the unambiguous marker. */
+        if (path.startsWith("external:"))
+        {
+            return false;
+        }
+
+        /* A Windows drive ("C:/..." or "C:\...") has a colon at index 1; a resource namespace has
+         * at least one character and is followed by a slash-free identifier. */
+        int colon = path.indexOf(':');
+
+        if (colon <= 0)
+        {
+            return false;
+        }
+
+        if (colon == 1 && path.length() > 2 && (path.charAt(2) == '/' || path.charAt(2) == '\\'))
+        {
+            return false;
+        }
+
+        return !path.startsWith("/") && !path.contains("\\");
+    }
+
+    /** Canonical stored token for an external file: {@code external:<absolute path>}. */
+    public static String externalToken(java.io.File file)
+    {
+        return "external:" + file.getAbsoluteFile().toPath().normalize();
+    }
+
+    /** Path part of an {@code external:} token, or the input when it is not one. */
+    public static String externalRaw(String path)
+    {
+        return path != null && path.startsWith("external:")
+            ? path.substring("external:".length()) : path;
+    }
+
     public static Path exportRoot(String projectId)
     {
         return FabricLoader.getInstance().getConfigDir().resolve("bbsae").resolve("exports").resolve(safe(projectId));
@@ -1099,6 +1213,7 @@ public final class CompStore
         project.outputPresets = defaultPresets();
         project.settings = new CompProject.CompSettings();
         project.settings.logicVersion = 1;
+        CompMediaLibrary.ensureDefaultBin(project);
 
         CompDocument comp = project.getCompOrFirst(DEFAULT_COMP);
 

@@ -14,7 +14,10 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.function.Function;
 
 /**
@@ -103,6 +106,12 @@ public final class CompAudioMixer
         float[] out = new float[total * CHANNELS];
         boolean any = false;
 
+        /* One decode per physical file per mix. A project may use the same music bed twice (an
+         * intro and a reprise); decoding it twice was pure latency and memory. */
+        Map<String, Source> sources = new HashMap<>();
+        Map<String, Source> retimed = new HashMap<>();
+        Map<String, Source> shifted = new HashMap<>();
+
         for (CompAudio clip : comp.audio)
         {
             if (clip == null || clip.muted || clip.path == null || clip.path.isBlank())
@@ -110,14 +119,34 @@ public final class CompAudioMixer
                 continue;
             }
 
-            Source source = decode(resolver, clip, log);
+            Source source = decode(resolver, clip, log, sources);
 
             if (source == null)
             {
                 continue;
             }
 
-            if (mixClip(out, total, clip, source, start))
+            float speed = clip.safeSpeed();
+
+            if (Math.abs(speed - 1F) > 0.001F)
+            {
+                String key = sourceKey(clip.path, source) + "|speed:" + speed;
+                final Source input = source;
+
+                source = retimed.computeIfAbsent(key, (ignored) -> timeStretch(input, speed));
+            }
+
+            float pitch = clip.safePitch();
+
+            if (Math.abs(pitch) > 0.001F)
+            {
+                String key = sourceKey(clip.path, source) + "|pitch:" + pitch;
+                final Source input = source;
+
+                source = shifted.computeIfAbsent(key, (ignored) -> pitchShift(input, pitch));
+            }
+
+            if (mixClip(out, total, clip, source, start, comp.duration))
             {
                 any = true;
             }
@@ -126,10 +155,15 @@ public final class CompAudioMixer
         return any ? out : new float[0];
     }
 
-    private static boolean mixClip(float[] out, int total, CompAudio clip, Source source, float exportStart)
+    private static boolean mixClip(float[] out, int total, CompAudio clip, Source source,
+                                   float exportStart, float compDuration)
     {
+        float speed = clip.safeSpeed();
         float clipStart = clip.start;
-        float clipLength = clip.duration > 0F ? clip.duration : Math.max(0F, source.duration() - Math.max(0F, clip.offset));
+        float sourceOffsetSeconds = Math.max(0F, clip.offset) / speed;
+        float clipLength = clip.duration > 0F
+            ? clip.duration
+            : Math.max(0F, source.duration() - sourceOffsetSeconds);
 
         if (clipLength <= 0F)
         {
@@ -152,16 +186,8 @@ public final class CompAudioMixer
          * first second of the file instead of the third — every range export was shifted by its
          * start time. `local` alone is only the offset from the first *exported* frame. */
         float seek = Math.max(0F, exportStart - clipStart);
-        int sourceOffset = Math.round((Math.max(0F, clip.offset) + seek) * SAMPLE_RATE);
-
-        if (sourceOffset < 0)
-        {
-            sourceOffset = 0;
-        }
-
-        float gain = Math.max(0F, clip.gain);
-        float fadeIn = Math.max(0F, clip.fadeIn);
-        float fadeOut = Math.max(0F, clip.fadeOut);
+        int sourceOffset = Math.round((sourceOffsetSeconds + seek) * SAMPLE_RATE);
+        int loopStart = Math.round(sourceOffsetSeconds * SAMPLE_RATE);
         int sourceFrames = source.frames;
 
         /* An in-point at or past the end of the decoded file has nothing to play — not even to
@@ -172,13 +198,24 @@ public final class CompAudioMixer
             return false;
         }
 
-        int loopLength = sourceFrames - sourceOffset;
+        if (loopStart < 0 || loopStart >= sourceFrames)
+        {
+            loopStart = 0;
+        }
+
+        int loopLength = Math.max(1, sourceFrames - loopStart);
+        float gain = Math.max(0F, clip.gain);
+        float fadeIn = Math.max(0F, clip.fadeIn);
+        float fadeOut = Math.max(0F, clip.fadeOut);
+        float pan = clip.safePan();
+        float leftGain = pan > 0F ? 1F - pan : 1F;
+        float rightGain = pan < 0F ? 1F + pan : 1F;
         boolean any = false;
 
         for (int frame = firstFrame; frame < lastFrame; frame++)
         {
             int local = frame - firstFrame;
-            int index = sourceOffset + local;
+            long index = sourceOffset + (long) local;
 
             if (index >= sourceFrames)
             {
@@ -187,8 +224,14 @@ public final class CompAudioMixer
                     break;
                 }
 
-                /* sourceOffset < sourceFrames, so this always lands inside the file. */
-                index = sourceOffset + (local % loopLength);
+                /* Loop from the clip's own in-point, not from the beginning of the file: a clip
+                 * trimmed into a 12 s bed must repeat that region, not jump back to 0. */
+                index = loopStart + (index - loopStart) % loopLength;
+            }
+
+            if (index < 0 || index >= sourceFrames)
+            {
+                break;
             }
 
             /* Time since the clip's own in-point: fades are anchored to the clip, not to the
@@ -211,12 +254,168 @@ public final class CompAudioMixer
                 }
             }
 
-            out[frame * 2] += source.left[index] * envelope;
-            out[frame * 2 + 1] += source.right[index] * envelope;
+            int sample = (int) index;
+
+            out[frame * 2] += source.left[sample] * envelope * leftGain;
+            out[frame * 2 + 1] += source.right[sample] * envelope * rightGain;
             any = true;
         }
 
         return any;
+    }
+
+    /**
+     * Time-stretches a source by {@code speed} without changing its pitch.
+     *
+     * <p>Speed used to be implemented by skipping samples in the mix loop. That makes a 2x clip
+     * also play an octave up, which is why "变速" and "音调" could not be independent. Grains are
+     * copied 1:1 (no resampling) and the input hop is multiplied by the speed, so the waveform is
+     * compressed/expanded while every grain keeps its original frequency.</p>
+     */
+    static Source timeStretch(Source input, float speed)
+    {
+        if (input.frames < 4 || Math.abs(speed - 1F) < 0.001F)
+        {
+            return input;
+        }
+
+        speed = Math.max(0.05F, Math.min(8F, speed));
+
+        /* Never allocate more than the mix's own upper bound: a 3-minute file at 0.05x would be
+         * an hour-long buffer for a clip that no composition can use. */
+        float floorSpeed = input.frames / (float) (SAMPLE_RATE * MAX_MIX_SECONDS);
+        speed = Math.max(speed, Math.max(0.05F, floorSpeed));
+
+        int outputFrames = Math.max(1, Math.round(input.frames / speed));
+        int grain = Math.min(PITCH_GRAIN, Math.max(32, input.frames));
+        int hop = Math.max(1, grain / 2);
+        float[] left = new float[outputFrames];
+        float[] right = new float[outputFrames];
+        float[] weight = new float[outputFrames];
+        float[] window = new float[grain];
+
+        for (int i = 0; i < grain; i++)
+        {
+            window[i] = (float) (0.5D - 0.5D * Math.cos(2D * Math.PI * i / (grain - 1D)));
+        }
+
+        for (int outStart = 0; outStart < outputFrames; outStart += hop)
+        {
+            int inStart = (int) Math.round(outStart * (double) speed);
+            int count = Math.min(grain, Math.min(outputFrames - outStart, input.frames - inStart));
+
+            if (count <= 0)
+            {
+                continue;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                float w = window[i];
+
+                left[outStart + i] += input.left[inStart + i] * w;
+                right[outStart + i] += input.right[inStart + i] * w;
+                weight[outStart + i] += w;
+            }
+        }
+
+        for (int i = 0; i < outputFrames; i++)
+        {
+            float w = weight[i];
+
+            if (w > 0.0001F)
+            {
+                left[i] /= w;
+                right[i] /= w;
+            }
+        }
+
+        return new Source(left, right, outputFrames);
+    }
+
+    /**
+     * Granular overlap-add pitch shifter.
+     *
+     * <p>Resampling alone would make +12 semitones play twice as fast. Grains of {@value #PITCH_GRAIN}
+     * samples are read at the pitch ratio and laid down at the original hop, so the clip keeps its
+     * timeline length while the tone moves. This is the classic cheap granular approach: good
+     * enough for a Minecraft film's dialogue/music bed, deterministic, and dependency-free.</p>
+     */
+    private static final int PITCH_GRAIN = 2048;
+
+    static Source pitchShift(Source input, float semitones)
+    {
+        int frames = input.frames;
+
+        if (frames < 4 || Math.abs(semitones) < 0.001F)
+        {
+            return input;
+        }
+
+        double ratio = Math.pow(2D, Math.max(-48F, Math.min(48F, semitones)) / 12D);
+        int grain = Math.min(PITCH_GRAIN, Math.max(32, frames));
+        int hop = Math.max(1, grain / 2);
+        float[] left = new float[frames];
+        float[] right = new float[frames];
+        float[] weight = new float[frames];
+        float[] window = new float[grain];
+
+        for (int i = 0; i < grain; i++)
+        {
+            window[i] = (float) (0.5D - 0.5D * Math.cos(2D * Math.PI * i / (grain - 1D)));
+        }
+
+        for (int start = 0; start < frames; start += hop)
+        {
+            int count = Math.min(grain, frames - start);
+
+            for (int i = 0; i < count; i++)
+            {
+                double source = start + i * ratio;
+                int index = (int) Math.floor(source);
+                float fraction = (float) (source - index);
+
+                if (index >= frames - 1)
+                {
+                    index = frames - 1;
+                    fraction = 0F;
+                }
+
+                if (index < 0)
+                {
+                    index = 0;
+                    fraction = 0F;
+                }
+
+                float valueL = input.left[index];
+                float valueR = input.right[index];
+
+                if (index + 1 < frames)
+                {
+                    valueL += (input.left[index + 1] - valueL) * fraction;
+                    valueR += (input.right[index + 1] - valueR) * fraction;
+                }
+
+                float w = window[i];
+
+                left[start + i] += valueL * w;
+                right[start + i] += valueR * w;
+                weight[start + i] += w;
+            }
+        }
+
+        for (int i = 0; i < frames; i++)
+        {
+            float w = weight[i];
+
+            if (w > 0.0001F)
+            {
+                left[i] /= w;
+                right[i] /= w;
+            }
+        }
+
+        return new Source(left, right, frames);
     }
 
     /** Clips to -1..1 and converts to little-endian 16-bit PCM. */
@@ -268,7 +467,7 @@ public final class CompAudioMixer
 
     /* Decoding */
 
-    private static final class Source
+    static final class Source
     {
         final float[] left;
         final float[] right;
@@ -287,7 +486,7 @@ public final class CompAudioMixer
         }
     }
 
-    private static Source decode(Resolver resolver, CompAudio clip, Log log)
+    private static Source decode(Resolver resolver, CompAudio clip, Log log, Map<String, Source> cache)
     {
         Path file;
 
@@ -307,6 +506,25 @@ public final class CompAudioMixer
             return null;
         }
 
+        String key;
+
+        try
+        {
+            key = file.toAbsolutePath() + "|" + Files.getLastModifiedTime(file).toMillis()
+                + "|" + Files.size(file);
+        }
+        catch (Exception e)
+        {
+            key = file.toAbsolutePath().toString();
+        }
+
+        Source cached = cache.get(key);
+
+        if (cached != null)
+        {
+            return cached;
+        }
+
         try
         {
             byte[] bytes = Files.readAllBytes(file);
@@ -319,7 +537,11 @@ public final class CompAudioMixer
                 return null;
             }
 
-            return toSource(wave);
+            Source source = toSource(wave);
+
+            cache.put(key, source);
+
+            return source;
         }
         catch (Exception e)
         {
@@ -327,6 +549,11 @@ public final class CompAudioMixer
 
             return null;
         }
+    }
+
+    private static String sourceKey(String path, Source source)
+    {
+        return path + "|" + source.frames;
     }
 
     public static Wave readWave(Path file) throws Exception
@@ -340,24 +567,20 @@ public final class CompAudioMixer
 
         if (name.endsWith(".wav") || startsWith(bytes, 'R', 'I', 'F', 'F'))
         {
+            /* Our parser handles 8/16/24/32-bit PCM and 32-bit float and does not need a chunk
+             * terminator. BBS's reader is kept as the fallback for exotic chunks it understands
+             * (lists/cues) and for WAVE_FORMAT_EXTENSIBLE. Trying the small parser first also
+             * avoids logging an EOF for every ordinary 8-bit file. */
+            Wave parsed = parseWav(bytes);
+
+            if (parsed != null)
+            {
+                return parsed;
+            }
+
             try (InputStream in = new ByteArrayInputStream(bytes))
             {
                 return new WaveReader().read(in);
-            }
-            catch (Throwable readerFailure)
-            {
-                /* BBS's reader walks chunks until it hits a terminator, so a perfectly valid file
-                 * that simply ends after its data chunk (python's wave module, a few exporters)
-                 * throws EOFException there. Fall back to a plain RIFF parser instead of losing
-                 * the clip: the frames are already in the bytes. */
-                Wave fallback = parseWav(bytes);
-
-                if (fallback != null)
-                {
-                    return fallback;
-                }
-
-                throw readerFailure;
             }
         }
 
@@ -525,45 +748,85 @@ public final class CompAudioMixer
     /** Converts any decoded wave to 48 kHz stereo floats. */
     private static Source toSource(Wave wave)
     {
-        Wave pcm = wave.bitsPerSample == 16 ? wave : wave.convertTo16();
-        int channels = Math.max(1, pcm.numChannels);
-        int bytesPerSample = Math.max(1, pcm.getBytesPerSample());
+        int channels = Math.max(1, wave.numChannels);
+        int bits = Math.max(8, wave.bitsPerSample);
+        int bytesPerSample = Math.max(1, bits / 8);
         int frameBytes = channels * bytesPerSample;
-        int frames = pcm.data.length / Math.max(1, frameBytes);
+        int frames = wave.data == null ? 0 : wave.data.length / Math.max(1, frameBytes);
 
         float[] left = new float[frames];
         float[] right = new float[frames];
+        boolean floatFormat = wave.audioFormat == 3;
 
         for (int frame = 0; frame < frames; frame++)
         {
             int base = frame * frameBytes;
 
-            left[frame] = sample(pcm.data, base, bytesPerSample);
+            left[frame] = sample(wave.data, base, bits, floatFormat);
             right[frame] = channels > 1
-                ? sample(pcm.data, base + bytesPerSample, bytesPerSample)
+                ? sample(wave.data, base + bytesPerSample, bits, floatFormat)
                 : left[frame];
         }
 
-        if (pcm.sampleRate == SAMPLE_RATE || pcm.sampleRate <= 0)
+        if (wave.sampleRate == SAMPLE_RATE || wave.sampleRate <= 0)
         {
             return new Source(left, right, frames);
         }
 
-        return resample(left, right, pcm.sampleRate);
+        return resample(left, right, wave.sampleRate);
     }
 
-    private static float sample(byte[] data, int offset, int bytesPerSample)
+    /**
+     * One sample in -1..1 for 8/16/24/32-bit PCM and 32-bit IEEE float.
+     *
+     * <p>The old conversion delegated non-16-bit formats to BBS's {@code Wave.convertTo16()},
+     * which cannot handle 8-bit PCM (it reads four bytes from a one-byte buffer) and treats every
+     * 32-bit sample as integer. An 8-bit WAV therefore produced no waveform AND no playback —
+     * exactly the kind of "the file is valid but the editor is silent" bug this method removes.</p>
+     */
+    private static float sample(byte[] data, int offset, int bits, boolean floatFormat)
     {
-        if (bytesPerSample == 1)
+        if (offset < 0 || offset >= data.length)
+        {
+            return 0F;
+        }
+
+        if (bits <= 8)
         {
             return ((data[offset] & 0xFF) - 128) / 128F;
         }
 
-        int low = data[offset] & 0xFF;
-        int high = bytesPerSample > 1 ? data[offset + 1] : 0;
-        int value = (short) ((high << 8) | low);
+        if (bits <= 16)
+        {
+            int low = data[offset] & 0xFF;
+            int high = offset + 1 < data.length ? data[offset + 1] & 0xFF : 0;
+            short value = (short) ((high << 8) | low);
 
-        return value / 32768F;
+            return value / 32768F;
+        }
+
+        if (bits <= 24)
+        {
+            int b0 = data[offset] & 0xFF;
+            int b1 = offset + 1 < data.length ? data[offset + 1] & 0xFF : 0;
+            int b2 = offset + 2 < data.length ? data[offset + 2] : 0;
+            int value = (b2 << 16) | (b1 << 8) | b0;
+
+            return value / 8388608F;
+        }
+
+        int b0 = data[offset] & 0xFF;
+        int b1 = offset + 1 < data.length ? data[offset + 1] & 0xFF : 0;
+        int b2 = offset + 2 < data.length ? data[offset + 2] & 0xFF : 0;
+        int b3 = offset + 3 < data.length ? data[offset + 3] & 0xFF : 0;
+        int intValue = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+
+        if (floatFormat)
+        {
+            return Float.intBitsToFloat(intValue);
+        }
+
+        return intValue / 2147483648F;
     }
 
     /**
@@ -637,12 +900,22 @@ public final class CompAudioMixer
         };
     }
 
+    /** Resolver for a real project, including the old project-relative spellings. */
+    public static Resolver projectResolver(String projectId)
+    {
+        return (path) -> dev.bbsae.comp.CompStore.resolveAsset(projectId, path);
+    }
+
     /**
      * Source length of an audio file in seconds, or -1 when it cannot be decoded.
      *
-     * <p>Called once at import: the timeline needs a real bar length, and "as long as the source"
-     * is not something a bar can draw. Decoding is fine here — it happens on a user action, not per
-     * frame.</p>
+     * <p>Called at import: the timeline needs a real bar length, and "as long as the source"
+     * is not something a bar can draw. This is deliberately cheaper than a full decode:</p>
+     * <ul>
+     *   <li>a RIFF header answers for WAV without reading the samples;</li>
+     *   <li>FFmpeg's banner answers for everything else in one short process;</li>
+     *   <li>only when FFmpeg is unavailable does it fall back to reading the whole file.</li>
+     * </ul>
      */
     public static float probeDuration(Path file)
     {
@@ -653,6 +926,25 @@ public final class CompAudioMixer
 
         try
         {
+            byte[] head = readHead(file, 256 * 1024);
+
+            if (startsWith(head, 'R', 'I', 'F', 'F'))
+            {
+                float wav = parseWavHeaderDuration(head);
+
+                if (wav > 0F)
+                {
+                    return wav;
+                }
+            }
+
+            float ffmpeg = probeDurationWithFfmpeg(file);
+
+            if (ffmpeg > 0F)
+            {
+                return ffmpeg;
+            }
+
             byte[] bytes = Files.readAllBytes(file);
             Wave wave = readWave(file, bytes);
 
@@ -661,6 +953,166 @@ public final class CompAudioMixer
         catch (Exception e)
         {
             return -1F;
+        }
+    }
+
+    private static byte[] readHead(Path file, int max) throws IOException
+    {
+        try (InputStream in = Files.newInputStream(file))
+        {
+            return in.readNBytes(max);
+        }
+    }
+
+    /**
+     * Declared length of a RIFF/WAVE header, in seconds, without reading the samples.
+     * Returns -1 for anything that is not a complete-enough PCM header.
+     */
+    private static float parseWavHeaderDuration(byte[] bytes)
+    {
+        if (bytes == null || bytes.length < 44)
+        {
+            return -1F;
+        }
+
+        int channels = 0;
+        int sampleRate = 0;
+        int byteRate = 0;
+        int blockAlign = 0;
+        int dataLength = -1;
+        int offset = 12;
+
+        while (offset + 8 <= bytes.length)
+        {
+            String id = new String(bytes, offset, 4, java.nio.charset.StandardCharsets.US_ASCII);
+            int size = (bytes[offset + 4] & 0xFF) | ((bytes[offset + 5] & 0xFF) << 8)
+                | ((bytes[offset + 6] & 0xFF) << 16) | ((bytes[offset + 7] & 0xFF) << 24);
+            int body = offset + 8;
+
+            if ("fmt ".equals(id) && body + 16 <= bytes.length)
+            {
+                channels = (bytes[body + 2] & 0xFF) | ((bytes[body + 3] & 0xFF) << 8);
+                sampleRate = (bytes[body + 4] & 0xFF) | ((bytes[body + 5] & 0xFF) << 8)
+                    | ((bytes[body + 6] & 0xFF) << 16) | ((bytes[body + 7] & 0xFF) << 24);
+                byteRate = (bytes[body + 8] & 0xFF) | ((bytes[body + 9] & 0xFF) << 8)
+                    | ((bytes[body + 10] & 0xFF) << 16) | ((bytes[body + 11] & 0xFF) << 24);
+                blockAlign = (bytes[body + 12] & 0xFF) | ((bytes[body + 13] & 0xFF) << 8);
+            }
+            else if ("data".equals(id))
+            {
+                dataLength = size;
+            }
+
+            if (size < 0)
+            {
+                return -1F;
+            }
+
+            offset = body + size + (size & 1);
+        }
+
+        if (dataLength <= 0 || channels <= 0 || sampleRate <= 0 || blockAlign <= 0)
+        {
+            return -1F;
+        }
+
+        int bytesPerSecond = byteRate > 0 ? byteRate : sampleRate * blockAlign;
+
+        return dataLength / (float) Math.max(1, bytesPerSecond);
+    }
+
+    /**
+     * Reads {@code Duration: hh:mm:ss.xx} from FFmpeg's input banner.
+     *
+     * <p>FFmpeg exits with status 1 when only probing (there is no output), which is expected;
+     * only the banner matters.</p>
+     */
+    public static float probeDurationWithFfmpeg(Path file)
+    {
+        String ffmpeg = mchorse.bbs_mod.utils.FFMpegUtils.getFFMPEG();
+
+        if (ffmpeg == null || ffmpeg.isBlank())
+        {
+            return -1F;
+        }
+
+        try
+        {
+            Process process = new ProcessBuilder(ffmpeg, "-nostdin", "-hide_banner", "-i", file.toAbsolutePath().toString())
+                .redirectErrorStream(true).start();
+            String output;
+
+            try (InputStream in = process.getInputStream())
+            {
+                byte[] bytes = in.readAllBytes();
+
+                output = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            }
+
+            process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
+            process.destroyForcibly();
+
+            java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("Duration:\\s*(\\d+):(\\d{2}):(\\d{2}(?:\\.\\d+)?)")
+                .matcher(output);
+
+            if (matcher.find())
+            {
+                return Integer.parseInt(matcher.group(1)) * 3600F
+                    + Integer.parseInt(matcher.group(2)) * 60F
+                    + Float.parseFloat(matcher.group(3));
+            }
+        }
+        catch (Exception e)
+        {
+            return -1F;
+        }
+
+        return -1F;
+    }
+
+    /**
+     * Peak envelope of a file for the timeline, independent of any clip trim.
+     *
+     * <p>The previous waveform drew the whole file across the clip bar, so trimming a clip made
+     * the picture lie. The editor now slices this envelope by the clip's source window.</p>
+     */
+    public static float[] peakEnvelope(Path file, int buckets)
+    {
+        if (file == null || buckets < 2 || !Files.isRegularFile(file))
+        {
+            return null;
+        }
+
+        try
+        {
+            Wave wave = readWave(file);
+            Source source = wave == null ? null : toSource(wave);
+
+            if (source == null || source.frames <= 0)
+            {
+                return null;
+            }
+
+            float[] peaks = new float[buckets];
+            int frames = source.frames;
+
+            for (int frame = 0; frame < frames; frame++)
+            {
+                int bucket = (int) Math.min(buckets - 1, (long) frame * buckets / frames);
+                float level = Math.max(Math.abs(source.left[frame]), Math.abs(source.right[frame]));
+
+                if (level > peaks[bucket])
+                {
+                    peaks[bucket] = level;
+                }
+            }
+
+            return peaks;
+        }
+        catch (Exception e)
+        {
+            return null;
         }
     }
 

@@ -1,5 +1,20 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix64**：音频与素材工作流大修。
+> - 音频导入后**预览必响**：不再只在 AE 编码器下试听；修复 8-bit WAV 被当成静音、
+>   改音量/音调后预览不再重启、异步解码/复制不卡 UI。
+> - 波形图按**片段的源偏移 / 时长 / 变速 / 循环**绘制，不再把整首歌拉满一条剪辑；
+>   8/16/24/32-bit PCM 与 32-bit float 都能画。
+> - 右侧检查器新增 **「影视」** 页：音频音量、音调（半音）、变速、声像、淡入淡出、
+>   循环/静音、入点/偏移/时长、试听/重新链接；视频图层的适配、尺寸、速度、冻结、
+>   时间重映射和「从视频提取音频到音轨」也在同一页。
+> - 左侧 **「素材箱」**（Premiere 式项目面板）：图片/音频/视频/帧序列统一索引，
+>   自制素材箱、搜索、缩略图；从素材箱拖到时间轴可新建片段，拖到已有轨道则**替换素材**
+>   并保留变换/效果/关键帧；音频可直接拖入音频轨；拖到素材箱行可归档。
+> - 修复素材导入/外链：外部视频登记、Windows 盘符路径不再被当作资源命名空间、
+>   同名文件不再覆盖、序列帧不再被拆成几百张图片、缺失外链可见并可重新链接。
+> - 详见 [`CHANGELOG.md`](CHANGELOG.md) 与 [`docs/ROUND100-ASSET-BIN-FILM-AUDIO.zh.md`](docs/ROUND100-ASSET-BIN-FILM-AUDIO.zh.md)。
+>
 > **0.99-hotfix63**：素材库新增「试听」：外链音频与 BBS 音效可直接预览，外链音频条目
 > 出现在项目分类并支持「加入音轨」；OS 拖入后目标轨道/入点有呼吸高亮和插入线动效；
 > 外链索引自动迁移、音频导入后刷新素材库、当前界面校验等外链 bug 修复。
@@ -124,15 +139,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download [`bbsae-0.99.jar`](https://github.com/zhongend/bbsae/releases/download/v0.99/bbsae-0.99.jar)
-   from the **v0.99** release (the asset is updated with each source push).
+1. Download `bbsae-0.99-hotfix64.jar` from the repository's
+   [releases](https://github.com/zhongend/bbsae/releases), or build it with
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix64.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix64.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
-   **Replay properties 鈫?Compositor 鈫?Open Film Compositor**.
+   **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99.jar` SHA-256: `949554D3FF488C8781CFB07A567B3B7D26F2E7906C63D1AAEF3B025125F37493` (3,814,597 bytes).
+`bbsae-0.99-hotfix64.jar` SHA-256: `C53675F6789BD712A7AC6CE06AD2670F58F144CE8228E938CDB97CBA5A80767E` (4,013,201 bytes).
 
 ## Gallery
 

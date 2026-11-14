@@ -75,7 +75,7 @@ public final class ImageTextureCache
             }
         }
 
-        if (path.indexOf(':') > 0 && !path.startsWith("/") && !path.contains("\\"))
+        if (CompStore.isResourcePath(path))
         {
             return path.hashCode() * 31L + 0x5DEECE66DL;
         }
@@ -110,8 +110,9 @@ public final class ImageTextureCache
         }
 
         /* Any resource-pack namespace (including this mod's "bbsae:") is loaded through the
-         * resource manager; project asset paths never contain a colon. */
-        if (path.indexOf(':') > 0 && !path.startsWith("/") && !path.contains("\\"))
+         * resource manager; project asset paths never contain a colon. A Windows drive path
+         * ("C:/...") must not be mistaken for a namespace — see isResourcePath. */
+        if (CompStore.isResourcePath(path))
         {
             return fromResource(path);
         }
@@ -246,42 +247,7 @@ public final class ImageTextureCache
 
     public static Path resolve(String projectId, String path)
     {
-        try
-        {
-            if (path.startsWith("external:"))
-            {
-                return Path.of(path.substring("external:".length()));
-            }
-
-            Path raw = Path.of(path);
-
-            if (raw.isAbsolute())
-            {
-                return raw;
-            }
-
-            Path projectRoot = CompStore.file(projectId).getParent();
-            Path projectRelative = projectRoot.resolve(path);
-
-            if (Files.isRegularFile(projectRelative))
-            {
-                return projectRelative;
-            }
-
-            String assetPath = path.startsWith("assets/") ? path.substring("assets/".length()) : path;
-            Path asset = CompStore.assetRoot(projectId).resolve(assetPath);
-
-            if (Files.isRegularFile(asset))
-            {
-                return asset;
-            }
-
-            return projectRelative;
-        }
-        catch (Exception e)
-        {
-            return null;
-        }
+        return CompStore.resolveAsset(projectId, path);
     }
 
     public static void clear()

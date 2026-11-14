@@ -645,6 +645,12 @@ public class UIAssetBrowser extends UIElement
     private List<Asset> projectAssets()
     {
         String id = this.projectId.get();
+
+        if (id == null)
+        {
+            id = CompStore.DEFAULT_PROJECT;
+        }
+
         List<String> external = this.externalAssets.get();
         String externalKey = external == null ? "" : String.join("\n", external);
 
@@ -669,12 +675,20 @@ public class UIAssetBrowser extends UIElement
             stream.filter(Files::isRegularFile)
                 .filter((path) ->
                 {
+                    String relative = root.relativize(path).toString().replace('\\', '/').toLowerCase(Locale.ROOT);
                     String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+
+                    /* Extracted video frames belong to a footage layer, not to hundreds of
+                     * individual picture tiles. The project panel shows the sequence as one item. */
+                    if (relative.startsWith("frames/"))
+                    {
+                        return false;
+                    }
 
                     return name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".gif");
                 })
                 .sorted()
-                .limit(600)
+                .limit(4000)
                 .forEach((path) ->
                 {
                     String relative = root.relativize(path).toString().replace('\\', '/');
@@ -706,7 +720,18 @@ public class UIAssetBrowser extends UIElement
                     continue;
                 }
 
-                Asset asset = new Asset(link, stripExtension(label), true, false,
+                boolean missing;
+
+                try
+                {
+                    missing = !Files.isRegularFile(Path.of(link.substring("external:".length())));
+                }
+                catch (Exception e)
+                {
+                    missing = true;
+                }
+
+                Asset asset = new Asset(link, stripExtension(label) + (missing ? "（缺失）" : ""), true, false,
                     image ? "项目（外链）" : "项目（外链音频）");
                 asset.externalAudio = audio;
 
@@ -830,6 +855,27 @@ public class UIAssetBrowser extends UIElement
 
         this.hint.label = IKey.constant((asset.project ? "项目：" : "") + asset.path);
         this.hint.color(0xFF8A94A6, false);
+
+        if (asset.path.startsWith("external:"))
+        {
+            try
+            {
+                if (!Files.isRegularFile(Path.of(asset.path.substring("external:".length()))))
+                {
+                    this.hint.label = IKey.constant("外链文件不存在：" + asset.path);
+                    this.hint.color(0xFFB06A6A, false);
+
+                    return;
+                }
+            }
+            catch (Exception e)
+            {
+                this.hint.label = IKey.constant("外链路径无效：" + asset.path);
+                this.hint.color(0xFFB06A6A, false);
+
+                return;
+            }
+        }
 
         if (asset.externalAudio)
         {

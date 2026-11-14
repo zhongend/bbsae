@@ -163,6 +163,14 @@ public class CompLayer
     public float textBoxHeight = 300F;
 
     public String imagePath = "";
+    /**
+     * Absolute path of the original video for a linked/footage layer. Empty for pictures.
+     *
+     * <p>Footage import extracts frames and normally forgets the container. Keeping the source
+     * path is what lets the "影视" inspector extract the video's audio track once, without
+     * copying the video or requiring the user to find it again.</p>
+     */
+    public String videoSource = "";
     public int imageFit = 0;
     /**
      * Texture sampling override for image/footage layers.
@@ -2075,6 +2083,24 @@ public class CompLayer
     }
 
     /* Replay entity matte helpers */
+
+    /** True for a picture/footage/video layer whose source can be replaced in place. */
+    public boolean isMediaLayer()
+    {
+        return "image".equals(this.type) || "footage".equals(this.type) || "videolink".equals(this.type);
+    }
+
+    /** True for a layer that plays a video (linked decode or extracted frame sequence). */
+    public boolean isVideoLayer()
+    {
+        return "footage".equals(this.type) || "videolink".equals(this.type);
+    }
+
+    /** True when this layer still remembers the original video container. */
+    public boolean hasVideoSource()
+    {
+        return this.videoSource != null && !this.videoSource.isBlank();
+    }
 
     /** True for the depth-keyed replay entity layer. */
     public boolean isEntityLayer()

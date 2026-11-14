@@ -449,6 +449,12 @@ public class UICompTrackTimeline extends UIElement
         return this.rowLayer(this.rowAt(y));
     }
 
+    /** Layer at a timeline display row; used by the project panel's internal drop. */
+    public CompLayer layerAtRow(int row)
+    {
+        return this.rowLayer(row);
+    }
+
     /**
      * Pulses the drop row/time after an OS import. GLFW/Screen only reports the drop itself (no
      * drag-over event), so this is the landing confirmation the pointer sees: a breathing row,
@@ -1235,11 +1241,24 @@ public class UICompTrackTimeline extends UIElement
         try
         {
             java.nio.file.Path file = dev.bbsae.client.export.CompAudioMixer
-                .resolver(dev.bbsae.comp.CompStore.assetRoot(this.panel.getProject().id))
-                .apply(clip.path);
+                .projectResolver(this.panel.getProject().id).resolve(clip.path);
 
-            int buckets = Math.max(8, Math.min(240, right - left));
-            float[] peaks = dev.bbsae.client.render.CompAudioWaveform.peaks(file, buckets);
+            if (file == null)
+            {
+                return;
+            }
+
+            /* The bar is timeline length; the waveform is the part of the source the clip actually
+             * consumes. The old call passed only the file and stretched the whole song across the
+             * bar, so every trim showed the wrong region. A loop repeats the same segment. */
+            float barLength = clip.length(this.duration());
+            float playable = Math.max(0.01F, clip.playableLength(this.duration()));
+            float segment = Math.min(barLength, playable);
+            int segmentRight = this.toX(clip.start + segment);
+            int segmentWidth = Math.max(8, segmentRight - left);
+            int buckets = Math.max(8, Math.min(320, segmentWidth));
+            float[] peaks = dev.bbsae.client.render.CompAudioWaveform
+                .peaks(file, clip.offset, segment * clip.safeSpeed(), buckets);
 
             if (peaks == null)
             {
@@ -1248,13 +1267,46 @@ public class UICompTrackTimeline extends UIElement
 
             int mid = barY + barH / 2;
             int color = selected ? 0x66E9FFF2 : 0x44CFE9DA;
+            float step = clip.loop && playable > 0.001F ? playable : barLength;
 
-            for (int i = 0; i < peaks.length; i++)
+            for (float at = 0F; at < barLength - 0.001F; at += step)
             {
-                int x = left + i * (right - left) / peaks.length;
-                int half = Math.max(1, Math.round(peaks[i] * (barH - 4) * 0.5F));
+                int baseX = this.toX(clip.start + at);
+                int width = Math.min(right, this.toX(clip.start + Math.min(barLength, at + segment))) - baseX;
 
-                context.batcher.box(x, mid - half, x + 1, mid + half, color);
+                if (width < 2)
+                {
+                    break;
+                }
+
+                for (int i = 0; i < peaks.length; i++)
+                {
+                    int x = baseX + i * width / peaks.length;
+                    int half = Math.max(1, Math.round(peaks[i] * (barH - 4) * 0.5F));
+
+                    context.batcher.box(x, mid - half, x + 1, mid + half, color);
+                }
+
+                if (!clip.loop)
+                {
+                    break;
+                }
+            }
+
+            /* Fade ramps are part of the clip's shape, not a post effect: showing them makes a
+             * silent intro/outro on the timeline visible instead of looking like broken audio. */
+            if (clip.fadeIn > 0F)
+            {
+                int fadeRight = this.toX(clip.start + Math.min(clip.fadeIn, clip.length(this.duration())));
+
+                context.batcher.box(left, barY + barH - 3, Math.max(left + 1, fadeRight), barY + barH - 1, 0x66FFFFFF);
+            }
+
+            if (clip.fadeOut > 0F)
+            {
+                int fadeLeft = this.toX(clip.start + Math.max(0F, clip.length(this.duration()) - clip.fadeOut));
+
+                context.batcher.box(Math.min(right - 1, fadeLeft), barY + barH - 3, right, barY + barH - 1, 0x66FFFFFF);
             }
         }
         catch (RuntimeException ignored)
@@ -2211,6 +2263,7 @@ public class UICompTrackTimeline extends UIElement
         float frame = 1F / this.fps();
         float duration = this.duration();
         float length = Math.max(frame, this.dragAudioLength);
+        float speed = clip.safeSpeed();
 
         if (this.dragMode == MODE_AUDIO_MOVE)
         {
@@ -2221,25 +2274,26 @@ public class UICompTrackTimeline extends UIElement
         {
             float newStart = this.clamp(this.quantize(this.dragAudioStart + delta), 0F, this.dragAudioStart + length - frame);
             float shift = newStart - this.dragAudioStart;
-            float newOffset = this.dragAudioOffset + shift;
+            float newOffset = this.dragAudioOffset + shift * speed;
 
             /* Dragging the in-point left of the source start cannot invent audio: stop at 0 and
              * keep the tail where it was. */
             if (newOffset < 0F)
             {
-                newStart -= newOffset;
+                newStart -= newOffset / speed;
                 newOffset = 0F;
             }
 
             clip.start = Math.max(0F, newStart);
             clip.offset = Math.max(0F, newOffset);
             clip.duration = Math.max(frame, length - (clip.start - this.dragAudioStart));
-            this.panel.setStatus(String.format(Locale.ROOT, "音频入点 %.2fs（源偏移 %.2fs）", clip.start, clip.offset));
+            this.panel.setStatus(String.format(Locale.ROOT, "音频入点 %.2fs（源偏移 %.2fs · %.2fx）",
+                clip.start, clip.offset, speed));
         }
         else
         {
             clip.duration = this.clamp(this.quantize(length + delta), frame, Math.max(frame, duration - clip.start));
-            this.panel.setStatus(String.format(Locale.ROOT, "音频时长 %.2fs", clip.duration));
+            this.panel.setStatus(String.format(Locale.ROOT, "音频时长 %.2fs（%.2fx）", clip.duration, speed));
         }
     }
 

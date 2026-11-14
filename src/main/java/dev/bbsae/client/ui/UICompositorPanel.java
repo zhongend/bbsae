@@ -20,6 +20,8 @@ import dev.bbsae.comp.CompEffectRegistry;
 import dev.bbsae.comp.CompLayer;
 import dev.bbsae.comp.CompMarker;
 import dev.bbsae.comp.CompMask;
+import dev.bbsae.comp.CompMediaBin;
+import dev.bbsae.comp.CompMediaLibrary;
 import dev.bbsae.comp.CompMotion;
 import dev.bbsae.comp.CompOutputPreset;
 import dev.bbsae.comp.CompParameter;
@@ -176,6 +178,13 @@ public class UICompositorPanel extends UIDashboardPanel
     private UICompButton precacheButton;
     private final UIElement renderPanel;
     private UIAssetBrowser assetBrowser;
+    /** Premiere-style project panel shown on the left "素材" page. */
+    private UIProjectBin projectBin;
+    /** Internal drag payload from the project panel to the timeline. */
+    private dev.bbsae.comp.CompMediaLibrary.Item mediaDragItem;
+    private int mediaDragX;
+    private int mediaDragY;
+    private boolean mediaDragActive;
     private UIImportBrowser importBrowser;
     private UILayerLibrary layerLibrary;
     private final UIElement modalLayer;
@@ -378,10 +387,12 @@ public class UICompositorPanel extends UIDashboardPanel
     private static final int PAGE_TEXT = 4;
     private static final int PAGE_COMP = 5;
     private static final int PAGE_OUTPUT = 6;
+    /** Film/video page: audio clip and video-layer parameters that are not per-effect. */
+    private static final int PAGE_FILM = 7;
 
     /** Inspector tab index → page id. Must match the addTab() order in the constructor. */
     private static final int[] INSPECTOR_TAB_PAGES = {
-        PAGE_GRADE, PAGE_LAYER, PAGE_MASK, PAGE_EFFECTS, PAGE_TEXT, PAGE_COMP, PAGE_OUTPUT
+        PAGE_GRADE, PAGE_LAYER, PAGE_FILM, PAGE_MASK, PAGE_EFFECTS, PAGE_TEXT, PAGE_COMP, PAGE_OUTPUT
     };
 
     private static int inspectorTabForPage(int page)
@@ -622,7 +633,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         UISection assetSection = new UISection(IKey.constant("素材"));
 
-        assetSection.fields.add(UI.label(IKey.constant("按分类、搜索和缩略图浏览项目素材与游戏素材。"), 16));
+        assetSection.fields.add(UI.label(IKey.constant("旧版素材库（游戏贴图/音效）。项目素材请用左侧「素材箱」。"), 15));
         assetSection.fields.add(new UICompButton(IKey.constant("打开素材库…"), (button) -> this.openAssetBrowser(false)));
         assetSection.fields.add(new UICompButton(IKey.constant("导入图片到所选轨道…"), (button) ->
         {
@@ -651,6 +662,10 @@ public class UICompositorPanel extends UIDashboardPanel
                 + "压缩格式用 FFmpeg 在内存中解码，不复制到工程。也可以直接拖到时间轴音频轨")));
         this.assetPanel.add(assetSection);
 
+        this.projectBin = new UIProjectBin(this);
+        this.projectBin.relative(this.effectColumn).x(0).y(22).w(1F, -6).h(1F, -22);
+        this.projectBin.setVisible(false);
+
         this.leftTabs = new UICompTabBar();
         /* 6 px dock-splitter inset on the right: the tab bar's "»" overflow control otherwise sits
          * under the splitter hot zone and a click there starts a panel drag. */
@@ -663,7 +678,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.replayBrowser.setVisible(false);
 
         this.leftTabs.addTab("效果库");
-        this.leftTabs.addTab("素材");
+        this.leftTabs.addTab("素材箱");
         this.leftTabs.addTab("预设");
         this.leftTabs.addTab("回放");
         this.leftTabs.onSelect((index) -> this.applyLeftPage(index, true));
@@ -676,7 +691,8 @@ public class UICompositorPanel extends UIDashboardPanel
         effectGallery.tooltip(IKey.constant("打开带预览图的效果库（单击效果即可叠加到当前轨道）"));
 
         this.effectColumn.w(190).h(1F);
-        this.effectColumn.add(this.leftTabs, effectGallery, this.effectLibrary, this.assetPanel, this.presetBrowser, this.replayBrowser);
+        this.effectColumn.add(this.leftTabs, effectGallery, this.effectLibrary, this.assetPanel,
+            this.projectBin, this.presetBrowser, this.replayBrowser);
 
         this.preview = new UIElement()
         {
@@ -5789,6 +5805,7 @@ public class UICompositorPanel extends UIDashboardPanel
          * removes. PAGE_* keeps its numeric contract for project files; the map below translates. */
         this.inspectorTabs.addTab("调色");
         this.inspectorTabs.addTab("图层");
+        this.inspectorTabs.addTab("影视");
         this.inspectorTabs.addTab("蒙版");
         this.inspectorTabs.addTab("效果");
         this.inspectorTabs.addTab("文字");
@@ -6704,6 +6721,8 @@ public class UICompositorPanel extends UIDashboardPanel
             CompReplayBridge.syncLayersFromReplays(film, this.doc);
             CompReplayBridge.setVirtualEnabled(film, false);
         }
+
+        this.probeMissingAudioMetadata();
 
         if (this.trackTimeline != null)
         {
@@ -8189,6 +8208,720 @@ public class UICompositorPanel extends UIDashboardPanel
         this.resize();
     }
 
+    /**
+     * Opens the classic asset library (game textures, BBS sounds, external media). Kept as a modal
+     * because it is a browser, not an editor surface; the project panel stays docked on the left.
+     */
+    public void openMediaLibrary()
+    {
+        this.openAssetBrowser(false);
+    }
+
+    /** Project-panel import: everything goes into the library first, not onto the timeline. */
+    public void importMediaDialog()
+    {
+        if (this.project == null)
+        {
+            this.setStatus("先打开一个工程");
+
+            return;
+        }
+
+        String[] extensions = {
+            "png", "jpg", "jpeg", "gif",
+            "wav", "ogg", "mp3", "flac", "m4a", "aac", "opus", "wma", "aiff", "aif",
+            "mp4", "mov", "mkv", "webm", "avi", "m4v"
+        };
+
+        NativeFileDialog.pickFile(
+            "导入素材到素材箱",
+            extensions,
+            (file) ->
+            {
+                if (file != null && file.isFile())
+                {
+                    this.importMediaToLibrary(file);
+                }
+            },
+            () ->
+            {
+                if (this.importBrowser != null)
+                {
+                    this.closeImportBrowser();
+                }
+
+                this.importBrowser = new UIImportBrowser(
+                    "导入素材到素材箱",
+                    extensions,
+                    (file) ->
+                    {
+                        if (file != null && file.isFile())
+                        {
+                            this.importMediaToLibrary(file);
+                        }
+
+                        this.closeImportBrowser();
+                    },
+                    this::closeImportBrowser
+                );
+
+                this.importBrowser.relative(this).x(0).y(0).w(1F).h(1F);
+                this.add(this.importBrowser);
+                this.resize();
+            }
+        );
+    }
+
+    /**
+     * Copies/links one picked file into the project panel without touching the timeline.
+     *
+     * <p>This is what "import" means in a project panel. The old asset browser's import button
+     * only ever imported pictures and immediately made a layer, so there was no way to build a
+     * library of unused media, and audio/video had no import path at all.</p>
+     */
+    private void importMediaToLibrary(java.io.File file)
+    {
+        try
+        {
+            String lower = file.getName().toLowerCase(java.util.Locale.ROOT);
+            CompMediaLibrary.Kind kind = CompMediaLibrary.kindOf(lower);
+            boolean linked = CompPrefs.get().linkExternalAssets;
+            String token;
+
+            if (kind == CompMediaLibrary.Kind.IMAGE)
+            {
+                if (linked)
+                {
+                    token = CompStore.externalToken(file);
+                    this.registerExternalAsset(file);
+                }
+                else
+                {
+                    String name = this.copyIntoProjectFile(file, "images");
+                    token = "images/" + name;
+                }
+            }
+            else if (kind == CompMediaLibrary.Kind.AUDIO)
+            {
+                if (linked)
+                {
+                    token = CompStore.externalToken(file);
+                    this.registerExternalAsset(file);
+                }
+                else
+                {
+                    String name = this.copyIntoProjectFile(file, "audio");
+                    token = "audio/" + name;
+                }
+            }
+            else if (kind == CompMediaLibrary.Kind.VIDEO)
+            {
+                /* A video is always linked: copying a 500 MB container into every project is not
+                 * what "import a clip" should mean. Frames are extracted where needed. */
+                token = CompStore.externalToken(file);
+                this.registerExternalAsset(file);
+            }
+            else
+            {
+                this.notifyError("不支持的文件类型：" + file.getName());
+
+                return;
+            }
+
+            if (this.projectBin != null)
+            {
+                this.projectBin.refresh();
+                this.projectBin.selectPath(token);
+            }
+
+            this.refreshMediaViews();
+            this.save();
+            this.setStatus("已导入素材箱：" + file.getName()
+                + (linked && kind != CompMediaLibrary.Kind.VIDEO ? "（外链）" : "（已复制/链接）")
+                + " · 拖到时间轴使用");
+        }
+        catch (Exception e)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.error("Could not import media {}", file, e);
+            this.notifyError("素材导入失败：" + e.getMessage());
+        }
+    }
+
+    /** Copy helper for the project panel: unique names, no silent overwrite. */
+    private String copyIntoProjectFile(java.io.File file, String folderName) throws java.io.IOException
+    {
+        java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve(folderName);
+
+        java.nio.file.Files.createDirectories(folder);
+
+        String raw = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+        String base = raw;
+        String extension = "";
+        int dot = raw.lastIndexOf('.');
+
+        if (dot > 0)
+        {
+            base = raw.substring(0, dot);
+            extension = raw.substring(dot);
+        }
+
+        String name = raw;
+        int suffix = 2;
+
+        while (java.nio.file.Files.isRegularFile(folder.resolve(name)))
+        {
+            name = base + "_" + suffix + extension;
+            suffix++;
+        }
+
+        java.nio.file.Path target = folder.resolve(name);
+
+        if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
+        {
+            java.nio.file.Files.copy(file.toPath(), target);
+        }
+
+        return name;
+    }
+
+    public boolean isMediaDragging()
+    {
+        return this.mediaDragActive;
+    }
+
+    /** Starts the project-panel -> timeline drag; the panel polls the release every frame. */
+    public void beginMediaDrag(CompMediaLibrary.Item item, int mouseX, int mouseY)
+    {
+        if (item == null)
+        {
+            return;
+        }
+
+        this.mediaDragItem = item;
+        this.mediaDragX = mouseX;
+        this.mediaDragY = mouseY;
+        this.mediaDragActive = true;
+    }
+
+    /**
+     * One insert path for the project panel, double-click and the internal drop.
+     *
+     * @param row timeline display row under the pointer, or -1 for "no target row"
+     */
+    public void insertMediaAt(CompMediaLibrary.Item item, float time, int row)
+    {
+        if (item == null || this.doc == null)
+        {
+            return;
+        }
+
+        if (item.offline)
+        {
+            this.notifyError("素材文件缺失：" + item.path + "（重新链接后再插入）");
+
+            return;
+        }
+
+        time = Math.max(0F, Math.min(this.doc.duration, time));
+
+        CompLayer target = null;
+
+        if (row >= 0 && this.trackTimeline != null)
+        {
+            target = this.trackTimeline.layerAtRow(row);
+        }
+
+        if (item.kind == CompMediaLibrary.Kind.AUDIO)
+        {
+            this.insertAudioMedia(item, time);
+            this.trackTimeline.showDropTarget(this.trackTimeline.audioRow(), time, true);
+
+            return;
+        }
+
+        if (target != null && target.isMediaLayer())
+        {
+            this.replaceLayerMedia(target, item);
+            this.setStatus("已替换轨道素材：" + target.name + " ← " + item.name);
+
+            return;
+        }
+
+        if (item.kind == CompMediaLibrary.Kind.IMAGE)
+        {
+            CompLayer layer = this.createImageLayer(item, time);
+
+            if (row >= 0)
+            {
+                this.moveLayerToDisplayIndex(layer, row);
+            }
+
+            this.setStatus("已插入图片：" + item.name + String.format(java.util.Locale.ROOT, " · 入点 %.2fs", time));
+        }
+        else if (item.kind == CompMediaLibrary.Kind.SEQUENCE)
+        {
+            CompLayer layer = this.createSequenceLayer(item, time);
+
+            if (row >= 0)
+            {
+                this.moveLayerToDisplayIndex(layer, row);
+            }
+
+            this.setStatus("已插入帧序列：" + item.name);
+        }
+        else if (item.kind == CompMediaLibrary.Kind.VIDEO)
+        {
+            java.nio.file.Path resolved = CompStore.resolveAsset(this.project.id, item.path);
+            java.io.File source = resolved == null ? null : resolved.toFile();
+
+            if (source == null || !source.isFile())
+            {
+                this.notifyError("视频文件不存在：" + item.path);
+
+                return;
+            }
+
+            this.importVideoLink(source, time);
+
+            if (row >= 0 && this.selectedLayer != null)
+            {
+                this.moveLayerToDisplayIndex(this.selectedLayer, row);
+            }
+
+            this.setStatus("已插入视频：" + item.name + String.format(java.util.Locale.ROOT, " · 入点 %.2fs", time));
+        }
+
+        this.refreshLayers();
+        this.refreshInspector();
+        this.save();
+    }
+
+    private void insertAudioMedia(CompMediaLibrary.Item item, float time)
+    {
+        java.nio.file.Path source = CompStore.resolveAsset(this.project.id, item.path);
+
+        if (source == null || !java.nio.file.Files.isRegularFile(source))
+        {
+            this.notifyError("音频不存在：" + item.path);
+
+            return;
+        }
+
+        dev.bbsae.comp.CompAudio clip = new dev.bbsae.comp.CompAudio(
+            CompStore.uniqueId("audio", this.doc.audio, (a) -> a.id), item.name, item.path);
+
+        clip.start = time;
+
+        if (source != null && java.nio.file.Files.isRegularFile(source))
+        {
+            float duration = dev.bbsae.client.export.CompAudioMixer.probeDuration(source);
+
+            if (duration > 0F)
+            {
+                clip.sourceDuration = duration;
+                clip.duration = duration / clip.safeSpeed();
+            }
+        }
+
+        this.doc.audio.add(clip);
+        this.selectAudioClip(clip);
+        dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+        this.refreshInspector();
+        this.refreshMediaViews();
+        this.save();
+        this.setStatus("已加入音频轨：" + item.name + String.format(java.util.Locale.ROOT, " · 入点 %.2fs", time));
+    }
+
+    private CompLayer createImageLayer(CompMediaLibrary.Item item, float time)
+    {
+        CompLayer layer = new CompLayer("image", item.name, "image");
+
+        layer.imagePath = item.path;
+        layer.x = this.doc.width / 2F;
+        layer.y = this.doc.height / 2F;
+        layer.width = Math.min(480F, this.doc.width * 0.5F);
+        layer.height = layer.width * 0.5625F;
+        layer.in = Math.max(0F, Math.min(this.doc.duration, time));
+        layer.out = this.doc.duration;
+        layer.imageFit = 0;
+        this.fitLayerToSource(layer, item.path);
+
+        this.doc.addLayer(layer);
+        this.setSingleSelection(layer);
+        this.refreshLayers();
+        this.refreshInspector();
+
+        return layer;
+    }
+
+    /** Sizes a new picture layer to its real pixels, fitted inside 80% of the composition. */
+    private void fitLayerToSource(CompLayer layer, String path)
+    {
+        if (this.project == null || this.doc == null || path == null || path.isBlank())
+        {
+            return;
+        }
+
+        String first = path;
+
+        if (path.contains("%"))
+        {
+            try
+            {
+                first = String.format(java.util.Locale.ROOT, path, 0);
+            }
+            catch (Exception ignored)
+            {}
+        }
+
+        ImageTextureCache.Entry image = ImageTextureCache.get(this.project.id, first);
+
+        if (image == null || image.width <= 0 || image.height <= 0)
+        {
+            return;
+        }
+
+        float scale = Math.min(1F, Math.min(this.doc.width * 0.8F / image.width,
+            this.doc.height * 0.8F / image.height));
+
+        layer.width = Math.max(16F, image.width * scale);
+        layer.height = Math.max(16F, image.height * scale);
+    }
+
+    private CompLayer createSequenceLayer(CompMediaLibrary.Item item, float time)
+    {
+        CompLayer layer = new CompLayer("footage", item.name, "footage");
+        int frames = CompMediaLibrary.sequenceFrames(item);
+
+        if (frames <= 0)
+        {
+            frames = 120;
+        }
+
+        layer.imagePath = item.path;
+        layer.width = this.doc.width * 0.8F;
+        layer.height = this.doc.height * 0.6F;
+        layer.x = this.doc.width / 2F;
+        layer.y = this.doc.height / 2F;
+        layer.in = Math.max(0F, Math.min(this.doc.duration, time));
+        layer.out = Math.min(this.doc.duration, layer.in + frames / Math.max(1F, this.doc.fps));
+        layer.imageFit = 0;
+        this.fitLayerToSource(layer, item.path);
+
+        this.doc.addLayer(layer);
+        this.setSingleSelection(layer);
+        this.refreshLayers();
+        this.refreshInspector();
+
+        return layer;
+    }
+
+    /**
+     * Overwrite edit: the dropped media replaces the layer's source, but the layer keeps its
+     * transform, effects, masks and keyframes. This is the Premiere behaviour users expect when
+     * dragging a clip onto an existing one.
+     */
+    private void replaceLayerMedia(CompLayer layer, CompMediaLibrary.Item item)
+    {
+        switch (item.kind)
+        {
+            case IMAGE -> {
+                layer.type = "image";
+                layer.imagePath = item.path;
+                layer.videoSource = "";
+            }
+            case SEQUENCE -> {
+                layer.type = "footage";
+                layer.imagePath = item.path;
+                layer.videoSource = "";
+            }
+            case VIDEO -> {
+                layer.type = "videolink";
+                layer.imagePath = item.path;
+                java.nio.file.Path resolved = CompStore.resolveAsset(this.project.id, item.path);
+                layer.videoSource = resolved == null ? CompStore.externalRaw(item.path) : resolved.toString();
+
+                if (resolved != null)
+                {
+                    this.probeVideoSizeAsync(resolved.toFile(), layer, true);
+                }
+            }
+            default -> {
+                return;
+            }
+        }
+
+        this.refreshLayers();
+        this.refreshInspector();
+        this.save();
+    }
+
+    /** Project-panel context menu for one item. */
+    public void openMediaMenu(CompMediaLibrary.Item item)
+    {
+        if (item == null)
+        {
+            return;
+        }
+
+        this.getContext().replaceContextMenu((menu) ->
+        {
+            menu.action(IKey.constant("插入到播放头"), () -> this.insertMediaAt(item, this.time, -1));
+
+            if (this.selectedLayer != null && this.selectedLayer.isMediaLayer())
+            {
+                menu.action(IKey.constant("替换所选轨道素材"), () -> this.replaceLayerMedia(this.selectedLayer, item));
+            }
+
+            if (item.kind == CompMediaLibrary.Kind.AUDIO)
+            {
+                menu.action(IKey.constant("加入音频轨（播放头）"), () -> this.insertAudioMedia(item, this.time));
+            }
+
+            java.nio.file.Path file = CompStore.resolveAsset(this.project == null ? "" : this.project.id, item.path);
+
+            if (file != null)
+            {
+                menu.action(IKey.constant("在文件夹中显示"), () ->
+                {
+                    if (!OsOpen.openFolder(file.getParent()))
+                    {
+                        this.setStatus("无法打开文件夹：" + file);
+                    }
+                });
+            }
+
+            if (item.external)
+            {
+                menu.action(IKey.constant("重新链接…"), () -> this.relinkMedia(item));
+                menu.action(IKey.constant("从素材箱移除（不删除文件）"), () -> this.removeMedia(item));
+            }
+        });
+    }
+
+    /** Re-points every reference of one external media item at a new file. */
+    public void relinkMedia(CompMediaLibrary.Item item)
+    {
+        if (item == null || this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        String[] extensions = switch (item.kind)
+        {
+            case AUDIO -> new String[] {"wav", "ogg", "mp3", "flac", "m4a", "aac", "opus", "wma", "aiff", "aif"};
+            case VIDEO -> new String[] {"mp4", "mov", "mkv", "webm", "avi", "m4v"};
+            default -> new String[] {"png", "jpg", "jpeg", "gif"};
+        };
+
+        NativeFileDialog.pickFile(
+            "重新链接素材",
+            extensions,
+            (file) ->
+            {
+                if (file == null || !file.isFile())
+                {
+                    return;
+                }
+
+                String oldToken = item.path;
+                String newToken = CompStore.externalToken(file);
+
+                this.project.settings.externalAssets.remove(oldToken);
+
+                if (!this.project.settings.externalAssets.contains(newToken))
+                {
+                    this.project.settings.externalAssets.add(newToken);
+                }
+
+                String bin = this.project.settings.mediaBinAssignments.remove(oldToken);
+
+                if (bin != null)
+                {
+                    this.project.settings.mediaBinAssignments.put(newToken, bin);
+                }
+
+                for (CompDocument comp : this.project.comps)
+                {
+                    for (CompLayer layer : comp.layers)
+                    {
+                        if (oldToken.equals(layer.imagePath))
+                        {
+                            layer.imagePath = newToken;
+                        }
+
+                        if (layer.videoSource != null
+                            && layer.videoSource.equals(CompStore.externalRaw(oldToken)))
+                        {
+                            layer.videoSource = file.getAbsolutePath();
+                        }
+                    }
+
+                    for (dev.bbsae.comp.CompAudio clip : comp.audio)
+                    {
+                        if (oldToken.equals(clip.path))
+                        {
+                            clip.path = newToken;
+                        }
+                    }
+                }
+
+                dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+                this.previewAudioRunning = false;
+                dev.bbsae.client.render.CompAudioWaveform.clear();
+                this.refreshMediaViews();
+                this.refreshInspector();
+                this.save();
+                this.setStatus("已重新链接：" + item.name + " → " + file.getName());
+            },
+            () -> this.setStatus("系统文件对话框不可用")
+        );
+    }
+
+    /** Removes an external link from the project index; project files are never deleted here. */
+    public void removeMedia(CompMediaLibrary.Item item)
+    {
+        if (item == null || this.project == null || this.project.settings == null)
+        {
+            return;
+        }
+
+        if (!item.external)
+        {
+            this.setStatus("工程素材文件不在这里删除；从磁盘删除后刷新即可");
+
+            return;
+        }
+
+        this.project.settings.externalAssets.remove(item.path);
+        this.project.settings.mediaBinAssignments.remove(item.path);
+        this.projectBin.refresh();
+        this.refreshMediaViews();
+        this.save();
+        this.setStatus("已从素材箱移除：" + item.name);
+    }
+
+    /** Drag ghost + drop resolution, called after the panel tree is drawn. */
+    private void renderMediaDrag(UIContext context)
+    {
+        if (!this.mediaDragActive || this.mediaDragItem == null)
+        {
+            return;
+        }
+
+        int x = context.mouseX;
+        int y = context.mouseY;
+
+        if (this.trackTimeline != null && this.trackTimeline.containsScreen(x, y))
+        {
+            int row = this.trackTimeline.rowAtScreen(y);
+            float time = this.trackTimeline.timeAtScreen(x);
+            boolean audio = this.mediaDragItem.kind == CompMediaLibrary.Kind.AUDIO;
+
+            this.trackTimeline.showDropTarget(audio ? this.trackTimeline.audioRow() : row, time, audio);
+        }
+
+        String label = "拖放：" + this.mediaDragItem.name;
+
+        context.batcher.box(x + 10, y + 8, x + 12 + label.length() * 6, y + 26, 0xE6101820);
+        context.batcher.outline(x + 10, y + 8, x + 12 + label.length() * 6, y + 26, BBSSettings.primaryColor());
+        context.batcher.textShadow(label, x + 15, y + 13, 0xFFFFFFFF);
+
+        if (!Window.isMouseButtonPressed(0))
+        {
+            this.finishMediaDrag(x, y);
+        }
+    }
+
+    private void finishMediaDrag(int mouseX, int mouseY)
+    {
+        CompMediaLibrary.Item item = this.mediaDragItem;
+
+        this.mediaDragActive = false;
+        this.mediaDragItem = null;
+
+        if (item == null)
+        {
+            return;
+        }
+
+        /* The drop mutates the document and the layer list. Doing that inside the render pass
+         * would rebuild children while the tree is being iterated, so run it right after the
+         * frame — the same contract the import browser uses for its close callback. */
+        Runnable drop = () -> this.performMediaDrop(item, mouseX, mouseY);
+        UIContext context = this.getContext();
+
+        if (context != null && context.render != null)
+        {
+            context.render.postRunnable(drop);
+        }
+        else
+        {
+            drop.run();
+        }
+    }
+
+    private void performMediaDrop(CompMediaLibrary.Item item, int mouseX, int mouseY)
+    {
+        /* Drop onto a bin row = move the item to that bin, exactly like dragging in Premiere. */
+        if (this.projectBin != null)
+        {
+            int bin = this.projectBin.binAtScreen(mouseX, mouseY);
+
+            if (bin >= 0 && this.project != null)
+            {
+                java.util.List<CompMediaBin> bins = CompMediaLibrary.bins(this.project);
+
+                if (bin < bins.size())
+                {
+                    CompMediaLibrary.assign(this.project, item.path, bins.get(bin).id);
+                    this.projectBin.refresh();
+                    this.projectBin.selectPath(item.path);
+                    this.save();
+                    this.setStatus("已移动到素材箱：" + bins.get(bin).name);
+
+                    return;
+                }
+            }
+        }
+
+        if (this.trackTimeline != null && this.trackTimeline.containsScreen(mouseX, mouseY))
+        {
+            float time = this.trackTimeline.timeAtScreen(mouseX);
+            int row = this.trackTimeline.rowAtScreen(mouseY);
+
+            this.insertMediaAt(item, time, row);
+
+            return;
+        }
+
+        if (item.kind == CompMediaLibrary.Kind.AUDIO)
+        {
+            this.insertAudioMedia(item, this.time);
+            this.setStatus("未拖到时间轴，已加入音频轨（播放头）");
+
+            return;
+        }
+
+        /* Dropped outside the timeline: insert at the playhead so the gesture is never a no-op. */
+        this.insertMediaAt(item, this.time, -1);
+        this.setStatus("未拖到时间轴，已插入到播放头：" + item.name);
+    }
+
+    /** Called after any import so the docked project panel and the modal library agree. */
+    private void refreshMediaViews()
+    {
+        if (this.projectBin != null)
+        {
+            this.projectBin.refresh();
+        }
+
+        if (this.assetBrowser != null)
+        {
+            this.assetBrowser.refresh();
+        }
+    }
+
     private void openAssetBrowser(boolean replaceMode)
     {
         dev.bbsae.client.audio.CompAudioPreview.stop();
@@ -8575,20 +9308,15 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        int[] size = dev.bbsae.client.export.CompVideoImport.probeSize(file);
-
-        if (size == null)
-        {
-            this.notifyError("无法读取视频尺寸；请确认 FFmpeg 可用：" + file.getName());
-            return;
-        }
-
-        float scale = Math.min(1F, Math.min(this.doc.width / (float) size[0], this.doc.height / (float) size[1]));
         CompLayer layer = new CompLayer("videolink", file.getName(), "videolink");
 
-        layer.imagePath = "external:" + file.getAbsoluteFile();
-        layer.width = Math.max(2, Math.round(size[0] * scale) & ~1);
-        layer.height = Math.max(2, Math.round(size[1] * scale) & ~1);
+        layer.imagePath = CompStore.externalToken(file);
+        layer.videoSource = file.getAbsolutePath();
+        /* Start with a composition-sized box so the drop is immediate; the real aspect ratio
+         * arrives from FFmpeg's banner on a worker thread. Probing here used to freeze the click
+         * for as long as the process took. */
+        layer.width = Math.max(2, this.doc.width * 0.8F);
+        layer.height = Math.max(2, this.doc.height * 0.6F);
         layer.x = this.doc.width / 2F;
         layer.y = this.doc.height / 2F;
         layer.in = Math.max(0F, Math.min(this.doc.duration, start));
@@ -8596,14 +9324,58 @@ public class UICompositorPanel extends UIDashboardPanel
         layer.imageFit = 0;
         layer.name = file.getName();
 
+        this.registerExternalAsset(file);
         this.doc.addLayer(layer);
         this.setSingleSelection(layer);
+        this.setInspectorPage(PAGE_FILM);
         this.refreshLayers();
         this.refreshInspector();
+        this.refreshMediaViews();
         this.save();
-        dev.bbsae.client.render.CompVideoFrames.prewarm(this.project.id, layer.imagePath,
-            this.doc.fps, Math.round(layer.width), Math.round(layer.height));
+        this.probeVideoSizeAsync(file, layer, true);
         this.setStatus("已链接外部视频：" + file.getName() + "（按需拆帧，不复制源文件）");
+    }
+
+    /** Probes a video's dimensions off the render thread and updates the layer in place. */
+    private void probeVideoSizeAsync(java.io.File file, CompLayer layer, boolean prewarm)
+    {
+        final CompProject targetProject = this.project;
+        final CompDocument targetDoc = this.doc;
+
+        Thread worker = new Thread(() ->
+        {
+            int[] size = dev.bbsae.client.export.CompVideoImport.probeSize(file);
+
+            if (size == null)
+            {
+                return;
+            }
+
+            net.minecraft.client.MinecraftClient.getInstance().execute(() ->
+            {
+                if (this.project != targetProject || this.doc != targetDoc
+                    || !targetDoc.layers.contains(layer))
+                {
+                    return;
+                }
+
+                float scale = Math.min(1F, Math.min(targetDoc.width / (float) size[0], targetDoc.height / (float) size[1]));
+
+                layer.width = Math.max(2, Math.round(size[0] * scale) & ~1);
+                layer.height = Math.max(2, Math.round(size[1] * scale) & ~1);
+                this.refreshInspector();
+                this.save();
+
+                if (prewarm)
+                {
+                    dev.bbsae.client.render.CompVideoFrames.prewarm(targetProject.id, layer.imagePath,
+                        targetDoc.fps, Math.round(layer.width), Math.round(layer.height));
+                }
+            });
+        }, "bbsae-video-probe");
+
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private void importVideoFile(java.io.File file)
@@ -8632,6 +9404,7 @@ public class UICompositorPanel extends UIDashboardPanel
                         CompLayer layer = new CompLayer("footage", file.getName(), "footage");
 
                         layer.imagePath = pattern;
+                        layer.videoSource = file.getAbsolutePath();
                         layer.width = width;
                         layer.height = height;
                         layer.x = target.width / 2F;
@@ -8649,8 +9422,10 @@ public class UICompositorPanel extends UIDashboardPanel
                         UICompositorPanel.this.selectedIds.add(layer.id);
                         UICompositorPanel.this.selectedLayer = layer;
                         UICompositorPanel.this.selectedAudio = null;
+                        UICompositorPanel.this.setInspectorPage(PAGE_FILM);
                         UICompositorPanel.this.refreshLayers();
                         UICompositorPanel.this.refreshInspector();
+                        UICompositorPanel.this.refreshMediaViews();
                         UICompositorPanel.this.save();
                         UICompositorPanel.this.setStatus("视频已导入：" + frames + " 帧 · " + width + "×" + height
                             + " · " + Math.round(fps) + "fps → 已创建 footage 轨道");
@@ -8775,24 +9550,30 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             boolean linked = CompPrefs.get().linkExternalAssets;
-            String name = linked ? file.getName() : this.copyIntoProjectImages(file);
+            String name = linked ? file.getName() : this.copyIntoProjectFile(file, "images");
+            String token = linked ? CompStore.externalToken(file) : "images/" + name;
 
             if (linked)
             {
                 this.registerExternalAsset(file);
             }
 
+            this.refreshMediaViews();
+
+            if (this.projectBin != null)
+            {
+                this.projectBin.selectPath(token);
+            }
+
             if (this.assetBrowser != null)
             {
-                this.assetBrowser.refresh();
                 /* Show the file that was just imported, selected. Without this the library simply
                  * re-listed itself and the new picture was one anonymous tile among hundreds. */
-                this.assetBrowser.selectPath(linked ? "external:" + file.getAbsoluteFile()
-                    : "assets/images/" + name);
+                this.assetBrowser.selectPath(linked ? token : "assets/images/" + name);
             }
 
             this.setStatus((linked ? "已链接：" : "已导入：") + name
-                + (linked ? "（外部素材，不复制）" : "（已在素材库选中，双击插入）"));
+                + (linked ? "（外部素材，不复制）" : "（已复制到工程，双击素材箱条目插入）"));
             this.save();
         }
         catch (Exception e)
@@ -8812,19 +9593,7 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     private String copyIntoProjectImages(java.io.File file) throws java.io.IOException
     {
-        java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve("images");
-
-        java.nio.file.Files.createDirectories(folder);
-
-        String name = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
-        java.nio.file.Path target = folder.resolve(name);
-
-        if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
-        {
-            java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        }
-
-        return name;
+        return this.copyIntoProjectFile(file, "images");
     }
 
     private void addImageLayer(String path)
@@ -8843,6 +9612,7 @@ public class UICompositorPanel extends UIDashboardPanel
         layer.height = layer.width * 0.5625F;
         layer.out = this.doc.duration;
         layer.imageFit = 0;
+        this.fitLayerToSource(layer, path);
 
         this.doc.addLayer(layer);
         this.setSingleSelection(layer);
@@ -10045,6 +10815,7 @@ public class UICompositorPanel extends UIDashboardPanel
             switch (debugPage)
             {
                 case "layer" -> this.setInspectorPage(PAGE_LAYER);
+                case "film" -> this.setInspectorPage(PAGE_FILM);
                 case "mask" -> this.setInspectorPage(PAGE_MASK);
                 case "text" -> this.setInspectorPage(PAGE_TEXT);
                 case "comp" -> this.setInspectorPage(PAGE_COMP);
@@ -11568,7 +12339,9 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.selectedIds.clear();
             this.selectedLayer = null;
-            this.inspectorPage = PAGE_COMP;
+            /* The film page is where the clip's volume/pitch/speed live. The old code jumped to
+             * the composition page, which has no per-clip controls at all. */
+            this.setInspectorPage(PAGE_FILM);
             this.setStatus("音频：" + clip.name + String.format(java.util.Locale.ROOT, " · 入点 %.2fs", clip.start));
 
             if (this.trackTimeline != null)
@@ -11630,6 +12403,13 @@ public class UICompositorPanel extends UIDashboardPanel
             && (this.inspectorPage == PAGE_COMP || this.inspectorPage == PAGE_OUTPUT))
         {
             this.setInspectorPage(PAGE_EFFECTS);
+        }
+
+        /* 「影视」 only edits media/audio. Selecting a text or shape layer while it was open
+         * should land on that layer's actual controls instead of an empty media page. */
+        if (layer != null && this.inspectorPage == PAGE_FILM && !layer.isMediaLayer())
+        {
+            this.setInspectorPage(PAGE_LAYER);
         }
 
         if (this.replayBrowser != null)
@@ -12612,7 +13392,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void setInspectorPage(int page)
     {
-        this.inspectorPage = Math.max(PAGE_EFFECTS, Math.min(PAGE_OUTPUT, page));
+        this.inspectorPage = Math.max(PAGE_EFFECTS, Math.min(PAGE_FILM, page));
         this.inspectorTabs.select(inspectorTabForPage(this.inspectorPage));
     }
 
@@ -12732,9 +13512,15 @@ public class UICompositorPanel extends UIDashboardPanel
     {
         this.leftPage = Math.max(0, Math.min(3, index));
         this.effectLibrary.setVisible(this.leftPage == 0);
-        this.assetPanel.setVisible(this.leftPage == 1);
+        this.assetPanel.setVisible(false);
+        this.projectBin.setVisible(this.leftPage == 1);
         this.presetBrowser.setVisible(this.leftPage == 2);
         this.replayBrowser.setVisible(this.leftPage == 3);
+
+        if (this.leftPage == 1 && this.projectBin != null)
+        {
+            this.projectBin.refresh();
+        }
 
         if (this.leftPage == 3)
         {
@@ -15000,7 +15786,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
         }
 
-        this.setInspectorPage(Math.max(PAGE_EFFECTS, Math.min(PAGE_OUTPUT, settings.inspectorPage)));
+        this.setInspectorPage(Math.max(PAGE_EFFECTS, Math.min(PAGE_FILM, settings.inspectorPage)));
         this.leftTabs.select(Math.max(0, Math.min(3, settings.leftPage)));
         this.applyLeftPage(settings.leftPage, false);
 
@@ -16070,6 +16856,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.doc.audio.remove(clip);
             this.selectedAudio = null;
             dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+            this.previewAudioRunning = false;
             this.refreshInspector();
             this.save();
             this.setStatus("已移除音频：" + clip.name);
@@ -16805,6 +17592,7 @@ public class UICompositorPanel extends UIDashboardPanel
             case PAGE_EFFECTS -> this.addEffectPage();
             case PAGE_GRADE -> this.inspector.add(this.gradeSection(this.selectedLayer));
             case PAGE_LAYER -> this.addLayerPage();
+            case PAGE_FILM -> this.addFilmPage();
             case PAGE_MASK -> this.inspector.add(this.maskSection(this.selectedLayer));
             case PAGE_TEXT ->
             {
@@ -16894,6 +17682,393 @@ public class UICompositorPanel extends UIDashboardPanel
         }));
 
         return section;
+    }
+
+    /**
+     * Effects page: only the selected layer's applied effect stack and layer styles.
+     *
+     * <p>Transform, opacity, source/clip, camera and binding controls moved to {@link #addLayerPage()}.
+     * The old "效果控件" page mixed all of them, so a user with five effects had to scroll past
+     * motion/opacity/source controls to reach the second effect. The left library adds effects, this
+     * page edits the ones the layer owns.</p>
+     */
+    /**
+     * Film page: the parameters that belong to a <b>piece of media</b> rather than to a layer
+     * transform or an effect.
+     *
+     * <p>It answers one question: what do I do after importing a song or a video? The old build
+     * had no answer — an audio clip could only be trimmed in the composition page, and a video
+     * layer's speed/fit/audio had no single home. Selecting an audio clip now lands here.</p>
+     */
+    private void addFilmPage()
+    {
+        if (this.selectedAudio != null && this.doc != null && this.doc.audio.contains(this.selectedAudio))
+        {
+            this.inspector.add(this.audioFilmSection(this.selectedAudio));
+            return;
+        }
+
+        if (this.selectedLayer != null && this.selectedLayer.isMediaLayer())
+        {
+            this.inspector.add(this.videoFilmSection(this.selectedLayer));
+            return;
+        }
+
+        this.inspector.add(this.emptySelectionSection("影视",
+            "选中一条音频片段或图片/视频轨道后，这里显示音量、音调、变速和画面适配。"));
+    }
+
+    private UISection audioFilmSection(dev.bbsae.comp.CompAudio clip)
+    {
+        UISection section = new UISection(IKey.constant("音频 · " + clip.name));
+        section.remember(this.sectionFolds, "filmAudio", true);
+
+        java.nio.file.Path source = this.resolveMedia(clip.path);
+        boolean missing = source == null || !java.nio.file.Files.isRegularFile(source);
+
+        section.fields.add(UI.label(IKey.constant(missing
+            ? "源文件缺失：" + clip.path + "（重新链接或从素材箱拖入）"
+            : clip.path), 13));
+
+        UILabel audioStatus = UI.label(IKey.constant("预览：" + dev.bbsae.client.audio.CompAudioPlayer.status()), 13);
+        section.fields.add(audioStatus);
+        this.inspectorBindings.add(() -> audioStatus.label =
+            IKey.constant("预览：" + dev.bbsae.client.audio.CompAudioPlayer.status()));
+
+        if (!this.usesAeEncoder())
+        {
+            section.fields.add(UI.label(IKey.constant("当前是 BBS 原生编码器：预览有声，但 F6 成片不带合成音频；需要成片带声音请在「输出」页切 AE 编码器或单独导出 WAV。"), 13));
+        }
+        section.fields.add(UI.label(IKey.constant("时长 "
+            + String.format(java.util.Locale.ROOT, "%.2fs", clip.length(this.doc.duration))
+            + (clip.sourceDuration > 0F ? " / 源 " + String.format(java.util.Locale.ROOT, "%.2fs", clip.sourceDuration) : "")), 13));
+
+        UIButton audition = this.smallButton("试听源文件", () ->
+        {
+            if (missing)
+            {
+                this.notifyError("音频文件不存在：" + clip.path);
+
+                return;
+            }
+
+            if (dev.bbsae.client.audio.CompAudioPreview.isPlaying(source))
+            {
+                dev.bbsae.client.audio.CompAudioPreview.stop();
+                this.setStatus("已停止试听");
+            }
+            else if (dev.bbsae.client.audio.CompAudioPreview.play(source))
+            {
+                this.setStatus("试听：" + clip.name + "（再点一次停止）");
+            }
+            else
+            {
+                this.notifyError("无法试听：文件不存在或 FFmpeg 不可用");
+            }
+        });
+        UIButton stop = this.smallButton("停止试听", () ->
+        {
+            dev.bbsae.client.audio.CompAudioPreview.stop();
+            this.setStatus("已停止试听");
+        });
+
+        section.fields.add(UI.row(audition, stop));
+
+        section.fields.add(UI.label(IKey.constant("音量 / 音调 / 变速独立生效；预览、WAV 导出和视频混音走同一条混音链。"), 13));
+
+        UISliderTrackpad gain = new UISliderTrackpad((value) ->
+        {
+            clip.gain = Math.max(0F, value.floatValue() / 100F);
+            this.invalidateAudioMix();
+            this.save();
+        });
+
+        gain.limit(0F, 200F, false);
+        gain.setValue(clip.gain * 100F);
+        section.fields.add(this.fieldRow("音量（%）", gain));
+
+        section.fields.add(this.numberRow("音调（半音）", clip.pitch, -24D, 24D, false, (value) ->
+        {
+            clip.pitch = (float) Math.max(-48D, Math.min(48D, value));
+            this.invalidateAudioMix();
+        }));
+        section.fields.add(this.numberRow("速度（x）", clip.safeSpeed(), 0.05D, 8D, false, (value) ->
+        {
+            clip.retimeForSpeed(value.floatValue());
+            this.invalidateAudioMix();
+            this.setStatus(String.format(java.util.Locale.ROOT, "音频速度 %.2fx · 时长 %.2fs", clip.safeSpeed(), clip.length(this.doc.duration)));
+        }));
+        section.fields.add(this.numberRow("声像（-1 左 / 1 右）", clip.pan, -1D, 1D, false, (value) ->
+        {
+            clip.pan = (float) Math.max(-1D, Math.min(1D, value));
+            this.invalidateAudioMix();
+        }));
+
+        section.fields.add(this.numberRow("淡入（秒）", clip.fadeIn, 0D, 60D, false, (value) ->
+        {
+            clip.fadeIn = Math.max(0F, value.floatValue());
+            this.invalidateAudioMix();
+        }));
+        section.fields.add(this.numberRow("淡出（秒）", clip.fadeOut, 0D, 60D, false, (value) ->
+        {
+            clip.fadeOut = Math.max(0F, value.floatValue());
+            this.invalidateAudioMix();
+        }));
+
+        section.fields.add(new UIToggle(IKey.constant("循环"), clip.loop, (toggle) ->
+        {
+            clip.loop = toggle.getValue();
+            this.invalidateAudioMix();
+            this.save();
+        }));
+        section.fields.add(new UIToggle(IKey.constant("静音"), clip.muted, (toggle) ->
+        {
+            clip.muted = toggle.getValue();
+            this.invalidateAudioMix();
+            this.save();
+        }));
+
+        section.fields.add(UI.label(IKey.constant("时间"), 15));
+        section.fields.add(this.numberRow("入点（秒）", clip.start, 0D, 36000D, false, (value) ->
+        {
+            clip.start = Math.max(0F, value.floatValue());
+            this.invalidateAudioMix();
+        }));
+        section.fields.add(this.numberRow("源偏移（秒）", clip.offset, 0D, 36000D, false, (value) ->
+        {
+            clip.offset = Math.max(0F, value.floatValue());
+            this.invalidateAudioMix();
+        }));
+        section.fields.add(this.numberRow("时长（-1 全长）", clip.duration, -1D, 36000D, false, (value) ->
+        {
+            clip.duration = value.floatValue() <= 0F ? -1F : value.floatValue();
+            this.invalidateAudioMix();
+        }));
+
+        section.fields.add(UI.row(
+            this.smallButton("入点=播放头", () ->
+            {
+                clip.start = this.time;
+                this.invalidateAudioMix();
+                this.save();
+            }),
+            this.smallButton("适配整段源", () ->
+            {
+                clip.duration = -1F;
+                this.invalidateAudioMix();
+                this.save();
+                this.refreshInspector();
+            })
+        ));
+
+        section.fields.add(UI.row(
+            this.smallButton("重新链接…", () -> this.relinkAudio(clip)),
+            this.smallButton("移除这条音频", () ->
+            {
+                this.beginAction("移除音频");
+                this.doc.audio.remove(clip);
+
+                if (this.selectedAudio == clip)
+                {
+                    this.selectedAudio = null;
+                }
+
+                this.invalidateAudioMix();
+                this.refreshInspector();
+                this.save();
+                this.setStatus("已移除音频");
+            })
+        ));
+
+        return section;
+    }
+
+    private UISection videoFilmSection(CompLayer layer)
+    {
+        UISection section = new UISection(IKey.constant("影视 · " + layer.name));
+        section.remember(this.sectionFolds, "filmVideo", true);
+
+        java.nio.file.Path source = this.resolveLayerFirstFrame(layer);
+        boolean missing = source == null || !java.nio.file.Files.isRegularFile(source);
+        boolean sequence = "footage".equals(layer.type) && layer.imagePath != null
+            && layer.imagePath.contains("%0");
+
+        section.fields.add(UI.label(IKey.constant("类型：" + layer.type
+            + (sequence ? "（帧序列）" : "")
+            + (layer.hasVideoSource() ? " · 原始视频：" + layer.videoSource : "")), 13));
+        section.fields.add(UI.label(IKey.constant(missing ? "源文件缺失：" + layer.imagePath : layer.imagePath), 13));
+
+        section.fields.add(UI.row(
+            this.smallButton("替换素材…", () -> this.replaceVideoSource(layer)),
+            this.smallButton("在文件夹中显示", () ->
+            {
+                if (source == null || !OsOpen.openFolder(source.getParent()))
+                {
+                    this.setStatus("无法打开文件夹：" + source);
+                }
+            })
+        ));
+
+        section.fields.add(UI.label(IKey.constant("画面"), 15));
+        section.fields.add(this.numberRow("宽度（像素）", layer.width, 1D, 10000D, false, (value) -> layer.width = Math.max(1F, value.floatValue())));
+        section.fields.add(this.numberRow("高度（像素）", layer.height, 1D, 10000D, false, (value) -> layer.height = Math.max(1F, value.floatValue())));
+
+        java.util.List<Integer> fits = java.util.List.of(0, 1, 2);
+        UIChoiceButton<Integer> fit = new UIChoiceButton<>(fits, (value) -> Icons.IMAGE,
+            (value) -> IKey.constant(value == 1 ? "覆盖（裁切）" : value == 2 ? "拉伸" : "包含（留黑边）"));
+
+        fit.setValue(layer.imageFit);
+        fit.callback((value) ->
+        {
+            layer.imageFit = value == null ? 0 : value;
+            this.save();
+        });
+        section.fields.add(this.fieldRow("适配", fit));
+
+        section.fields.add(this.animatedNumberRow("不透明度", layer, "opacity",
+            layer.opacityFrame(this.getFrame()), (value) -> layer.opacity = (float) Math.max(0D, Math.min(1D, value)), 0F, 1F));
+
+        section.fields.add(UI.label(IKey.constant("时间（视频图层）"), 15));
+        section.fields.add(this.numberRow("速度（x）", layer.timeScale, -8D, 8D, false, (value) ->
+        {
+            layer.timeScale = (float) Math.max(-8D, Math.min(8D, value));
+            this.setStatus(String.format(java.util.Locale.ROOT, "视频速度 %.2fx", layer.timeScale));
+        }));
+        section.fields.add(new UIToggle(IKey.constant("冻结帧"), layer.freeze, (toggle) ->
+        {
+            layer.freeze = toggle.getValue();
+            this.save();
+        }));
+        section.fields.add(this.numberRow("冻结时间（秒）", layer.freezeTime, 0D, 36000D, false, (value) -> layer.freezeTime = Math.max(0F, value.floatValue())));
+        section.fields.add(new UIToggle(IKey.constant("时间重映射"), layer.timeRemap, (toggle) ->
+        {
+            layer.timeRemap = toggle.getValue();
+            this.save();
+            this.refreshInspector();
+        }));
+
+        if (layer.timeRemap)
+        {
+            section.fields.add(this.animatedNumberRow("重映射源时间", layer, "timeRemap",
+                layer.sourceTimeAt(this.time, this.getFrame()), (value) -> {}, 0F, 36000F));
+            section.fields.add(UI.label(IKey.constant("启用后在播放头写关键帧；源时间 0 = 片段第一帧。"), 13));
+        }
+
+        section.fields.add(UI.label(IKey.constant("画面 / 时间 / 原视频音频都在本页；运动与缩放仍在「图层」页。"), 13));
+
+        if (layer.hasVideoSource())
+        {
+            section.fields.add(UI.label(IKey.constant("视频音频"), 15));
+            section.fields.add(this.smallButton("提取音频到音轨（音量/音调可编辑）", () ->
+            {
+                java.io.File file = new java.io.File(layer.videoSource);
+
+                if (!file.isFile())
+                {
+                    this.notifyError("原始视频不存在：" + layer.videoSource);
+
+                    return;
+                }
+
+                this.addAudioClip(file, layer.in);
+                this.setInspectorPage(PAGE_FILM);
+                this.setStatus("已从视频提取音频：拖动到音轨后可调音量/音调");
+            }));
+        }
+
+        return section;
+    }
+
+    /** Resolves a layer/audio source for the film page's existence checks. */
+    private java.nio.file.Path resolveMedia(String path)
+    {
+        if (this.project == null || path == null || path.isBlank())
+        {
+            return null;
+        }
+
+        return CompStore.resolveAsset(this.project.id, path);
+    }
+
+    /** A frame sequence is represented by its printf pattern; check its first frame. */
+    private java.nio.file.Path resolveLayerFirstFrame(CompLayer layer)
+    {
+        if (layer == null)
+        {
+            return null;
+        }
+
+        String path = layer.imagePath;
+
+        if (path != null && path.contains("%"))
+        {
+            try
+            {
+                path = String.format(java.util.Locale.ROOT, path, 0);
+            }
+            catch (Exception ignored)
+            {}
+        }
+
+        return this.resolveMedia(path);
+    }
+
+    private void invalidateAudioMix()
+    {
+        dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+        this.save();
+    }
+
+    private void replaceVideoSource(CompLayer layer)
+    {
+        NativeFileDialog.pickFile(
+            "替换视频/图片素材",
+            new String[] {"mp4", "mov", "mkv", "webm", "avi", "m4v", "png", "jpg", "jpeg", "gif"},
+            (file) ->
+            {
+                if (file == null || !file.isFile())
+                {
+                    return;
+                }
+
+                String lower = file.getName().toLowerCase(java.util.Locale.ROOT);
+                boolean video = lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".mkv")
+                    || lower.endsWith(".webm") || lower.endsWith(".avi") || lower.endsWith(".m4v");
+
+                if (video)
+                {
+                    layer.type = "videolink";
+                    layer.imagePath = CompStore.externalToken(file);
+                    layer.videoSource = file.getAbsolutePath();
+                    layer.width = Math.max(2, this.doc.width * 0.8F);
+                    layer.height = Math.max(2, this.doc.height * 0.6F);
+                    this.registerExternalAsset(file);
+                    this.probeVideoSizeAsync(file, layer, true);
+                    this.refreshMediaViews();
+                    this.setStatus("已替换为外部视频：" + file.getName() + "（首次预览按需拆帧）");
+                }
+                else
+                {
+                    try
+                    {
+                        layer.type = "image";
+                        layer.imagePath = this.imageImportPath(file);
+                        layer.videoSource = "";
+                        this.setStatus("已替换图片：" + file.getName());
+                    }
+                    catch (Exception e)
+                    {
+                        this.notifyError("替换失败：" + e.getMessage());
+
+                        return;
+                    }
+                }
+
+                this.refreshInspector();
+                this.save();
+            },
+            () -> this.setStatus("系统文件对话框不可用；请使用素材箱拖拽替换")
+        );
     }
 
     /**
@@ -18457,6 +19632,7 @@ public class UICompositorPanel extends UIDashboardPanel
             comp.audio.remove(clip);
             this.selectedAudio = null;
             dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+            this.previewAudioRunning = false;
             this.refreshInspector();
             this.save();
             this.setStatus("已移除音频");
@@ -18478,16 +19654,23 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
-                clip.path = "external:" + file.getAbsoluteFile();
+                clip.path = CompStore.externalToken(file);
                 float length = dev.bbsae.client.export.CompAudioMixer.probeDuration(file.toPath());
 
                 if (length > 0F)
                 {
-                    clip.duration = length;
+                    clip.sourceDuration = length;
+
+                    if (clip.duration <= 0F)
+                    {
+                        clip.duration = length / clip.safeSpeed();
+                    }
                 }
 
+                this.registerExternalAsset(file);
                 dev.bbsae.client.audio.CompAudioPlayer.invalidate();
                 this.refreshInspector();
+                this.refreshMediaViews();
                 this.save();
                 this.setStatus("已重新链接：" + file.getName());
             },
@@ -18521,6 +19704,8 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.selectedAudio = null;
             }
 
+            dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+            this.previewAudioRunning = false;
             this.refreshInspector();
             this.save();
         });
@@ -18641,86 +19826,189 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void addAudioClip(java.io.File file, float start)
     {
-        try
+        if (this.project == null || this.doc == null || file == null || !file.isFile())
         {
-            java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve("audio");
+            this.notifyError("音频文件不存在：" + file);
 
-            String rawName = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
-            String lower = rawName.toLowerCase(java.util.Locale.ROOT);
-            boolean direct = lower.endsWith(".wav") || lower.endsWith(".ogg");
-            boolean supported = direct || lower.endsWith(".mp3") || lower.endsWith(".flac")
-                || lower.endsWith(".m4a") || lower.endsWith(".aac") || lower.endsWith(".opus")
-                || lower.endsWith(".wma") || lower.endsWith(".aiff") || lower.endsWith(".aif");
-            boolean link = supported && CompPrefs.get().linkExternalAssets;
-            java.nio.file.Path target;
-            String storedPath;
+            return;
+        }
 
-            if (link)
+        final CompProject targetProject = this.project;
+        final CompDocument targetDoc = this.doc;
+        final String rawName = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+        final String lower = rawName.toLowerCase(java.util.Locale.ROOT);
+        final boolean direct = lower.endsWith(".wav") || lower.endsWith(".ogg");
+        final boolean supported = direct || lower.endsWith(".mp3") || lower.endsWith(".flac")
+            || lower.endsWith(".m4a") || lower.endsWith(".aac") || lower.endsWith(".opus")
+            || lower.endsWith(".wma") || lower.endsWith(".aiff") || lower.endsWith(".aif")
+            || lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".mkv")
+            || lower.endsWith(".webm") || lower.endsWith(".avi") || lower.endsWith(".m4v");
+
+        if (!supported)
+        {
+            this.notifyError("不支持的音频格式：" + file.getName());
+
+            return;
+        }
+
+        final boolean link = CompPrefs.get().linkExternalAssets;
+        final java.nio.file.Path folder = CompStore.assetRoot(targetProject.id).resolve("audio");
+        final java.nio.file.Path target;
+        final String storedPath;
+
+        if (link)
+        {
+            target = file.toPath().toAbsolutePath();
+            storedPath = CompStore.externalToken(file);
+            this.registerExternalAsset(file);
+        }
+        else if (direct)
+        {
+            target = folder.resolve(this.uniqueAudioName(folder, rawName));
+            storedPath = "audio/" + target.getFileName();
+        }
+        else
+        {
+            String base = rawName.lastIndexOf('.') > 0
+                ? rawName.substring(0, rawName.lastIndexOf('.')) : rawName;
+
+            target = folder.resolve(this.uniqueAudioName(folder, base + ".wav"));
+            storedPath = "audio/" + target.getFileName();
+        }
+
+        String name = target.getFileName().toString();
+
+        dev.bbsae.comp.CompAudio clip = new dev.bbsae.comp.CompAudio(
+            CompStore.uniqueId("audio", targetDoc.audio, (a) -> a.id),
+            name,
+            storedPath
+        );
+
+        clip.start = Math.max(0F, Math.min(targetDoc.duration, start));
+        clip.name = name.substring(0, name.lastIndexOf('.') > 0 ? name.lastIndexOf('.') : name.length());
+
+        targetDoc.audio.add(clip);
+        this.selectAudioClip(clip);
+        dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+        this.refreshInspector();
+        this.refreshMediaViews();
+        this.save();
+        this.setStatus("已加入音频：" + name + (link ? "（外部链接）" : "（正在复制/转换…）")
+            + " · 入点 " + String.format(java.util.Locale.ROOT, "%.2fs", clip.start));
+
+        /* File work and decoding happen off the render thread. A 10-minute MP3 used to be copied
+         * and fully decoded inside the click handler, freezing the editor for seconds. */
+        Thread worker = new Thread(() ->
+        {
+            try
             {
-                target = file.toPath().toAbsolutePath();
-                storedPath = "external:" + target;
-                this.registerExternalAsset(file);
-            }
-            else if (direct)
-            {
-                java.nio.file.Files.createDirectories(folder);
-                target = folder.resolve(rawName);
-
-                if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
+                if (!link)
                 {
-                    java.nio.file.Files.copy(file.toPath(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    java.nio.file.Files.createDirectories(folder);
+
+                    if (direct)
+                    {
+                        if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))
+                        {
+                            java.nio.file.Files.copy(file.toPath(), target,
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    }
+                    else
+                    {
+                        convertAudioToWav(file, target);
+                    }
                 }
 
-                storedPath = "audio/" + rawName;
+                float length = dev.bbsae.client.export.CompAudioMixer.probeDuration(target);
+
+                if (length > 0F)
+                {
+                    dev.bbsae.client.render.CompAudioWaveform.prewarm(target);
+                }
+
+                net.minecraft.client.MinecraftClient.getInstance().execute(() ->
+                {
+                    if (this.project != targetProject || this.doc != targetDoc || !targetDoc.audio.contains(clip))
+                    {
+                        return;
+                    }
+
+                    if (length > 0F)
+                    {
+                        clip.sourceDuration = length;
+
+                        if (clip.duration <= 0F)
+                        {
+                            clip.duration = length / clip.safeSpeed();
+                        }
+
+                        this.setStatus("音频已就绪：" + clip.name + " · "
+                            + String.format(java.util.Locale.ROOT, "%.2fs", length));
+                    }
+                    else
+                    {
+                        this.setStatus("音频已加入，但读不到时长；播放时仍会尝试解码：" + clip.name);
+                    }
+
+                    dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+                    this.refreshInspector();
+                    this.refreshMediaViews();
+                    this.save();
+                });
             }
-            else
+            catch (Exception e)
             {
-                String base = rawName.lastIndexOf('.') > 0
-                    ? rawName.substring(0, rawName.lastIndexOf('.')) : rawName;
+                dev.bbsae.BbsAeAddon.LOGGER.error("Could not prepare audio {}", file, e);
+                net.minecraft.client.MinecraftClient.getInstance().execute(() ->
+                {
+                    if (this.doc == targetDoc && targetDoc.audio.contains(clip))
+                    {
+                        targetDoc.audio.remove(clip);
 
-                target = folder.resolve(base + ".wav");
-                convertAudioToWav(file, target);
-                storedPath = "audio/" + target.getFileName();
+                        if (this.selectedAudio == clip)
+                        {
+                            this.selectedAudio = null;
+                        }
+
+                        dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+                        this.previewAudioRunning = false;
+                        this.refreshInspector();
+                        this.save();
+                    }
+
+                    this.notifyError("音频导入失败：" + e.getMessage());
+                });
             }
+        }, "bbsae-audio-import");
 
-            String name = target.getFileName().toString();
-            dev.bbsae.comp.CompAudio clip = new dev.bbsae.comp.CompAudio(
-                "audio_" + (this.doc.audio.size() + 1),
-                name,
-                storedPath
-            );
+        worker.setDaemon(true);
+        worker.start();
+    }
 
-            clip.start = Math.max(0F, Math.min(this.doc.duration, start));
-            clip.name = name.substring(0, name.lastIndexOf('.') > 0 ? name.lastIndexOf('.') : name.length());
+    /** Unique name inside the project audio folder; never silently overwrites an import. */
+    private String uniqueAudioName(java.nio.file.Path folder, String rawName)
+    {
+        String base = rawName;
+        String extension = "";
+        int dot = rawName.lastIndexOf('.');
 
-            /* Store the real length now: the timeline draws it and the mixer plays it, so a clip
-             * without an explicit duration must not be a guess in two different places. */
-            float length = dev.bbsae.client.export.CompAudioMixer.probeDuration(target);
-
-            if (length > 0F)
-            {
-                clip.duration = length;
-            }
-
-            this.doc.audio.add(clip);
-            this.selectAudioClip(clip);
-            dev.bbsae.client.audio.CompAudioPlayer.invalidate();
-            this.refreshInspector();
-
-            if (this.assetBrowser != null)
-            {
-                this.assetBrowser.refresh();
-            }
-
-            this.save();
-            this.setStatus("已导入音频：" + name + (link ? "（外部链接）" : "（已复制/转换）")
-                + " · 入点 " + String.format(java.util.Locale.ROOT, "%.2fs", clip.start));
-        }
-        catch (Exception e)
+        if (dot > 0)
         {
-            dev.bbsae.BbsAeAddon.LOGGER.error("Could not import audio {}", file, e);
-            this.notifyError("音频导入失败：" + e.getMessage());
+            base = rawName.substring(0, dot);
+            extension = rawName.substring(dot);
         }
+
+        String name = rawName;
+        int suffix = 2;
+
+        while (java.nio.file.Files.isRegularFile(folder.resolve(name)))
+        {
+            name = base + "_" + suffix + extension;
+            suffix++;
+        }
+
+        return name;
     }
 
     /** Converts MP3/FLAC/M4A to WAV so the mixer's WAV/OGG decoder can read it. */
@@ -20867,6 +22155,16 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void setScalar(CompLayer layer, String path, float value)
     {
+        /* time remap is a time value, not a static property: changing it must write a key at the
+         * playhead, otherwise the inspector field would appear to do nothing on an enabled layer. */
+        if ("timeRemap".equals(path) && layer.timeRemap)
+        {
+            layer.scalarChannel("timeRemap").insert(this.getFrame(), Math.max(0F, value));
+            this.save();
+
+            return;
+        }
+
         if (dev.bbsae.comp.CompCurves.isTransformAxisPath(path))
         {
             layer.ensureIndependentAxes();
@@ -21717,14 +23015,21 @@ public class UICompositorPanel extends UIDashboardPanel
     private void syncPreviewAudio()
     {
         CompProject.CompSettings settings = this.project == null ? null : this.project.settings;
+        /* Audio follows the playhead, not the encoder. The old gate (`usesAeEncoder`) made the
+         * audio track silent in the default BBS mode even though the composition preview and the
+         * playhead were running — the exact "imported audio, no sound" bug. */
+        boolean ratePlayable = this.playRate == 0F || Math.abs(this.playRate - 1F) < 0.001F;
         boolean enabled = this.playing
-            && this.usesAeEncoder()
+            && ratePlayable
             && settings != null && settings.previewAudio
             && this.doc != null && dev.bbsae.client.audio.CompAudioPlayer.hasAudio(this.doc);
 
         if (enabled)
         {
-            if (!this.previewAudioRunning)
+            /* Also restart when the player was invalidated by an audio edit: `invalidate()`
+             * releases the buffer, and keeping previewAudioRunning=true used to leave the next
+             * frames calling sync() on a null player, i.e. silence after every volume change. */
+            if (!this.previewAudioRunning || !dev.bbsae.client.audio.CompAudioPlayer.isActive())
             {
                 this.previewAudioRunning = true;
                 dev.bbsae.client.audio.CompAudioPlayer.play(this.project, this.doc, this.time);
@@ -23225,11 +24530,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.refreshLayers();
             this.refreshInspector();
-
-            if (this.assetBrowser != null)
-            {
-                this.assetBrowser.refresh();
-            }
+            this.refreshMediaViews();
 
             this.save();
             this.setStatus("已从拖放导入 " + imported + " 个文件"
@@ -23270,6 +24571,90 @@ public class UICompositorPanel extends UIDashboardPanel
         this.setStatus("已拖入图片：" + name + (path.startsWith("external:") ? "（外部链接）" : ""));
     }
 
+    /**
+     * Fills in {@code sourceDuration} for audio clips written before that field existed.
+     *
+     * <p>Without it an old clip draws a bar to the end of the composition and its speed control
+     * cannot know how much source it actually has. Probing is fast (RIFF header / FFmpeg banner)
+     * but still off-thread, so opening a project never stalls on a music file.</p>
+     */
+    private void probeMissingAudioMetadata()
+    {
+        if (this.project == null || this.doc == null || this.doc.audio == null || this.doc.audio.isEmpty())
+        {
+            return;
+        }
+
+        final CompProject targetProject = this.project;
+        final CompDocument targetDoc = this.doc;
+        final java.util.List<dev.bbsae.comp.CompAudio> clips = new java.util.ArrayList<>(targetDoc.audio);
+
+        Thread worker = new Thread(() ->
+        {
+            java.util.Map<dev.bbsae.comp.CompAudio, Float> lengths = new java.util.IdentityHashMap<>();
+
+            for (dev.bbsae.comp.CompAudio clip : clips)
+            {
+                if (clip == null || clip.sourceDuration > 0F)
+                {
+                    continue;
+                }
+
+                java.nio.file.Path file = CompStore.resolveAsset(targetProject.id, clip.path);
+
+                if (file == null || !java.nio.file.Files.isRegularFile(file))
+                {
+                    continue;
+                }
+
+                float length = dev.bbsae.client.export.CompAudioMixer.probeDuration(file);
+
+                if (length > 0F)
+                {
+                    lengths.put(clip, length);
+                    dev.bbsae.client.render.CompAudioWaveform.prewarm(file);
+                }
+            }
+
+            if (lengths.isEmpty())
+            {
+                return;
+            }
+
+            net.minecraft.client.MinecraftClient.getInstance().execute(() ->
+            {
+                if (this.project != targetProject || this.doc != targetDoc)
+                {
+                    return;
+                }
+
+                for (java.util.Map.Entry<dev.bbsae.comp.CompAudio, Float> entry : lengths.entrySet())
+                {
+                    dev.bbsae.comp.CompAudio clip = entry.getKey();
+
+                    if (!targetDoc.audio.contains(clip))
+                    {
+                        continue;
+                    }
+
+                    clip.sourceDuration = entry.getValue();
+
+                    if (clip.duration <= 0F)
+                    {
+                        clip.duration = entry.getValue() / clip.safeSpeed();
+                    }
+                }
+
+                dev.bbsae.client.audio.CompAudioPlayer.invalidate();
+                this.refreshInspector();
+                this.save();
+            });
+        }, "bbsae-audio-probe");
+
+        worker.setDaemon(true);
+        worker.start();
+    }
+
     /** Migrates pre-existing external layer/audio paths into the new asset-library index. */
     private void syncExternalAssets()
     {
@@ -23306,13 +24691,25 @@ public class UICompositorPanel extends UIDashboardPanel
 
     private void addExternalIndex(String path)
     {
-        if (path != null && path.startsWith("external:")
-            && !this.project.settings.externalAssets.contains(path))
+        if (path == null || !path.startsWith("external:"))
         {
-            this.project.settings.externalAssets.add(path);
+            return;
+        }
+
+        String token = path;
+
+        try
+        {
+            token = CompStore.externalToken(new java.io.File(CompStore.externalRaw(path)));
+        }
+        catch (Exception ignored)
+        {}
+
+        if (!this.project.settings.externalAssets.contains(token))
+        {
+            this.project.settings.externalAssets.add(token);
         }
     }
-
     /** Adds an absolute media path to the project's external library; nothing is copied. */
     private void registerExternalAsset(java.io.File file)
     {
@@ -23321,7 +24718,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        String path = "external:" + file.getAbsoluteFile();
+        String path = CompStore.externalToken(file);
 
         if (this.project.settings.externalAssets == null)
         {
@@ -23729,6 +25126,11 @@ public class UICompositorPanel extends UIDashboardPanel
         try
         {
             super.render(context);
+
+            /* Project-panel drag ghost and drop resolution. Drawn after the tree so it is visible
+             * over the timeline; the panel polls the physical button because the release is
+             * delivered to whichever element is under the pointer. */
+            this.renderMediaDrag(context);
 
             /* Page switches: a fast veil over the page that just changed. Drawn after the children
              * (and inside the entrance transform) so it covers the hard cut without touching any
