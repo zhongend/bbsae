@@ -146,4 +146,55 @@ public class CompDocumentDurationTest
         assertFalse(doc.clampToMaxDuration());
         assertEquals(90F, doc.duration, 0.001F);
     }
+
+    @Test
+    public void fitEndUsesTheLastVisualLayerNotTheEmptyTail()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.duration = 90F;
+        doc.workAreaOut = 90F;
+
+        CompLayer content = new CompLayer("content", "Content", "solid");
+
+        content.in = 2F;
+        content.out = 12F;
+        doc.layers.add(content);
+
+        CompLayer camera = new CompLayer("camera", "Camera", "camera");
+
+        camera.out = 90F;
+        doc.layers.add(camera);
+
+        assertEquals(12F, doc.fitEnd(), 0.001F,
+            "a canvas-long camera must not stretch the fit past the visual edit");
+        assertEquals(90F, doc.duration, 0.001F, "fit must not mutate editorial duration");
+    }
+
+    @Test
+    public void fitEndIncludesTheLastAudioClip()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.duration = 90F;
+
+        CompAudio audio = new CompAudio("a", "Music", "audio/music.wav");
+
+        audio.start = 20F;
+        audio.duration = 5F;
+        doc.audio.add(audio);
+
+        assertEquals(25F, doc.fitEnd(), 0.001F);
+    }
+
+    @Test
+    public void anEmptyCompositionFitsItsCanvas()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.duration = 30F;
+
+        assertEquals(30F, doc.fitEnd(), 0.001F,
+            "with no layers/audio there is no content end; keep the canvas usable");
+    }
 }

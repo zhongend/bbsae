@@ -190,6 +190,52 @@ public class CompDocument
     }
 
     /**
+     * Time-axis end used by "fit the whole timeline".
+     *
+     * <p>The canvas duration is editorial: it may carry a deliberate empty tail, and older builds
+     * even inflated it to a film placeholder. Fitting to it zoomed the real edit into a sliver at
+     * the left. The user-facing fit is therefore based on the last layer/audio end, mapped from
+     * time 0, so the beginning is always visible and the edit fills the lane.</p>
+     *
+     * <p>An empty composition has no content end; it falls back to the canvas duration so the
+     * editor still opens on a usable scale instead of a 0.1 s sliver.</p>
+     */
+    public float fitEnd()
+    {
+        float end = 0F;
+        boolean hasContent = false;
+
+        for (CompLayer layer : this.layers == null ? java.util.Collections.<CompLayer>emptyList() : this.layers)
+        {
+            if (layer == null || "camera".equals(layer.type) || "null".equals(layer.type))
+            {
+                /* A camera/null layer has no pixels and is commonly stretched to the whole canvas.
+                 * Letting it define the fit would put the visual edit back into a sliver. */
+                continue;
+            }
+
+            hasContent = true;
+            end = Math.max(end, Math.max(layer.in, layer.out));
+        }
+
+        for (CompAudio clip : this.audio == null ? java.util.Collections.<CompAudio>emptyList() : this.audio)
+        {
+            if (clip != null)
+            {
+                hasContent = true;
+                end = Math.max(end, clip.start + Math.max(0F, clip.length(this.duration)));
+            }
+        }
+
+        if (!hasContent)
+        {
+            return Math.max(0.1F, Math.min(MAX_CANVAS, this.duration));
+        }
+
+        return Math.max(0.1F, Math.min(MAX_CANVAS, end));
+    }
+
+    /**
      * Grows the composition so its last layer/audio clip is fully reachable. Never shrinks: a
      * deliberately longer canvas (markers, empty tail, export padding) is editorial state, while
      * the old 12s clamp silently cut real content.

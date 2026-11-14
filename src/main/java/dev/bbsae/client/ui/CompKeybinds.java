@@ -135,7 +135,7 @@ public final class CompKeybinds
             .premiere(GLFW.GLFW_KEY_E, false, false, false);
 
         action("timeline.snap", "开关时间轴吸附", "时间轴").both(GLFW.GLFW_KEY_S, false, false, false);
-        action("timeline.fit", "时间轴适配全长", "时间轴").both(GLFW.GLFW_KEY_BACKSLASH, false, false, false);
+        action("timeline.fit", "时间轴适配内容末尾", "时间轴").both(GLFW.GLFW_KEY_BACKSLASH, false, false, false);
         action("timeline.zoomIn", "放大时间轴", "时间轴")
             .both(GLFW.GLFW_KEY_EQUAL, false, false, false)
             .both(GLFW.GLFW_KEY_KP_ADD, false, false, false);

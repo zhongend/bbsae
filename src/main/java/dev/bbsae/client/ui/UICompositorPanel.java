@@ -6240,13 +6240,9 @@ public class UICompositorPanel extends UIDashboardPanel
         nextKey.relative(this.keyframeDrawer).x(1F, -68).y(2).w(18).h(18);
         nextKey.tooltip(IKey.constant("下一个关键帧（.）"));
 
-        UIIcon fitKeys = new UIIcon(Icons.MAXIMIZE, (icon) ->
-        {
-            this.keyframeEditor.view.resize();
-            this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
-        });
+        UIIcon fitKeys = new UIIcon(Icons.MAXIMIZE, (icon) -> this.fitKeyframeTimeline());
         fitKeys.relative(this.keyframeDrawer).x(1F, -46).y(2).w(18).h(18);
-        fitKeys.tooltip(IKey.constant("关键帧视图适配合成全长"));
+        fitKeys.tooltip(IKey.constant("关键帧视图适配内容末尾（最后一个图层/音频）"));
 
         /* Visible XYZ-track row height controls, right in the drawer title bar. */
         UIIcon drawerZoomOut = new UIIcon(Icons.ARROW_DOWN, (icon) -> this.zoomKeyframeTime(-1));
@@ -6477,7 +6473,7 @@ public class UICompositorPanel extends UIDashboardPanel
         zoomOut.relative(this.timelineHeader).x(190).y(3).w(zoomSize).h(zoomSize);
         UIButton zoomIn = CompUi.flat("+", "放大时间轴（=）：看清更细的关键帧", () -> this.trackTimeline.zoom(1D));
         zoomIn.relative(this.timelineHeader).x(190 + zoomSize + 2).y(3).w(zoomSize).h(zoomSize);
-        UIIcon fitTimeline = CompUi.iconButton(Icons.MAXIMIZE, "时间轴适配全长（反斜杠键）", () -> this.trackTimeline.fit());
+        UIIcon fitTimeline = CompUi.iconButton(Icons.MAXIMIZE, "时间轴适配内容末尾（最后一个图层/音频）", this::fitVisibleTimelines);
         fitTimeline.relative(this.timelineHeader).x(190 + zoomSize * 2 + 4).y(3).w(zoomSize).h(zoomSize);
 
         this.trackOnlyTools.add(this.snapButton);
@@ -7490,8 +7486,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.keyframeOpen && this.keyframeEditor != null && this.keyframeEditor.view != null)
         {
-            this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
-            this.keyframeViewNeedsFit = false;
+            this.fitKeyframeTimeline();
             this.resetTimelineView = false;
         }
     }
@@ -14743,9 +14738,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (open && this.keyframeViewNeedsFit && this.keyframeEditor.area.w > 0)
         {
-            this.keyframeEditor.view.resize();
-            this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
-            this.keyframeViewNeedsFit = false;
+            this.fitKeyframeTimeline();
         }
     }
 
@@ -14883,9 +14876,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
             if (this.keyframeEditor.area.w > 0 && this.keyframeViewNeedsFit)
             {
-                this.keyframeEditor.view.resize();
-                this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
-                this.keyframeViewNeedsFit = false;
+                this.fitKeyframeTimeline();
             }
         }
     }
@@ -24221,16 +24212,18 @@ public class UICompositorPanel extends UIDashboardPanel
         this.keyframeEditor.resize();
         this.keyframeEditor.view.resize();
 
+        boolean refitAfterState = false;
+
         if (this.resetTimelineView)
         {
             this.resetTimelineView = false;
 
-            /* Reset to the composition's full duration, not to the keyframes' bounding box:
-             * the property editor belongs to the same timeline as the track lanes. */
+            /* Reset to the last layer/audio end, not to the canvas duration: the property editor
+             * belongs to the same timeline as the track lanes and the real edit must fill it. */
             if (this.keyframeOpen && this.keyframeEditor.area.w > 0)
             {
-                this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
-                this.keyframeViewNeedsFit = false;
+                this.fitKeyframeTimeline();
+                refitAfterState = true;
             }
             else
             {
@@ -24241,6 +24234,14 @@ public class UICompositorPanel extends UIDashboardPanel
         if (selection != null)
         {
             this.keyframeEditor.view.applyState(selection);
+        }
+
+        /* applyState() restores the cached x_min/x_max as well as the selection. On a layout reset
+         * that silently undid the fit above and left the drawer showing the old (often zoomed)
+         * range. Re-fit only for that reset; a normal sheet refresh must keep the user's zoom. */
+        if (refitAfterState)
+        {
+            this.fitKeyframeTimeline();
         }
     }
 
@@ -26158,7 +26159,7 @@ public class UICompositorPanel extends UIDashboardPanel
             case "clip.trimIn" -> { this.trimSelectedToPlayhead(true); return true; }
             case "clip.trimOut", "clip.trimOutAlt" -> { this.trimSelectedToPlayhead(false); return true; }
             case "timeline.snap" -> { this.trackTimeline.toggleSnapping(); this.updateToolbarLabels(); return true; }
-            case "timeline.fit" -> { this.trackTimeline.fit(); return true; }
+            case "timeline.fit" -> { this.fitVisibleTimelines(); return true; }
             case "timeline.zoomIn" -> { this.trackTimeline.zoom(1D); return true; }
             case "timeline.zoomOut" -> { this.trackTimeline.zoom(-1D); return true; }
             case "track.rowUp" -> { this.trackTimeline.stepRowHeight(2); return true; }
@@ -27432,9 +27433,71 @@ public class UICompositorPanel extends UIDashboardPanel
         return this.doc == null ? 0F : this.getTime() * this.doc.fps;
     }
 
+    /**
+     * Fits both visible time axes to the last layer/audio end.
+     *
+     * <p>The track lane and the keyframe drawer are two views of the same interval; the toolbar
+     * fit and the {@code \} shortcut should not leave one of them on the old canvas-length range.</p>
+     */
+    public void fitVisibleTimelines()
+    {
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.fit();
+        }
+
+        if (this.keyframeOpen)
+        {
+            this.fitKeyframeTimeline();
+        }
+    }
+
     public int getDurationTicks()
     {
         return this.doc == null ? 1 : Math.max(1, Math.round(this.doc.duration * this.doc.fps));
+    }
+
+    /**
+     * Keyframe-drawer fit end: the last layer/audio end, not the editorial canvas duration.
+     *
+     * <p>Fitting the drawer to a long empty tail (or an old film-length canvas) pushed the real
+     * keyframes into the left edge; the user asked for a fit based on the last layer's end that
+     * still shows the beginning. Time 0 stays the left edge.</p>
+     */
+    public int fitDurationTicks()
+    {
+        if (this.doc == null)
+        {
+            return 1;
+        }
+
+        float seconds = this.doc.fitEnd();
+
+        return Math.max(1, Math.round(seconds * Math.max(1F, this.doc.fps)));
+    }
+
+    /**
+     * Fits the keyframe drawer to {@code [0, last layer/audio end]}.
+     *
+     * <p>This is the one implementation behind the drawer's fit button, opening it, resizing it
+     * and the per-composition view reset. It resets the axis anchor before {@code view()} so the
+     * visible range is always anchored at time 0 instead of inheriting a previous zoom/pan.</p>
+     */
+    public void fitKeyframeTimeline()
+    {
+        if (this.keyframeEditor == null || this.keyframeEditor.view == null)
+        {
+            return;
+        }
+
+        this.keyframeEditor.view.resize();
+
+        mchorse.bbs_mod.ui.utils.Scale axis = this.keyframeEditor.view.getXAxis();
+
+        axis.anchor(0F);
+        axis.view(0D, Math.max(1, this.fitDurationTicks()));
+
+        this.keyframeViewNeedsFit = false;
     }
 
     public void setFrame(float frame)

@@ -1,5 +1,15 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix80 — 2026-11-14
+
+时间轴与关键帧抽屉的「适配」改为以最后一个可见图层/音频的末尾为基准，从 0 开始显示；
+详见 [`docs/ROUND115-FIT-CONTENT.zh.md`](docs/ROUND115-FIT-CONTENT.zh.md)。
+
+- 轨道时间轴：`fit()`/自动适配使用 `CompDocument.fitEnd()`，忽略画布空尾、相机/null 层干扰。
+- 关键帧抽屉：所有适配入口共用一个 `fitKeyframeTimeline()`，先 `anchor(0)` 再 `view(0, 内容末尾)`。
+- 工具栏/反斜杠同时适配轨道与已打开的抽屉；`applyState` 不再覆盖重置后的适配。
+- README 保持精简介绍页。
+
 ## 0.99-hotfix79 — 2026-11-14
 
 本轮按用户 11 条反馈做的一轮大修，详见

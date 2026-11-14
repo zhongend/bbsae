@@ -237,6 +237,18 @@ public class UICompTrackTimeline extends UIElement
         return this.doc() == null ? 1F : Math.max(0.1F, this.doc().duration);
     }
 
+    /**
+     * End of the editable content, i.e. the last layer/audio end.
+     *
+     * <p>Fit uses this instead of the canvas duration: an empty tail (or a film-length canvas
+     * inherited from an old build) must not squeeze the actual edit into a few pixels. Time 0 is
+     * always the left edge of the fitted view.</p>
+     */
+    private float fitDuration()
+    {
+        return this.doc() == null ? 1F : Math.max(0.1F, this.doc().fitEnd());
+    }
+
     private float fps()
     {
         return this.doc() == null ? 20F : Math.max(1F, this.doc().fps);
@@ -626,7 +638,7 @@ public class UICompTrackTimeline extends UIElement
 
         this.xAxis.set(shift, Math.max(0.05D, zoom * widthScale));
         this.knownWidth = this.laneArea.w;
-        this.knownDuration = this.duration();
+        this.knownDuration = this.fitDuration();
     }
 
     public int scrollY()
@@ -660,7 +672,7 @@ public class UICompTrackTimeline extends UIElement
             return;
         }
 
-        float duration = this.duration();
+        float duration = this.fitDuration();
         boolean widthChanged = this.knownWidth != this.laneArea.w;
 
         if (!this.viewReady || (this.fitMode && (widthChanged || Math.abs(duration - this.knownDuration) > 0.0001F)))
@@ -677,7 +689,7 @@ public class UICompTrackTimeline extends UIElement
     public void fit()
     {
         this.fitMode = true;
-        this.knownDuration = this.duration();
+        this.knownDuration = this.fitDuration();
         this.knownWidth = this.laneArea.w;
 
         if (this.laneArea.w <= 0)
@@ -688,7 +700,7 @@ public class UICompTrackTimeline extends UIElement
         }
 
         this.viewReady = true;
-        applyFit(this.xAxis, this.duration(), this.laneArea.w);
+        applyFit(this.xAxis, this.fitDuration(), this.laneArea.w);
     }
 
     /**
