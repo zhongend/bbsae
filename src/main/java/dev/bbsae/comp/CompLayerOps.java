@@ -283,14 +283,6 @@ public final class CompLayerOps
             }
         }
 
-        int serial = project.comps.size() + 1;
-        String name = (baseName == null || baseName.isBlank() ? "预合成" : baseName) + " " + serial;
-        CompDocument sub = project.addComp("precomp_" + serial, doc.width, doc.height, doc.fps, doc.duration);
-
-        sub.name = name;
-        sub.duration = doc.duration;
-        sub.workAreaOut = doc.duration;
-
         List<String> inside = new ArrayList<>();
 
         for (CompLayer layer : ordered)
@@ -298,6 +290,12 @@ public final class CompLayerOps
             inside.add(layer.id);
         }
 
+        List<CompLayer> copies = new ArrayList<>();
+
+        /* Duplicate first, mutate the parent only after every copy succeeded. The old loop
+         * interleaved duplicate() and doc.layers.remove(); one malformed layer in the middle
+         * therefore left the already-processed layers deleted while the precomp was incomplete —
+         * exactly the "precompose made my graphics disappear" failure mode. */
         for (CompLayer layer : ordered)
         {
             CompLayer copy = layer.duplicate();
@@ -318,7 +316,20 @@ public final class CompLayerOps
                 copy.trackMatteEnabled = false;
             }
 
-            sub.layers.add(copy);
+            copies.add(copy);
+        }
+
+        int serial = project.comps.size() + 1;
+        String name = (baseName == null || baseName.isBlank() ? "预合成" : baseName) + " " + serial;
+        CompDocument sub = project.addComp("precomp_" + serial, doc.width, doc.height, doc.fps, doc.duration);
+
+        sub.name = name;
+        sub.duration = doc.duration;
+        sub.workAreaOut = doc.duration;
+        sub.layers.addAll(copies);
+
+        for (CompLayer layer : ordered)
+        {
             doc.layers.remove(layer);
         }
 
@@ -337,6 +348,35 @@ public final class CompLayerOps
         precomp.in = start;
         precomp.out = end;
         precomp.startTime = 0F;
+
+        /* The group must keep the parent/matte context of the layer it replaces. Losing a parent
+         * moves the whole nested composition (often off-screen), which reads as "precompose made
+         * my graphics disappear"; losing a matte silently changes the alpha. Only transfer a
+         * relation shared by every selected layer — a mixed set has no single correct parent. */
+        String sharedParent = ordered.get(0).parentId;
+        String sharedMatte = ordered.get(0).trackMatteId;
+
+        for (CompLayer layer : ordered)
+        {
+            if (sharedParent == null ? layer.parentId != null && !layer.parentId.isEmpty()
+                : !sharedParent.equals(layer.parentId))
+            {
+                sharedParent = null;
+            }
+
+            if (sharedMatte == null ? layer.trackMatteId != null && !layer.trackMatteId.isEmpty()
+                : !sharedMatte.equals(layer.trackMatteId))
+            {
+                sharedMatte = null;
+            }
+        }
+
+        precomp.parentId = sharedParent != null && !sharedParent.isEmpty() && !inside.contains(sharedParent)
+            ? sharedParent : "";
+        precomp.trackMatteId = sharedMatte != null && !sharedMatte.isEmpty() && !inside.contains(sharedMatte)
+            ? sharedMatte : "";
+        precomp.trackMatteEnabled = !precomp.trackMatteId.isEmpty() && ordered.get(0).trackMatteEnabled;
+        precomp.trackMatteMode = ordered.get(0).trackMatteMode;
 
         doc.layers.add(Math.max(0, Math.min(index - removedBelow, doc.layers.size())), precomp);
 

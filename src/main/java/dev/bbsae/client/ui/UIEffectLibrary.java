@@ -44,6 +44,8 @@ public class UIEffectLibrary extends UIElement
     private final UIIcon clear;
 
     private String filter = "";
+    /** Last text read from the box; the authoritative query, not a callback side effect. */
+    private String lastQuery = "";
     private final Set<String> expanded = new LinkedHashSet<>();
     /** One clock for the whole panel: the list only reads channels, it never ticks its own. */
     private final UiMotion motion = new UiMotion();
@@ -52,8 +54,56 @@ public class UIEffectLibrary extends UIElement
     @Override
     public void render(UIContext context)
     {
+        /* Derive the filter from the text box itself. The callback below is the normal path, but
+         * a swallowed/never-fired text callback used to leave the visible query and the list out
+         * of sync — the field looked editable while nothing was filtered. Reading the authoritative
+         * text once per frame makes search work even if the callback is missed. */
+        String query = this.search.getText();
+
+        if (query == null)
+        {
+            query = "";
+        }
+
+        if (!query.equals(this.lastQuery))
+        {
+            this.lastQuery = query;
+            this.filter = query.trim().toLowerCase(Locale.ROOT);
+            this.rebuild();
+        }
+
+        if (this.area.w > 0 && this.search.area.w <= 0)
+        {
+            /* A host that laid the library out before its own width was known can leave the child
+             * at a zero-width area; a zero-area UITextbox can never receive a click, so search
+             * looked visually present but dead. Re-resolve the child once a real width exists. */
+            this.search.relative(this).x(PAD).y(18).w(1F, -PAD * 2 - 21).h(18);
+            this.search.resize();
+        }
+
         this.tickMotion();
         super.render(context);
+    }
+
+    /**
+     * Focus fallback for the search box.
+     *
+     * <p>The child {@link UITextbox} normally handles its own press, but a layout pass that ran
+     * before the library had a real width can leave its hit area stale; a click inside the visible
+     * box still means "start searching". Keeping this fallback makes the field usable even when the
+     * child's cached rectangle is wrong.</p>
+     */
+    @Override
+    protected boolean subMouseClicked(UIContext context)
+    {
+        if (this.search.area.isInside(context))
+        {
+            context.focus(this.search);
+
+            return true;
+        }
+
+        return super.subMouseClicked(context);
     }
 
     private void tickMotion()
@@ -76,13 +126,17 @@ public class UIEffectLibrary extends UIElement
 
         this.search = new UITextbox(64, (text) ->
         {
-            this.filter = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
+            String next = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
+
+            this.lastQuery = text == null ? "" : text;
+            this.filter = next;
             this.rebuild();
         });
 
         this.clear = new UIIcon(Icons.CLOSE, (icon) ->
         {
             this.search.setText("");
+            this.lastQuery = "";
             this.filter = "";
             this.rebuild();
         });
@@ -290,9 +344,29 @@ public class UIEffectLibrary extends UIElement
 
     private boolean matches(CompEffectRegistry.Definition definition)
     {
-        return definition.name.toLowerCase(Locale.ROOT).contains(this.filter)
-            || definition.id.toLowerCase(Locale.ROOT).contains(this.filter)
-            || definition.category.toLowerCase(Locale.ROOT).contains(this.filter);
+        return matchesFilter(definition, this.filter);
+    }
+
+    /** Pure search predicate: effect name, id and category are all searchable. */
+    static boolean matchesFilter(CompEffectRegistry.Definition definition, String filter)
+    {
+        if (definition == null)
+        {
+            return false;
+        }
+
+        String needle = filter == null ? "" : filter.trim().toLowerCase(Locale.ROOT);
+
+        if (needle.isEmpty())
+        {
+            return true;
+        }
+
+        String name = definition.name == null ? "" : definition.name.toLowerCase(Locale.ROOT);
+        String id = definition.id == null ? "" : definition.id.toLowerCase(Locale.ROOT);
+        String category = definition.category == null ? "" : definition.category.toLowerCase(Locale.ROOT);
+
+        return name.contains(needle) || id.contains(needle) || category.contains(needle);
     }
 
     private static final class EffectRow

@@ -1,5 +1,18 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix65**：蒙版 / 排除 / 预合成 / 搜索 / 素材箱提示修复。
+> - **蒙版与排除不再局限于形状图层**：文字、纯色、图片、视频、预合成等任意有像素的图层
+>   都可以作为 AM 蒙版/排除源；蒙版页对每个图层直接给出「用作蒙版 / 用作排除」，
+>   并保留「上方图层 → 蒙版」快捷动作。手动路径蒙版对所有图层类型同样生效。
+> - **多选预合成修复**：保留共享外部父级/轨道遮罩，组内时间重定基与外层引用重指向；
+>   预合成后主动清除帧/预渲染/图层源缓存，避免出现「图层已移入子合成但画面空白」。
+> - **效果库搜索**：不再只依赖文本框回调，每帧以文本框内容为准重新过滤；搜索框
+>   点击有 focus 兜底，即使布局早于宽度计算也不会变成“看得见但点不动”。
+> - **素材箱图形按钮悬浮提示**：导入 / 新建素材箱 / 旧素材库 / 刷新四个图标都有
+>   悬停文字，不再靠猜。
+> - 详见 [`CHANGELOG.md`](CHANGELOG.md) 与
+>   [`docs/ROUND101-MASK-PRECOMP-SEARCH.zh.md`](docs/ROUND101-MASK-PRECOMP-SEARCH.zh.md)。
+>
 > **0.99-hotfix64**：音频与素材工作流大修。
 > - 音频导入后**预览必响**：不再只在 AE 编码器下试听；修复 8-bit WAV 被当成静音、
 >   改音量/音调后预览不再重启、异步解码/复制不卡 UI。
@@ -139,16 +152,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download `bbsae-0.99-hotfix64.jar` from the repository's
+1. Download `bbsae-0.99-hotfix65.jar` from the repository's
    [releases](https://github.com/zhongend/bbsae/releases), or build it with
-   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix64.jar`).
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix65.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99-hotfix64.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix65.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix64.jar` SHA-256: `C9A4C616AC5D1222AC5C2B8CF3D7F4CCFB0C68E615EA86627169EC7C286E3B81` (4,013,058 bytes).
+`bbsae-0.99-hotfix65.jar` SHA-256: `A1FECC3D9D491A3E1AF84857D5C1976FF39ABCCC08AF9378600D1A05BA49D2EA` (4,014,909 bytes).
 
 ## Gallery
 

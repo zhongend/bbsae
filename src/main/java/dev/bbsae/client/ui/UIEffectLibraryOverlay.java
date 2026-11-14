@@ -69,6 +69,8 @@ public class UIEffectLibraryOverlay extends UIElement
 
     private String category = "全部";
     private String query = "";
+    /** Authoritative text read once per frame; see UIEffectLibrary's identical guard. */
+    private String lastQuery = "";
     private String appliedId = "";
     private int laidOutWidth = -1;
     private int laidOutHeight = -1;
@@ -110,6 +112,7 @@ public class UIEffectLibraryOverlay extends UIElement
 
         this.search = new UITextbox(64, (text) ->
         {
+            this.lastQuery = text == null ? "" : text;
             this.query = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
             this.rebuild();
         });
@@ -250,6 +253,20 @@ public class UIEffectLibraryOverlay extends UIElement
     public void render(UIContext context)
     {
         this.layout();
+
+        String text = this.search.getText();
+
+        if (text == null)
+        {
+            text = "";
+        }
+
+        if (!text.equals(this.lastQuery))
+        {
+            this.lastQuery = text;
+            this.query = text.trim().toLowerCase(Locale.ROOT);
+            this.rebuild();
+        }
 
         this.motion.tickFrame();
 

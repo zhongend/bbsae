@@ -6,6 +6,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -120,6 +121,110 @@ public class CompLayerOpsTest
         assertNotNull(sub.getLayer(sub.activeCameraId));
         assertEquals(960F, sub.getLayer(sub.activeCameraId).x, 0.001F);
         assertEquals(-900F, sub.getLayer(sub.activeCameraId).z, 0.001F);
+    }
+
+    @Test
+    public void precomposeSurvivesAProjectSnapshot()
+    {
+        CompProject project = project();
+        CompDocument doc = project.getCompOrFirst("main");
+        CompLayer a = layer(doc, "a", 400F, 300F);
+        CompLayer b = layer(doc, "b", 800F, 500F);
+
+        a.in = 2F;
+        a.out = 6F;
+        b.in = 3F;
+        b.out = 8F;
+
+        CompLayer precomp = CompLayerOps.precompose(project, doc, List.of(a, b), "组");
+        CompProject restored = CompStore.restore(CompStore.snapshot(project));
+
+        assertNotNull(restored);
+
+        CompDocument restoredDoc = restored.getCompOrFirst("main");
+        CompLayer restoredPrecomp = restoredDoc.getLayer(precomp.id);
+        CompDocument restoredSub = restored.getComp(precomp.precompId);
+
+        assertNotNull(restoredPrecomp, "the precomp layer must survive saving");
+        assertEquals(2F, restoredPrecomp.in, 0.001F);
+        assertEquals(8F, restoredPrecomp.out, 0.001F);
+        assertNotNull(restoredSub, "the nested composition must survive saving");
+        assertEquals(2, restoredSub.layers.size());
+        assertEquals(0F, restoredSub.layers.get(0).in, 0.001F);
+    }
+
+    @Test
+    public void precomposeChangesTheFrameSignature()
+    {
+        CompProject project = project();
+        CompDocument doc = project.getCompOrFirst("main");
+        CompLayer a = layer(doc, "a", 400F, 300F);
+        CompLayer b = layer(doc, "b", 800F, 500F);
+
+        long before = dev.bbsae.client.render.CompRenderCache.signature(
+            project, doc, 0F, true, true, 0, 1280, 720, false);
+
+        CompLayer precomp = CompLayerOps.precompose(project, doc, List.of(a, b), "组");
+
+        long after = dev.bbsae.client.render.CompRenderCache.signature(
+            project, doc, 0F, true, true, 0, 1280, 720, false);
+
+        assertNotNull(precomp);
+        assertNotEquals(before, after, "the frame cache must not survive a precompose unchanged");
+    }
+
+    @Test
+    public void precomposeKeepsASharedExternalParentAndMatte()
+    {
+        CompProject project = project();
+        CompDocument doc = project.getCompOrFirst("main");
+        CompLayer parent = layer(doc, "parent", 0F, 0F);
+        CompLayer matte = layer(doc, "matte", 0F, 0F);
+        CompLayer a = layer(doc, "a", 200F, 100F);
+        CompLayer b = layer(doc, "b", 400F, 200F);
+        CompLayer target = layer(doc, "target", 600F, 300F);
+
+        a.parentId = parent.id;
+        b.parentId = parent.id;
+        a.trackMatteId = matte.id;
+        b.trackMatteId = matte.id;
+        a.trackMatteEnabled = true;
+        b.trackMatteEnabled = true;
+        a.trackMatteMode = CompLayer.MATTE_LUMA;
+        b.trackMatteMode = CompLayer.MATTE_LUMA;
+
+        CompLayer precomp = CompLayerOps.precompose(project, doc, List.of(a, b), "组");
+
+        assertEquals(parent.id, precomp.parentId,
+            "a shared external parent must move to the precomp layer, not vanish");
+        assertEquals(matte.id, precomp.trackMatteId,
+            "a shared external track matte must move to the precomp layer");
+        assertTrue(precomp.trackMatteEnabled);
+        assertEquals(CompLayer.MATTE_LUMA, precomp.trackMatteMode);
+    }
+
+    @Test
+    public void precomposeKeepsTheGroupVisibleAtItsOriginalTime()
+    {
+        CompProject project = project();
+        CompDocument doc = project.getCompOrFirst("main");
+        CompLayer a = layer(doc, "a", 400F, 300F);
+        CompLayer b = layer(doc, "b", 800F, 500F);
+
+        a.in = 5F;
+        a.out = 8F;
+        b.in = 5.5F;
+        b.out = 8F;
+
+        CompLayer precomp = CompLayerOps.precompose(project, doc, List.of(a, b), "组");
+        CompDocument sub = project.getComp(precomp.precompId);
+
+        assertTrue(precomp.activeAt(5F), "the group must be visible where the first layer was");
+        assertTrue(precomp.activeAt(6F));
+        assertFalse(precomp.activeAt(4.9F));
+        assertTrue(sub.layers.get(0).activeAt(0F), "inner time 0 is the group's 5 s");
+        assertTrue(sub.layers.get(1).activeAt(0.5F), "inner time is rebased, not absolute");
+        assertFalse(sub.layers.get(1).activeAt(4.9F));
     }
 
     @Test

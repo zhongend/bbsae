@@ -47,6 +47,13 @@ public class UIProjectBin extends UIElement
     private static final int TILE_GAP = 5;
     private static final int PAD = 4;
 
+    private static final String[] HEADER_TOOLTIPS = {
+        "导入素材：图片 / 视频 / 音频",
+        "新建素材箱（只归档，不复制文件）",
+        "打开旧素材库（游戏贴图 / BBS 音效）",
+        "刷新素材索引（外部文件改动后）"
+    };
+
     private final UICompositorPanel panel;
     private final UITextbox search;
 
@@ -256,6 +263,7 @@ public class UIProjectBin extends UIElement
         this.drawFooter(context);
 
         super.render(context);
+        this.drawHeaderTooltip(context);
     }
 
     private void layout()
@@ -297,6 +305,41 @@ public class UIProjectBin extends UIElement
         int right = this.area.ex() - PAD - 14;
 
         return new int[] {right - 42, right - 28, right - 14, right};
+    }
+
+    /**
+     * Hover labels for the four custom-drawn header icons.
+     *
+     * <p>They are drawn by hand (not BBS {@link mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon})
+     * so the row can stay 22 px tall, which also means they get no automatic tooltip. A user who
+     * has never seen the panel cannot tell the down-arrow from "open library"; the labels remove
+     * that guesswork.</p>
+     */
+    private void drawHeaderTooltip(UIContext context)
+    {
+        int hovered = this.headerAt(context.mouseX, context.mouseY);
+
+        if (hovered < 0 || hovered >= HEADER_TOOLTIPS.length)
+        {
+            return;
+        }
+
+        String text = HEADER_TOOLTIPS[hovered];
+        int width = context.batcher.getFont().getWidth(text) + 10;
+        int height = 16;
+        int x = Math.max(this.area.x + 2, Math.min(this.area.ex() - width - 2, context.mouseX + 8));
+        int y = context.mouseY + 16;
+
+        if (y + height > this.area.ey() - 2)
+        {
+            y = context.mouseY - height - 4;
+        }
+
+        y = Math.max(this.area.y + 2, y);
+
+        context.batcher.box(x, y, x + width, y + height, 0xF00B1118);
+        context.batcher.outline(x, y, x + width, y + height, BBSSettings.primaryColor() & 0xCCFFFFFF);
+        context.batcher.textShadow(text, x + 5, y + 4, 0xFFFFFFFF);
     }
 
     private void drawBins(UIContext context, CompProject project)

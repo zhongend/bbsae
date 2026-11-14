@@ -13003,6 +13003,13 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshInspector();
         this.refreshSheets();
         this.save();
+
+        /* Precompose changes both the parent stack and the nested content. Signature-based caches
+         * should notice, but the green-frame/frame-server caches also key off the composition id
+         * and can serve a texture from the pre-precompose stack. Drop them explicitly so the first
+         * frame after grouping is guaranteed to be the new nested composition. */
+        this.invalidatePathClosedCaches();
+
         this.setStatus("已把 " + layers.size() + " 个图层移入预合成：" + precomp.name
             + "（右键预合成层可“进入预合成”）");
     }
@@ -20294,7 +20301,7 @@ public class UICompositorPanel extends UIDashboardPanel
         /* AM's Mask/Exclude are blend modes: the selected layer masks every layer already
          * accumulated below it, not just the adjacent one. The explicit track-matte rows below
          * stay for advanced one-target mattes. */
-        section.fields.add(UI.label(IKey.constant("蒙版 / 排除：选中一个图层，作用于它下方所有图层"), 14));
+        section.fields.add(UI.label(IKey.constant("蒙版 / 排除：任意有像素图层都可作为源，作用于它下方所有图层"), 14));
         section.fields.add(UI.row(
             this.smallButton("用作蒙版（所有下方图层）", () -> this.setBlendMask(l, false)),
             this.smallButton("用作排除（所有下方图层）", () -> this.setBlendMask(l, true))
@@ -21382,15 +21389,18 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         /*
-         * Alight Motion's mask model is one gesture: select a shape layer, press Mask or Exclude,
-         * and the layer under it is clipped. bbsae implemented exactly that, but buried it in the
-         * Layer page under the track-matte rows; the Mask tab only offered a long path/point editor.
-         * The simple matte actions therefore live here first, and the manual path editor is folded
-         * away behind an explicit advanced switch.
+         * Alight Motion's mask model is one gesture: select any layer with pixels, press Mask or
+         * Exclude, and every layer below it is clipped by its alpha. bbsae implemented exactly
+         * that for shape layers only, which made text, solids, footage and precomps unusable as
+         * masks. The source's type is irrelevant to the composite shader (it only samples alpha),
+         * so the editor now exposes the actions for every layer type.
          */
-        section.fields.add(UI.label(IKey.constant("蒙版 / 排除（AM 风格）：作用于形状层下方的所有图层"), 14));
+        section.fields.add(UI.label(IKey.constant("蒙版 / 排除（AM 风格）：任意有像素图层都可作为源，作用于此层下方的所有图层"), 14));
 
-        if ("shape".equals(layer.type))
+        boolean canBeMaskSource = !"camera".equals(layer.type) && !"null".equals(layer.type)
+            && !"adjustment".equals(layer.type);
+
+        if (canBeMaskSource)
         {
             section.fields.add(UI.row(
                 this.smallButton("用作蒙版（所有下方图层）", () -> this.setBlendMask(layer, false)),
@@ -21399,15 +21409,18 @@ public class UICompositorPanel extends UIDashboardPanel
         }
         else
         {
-            CompLayer above = this.nearestShapeAbove(layer);
+            section.fields.add(UI.label(IKey.constant("摄像机 / 空对象 / 调整层不产生像素，不能作为蒙版源；"
+                + "它们的蒙版参数没有意义。"), 13));
+        }
 
-            if (above != null)
-            {
-                section.fields.add(UI.row(
-                    this.smallButton("上方形状 → 蒙版（所有下方）", () -> this.setBlendMask(above, false)),
-                    this.smallButton("上方形状 → 排除（所有下方）", () -> this.setBlendMask(above, true))
-                ));
-            }
+        CompLayer above = this.nearestLayerAbove(layer);
+
+        if (above != null)
+        {
+            section.fields.add(UI.row(
+                this.smallButton("上方 " + this.layerLabel(above) + " → 蒙版", () -> this.setBlendMask(above, false)),
+                this.smallButton("上方 " + this.layerLabel(above) + " → 排除", () -> this.setBlendMask(above, true))
+            ));
         }
 
         if (layer.blendMode == CompLayer.BLEND_MASK || layer.blendMode == CompLayer.BLEND_EXCLUDE)
@@ -25411,8 +25424,8 @@ public class UICompositorPanel extends UIDashboardPanel
         this.setStatus(visible ? "蒙版来源已显示（仅用于检查形状）" : "蒙版来源已隐藏");
     }
 
-    /** Nearest shape layer above {@code layer} (shape-on-top masks the layer below it). */
-    private CompLayer nearestShapeAbove(CompLayer layer)
+    /** Nearest visible layer above {@code layer} that can supply alpha. */
+    private CompLayer nearestLayerAbove(CompLayer layer)
     {
         if (this.doc == null || layer == null)
         {
@@ -25425,8 +25438,9 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             CompLayer candidate = this.doc.layers.get(i);
 
-            if (candidate != null && "shape".equals(candidate.type) && candidate.visible
-                && candidate != layer)
+            if (candidate != null && candidate != layer && candidate.visible
+                && !"camera".equals(candidate.type) && !"null".equals(candidate.type)
+                && !"adjustment".equals(candidate.type))
             {
                 return candidate;
             }
