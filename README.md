@@ -1,5 +1,15 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix66**：预览框左右分栏的标签溢出提示。
+> - 预览左右两侧的分区标签（效果库/素材箱/预设/回放，以及调色/图层/影视/蒙版/效果/
+>   文字/合成/输出）在空间不足时不再只是静默截断：
+>   - 有隐藏标签的一侧绘制**渐隐渐变**，明确表示栏位还在继续；
+>   - 边缘显示**呼吸的 «N / »N** 提示（N 为隐藏分区数），鼠标悬停高亮、点击翻页；
+>   - 活动分区会自动滚入可见窗口，不会再出现“选中了但看不到标签”的情况；
+>   - 支持左右两侧同时溢出，两侧各有独立提示。
+> - 窗口滚动逻辑抽成 `CompUi.tabStripWindow(...)` 纯函数，并用测试覆盖窄栏、首尾页、
+>   中间页和任意宽度下“活动分区必须可见”。
+>
 > **0.99-hotfix65**：蒙版 / 排除 / 预合成 / 搜索 / 素材箱提示修复。
 > - **蒙版与排除不再局限于形状图层**：文字、纯色、图片、视频、预合成等任意有像素的图层
 >   都可以作为 AM 蒙版/排除源；蒙版页对每个图层直接给出「用作蒙版 / 用作排除」，
@@ -152,16 +162,16 @@ export** without touching the `.dat` film format.
 
 ## Download / Install
 
-1. Download `bbsae-0.99-hotfix65.jar` from the repository's
+1. Download `bbsae-0.99-hotfix66.jar` from the repository's
    [releases](https://github.com/zhongend/bbsae/releases), or build it with
-   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix65.jar`).
+   `gradlew remapJar` (the artifact is `build/libs/bbsae-0.99-hotfix66.jar`).
 2. Install **Minecraft 1.20.1**, **Fabric Loader 0.16.14+**, **Fabric API 0.92.1+1.20.1** and
    **BBS FS 2.7-1.20.1**.
-3. Put `bbsae-0.99-hotfix65.jar` and the BBS FS jar into the game's `mods/` folder.
+3. Put `bbsae-0.99-hotfix66.jar` and the BBS FS jar into the game's `mods/` folder.
 4. Launch the game, open a film in BBS, select a replay, then use
    **Replay properties → Compositor → Open Film Compositor**.
 
-`bbsae-0.99-hotfix65.jar` SHA-256: `A1FECC3D9D491A3E1AF84857D5C1976FF39ABCCC08AF9378600D1A05BA49D2EA` (4,014,909 bytes).
+`bbsae-0.99-hotfix66.jar` SHA-256: `1CE1AAD4BF03D739BC3BF708FD07C663485DD9967923F70B5C6562192855358B` (4,016,560 bytes).
 
 ## Gallery
 

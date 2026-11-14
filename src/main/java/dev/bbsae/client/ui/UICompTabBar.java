@@ -46,6 +46,12 @@ public class UICompTabBar extends UIElement
     private boolean overflow;
     private int visibleTabs;
     private int overflowX;
+    /** Visible window when the bar scrolls to keep the active tab on screen. */
+    private int windowStart;
+    private int windowEnd;
+    private boolean overflowLeft;
+    private boolean overflowRight;
+    private int laidOutActive = -1;
 
     /**
      * Which tab the pointer button went down on, or -1. BBS's click fires on the press and clears
@@ -76,6 +82,20 @@ public class UICompTabBar extends UIElement
         if (this.pressedTab >= 0 && !Window.isMouseButtonPressed(0))
         {
             this.pressedTab = -1;
+        }
+        else if (this.pressedTab == -2 && !Window.isMouseButtonPressed(0))
+        {
+            this.pressedTab = -1;
+        }
+
+        /* The active page can change without a resize (inspector tab click, keyboard command,
+         * restored project). Recompute the window so the label of the selected section is always
+         * on screen instead of just its hidden-page accent. */
+        int activeNow = this.active.getAsInt();
+
+        if (activeNow != this.laidOutActive)
+        {
+            this.layoutTabs();
         }
 
         super.render(context);
@@ -119,57 +139,143 @@ public class UICompTabBar extends UIElement
             widths[index] = this.tabWidths.get(index);
         }
 
-        int[] layout = CompUi.tabStripLayout(widths, this.area.w);
+        int activeIndex = this.active.getAsInt();
+        int[] window = CompUi.tabStripWindow(widths, this.area.w, activeIndex, OVERFLOW_W);
 
-        this.overflow = layout[2] == 1;
-        this.visibleTabs = layout[0];
-        this.overflowX = layout[1];
+        this.windowStart = window[0];
+        this.windowEnd = window[1];
+        this.overflowLeft = window[2] == 1;
+        this.overflowRight = window[3] == 1;
+        this.overflow = this.overflowLeft || this.overflowRight;
+        this.visibleTabs = Math.max(0, this.windowEnd - this.windowStart);
+        this.overflowX = Math.max(0, this.area.w - OVERFLOW_W);
+        this.laidOutActive = activeIndex;
+
+        int x = this.overflowLeft ? OVERFLOW_W : 0;
 
         for (int index = 0; index < this.tabs.size(); index++)
         {
-            this.tabs.get(index).setVisible(index < this.visibleTabs);
+            UITextTab tab = this.tabs.get(index);
+            boolean visible = index >= this.windowStart && index < this.windowEnd;
+
+            tab.setVisible(visible);
+
+            if (visible)
+            {
+                tab.relative(this).x(x).y(0).w(this.tabWidths.get(index)).h(1F);
+                x += this.tabWidths.get(index) + 2;
+            }
         }
     }
 
-    /** Draws the "»" control (and the hidden-active-page accent) when tabs overflow. */
+    /**
+     * Draws the overflow affordances.
+     *
+     * <p>A truncated tab row is a false affordance: if the last visible label simply ends, the
+     * user reads "there are no more sections". Three signals say otherwise even at a glance:</p>
+     * <ul>
+     *   <li>a soft gradient fades the edge that has hidden tabs into the panel;</li>
+     *   <li>a breathing chevron with the hidden count ("»3") shows how much is off-screen;</li>
+     *   <li>clicking it scrolls the window to the next active tab instead of only changing a page
+     *       the user cannot see.</li>
+     * </ul>
+     */
     private void renderOverflow(UIContext context)
     {
-        if (!this.overflow || this.area.w <= 0)
+        if ((!this.overflowLeft && !this.overflowRight) || this.area.w <= 0)
         {
             return;
         }
 
-        int x = this.area.x + this.overflowX;
-        int y = this.area.y;
-        boolean hot = context.mouseX >= x && context.mouseX < this.area.ex()
-            && context.mouseY >= y && context.mouseY < this.area.ey();
-        float hover = this.motion.anim(OVERFLOW_HOVER_KEY, hot ? 1F : 0F, 22F);
-        float press = this.motion.spring(OVERFLOW_PRESS_KEY, this.pressedTab == -2 ? 1F : 0F, 520F, 30F);
-        int active = this.active.getAsInt();
-        boolean hiddenActive = active >= this.visibleTabs;
+        int top = this.area.y;
+        int bottom = this.area.ey();
+        int activeNow = this.active.getAsInt();
+        boolean animate = CompPrefs.animating();
+        float wave = animate
+            ? (float) (0.5D + 0.5D * Math.sin(System.nanoTime() / 1_000_000_000D * 3.4D))
+            : 1F;
 
-        if (hover > 0.01F)
+        /* Fade the cut edge into the panel background. The gradient is the visual equivalent of
+         * a page that continues under the fold; without it the bar looks complete. */
+        int fade = Math.min(22, Math.max(10, this.area.w / 5));
+        int panel = 0xE612161D;
+
+        if (this.overflowRight)
         {
-            context.batcher.box(x + 2, y + 3, this.area.ex() - 2, this.area.ey() - 3,
-                UiGfx.mulA(0xFFFFFFFF, 0.05F * hover * (1F - 0.5F * press)));
+            int right = this.area.ex();
+
+            context.batcher.gradientHBox(right - fade, top, right, bottom,
+                0x0012161D, panel);
         }
 
-        int color = UiMotion.lerpColor(hiddenActive ? 0xFFCCD6E6 : 0xFF8A94A6, 0xFFFFFFFF, hover);
-        context.batcher.textShadow("»", x + 6, y + 6, color);
-
-        if (hiddenActive)
+        if (this.overflowLeft)
         {
-            context.batcher.box(x + 5, this.area.ey() - 2, this.area.ex() - 5, this.area.ey() - 1,
-                UiGfx.mulA(0xFF4C9AFF, 0.9F));
+            int left = this.area.x;
+
+            context.batcher.gradientHBox(left, top, left + fade, bottom,
+                panel, 0x0012161D);
         }
 
-        if (press > 0.01F && this.pressedTab == -2 && !Window.isMouseButtonPressed(0))
+        if (this.overflowRight)
         {
-            this.pressedTab = -1;
+            int hidden = Math.max(1, this.tabs.size() - this.windowEnd);
+            int x = this.area.ex() - OVERFLOW_W;
+            boolean hot = context.mouseX >= x && context.mouseX < this.area.ex()
+                && context.mouseY >= top && context.mouseY < bottom;
+            float hover = this.motion.anim(OVERFLOW_HOVER_KEY, hot ? 1F : 0F, 22F);
+            float press = this.motion.spring(OVERFLOW_PRESS_KEY, this.pressedTab == -2 ? 1F : 0F, 520F, 30F);
+            int color = UiMotion.lerpColor(0xFFC7D4E6, 0xFFFFFFFF, Math.max(hover, wave * 0.35F));
+
+            color = UiGfx.mulA(color, 0.72F + 0.28F * wave + 0.12F * hover);
+
+            if (hover > 0.01F)
+            {
+                context.batcher.box(x + 1, top + 3, this.area.ex() - 1, bottom - 3,
+                    UiGfx.mulA(0xFFFFFFFF, 0.06F * hover * (1F - 0.5F * press)));
+            }
+
+            /* The count is the unambiguous part; the chevron gets a one-pixel breathing shift so
+             * the edge reads as interactive even when the label is clipped into the gradient. */
+            int shift = Math.round(wave * (animate ? 1F : 0F));
+            context.batcher.textShadow("»" + Math.min(9, hidden), x + 4 + shift, top + 6, color);
+
+            if (activeNow >= this.windowEnd)
+            {
+                context.batcher.box(x + 4, bottom - 2, this.area.ex() - 4, bottom - 1,
+                    UiGfx.mulA(0xFF4C9AFF, 0.85F));
+            }
+        }
+
+        if (this.overflowLeft)
+        {
+            int hidden = Math.max(1, this.windowStart);
+            int x = this.area.x;
+            boolean hot = context.mouseX >= x && context.mouseX < x + OVERFLOW_W
+                && context.mouseY >= top && context.mouseY < bottom;
+            float hover = this.motion.anim("tab-overflow-left-hover", hot ? 1F : 0F, 22F);
+            float press = this.motion.spring(OVERFLOW_PRESS_KEY, this.pressedTab == -2 ? 1F : 0F, 520F, 30F);
+            int color = UiMotion.lerpColor(0xFFC7D4E6, 0xFFFFFFFF, Math.max(hover, wave * 0.35F));
+
+            color = UiGfx.mulA(color, 0.72F + 0.28F * wave + 0.12F * hover);
+
+            if (hover > 0.01F)
+            {
+                context.batcher.box(x + 1, top + 3, x + OVERFLOW_W - 1, bottom - 3,
+                    UiGfx.mulA(0xFFFFFFFF, 0.06F * hover * (1F - 0.5F * press)));
+            }
+
+            int shift = Math.round(wave * (animate ? 1F : 0F));
+            context.batcher.textShadow("«" + Math.min(9, hidden), x + 4 - shift, top + 6, color);
+
+            if (activeNow < this.windowStart)
+            {
+                context.batcher.box(x + 4, bottom - 2, x + OVERFLOW_W - 4, bottom - 1,
+                    UiGfx.mulA(0xFF4C9AFF, 0.85F));
+            }
         }
     }
 
-    private void cycleOverflow()
+    private void cycleOverflow(int direction)
     {
         int size = this.tabs.size();
 
@@ -178,7 +284,7 @@ public class UICompTabBar extends UIElement
             return;
         }
 
-        int next = (Math.max(0, this.active.getAsInt()) + 1) % size;
+        int next = (Math.max(0, this.active.getAsInt()) + (direction < 0 ? -1 : 1) + size) % size;
 
         this.select(next);
     }
@@ -196,12 +302,23 @@ public class UICompTabBar extends UIElement
             return false;
         }
 
-        if (this.overflow && context.mouseButton == 0 && context.mouseX >= this.area.ex() - OVERFLOW_W)
+        if (this.overflow && context.mouseButton == 0)
         {
-            this.pressedTab = -2;
-            this.cycleOverflow();
+            if (this.overflowRight && context.mouseX >= this.area.ex() - OVERFLOW_W)
+            {
+                this.pressedTab = -2;
+                this.cycleOverflow(1);
 
-            return true;
+                return true;
+            }
+
+            if (this.overflowLeft && context.mouseX < this.area.x + OVERFLOW_W)
+            {
+                this.pressedTab = -2;
+                this.cycleOverflow(-1);
+
+                return true;
+            }
         }
 
         return super.subMouseClicked(context);
@@ -342,6 +459,9 @@ public class UICompTabBar extends UIElement
         if (index >= 0 && index < this.tabs.size() && this.onSelect != null)
         {
             this.onSelect.accept(index);
+            /* The active supplier may update in the same call; recompute now so the scroll window
+             * is correct even before the next frame. */
+            this.layoutTabs();
         }
     }
 }

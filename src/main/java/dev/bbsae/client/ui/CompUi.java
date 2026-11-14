@@ -391,6 +391,74 @@ public final class CompUi
         return new int[] {Math.max(1, count), Math.max(0, width - 20), 1};
     }
 
+    /**
+     * Visible tab window that always includes the active tab.
+     *
+     * <p>{@link #tabStripLayout(int[], int)} always returns the first N tabs. When the active page
+     * moved behind the right edge, the bar showed no label for it — only a tiny "»" and an accent,
+     * which read as "there are no more sections". This window scrolls to the active tab and
+     * reserves an edge control on each side that has hidden tabs.</p>
+     *
+     * @return {firstVisible, endExclusive, hasHiddenLeft, hasHiddenRight}
+     */
+    public static int[] tabStripWindow(int[] widths, int available, int active, int arrowWidth)
+    {
+        int count = widths.length;
+        int width = Math.max(0, available);
+        int edge = Math.max(0, arrowWidth);
+        int total = 0;
+
+        for (int item : widths)
+        {
+            total += Math.max(0, item) + 2;
+        }
+
+        if (count == 0 || total <= width)
+        {
+            return new int[] {0, count, 0, 0};
+        }
+
+        int limit = Math.max(1, width - edge * 2);
+        int capacity = 0;
+        int used = 0;
+
+        for (int item : widths)
+        {
+            if (used + Math.max(0, item) > limit && capacity > 0)
+            {
+                break;
+            }
+
+            used += Math.max(0, item) + 2;
+            capacity++;
+        }
+
+        capacity = Math.max(1, Math.min(count, capacity));
+        active = Math.max(0, Math.min(count - 1, active));
+
+        int start = active < capacity ? 0 : Math.min(count - capacity, active - capacity + 1);
+
+        start = Math.max(0, Math.min(start, count - 1));
+
+        int visible = 0;
+        used = 0;
+
+        for (int index = start; index < count; index++)
+        {
+            if (used + Math.max(0, widths[index]) > limit && visible > 0)
+            {
+                break;
+            }
+
+            used += Math.max(0, widths[index]) + 2;
+            visible++;
+        }
+
+        int end = Math.min(count, start + Math.max(1, visible));
+
+        return new int[] {start, end, start > 0 ? 1 : 0, end < count ? 1 : 0};
+    }
+
     /** Minimum width of the floating preview bar when the icon rail competes for the same row. */
     public static final int MIN_BAR_WIDTH = 150;
     public static final int PREVIEW_BAR_MAX = 292;
