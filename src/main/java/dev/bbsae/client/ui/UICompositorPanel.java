@@ -18618,8 +18618,6 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             java.nio.file.Path folder = CompStore.assetRoot(this.project.id).resolve("audio");
 
-            java.nio.file.Files.createDirectories(folder);
-
             String rawName = file.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
             String lower = rawName.toLowerCase(java.util.Locale.ROOT);
             boolean direct = lower.endsWith(".wav") || lower.endsWith(".ogg");
@@ -18637,6 +18635,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
             else if (direct)
             {
+                java.nio.file.Files.createDirectories(folder);
                 target = folder.resolve(rawName);
 
                 if (!target.toAbsolutePath().equals(file.toPath().toAbsolutePath()))

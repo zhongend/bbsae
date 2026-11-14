@@ -1,5 +1,17 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix62 — 2026-11-14
+
+外链音频导入不再触碰工程目录。
+
+- `addAudioClip` 原先在判断外链之前就 `Files.createDirectories(assets/audio)`；即使源文件只是
+  被外链，也会在工程里留下空目录。现在只在「关闭外链、复制 WAV/OGG」分支创建目录；
+  压缩格式转 WAV 仍由 `convertAudioToWav` 创建目标父目录。
+- 外链路径、MP3/FLAC/... 的 raw PCM 解码、素材库外链索引均保持 hotfix61/60 行为。
+- 全量测试：**165 套件 / 1007 项 / 0 failures / 0 errors / 1 skipped**。
+- 候选包：`bbsae-0.99-hotfix62.jar`（3,958,207 bytes，SHA-256
+  `DF704E2635182E6480249C2EE1C265A4F123E6129125FA81BD711C7622686C33`）。
+
 ## 0.99-hotfix61 — 2026-11-14
 
 修复外链压缩音频在真实 FFmpeg 输出下的解码 bug。

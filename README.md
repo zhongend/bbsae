@@ -1,5 +1,8 @@
 # BBS AE (`bbsae`)
 
+> **0.99-hotfix62**：外链音频不再创建工程 `assets/audio` 目录；只有关闭外链、需要复制/
+> 转码时才创建。hotfix61 的 raw PCM 解码与 hotfix60 的外链索引保留。
+>
 > **0.99-hotfix61**：修复外链压缩音频解码：FFmpeg 不再输出到不可 seek 的 WAV（头尺寸为
 > `0xFFFFFFFF`，BBS WaveReader 会拒绝），改为输出 raw `s16le` PCM 并直接构造 `Wave`；
 > 同时保留 hotfix60 的真正外链与多格式支持。
