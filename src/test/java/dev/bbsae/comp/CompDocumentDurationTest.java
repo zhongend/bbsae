@@ -84,4 +84,66 @@ public class CompDocumentDurationTest
 
         assertEquals(40F, doc.duration, 0.001F);
     }
+
+    @Test
+    public void aNewFilmCompositionGetsAShortAdaptiveCanvas()
+    {
+        assertEquals(12F, CompDocument.adaptiveInitialDuration(0F), 0.001F);
+        assertEquals(12F, CompDocument.adaptiveInitialDuration(Float.NaN), 0.001F);
+        assertEquals(30F, CompDocument.adaptiveInitialDuration(30F), 0.001F);
+        assertEquals(60F, CompDocument.adaptiveInitialDuration(1800F), 0.001F,
+            "a 30-minute camera placeholder must not become the composition's initial length");
+        assertEquals(60F, CompDocument.adaptiveInitialDuration(36000F), 0.001F);
+    }
+
+    @Test
+    public void durationIsHardCappedAtTheCanvasCeiling()
+    {
+        assertEquals(12F, CompDocument.clampDuration(0F), 0.001F);
+        assertEquals(1800F, CompDocument.clampDuration(36000F), 0.001F);
+        assertEquals(1800F, CompDocument.clampDuration(Float.POSITIVE_INFINITY), 0.001F);
+        assertEquals(45F, CompDocument.clampDuration(45F), 0.001F);
+    }
+
+    @Test
+    public void clampingAHugeCanvasAlsoPullsItsContentBack()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.duration = 36000F;
+        doc.workAreaOut = 36000F;
+
+        CompLayer layer = new CompLayer("layer", "Layer", "solid");
+
+        layer.out = 36000F;
+        doc.layers.add(layer);
+
+        CompAudio audio = new CompAudio("a", "A", "audio/a.wav");
+
+        audio.start = 0F;
+        audio.duration = 36000F;
+        doc.audio.add(audio);
+
+        assertTrue(doc.clampToMaxDuration());
+        assertEquals(CompDocument.MAX_CANVAS, doc.duration, 0.001F);
+        assertEquals(CompDocument.MAX_CANVAS, layer.out, 0.001F);
+        assertEquals(CompDocument.MAX_CANVAS, audio.duration, 0.001F);
+        assertFalse(doc.extendDurationToContent(), "clamped content must not re-inflate the canvas");
+    }
+
+    @Test
+    public void aReasonableCanvasIsNotClamped()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.duration = 90F;
+        doc.workAreaOut = 90F;
+        CompLayer layer = new CompLayer("l", "L", "solid");
+
+        layer.out = 60F;
+        doc.layers.add(layer);
+
+        assertFalse(doc.clampToMaxDuration());
+        assertEquals(90F, doc.duration, 0.001F);
+    }
 }

@@ -93,6 +93,20 @@ public final class CompPrefs
         public boolean previewSnap = true;
         /** Snap radius in screen pixels; converted to composition space at draw time. */
         public float snapThresholdPx = 8F;
+        /**
+         * Minimum pointer travel, in screen pixels, before a press turns into a layer/clip drag.
+         *
+         * <p>{@code null} means "not stored by this build" and resolves to {@link #DEFAULT_DRAG_THRESHOLD}.
+         * A nullable field is used on purpose: Gson leaves an absent primitive at 0, which would
+         * silently make every click a drag again for existing preference files.</p>
+         */
+        public Float dragThresholdPx;
+        /**
+         * Allow dragging a layer by its body in the 2D preview. Off leaves selection and the
+         * corner/edge handles working, so the compositor still edits fine without the easy-to-hit
+         * body drag (for users who enter precomps by double-clicking).
+         */
+        public Boolean previewDragMove;
         /** Keep X:Y scale ratio when dragging or typing one scale field. Default on: resizing a
          *  layer should not silently deform it. */
         public boolean scaleLock = true;
@@ -432,5 +446,47 @@ public final class CompPrefs
         int mode = get().replayCompPreview;
 
         return mode < 0 || mode > 2 ? 0 : mode;
+    }
+
+    /** Default pointer travel before a press becomes a drag (screen pixels). */
+    public static final float DEFAULT_DRAG_THRESHOLD = 4F;
+
+    /**
+     * Pointer travel required before a layer/track drag starts moving data.
+     *
+     * <p>The editor used to start a move on the first mouse event, so the tiny hand jitter between
+     * the two clicks of a double-click nudged the layer by a frame or a pixel. That is the
+     * "double-clicking a precomp moves the layer" report; a small dead zone makes the two gestures
+     * unambiguous. Clamped because a huge value would feel like the mouse was dead.</p>
+     */
+    public static float dragThresholdPx()
+    {
+        Float stored = get().dragThresholdPx;
+
+        if (stored == null || Float.isNaN(stored))
+        {
+            return DEFAULT_DRAG_THRESHOLD;
+        }
+
+        return Math.max(0F, Math.min(24F, stored));
+    }
+
+    /** Whether the preview body drag is allowed (handles/track bars always are). */
+    public static boolean previewDragMove()
+    {
+        Boolean stored = get().previewDragMove;
+
+        return stored == null || stored;
+    }
+
+    /** Test seam for the drag settings (the UI writes through the data object directly). */
+    public static void setDragThresholdPx(float value)
+    {
+        get().dragThresholdPx = Math.max(0F, Math.min(24F, value));
+    }
+
+    public static void setPreviewDragMove(boolean value)
+    {
+        get().previewDragMove = value;
     }
 }

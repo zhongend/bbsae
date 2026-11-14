@@ -7,6 +7,10 @@
     "IrisFinalizeMixin",
     "TimelineRulerRendererMixin",
     "UIDockLayoutMixin",
+    "UIClipsSplitMixin",
+    "UIFilmControllerMixin",
+    "UIReplayListMixin",
+    "UIReplaysEditorMixin",
     "UIScreenFileDropMixin"
   ],
   "injectors": {

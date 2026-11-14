@@ -745,6 +745,13 @@ public final class ReplayEntityMask
         GL11.glGetIntegerv(GL14.GL_BLEND_DST_ALPHA, previousBlendDstAlpha);
 
         boolean queued = FormRenderLast.suspend();
+        /* BBS splits form draws with translucent pixels into an immediate opaque pass plus a
+         * command deferred until the world's flush. This pass writes into its own framebuffer, so
+         * without suspending the queue every semi-transparent texel (outer skin layer, cape,
+         * translucent armor, hair) went to the world framebuffer instead of the matte. The mask
+         * then had holes exactly where the model was translucent — the "broken/incomplete actor"
+         * cutout. Suspending makes the form renderer draw every pass immediately into this target. */
+        boolean translucency = mchorse.bbs_mod.forms.FormTranslucentQueue.suspend();
         int rendered = 0;
         boolean depthReady = false;
 
@@ -784,6 +791,14 @@ public final class ReplayEntityMask
             if (depthReady)
             {
                 GL11.glEnable(GL11.GL_DEPTH_TEST);
+
+                /* The depth buffer already contains this actor (the world drew it). Re-rendering the
+                 * same geometry into the matte must win the LEQUAL comparison even when the two
+                 * draws differ by a depth quantum; without the bias, whole faces failed the test and
+                 * showed up as holes in the extracted silhouette. Negative units pull the matte
+                 * actor a hair towards the camera. */
+                GL11.glEnable(GL11.GL_POLYGON_OFFSET_FILL);
+                GL11.glPolygonOffset(-1F, -4F);
             }
             else
             {
@@ -833,9 +848,12 @@ public final class ReplayEntityMask
                          * the real one). Playback does not do onion skins, which is exactly why
                          * the matte "worked" when the compositor was opened from film playback.
                          * Re-apply the replay at the current tick before the coverage render. */
-                        float tick = replay.getTick(lastActorTick >= 0 ? lastActorTick : controller.getTick())
-                            + actorTransition;
+                        float tick = replay.getTick(lastActorTick >= 0 ? lastActorTick : controller.getTick());
 
+                        /* Apply the integer keyframe tick only. FilmEntityRenderer performs the
+                         * sub-tick interpolation itself from prev/current; adding the transition
+                         * here and passing it again made the matte actor up to one tick ahead of
+                         * the actor in the frame, so the depth comparison carved holes in it. */
                         replay.keyframes.apply(tick, entity);
 
                         if (entity.getForm() != null)
@@ -883,6 +901,9 @@ public final class ReplayEntityMask
         finally
         {
             FormRenderLast.restore(queued);
+            mchorse.bbs_mod.forms.FormTranslucentQueue.restore(translucency);
+            GL11.glDisable(GL11.GL_POLYGON_OFFSET_FILL);
+            GL11.glPolygonOffset(0F, 0F);
 
             GL11.glColorMask(previousColorMask[0] != 0, previousColorMask[1] != 0, previousColorMask[2] != 0, previousColorMask[3] != 0);
             GlStateManager._depthFunc(previousDepthFunc);

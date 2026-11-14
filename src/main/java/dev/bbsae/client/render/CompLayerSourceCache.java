@@ -270,6 +270,19 @@ public final class CompLayerSourceCache
     }
 
     /**
+     * Orthographic projection for one layer-local rectangle.
+     *
+     * <p>Deliberately in <b>logical layer pixels</b>. The framebuffer viewport already maps this
+     * rectangle onto the (possibly capped) raster; scaling the projection as well zoomed the
+     * content and clipped it, which is what made a layer jump in size when an effect switched it
+     * to the bake path. Package-visible for the regression test.</p>
+     */
+    static Matrix4f logicalProjection(float x, float y, float width, float height)
+    {
+        return new Matrix4f().ortho(x, x + width, y + height, y, -1000F, 1000F);
+    }
+
+    /**
      * Local rectangle covered by the layer's content.
      *
      * <p>The anchor decides the origin; shape layers can exceed the layer box because their raster
@@ -386,12 +399,15 @@ public final class CompLayerSourceCache
             /* The FBO covers the local rect [x, x+w] × [y, y+h]; the projection is that rect in
              * layer pixels, so content is drawn exactly where it lives in the layer. No model
              * matrix: the renderer's own "anchor at the origin" convention is the coordinate
-             * system, which is what makes this texture independent of the camera. */
-            Matrix4f projection = new Matrix4f().ortho(
-                rect.x * scale, (rect.x + rect.width) * scale,
-                (rect.y + rect.height) * scale, rect.y * scale,
-                -1000F, 1000F
-            );
+             * system, which is what makes this texture independent of the camera.
+             *
+             * The projection is in LOGICAL layer pixels, not `rect * scale`. The viewport (and the
+             * FBO) already scale the drawn rectangle down to `pixelWidth/pixelHeight`; multiplying
+             * the projection by the raster scale as well zoomed the content by 1/scale and clipped
+             * its edges. That was the "adding any effect to a 3D/precomp layer enlarges it" bug:
+             * effects switch the layer from the direct path to this bake, and the bake's visible
+             * rect was smaller than the layer by exactly the cap factor. */
+            Matrix4f projection = logicalProjection(rect.x, rect.y, rect.width, rect.height);
 
             /* A precomp is a real nested composition in every mode, including the free 3D
              * workspace. The old blue "预合成（草稿）" plate was an opaque rectangle that did not
@@ -826,13 +842,10 @@ public final class CompLayerSourceCache
         {
             com.mojang.blaze3d.platform.GlStateManager._glBindFramebuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, content.id);
             org.lwjgl.opengl.GL11.glViewport(0, 0, content.width, content.height);
-            /* Same projection the content was drawn with: layer-local pixels, scaled into the
-             * raster. Using ortho(0..width) here put the matte in the raster's corner instead of on
-             * the layer — the first build drew a rectangle with a bite out of its corner. */
-            RenderSystem.setProjectionMatrix(new Matrix4f().ortho(
-                rect.x * scale, (rect.x + rect.width) * scale,
-                (rect.y + rect.height) * scale, rect.y * scale,
-                -1000F, 1000F), VertexSorter.BY_Z);
+            /* Same projection the content was drawn with: logical layer pixels mapped into the
+             * raster by the viewport. The scaled variant shrank the matte by the raster cap. */
+            RenderSystem.setProjectionMatrix(logicalProjection(rect.x, rect.y, rect.width, rect.height),
+                VertexSorter.BY_Z);
 
             boolean exclude = layer.trackMatteMode == CompLayer.MATTE_ALPHA_INVERTED
                 || layer.trackMatteMode == CompLayer.MATTE_LUMA_INVERTED;

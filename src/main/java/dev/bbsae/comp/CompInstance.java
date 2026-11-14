@@ -11,6 +11,8 @@ public final class CompInstance
     public final String project;
     public final String comp;
     public final float ticks;
+    /** Absolute BBS film tick this instance was sampled at (for binding fallbacks). */
+    public final float filmTicks;
     public final int offset;
     public final float timeScale;
     public final float opacity;
@@ -19,9 +21,16 @@ public final class CompInstance
 
     public CompInstance(String project, String comp, float ticks, int offset, float timeScale, float opacity, int fit, boolean hold)
     {
+        this(project, comp, ticks, ticks, offset, timeScale, opacity, fit, hold);
+    }
+
+    public CompInstance(String project, String comp, float ticks, float filmTicks, int offset,
+                        float timeScale, float opacity, int fit, boolean hold)
+    {
         this.project = project;
         this.comp = comp;
         this.ticks = ticks;
+        this.filmTicks = filmTicks;
         this.offset = offset;
         this.timeScale = timeScale;
         this.opacity = opacity;

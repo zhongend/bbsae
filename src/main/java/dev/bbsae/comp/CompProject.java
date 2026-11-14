@@ -156,7 +156,7 @@ public class CompProject
         comp.width = Math.max(1, width);
         comp.height = Math.max(1, height);
         comp.fps = Math.max(1F, fps);
-        comp.duration = Math.max(0.1F, duration);
+        comp.duration = CompDocument.clampDuration(duration);
         this.comps.add(comp);
 
         return comp;
@@ -447,7 +447,7 @@ public class CompProject
 
         /** Decoded form of one {@link #timelineViews} entry. */
         public record TimelineView(boolean fit, double shift, double zoom, int scrollY,
-                                   double keyShift, double keyZoom)
+                                   double keyShift, double keyZoom, int laneWidth)
         {}
 
         /**
@@ -457,13 +457,24 @@ public class CompProject
         public void putTimelineView(String compId, boolean fit, double shift, double zoom,
                                     int scrollY, double keyShift, double keyZoom)
         {
+            this.putTimelineView(compId, fit, shift, zoom, scrollY, keyShift, keyZoom, 0);
+        }
+
+        /**
+         * @param laneWidth the lane width the shift/zoom were measured against. Keeping it lets a
+         *                  restored view preserve its visible time span when the window or panel
+         *                  width changed between sessions. 0 = legacy entry.
+         */
+        public void putTimelineView(String compId, boolean fit, double shift, double zoom,
+                                    int scrollY, double keyShift, double keyZoom, int laneWidth)
+        {
             if (compId == null || compId.isEmpty())
             {
                 return;
             }
 
             this.timelineViews.put(compId, (fit ? "1" : "0") + "," + shift + "," + zoom + ","
-                + scrollY + "," + keyShift + "," + keyZoom);
+                + scrollY + "," + keyShift + "," + keyZoom + "," + Math.max(0, laneWidth));
         }
 
         /**
@@ -496,6 +507,7 @@ public class CompProject
                     ? (int) Math.round(Double.parseDouble(parts[base + 2])) : 0;
                 double keyShift = parts.length >= base + 5 ? Double.parseDouble(parts[base + 3]) : 0D;
                 double keyZoom = parts.length >= base + 5 ? Double.parseDouble(parts[base + 4]) : 0D;
+                int laneWidth = parts.length >= base + 6 ? (int) Math.round(Double.parseDouble(parts[base + 5])) : 0;
 
                 if (!(zoom > 0D) || Double.isNaN(shift) || Double.isInfinite(shift)
                     || Double.isNaN(zoom) || Double.isInfinite(zoom)
@@ -504,7 +516,7 @@ public class CompProject
                     return null;
                 }
 
-                return new TimelineView(fit, shift, zoom, scroll, keyShift, keyZoom);
+                return new TimelineView(fit, shift, zoom, scroll, keyShift, keyZoom, Math.max(0, laneWidth));
             }
             catch (NumberFormatException e)
             {

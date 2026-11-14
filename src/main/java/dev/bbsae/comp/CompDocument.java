@@ -9,6 +9,31 @@ import java.util.List;
  */
 public class CompDocument
 {
+    /**
+     * Shortest usable canvas. A new composition starts here when no film length is meaningful.
+     */
+    public static final float MIN_CANVAS = 12F;
+    /**
+     * Absolute ceiling for a composition, in seconds.
+     *
+     * <p>BBS camera timelines can carry a 30-minute placeholder, and old builds copied that length
+     * (sometimes even the tick count) into every composition. A composition is editorial content,
+     * so a value beyond half an hour cannot be a real edit — it is the damage this constant
+     * prevents. The value is deliberately generous: a real half-hour film still fits, while the
+     * reported ten-hour canvases do not.</p>
+     */
+    public static final float MAX_CANVAS = 1800F;
+    /**
+     * Longest duration a <b>new</b> composition inherits from a film, in seconds.
+     *
+     * <p>Films routinely hold a long camera placeholder to reserve timeline space. Inheriting that
+     * number made an empty 12-second composition open as a 30-minute canvas. New compositions get a
+     * short canvas instead; layers and audio extend it as real content arrives, and the composition
+     * can always be lengthened explicitly. The export clip still covers the whole film (it holds
+     * the last frame), so a longer film is not cut.</p>
+     */
+    public static final float AUTO_FILM_CAP = 60F;
+
     public String id = "main";
     public String name = "Main";
     public int width = 1920;
@@ -177,7 +202,7 @@ public class CompDocument
     /** Grows duration/work area to at least {@code minimum}; returns true when it changed. */
     public boolean setDurationAtLeast(float minimum)
     {
-        float wanted = Math.max(0.1F, minimum);
+        float wanted = Math.max(0.1F, Math.min(MAX_CANVAS, minimum));
 
         if (wanted <= this.duration + 0.0001F)
         {
@@ -197,6 +222,125 @@ public class CompDocument
         }
 
         return true;
+    }
+
+    /**
+     * Duration a newly created composition should start with, given the film it belongs to.
+     *
+     * <p>Film length is not editorial composition length. A BBS camera timeline may reserve half
+     * an hour for a shot that is twelve seconds long, and copying it made every new replay
+     * composition start as a half-hour canvas (the reported "timeline is stretched huge"). New
+     * compositions therefore inherit at most {@link #AUTO_FILM_CAP} seconds; real layers and audio
+     * grow the canvas through {@link #extendDurationToContent()}.</p>
+     */
+    public static float adaptiveInitialDuration(float filmSeconds)
+    {
+        if (!Float.isFinite(filmSeconds) || filmSeconds <= 0F)
+        {
+            return MIN_CANVAS;
+        }
+
+        return Math.max(MIN_CANVAS, Math.min(AUTO_FILM_CAP, filmSeconds));
+    }
+
+    /** Clamps any requested duration into the representable canvas range. */
+    public static float clampDuration(float seconds)
+    {
+        if (Float.isNaN(seconds) || seconds <= 0F)
+        {
+            return MIN_CANVAS;
+        }
+
+        if (seconds == Float.POSITIVE_INFINITY)
+        {
+            return MAX_CANVAS;
+        }
+
+        return Math.max(0.1F, Math.min(MAX_CANVAS, seconds));
+    }
+
+    /**
+     * Repairs a composition whose duration exceeds the hard ceiling.
+     *
+     * <p>This is the last line of defence for projects damaged by older builds (including the
+     * tick-as-seconds bug that produced 36 000-second canvases). Layers and audio that were
+     * explicitly stretched to that impossible end are clamped too; otherwise
+     * {@link #extendDurationToContent()} would immediately grow the canvas back on the next
+     * frame.</p>
+     *
+     * @return true when anything changed
+     */
+    public boolean clampToMaxDuration()
+    {
+        boolean changed = false;
+        float sane = clampDuration(this.duration);
+
+        if (!Float.isFinite(this.duration) || this.duration > MAX_CANVAS || this.duration <= 0F)
+        {
+            this.duration = sane;
+            changed = true;
+        }
+
+        if (this.workAreaOut > this.duration || this.workAreaOut <= 0F)
+        {
+            this.workAreaOut = this.duration;
+            changed = true;
+        }
+
+        if (this.workAreaIn < 0F || this.workAreaIn >= this.workAreaOut)
+        {
+            this.workAreaIn = 0F;
+            changed = true;
+        }
+
+        if (this.layers != null)
+        {
+            for (CompLayer layer : this.layers)
+            {
+                if (layer == null)
+                {
+                    continue;
+                }
+
+                if (layer.out > this.duration + 0.0001F)
+                {
+                    layer.out = this.duration;
+                    changed = true;
+                }
+
+                if (layer.in < 0F || layer.in >= layer.out)
+                {
+                    layer.in = 0F;
+                    layer.out = Math.max(0.1F, this.duration);
+                    changed = true;
+                }
+            }
+        }
+
+        if (this.audio != null)
+        {
+            for (CompAudio clip : this.audio)
+            {
+                if (clip == null)
+                {
+                    continue;
+                }
+
+                if (clip.start < 0F)
+                {
+                    clip.start = 0F;
+                    changed = true;
+                }
+
+                if (clip.duration > 0F && clip.start + clip.duration > this.duration + 0.0001F)
+                {
+                    clip.duration = Math.max(0.1F, this.duration - clip.start);
+                    changed = true;
+                }
+            }
+        }
+
+        return changed;
     }
 
     public boolean removeLayer(String layerId)

@@ -33,6 +33,69 @@ public class CompositionClip extends CameraClip
     public final ValueBoolean hold = new ValueBoolean("hold", true);
 
     /**
+     * Set when the user split this clip (or otherwise placed it by hand).
+     *
+     * <p>The compositor keeps a single composition clip covering the whole film by default, and
+     * every duration edit rewrites its tick/duration. That convenience would silently undo a
+     * split: the first half would be stretched over the second, or its source offset reset. A
+     * manual clip therefore opts out of the automatic rewrite until the user explicitly restores
+     * automatic timing.</p>
+     */
+    public final ValueBoolean manualTiming = new ValueBoolean("manual_timing", false);
+
+    /** Number of clips that point at the same project/composition. */
+    public static int countForFilm(mchorse.bbs_mod.film.Film film, String projectId, String compId)
+    {
+        if (film == null || projectId == null || compId == null)
+        {
+            return 0;
+        }
+
+        int count = 0;
+
+        for (CompositionClip clip : film.camera.getClips(CompositionClip.class))
+        {
+            if (projectId.equals(clip.project.get()) && compId.equals(clip.comp.get()))
+            {
+                count += 1;
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Film length that does not include composition clips.
+     *
+     * <p>{@code film.calculateDuration()} includes this clip's own duration, and the clip is kept
+     * as long as the film. Feeding that back into {@code updateForFilm} made the pair a ratchet:
+     * the composition grew, the clip grew, the film grew, and the next open inherited the larger
+     * film length. Measuring only the other camera clips breaks the loop, so a composition can be
+     * shortened again.</p>
+     */
+    public static int editorialDurationTicks(mchorse.bbs_mod.film.Film film)
+    {
+        if (film == null)
+        {
+            return 0;
+        }
+
+        int max = 0;
+
+        for (Clip clip : film.camera.get())
+        {
+            if (clip instanceof CompositionClip)
+            {
+                continue;
+            }
+
+            max = Math.max(max, clip.tick.get() + clip.duration.get());
+        }
+
+        return max;
+    }
+
+    /**
      * Finds the composition clip for one project/comp without creating or modifying anything.
      *
      * <p>Opening the compositor is a view action; it must not add a clip to the film timeline. A
@@ -74,7 +137,14 @@ public class CompositionClip extends CameraClip
             return null;
         }
 
-        int duration = exportDurationTicks(film.calculateDuration(), compDurationSeconds);
+        /* A split/manual clip is intentional timing. Rewriting it here is what would merge the
+         * two halves back into one full-length clip after any duration edit. */
+        if (clip.manualTiming.get() || countForFilm(film, projectId, compId) > 1)
+        {
+            return clip;
+        }
+
+        int duration = exportDurationTicks(editorialDurationTicks(film), compDurationSeconds);
 
         clip.tick.set(0);
         clip.duration.set(duration);
@@ -112,10 +182,14 @@ public class CompositionClip extends CameraClip
     {
         int filmDuration = Math.max(20, filmTicks);
         int compDuration = compDurationSeconds > 0F
-            ? Math.max(20, Math.round(compDurationSeconds * 20F) + 1)
+            ? Math.max(20, Math.round(Math.min(CompDocument.MAX_CANVAS, compDurationSeconds) * 20F) + 1)
             : 20;
+        int duration = Math.max(filmDuration, compDuration);
 
-        return Math.max(filmDuration, compDuration);
+        /* A composition clip is a camera-timeline window, not a second film. Ten-hour clips came
+         * from copying a film tick count or a damaged composition duration; half an hour is the
+         * same generous ceiling the composition itself uses. */
+        return Math.max(20, Math.min((int) (CompDocument.MAX_CANVAS * 20F) + 1, duration));
     }
 
     public static CompositionClip ensureForFilm(mchorse.bbs_mod.film.Film film, String projectId, String compId, float compDurationSeconds)
@@ -125,14 +199,19 @@ public class CompositionClip extends CameraClip
             return null;
         }
 
-        int duration = exportDurationTicks(film.calculateDuration(), compDurationSeconds);
+        int duration = exportDurationTicks(editorialDurationTicks(film), compDurationSeconds);
 
         for (CompositionClip clip : film.camera.getClips(CompositionClip.class))
         {
             if (projectId.equals(clip.project.get()) && compId.equals(clip.comp.get()))
             {
-                clip.tick.set(0);
-                clip.duration.set(duration);
+                /* A split clip already covers its own window; forcing tick 0 / full duration here
+                 * would silently undo the cut. */
+                if (!clip.manualTiming.get() && countForFilm(film, projectId, compId) == 1)
+                {
+                    clip.tick.set(0);
+                    clip.duration.set(duration);
+                }
 
                 if (clip.title.get() == null || clip.title.get().isBlank() || "Compositor".equals(clip.title.get()))
                 {
@@ -140,8 +219,9 @@ public class CompositionClip extends CameraClip
                 }
 
                 dev.bbsae.BbsAeAddon.LOGGER.info(
-                    "Composition clip found for film {}: project={} comp={} tick={} duration={} layer={} opacity={}",
-                    film.getId(), projectId, compId, clip.tick.get(), clip.duration.get(), clip.layer.get(), clip.opacity.get()
+                    "Composition clip found for film {}: project={} comp={} tick={} duration={} layer={} opacity={} manual={}",
+                    film.getId(), projectId, compId, clip.tick.get(), clip.duration.get(), clip.layer.get(), clip.opacity.get(),
+                    clip.manualTiming.get()
                 );
 
                 return clip;
@@ -191,11 +271,20 @@ public class CompositionClip extends CameraClip
             return null;
         }
 
-        int filmDuration = Math.max(20, film.calculateDuration());
+        /* A split composition is two (or more) windows of the same comp. Flattening them into one
+         * full-length clip here would draw the composition twice and destroy the user's cut. The
+         * export recorder's length is supplied separately through the loop range, so leaving the
+         * windows alone is safe. */
+        if (clip.manualTiming.get() || countForFilm(film, projectId, compId) > 1)
+        {
+            return clip;
+        }
+
+        int filmDuration = Math.max(20, editorialDurationTicks(film));
         int compDuration = compDurationSeconds > 0F
-            ? Math.max(20, Math.round(compDurationSeconds * 20F) + 1)
+            ? Math.max(20, Math.round(Math.min(CompDocument.MAX_CANVAS, compDurationSeconds) * 20F) + 1)
             : 20;
-        int duration = exportDurationTicks(film.calculateDuration(), compDurationSeconds);
+        int duration = exportDurationTicks(filmDuration, compDurationSeconds);
 
         clip.tick.set(0);
         clip.duration.set(duration);
@@ -228,6 +317,7 @@ public class CompositionClip extends CameraClip
         this.add(this.opacity);
         this.add(this.fit);
         this.add(this.hold);
+        this.add(this.manualTiming);
     }
 
     @Override
@@ -247,12 +337,32 @@ public class CompositionClip extends CameraClip
             this.project.get(),
             this.comp.get(),
             context.relativeTick + context.transition,
+            context.ticks + context.transition,
             this.offset.get(),
             this.timeScale.get(),
             alpha,
             this.fit.get(),
             this.hold.get()
         ));
+    }
+
+    @Override
+    protected void breakDownClip(Clip original, int offset)
+    {
+        super.breakDownClip(original, offset);
+
+        if (original instanceof CompositionClip source)
+        {
+            /* The right half restarts at relative tick 0 while the composition must continue at
+             * the cut. Composition time is (ticks * timeScale + offset) / 20, so advancing the
+             * offset by the cut distance times the clip's time scale keeps the picture continuous
+             * for every time scale, including negative ones. */
+            long shifted = (long) source.offset.get() + Math.round(offset * (double) source.timeScale.get());
+
+            this.offset.set((int) Math.max(-100000L, Math.min(100000L, shifted)));
+            this.manualTiming.set(true);
+            source.manualTiming.set(true);
+        }
     }
 
     @Override

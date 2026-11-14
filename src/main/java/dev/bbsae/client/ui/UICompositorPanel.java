@@ -3765,9 +3765,15 @@ public class UICompositorPanel extends UIDashboardPanel
 
                 CompLayer layer = UICompositorPanel.this.selectedLayer;
                 float scale = Math.max(0.0001F, this.fitScale());
-                /* A click with a 1px jitter must not nudge the layer. The old threshold was in
-                 * composition units (0.01px), which is effectively zero at any preview scale. */
-                if (Math.abs(context.mouseX - this.dragStartX) < 3 && Math.abs(context.mouseY - this.dragStartY) < 3)
+                /* A click with a little hand jitter must not nudge the layer. The threshold is a
+                 * preference because pointer/DPI combinations differ; zero restores the immediate
+                 * drag. This is the second half of the double-click fix (the timeline has the same
+                 * dead zone). */
+                float dragThreshold = CompPrefs.dragThresholdPx();
+
+                if (dragThreshold > 0.0001F
+                    && Math.abs(context.mouseX - this.dragStartX) < dragThreshold
+                    && Math.abs(context.mouseY - this.dragStartY) < dragThreshold)
                 {
                     return;
                 }
@@ -4627,7 +4633,18 @@ public class UICompositorPanel extends UIDashboardPanel
                         UICompositorPanel.this.setStatus(String.format(java.util.Locale.ROOT,
                             "平移  目标 %.0f, %.0f, %.0f", camera.target.x, camera.target.y, camera.target.z));
                     }
-                    case VP_MOVE -> this.dragLayersInViewport(doc, camera, startLocalX, startLocalY, localX, localY, false);
+                    case VP_MOVE ->
+                    {
+                        float dragThreshold = CompPrefs.dragThresholdPx();
+
+                        if (dragThreshold > 0.0001F
+                            && Math.abs(dx) < dragThreshold && Math.abs(dy) < dragThreshold)
+                        {
+                            return;
+                        }
+
+                        this.dragLayersInViewport(doc, camera, startLocalX, startLocalY, localX, localY, false);
+                    }
                     case VP_CAM_BODY -> this.dragCameraInViewport(doc, camera, startLocalX, startLocalY, localX, localY);
                     case VP_CAM_TARGET -> this.aimCameraInViewport(doc, camera, localX, localY);
                     case VP_CAM_ORBIT -> this.orbitCameraInViewport(doc, localX, localY);
@@ -5387,6 +5404,16 @@ public class UICompositorPanel extends UIDashboardPanel
                     return true;
                 }
 
+                if (!CompPrefs.previewDragMove())
+                {
+                    /* Selection still works; only the body drag is off. Handles, the track bar and
+                     * the 3D gizmo all remain explicit ways to move a layer, so the editor is fully
+                     * usable without the gesture that competes with double-click-to-enter-precomp. */
+                    UICompositorPanel.this.setStatus("预览拖动已关闭：用角点/边柄或轨道移动图层（设置 → 变换与吸附）");
+
+                    return true;
+                }
+
                 this.dragMode = DRAG_MOVE;
                 this.dragStartX = context.mouseX;
                 this.dragStartY = context.mouseY;
@@ -5560,6 +5587,13 @@ public class UICompositorPanel extends UIDashboardPanel
                 if (hit.locked)
                 {
                     UICompositorPanel.this.setStatus("图层已锁定，解锁后才能拖动");
+
+                    return true;
+                }
+
+                if (!CompPrefs.previewDragMove())
+                {
+                    UICompositorPanel.this.setStatus("预览拖动已关闭：用 Gizmo、手柄或轨道移动图层（设置 → 变换与吸附）");
 
                     return true;
                 }
@@ -6996,6 +7030,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.doc != null)
         {
+            /* A project loaded from an old build may still carry a 36 000-second canvas and layers
+             * stretched to it. Fold that to the ceiling before the repair heuristics look at the
+             * content; otherwise the first extend-to-content pass grows it right back. */
+            this.doc.clampToMaxDuration();
+
             /* The film's length is not the composition's length. Older builds copied it into
              * doc.duration, so a 30-minute camera placeholder stretched every composition and the
              * timeline fitted to the empty tail. Only a project that was damaged that way is
@@ -7229,7 +7268,23 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.film.camera.remove(clip);
+        /* A split composition has several windows on the camera timeline; "remove from film
+         * timeline" means all of them, otherwise one half stays behind and keeps drawing. */
+        java.util.List<CompositionClip> matching = new java.util.ArrayList<>();
+
+        for (CompositionClip candidate : this.film.camera.getClips(CompositionClip.class))
+        {
+            if (this.project.id.equals(candidate.project.get()) && this.doc.id.equals(candidate.comp.get()))
+            {
+                matching.add(candidate);
+            }
+        }
+
+        for (CompositionClip candidate : matching)
+        {
+            this.film.camera.remove(candidate);
+        }
+
         this.filmClipLinked = false;
 
         if (this.filmPanel != null)
@@ -7319,6 +7374,11 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             return;
         }
+
+        /* The export field lets a user ask for any length; the composition itself has a hard
+         * ceiling. Copying an unbounded value here is how a 10-hour canvas appeared after an
+         * export on a film with a long placeholder. */
+        seconds = CompDocument.clampDuration(seconds);
 
         if (seconds <= this.doc.duration + 0.0001F)
         {
@@ -7793,6 +7853,20 @@ public class UICompositorPanel extends UIDashboardPanel
         if (this.doc == null)
         {
             this.doc = this.project.getCompOrFirst(CompStore.DEFAULT_COMP);
+        }
+
+        if (this.doc != null)
+        {
+            this.doc.clampToMaxDuration();
+
+            /* This is the everyday path (opening the compositor from a composition clip), so the
+             * film-fingerprint repair has to run here too. It used to be applied only when the
+             * panel was opened from a replay, which left damaged comps untouched. */
+            float filmDuration = film.calculateDuration() / 20F;
+
+            this.durationRepairedOnBind = this.repairInflatedDuration(this.doc, filmDuration)
+                | this.repairImplausibleLongDuration(this.doc);
+            normalizeWorkArea(this.doc);
         }
 
         this.time = 0F;
@@ -8383,7 +8457,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        float duration = Math.max(0F, Math.min(3600F, seconds));
+        float duration = seconds <= 0F ? 0F : CompDocument.clampDuration(Math.min(3600F, seconds));
 
         this.project.settings.exportDuration = duration;
 
@@ -8391,7 +8465,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             if (this.doc != null)
             {
-                this.doc.duration = Math.max(0.1F, duration);
+                this.doc.duration = duration;
                 this.doc.workAreaOut = this.doc.duration;
             }
 
@@ -8669,7 +8743,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.project.settings.exportDuration = Math.max(0F, Math.min(3600F, seconds));
-            this.doc.duration = Math.max(0.1F, seconds);
+            this.doc.duration = CompDocument.clampDuration(seconds);
             this.doc.workAreaOut = this.doc.duration;
             this.syncBbsLoopToDocument();
             this.updateFilmClip(this.doc.duration);
@@ -10537,7 +10611,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
             float seconds = settings.exportDuration > 0F ? settings.exportDuration : this.doc.duration;
 
-            this.doc.duration = Math.max(0.1F, seconds);
+            this.doc.duration = CompDocument.clampDuration(seconds);
             this.doc.workAreaOut = this.doc.duration;
             this.syncBbsLoopToDocument();
             this.updateFilmClip(this.doc.duration);
@@ -10807,6 +10881,7 @@ public class UICompositorPanel extends UIDashboardPanel
             String replayKey = replay.getId() == null || replay.getId().isBlank() ? replay.getName() : replay.getId();
 
             this.doc = CompStore.ensureReplayComp(this.project, replayKey, replay.getName(), width, height, fps, duration);
+            this.doc.clampToMaxDuration();
             /* Switching replays must not stretch the composition to the film's length. */
             /* Fallback for a project that was damaged by an older build and whose film has changed
              * since: the composition is still a whole-minute placeholder but no longer equals the
@@ -11143,7 +11218,8 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.project.settings.putTimelineView(this.doc.id, this.trackTimeline.isFitMode(),
-            view[0], view[1], this.trackTimeline.scrollY(), keyShift, keyZoom);
+            view[0], view[1], this.trackTimeline.scrollY(), keyShift, keyZoom,
+            this.trackTimeline.viewWidth());
     }
 
     /**
@@ -11182,7 +11258,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
         else
         {
-            this.trackTimeline.restoreView(view.shift(), view.zoom());
+            this.trackTimeline.restoreView(view.shift(), view.zoom(), view.laneWidth());
         }
 
         this.trackTimeline.restoreScrollY(view.scrollY());
@@ -14178,9 +14254,26 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void splitSelectedAtPlayhead()
     {
-        if (this.doc == null || this.selectedLayer == null)
+        if (this.doc == null)
         {
-            this.setStatus("先在时间轴选择一条轨道");
+            this.setStatus("先打开一个合成");
+
+            return;
+        }
+
+        /* The audio lane and the layer tracks share the split shortcut. Selecting an audio clip
+         * clears the layer selection (there is exactly one editing target), so this check is the
+         * complete dispatch. */
+        if (this.selectedLayer == null && this.selectedAudio != null)
+        {
+            this.splitSelectedAudioAtPlayhead();
+
+            return;
+        }
+
+        if (this.selectedLayer == null)
+        {
+            this.setStatus("先在时间轴选择一条轨道或一个音频片段");
 
             return;
         }
@@ -14210,6 +14303,65 @@ public class UICompositorPanel extends UIDashboardPanel
         this.refreshSheets();
         this.save();
         this.setStatus("已在播放头拆分轨道");
+    }
+
+    /**
+     * Splits the selected audio clip at the playhead, Premiere-style.
+     *
+     * <p>The halves keep the source continuous: the right half starts at the cut on the timeline
+     * and at the corresponding source offset. Fades are distributed like BBS's clip split (the
+     * left keeps its fade-in, the right keeps its fade-out) instead of both halves fading twice.</p>
+     */
+    public void splitSelectedAudioAtPlayhead()
+    {
+        if (this.doc == null || this.selectedAudio == null)
+        {
+            this.setStatus("先在音频轨选择一个片段");
+
+            return;
+        }
+
+        dev.bbsae.comp.CompAudio clip = this.selectedAudio;
+        float fps = Math.max(1F, this.doc.fps);
+        float frame = 1F / fps;
+        float length = Math.max(frame, clip.length(this.doc.duration));
+        float at = this.time;
+
+        if (at <= clip.start + frame || at >= clip.start + length - frame)
+        {
+            this.setStatus("播放头不在所选音频片段的范围内");
+
+            return;
+        }
+
+        int index = this.doc.audio.indexOf(clip);
+
+        if (index < 0)
+        {
+            return;
+        }
+
+        this.beginAction("拆分音频");
+
+        dev.bbsae.comp.CompAudio right = clip.copy();
+
+        right.id = CompStore.uniqueId(clip.id + "_b", this.doc.audio, (candidate) -> candidate.id);
+        right.start = at;
+        right.offset = Math.max(0F, clip.offset + (at - clip.start) * clip.safeSpeed());
+        right.duration = Math.max(frame, clip.start + length - at);
+        right.fadeIn = 0F;
+
+        clip.duration = Math.max(frame, at - clip.start);
+        clip.fadeOut = 0F;
+
+        this.doc.audio.add(index + 1, right);
+        this.selectedAudio = right;
+        this.contentDurationChanged();
+        this.refreshInspector();
+        this.refreshMediaViews();
+        this.save();
+        this.setStatus(String.format(java.util.Locale.ROOT,
+            "已在播放头拆分音频「%s」：%.2fs + %.2fs", clip.name, clip.duration, right.duration));
     }
 
     public void nudgeSelected(int frames)
@@ -20719,11 +20871,11 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.numberRow("宽度", comp.width, 1, 16384, true, (value) -> comp.width = value.intValue()));
         section.fields.add(this.numberRow("高度", comp.height, 1, 16384, true, (value) -> comp.height = value.intValue()));
         section.fields.add(this.numberRow("帧率", comp.fps, 1, 240, false, (value) -> comp.fps = value.floatValue()));
-        section.fields.add(this.numberRow("时长", comp.duration, 0.1F, 36000F, false, (value) ->
+        section.fields.add(this.numberRow("时长", comp.duration, 0.1F, CompDocument.MAX_CANVAS, false, (value) ->
         {
             float previous = comp.duration;
 
-            comp.duration = Math.max(0.1F, value.floatValue());
+            comp.duration = CompDocument.clampDuration(value.floatValue());
 
             /* The work area is the playback loop. It used to stay at the 12-second default after
              * the composition duration was raised, so the compositor appeared to stop at 12s

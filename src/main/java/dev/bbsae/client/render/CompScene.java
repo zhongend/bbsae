@@ -490,8 +490,10 @@ public final class CompScene
 
         /* A bound layer is pinned to a projected BBS point in composition space. Letting the camera
          * affect it would project that point a second time, so bindings are screen-space by design
-         * (HUD labels, actor tags). */
-        if (BindingResolver.isBound(layer))
+         * (HUD labels, actor tags). The test is the resolved point, not the "enabled" switch: an
+         * unresolved target (no film/controller/replay in this render path) must behave exactly
+         * like an unbound layer instead of freezing a 3D layer out of the camera. */
+        if (boundPoint(ctx, layer) != null)
         {
             return false;
         }
@@ -541,8 +543,9 @@ public final class CompScene
 
         /* A binding pins the layer to a screen point: it is a flat overlay at that point, not a
          * plane at its old local Z. Sorting it as a 3D plane would let it disappear behind geometry
-         * it is supposed to be drawn over. */
-        if (BindingResolver.isBound(layer))
+         * it is supposed to be drawn over. Resolved only: an unavailable target must not change the
+         * layer's 3D behaviour. */
+        if (boundPoint(ctx, layer) != null)
         {
             return false;
         }
@@ -561,8 +564,8 @@ public final class CompScene
 
         /* Keep the projection consistent with {@link #cameraAffects}: a bound layer's world matrix
          * already is the composition-space anchor, so a perspective projection would transform it a
-         * second time. */
-        if (BindingResolver.isBound(layer))
+         * second time. Only a resolved binding gets this treatment — see cameraAffects. */
+        if (boundPoint(ctx, layer) != null)
         {
             return false;
         }

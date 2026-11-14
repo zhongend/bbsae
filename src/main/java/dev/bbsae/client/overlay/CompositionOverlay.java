@@ -91,6 +91,16 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
 
         BbsPreviewBridge.beginOverlayRendering();
 
+        mchorse.bbs_mod.film.Film film = filmOf(context);
+        mchorse.bbs_mod.film.Film previousFilm = dev.bbsae.client.render.BindingResolver.getFilm();
+        float previousTick = dev.bbsae.client.render.BindingResolver.frameTick();
+
+        /* Bindings inside this composition need the film even when the compositor panel is closed
+         * (this overlay is the editor's and the recorder's render path). Relying on the panel to
+         * leave a global film behind made binding work only immediately after opening the panel;
+         * in plain film playback it quietly fell back to the layer's authored position. */
+        dev.bbsae.client.render.BindingResolver.setFilm(film);
+
         try
         {
             for (CompInstance instance : instances)
@@ -125,6 +135,10 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
                     {
                         continue;
                     }
+
+                    /* The instance carries the absolute camera-timeline tick, which is the only
+                     * correct clock for a split or time-scaled composition clip. */
+                    dev.bbsae.client.render.BindingResolver.setFrameTick(instance.filmTicks);
 
                     if (BbsPreviewBridge.needsWorldFrame(doc))
                     {
@@ -177,6 +191,8 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
         }
         finally
         {
+            dev.bbsae.client.render.BindingResolver.restoreFilm(previousFilm);
+            dev.bbsae.client.render.BindingResolver.setFrameTick(previousTick);
             BbsPreviewBridge.endOverlayRendering();
             RenderSystem.setProjectionMatrix(previous, VertexSorter.BY_Z);
             RenderSystem.depthFunc(previousDepthFunc);
@@ -209,6 +225,33 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
             }
 
             ui.pop();
+        }
+    }
+
+    /**
+     * The film this overlay is drawing, found without relying on the compositor panel.
+     *
+     * <p>{@link ClipContext#clips} is the film's camera timeline; its parent is the film itself.
+     * The dashboard fallback covers a caller that passes a detached clips object.</p>
+     */
+    private static mchorse.bbs_mod.film.Film filmOf(ClipContext context)
+    {
+        if (context != null && context.clips != null
+            && context.clips.getParent() instanceof mchorse.bbs_mod.film.Film film)
+        {
+            return film;
+        }
+
+        try
+        {
+            mchorse.bbs_mod.ui.film.UIFilmPanel panel =
+                mchorse.bbs_mod.BBSModClient.getDashboard().getPanel(mchorse.bbs_mod.ui.film.UIFilmPanel.class);
+
+            return panel == null ? null : panel.getData();
+        }
+        catch (RuntimeException ignored)
+        {
+            return null;
         }
     }
 

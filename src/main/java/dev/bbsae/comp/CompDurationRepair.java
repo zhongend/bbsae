@@ -36,15 +36,18 @@ public final class CompDurationRepair
         }
 
         float content = doc.contentEnd();
+        boolean fingerprint = Math.abs(doc.duration - filmDuration) <= 0.05F;
+        boolean extremeTail = doc.duration >= 600F
+            && content <= Math.max(60F, doc.duration * 0.05F);
 
         if (doc.duration <= 60F
-            || Math.abs(doc.duration - filmDuration) > 0.05F
+            || !fingerprint && !extremeTail
             || content >= doc.duration * 0.5F)
         {
             return Float.NaN;
         }
 
-        return Math.max(MIN_REPAIRED, Math.min(3600F, content));
+        return Math.max(MIN_REPAIRED, Math.min(CompDocument.MAX_CANVAS, content));
     }
 
     /**
@@ -63,8 +66,11 @@ public final class CompDurationRepair
 
         float content = doc.contentEnd();
         boolean wholeMinute = Math.abs(doc.duration - Math.round(doc.duration / 60F) * 60F) <= 0.05F;
+        boolean extremeTail = doc.duration >= 600F
+            && content <= Math.max(60F, doc.duration * 0.05F);
 
-        if (doc.duration < 600F || content >= 60F || !wholeMinute
+        if (doc.duration < 600F || content >= 60F && !extremeTail
+            || !wholeMinute && !extremeTail
             || doc.workAreaOut < doc.duration - 0.1F)
         {
             return Float.NaN;

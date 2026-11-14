@@ -89,6 +89,12 @@ public class UICompTrackTimeline extends UIElement
     private boolean viewReady;
     private boolean fitMode = true;
     private float knownDuration = -1F;
+    /**
+     * Lane width the fitted view was computed for. A panel resize changes the pixels-per-second a
+     * fitted timeline needs; without this the "fit" stayed at the old width and either cut the end
+     * off (window made narrower) or left a gap (window made wider).
+     */
+    private int knownWidth = -1;
 
     private int dragMode = MODE_NONE;
     /** Audio clip being dragged, plus its start/offset/length at the moment the drag began. */
@@ -115,6 +121,15 @@ public class UICompTrackTimeline extends UIElement
     private float dragStartDuration;
     private int dragReorderTarget = -1;
     private boolean dragCheckpoint;
+    /**
+     * True once the pointer left the dead zone during this press.
+     *
+     * <p>A press arms a move immediately so a real drag has no lost frame, but the data is only
+     * touched after this becomes true. The tiny pointer jitter between the two clicks of a
+     * double-click used to turn the first click into a one-frame nudge — exactly the "entering a
+     * precomp moves the layer" report.</p>
+     */
+    private boolean dragMoved;
     /** Snap targets are collected once per gesture, not once per drag frame. */
     private List<Float> dragSnapPoints;
     /** Multi-selection MOVE drag: every selected, unlocked layer travels by one delta. */
@@ -160,6 +175,11 @@ public class UICompTrackTimeline extends UIElement
 
             if (layer == null)
             {
+                if (this.panel.getSelectedAudio() != null)
+                {
+                    manager.action(Icons.CUT, IKey.constant("在播放头拆分音频"), this.panel::splitSelectedAudioAtPlayhead);
+                }
+
                 manager.action(Icons.SQUARE, IKey.constant("快速新建纯色"), () -> this.panel.addLayer("solid"));
                 manager.action(Icons.FONT, IKey.constant("快速新建文字"), () -> this.panel.addLayer("text"));
                 manager.action(Icons.SHAPES, IKey.constant("快速新建矩形"), () -> this.panel.addLayer("shape"));
@@ -569,6 +589,12 @@ public class UICompTrackTimeline extends UIElement
         return new double[] {this.xAxis.getShift(), this.xAxis.getZoom()};
     }
 
+    /** Lane width the current shift/zoom were measured against; 0 before the first layout. */
+    public int viewWidth()
+    {
+        return this.laneArea.w;
+    }
+
     /** True while the axis follows the whole composition (the "fit" mode). */
     public boolean isFitMode()
     {
@@ -577,9 +603,30 @@ public class UICompTrackTimeline extends UIElement
 
     public void restoreView(double shift, double zoom)
     {
+        this.restoreView(shift, zoom, 0);
+    }
+
+    /**
+     * Restores a remembered view, rescaling its pixels-per-second to today's lane width.
+     *
+     * <p>{@code Scale.zoom} is a screen-space value (pixels per second), not an editorial one. A
+     * view remembered in a wide window and restored in a narrow one kept the old pixels-per-second,
+     * so the same ten seconds either overflowed the lane or occupied a corner. Rescaling by the
+     * width ratio preserves the visible time span; the saved width is 0 for old projects and then
+     * the raw value is used exactly as before.</p>
+     */
+    public void restoreView(double shift, double zoom, int savedWidth)
+    {
         this.fitMode = false;
         this.viewReady = true;
-        this.xAxis.set(shift, zoom);
+
+        double widthScale = savedWidth > 0 && this.laneArea.w > 0
+            ? this.laneArea.w / (double) savedWidth
+            : 1D;
+
+        this.xAxis.set(shift, Math.max(0.05D, zoom * widthScale));
+        this.knownWidth = this.laneArea.w;
+        this.knownDuration = this.duration();
     }
 
     public int scrollY()
@@ -614,13 +661,14 @@ public class UICompTrackTimeline extends UIElement
         }
 
         float duration = this.duration();
+        boolean widthChanged = this.knownWidth != this.laneArea.w;
 
-        if (!this.viewReady || (this.fitMode && Math.abs(duration - this.knownDuration) > 0.0001F))
+        if (!this.viewReady || (this.fitMode && (widthChanged || Math.abs(duration - this.knownDuration) > 0.0001F)))
         {
             this.viewReady = true;
             this.knownDuration = duration;
-            this.xAxis.view(0D, duration);
-            this.xAxis.anchor(0F);
+            this.knownWidth = this.laneArea.w;
+            applyFit(this.xAxis, duration, this.laneArea.w);
         }
     }
 
@@ -630,6 +678,7 @@ public class UICompTrackTimeline extends UIElement
     {
         this.fitMode = true;
         this.knownDuration = this.duration();
+        this.knownWidth = this.laneArea.w;
 
         if (this.laneArea.w <= 0)
         {
@@ -639,8 +688,26 @@ public class UICompTrackTimeline extends UIElement
         }
 
         this.viewReady = true;
-        this.xAxis.view(0D, this.duration());
-        this.xAxis.anchor(0F);
+        applyFit(this.xAxis, this.duration(), this.laneArea.w);
+    }
+
+    /**
+     * Maps composition time {@code [0, duration]} exactly onto {@code width} pixels.
+     *
+     * <p>Anchor is reset <b>before</b> {@code view()}: BBS's {@link mchorse.bbs_mod.ui.utils.Scale}
+     * derives the shift from the current anchor, so changing the anchor afterwards moves the
+     * visible range by half a screen even though the zoom is right. That order was the difference
+     * between "fit" and "starts halfway through the composition".</p>
+     */
+    static void applyFit(mchorse.bbs_mod.ui.utils.Scale scale, double duration, int width)
+    {
+        if (scale == null || width <= 0 || duration <= 0D || Double.isNaN(duration) || Double.isInfinite(duration))
+        {
+            return;
+        }
+
+        scale.anchor(0F);
+        scale.view(0D, duration);
     }
 
     /**
@@ -2032,7 +2099,9 @@ public class UICompTrackTimeline extends UIElement
 
             this.dragMode = MODE_REORDER;
             this.dragId = layer.id;
+            this.dragStartX = context.mouseX;
             this.dragStartY = context.mouseY;
+            this.dragMoved = false;
             this.dragReorderTarget = row;
             this.dragCheckpoint = false;
 
@@ -2179,6 +2248,7 @@ public class UICompTrackTimeline extends UIElement
         this.dragStartX = context.mouseX;
         this.dragStartY = context.mouseY;
         this.dragStartTime = time;
+        this.dragMoved = false;
         this.dragIn = layer.in;
         this.dragOut = layer.out;
         this.dragOrigStartTime = layer.startTime;
@@ -2252,7 +2322,9 @@ public class UICompTrackTimeline extends UIElement
 
         this.dragAudio = clip;
         this.dragStartX = context.mouseX;
+        this.dragStartY = context.mouseY;
         this.dragStartTime = this.fromX(context.mouseX);
+        this.dragMoved = false;
         this.dragAudioStart = clip.start;
         this.dragAudioOffset = clip.offset;
         this.dragAudioLength = this.audioLength(clip);
@@ -2475,6 +2547,24 @@ public class UICompTrackTimeline extends UIElement
             return;
         }
 
+        /* Everything that mutates document data goes through the dead zone. Scrub, work-area
+         * handles and navigation are view gestures and stay immediate, because a pixel of travel
+         * there is the user asking for exactly that pixel. */
+        boolean editGesture = this.dragMode == MODE_MOVE || this.dragMode == MODE_TRIM_IN
+            || this.dragMode == MODE_TRIM_OUT
+            || this.dragMode == MODE_AUDIO_MOVE || this.dragMode == MODE_AUDIO_TRIM_IN
+            || this.dragMode == MODE_AUDIO_TRIM_OUT;
+
+        if (editGesture && !this.pastDragThreshold(context))
+        {
+            return;
+        }
+
+        if (editGesture)
+        {
+            this.dragMoved = true;
+        }
+
         if (this.dragMode == MODE_NAVIGATE)
         {
             this.fitMode = false;
@@ -2485,6 +2575,12 @@ public class UICompTrackTimeline extends UIElement
 
         if (this.dragMode == MODE_REORDER)
         {
+            if (!this.pastDragThreshold(context))
+            {
+                return;
+            }
+
+            this.dragMoved = true;
             this.dragReorderTarget = this.reorderTarget(context.mouseY);
 
             return;
@@ -2682,15 +2778,15 @@ public class UICompTrackTimeline extends UIElement
     private void endDrag()
     {
         boolean reorder = this.dragMode == MODE_REORDER;
-        boolean edited = this.dragMode == MODE_MOVE || this.dragMode == MODE_TRIM_IN || this.dragMode == MODE_TRIM_OUT
+        boolean edited = this.dragMoved && (this.dragMode == MODE_MOVE || this.dragMode == MODE_TRIM_IN || this.dragMode == MODE_TRIM_OUT
             || this.dragMode == MODE_WORK_IN || this.dragMode == MODE_WORK_OUT
-            || this.dragMode == MODE_AUDIO_MOVE || this.dragMode == MODE_AUDIO_TRIM_IN || this.dragMode == MODE_AUDIO_TRIM_OUT;
+            || this.dragMode == MODE_AUDIO_MOVE || this.dragMode == MODE_AUDIO_TRIM_IN || this.dragMode == MODE_AUDIO_TRIM_OUT);
 
         if (reorder)
         {
             CompLayer layer = this.findLayer(this.dragId);
 
-            if (layer != null)
+            if (layer != null && this.dragMoved)
             {
                 this.beginDragCheckpoint("重排图层");
                 this.panel.moveLayerToDisplayIndex(layer, this.dragReorderTarget);
@@ -2702,6 +2798,7 @@ public class UICompTrackTimeline extends UIElement
         this.dragAudio = null;
         this.dragReorderTarget = -1;
         this.dragCheckpoint = false;
+        this.dragMoved = false;
         this.dragSnapPoints = null;
         this.dragLayers.clear();
         this.dragGroup.clear();
@@ -2745,6 +2842,7 @@ public class UICompTrackTimeline extends UIElement
         }
 
         this.dragCheckpoint = true;
+        this.dragMoved = true;
 
         /* Freeze the fitted view for the duration of the gesture. Growing the document update
          * (extendDurationForLayers) would otherwise re-fit the axis mid-drag, which changes the
@@ -2753,6 +2851,26 @@ public class UICompTrackTimeline extends UIElement
         this.dragStartDuration = this.duration();
         this.fitMode = false;
         this.panel.beginAction(name);
+    }
+
+    /**
+     * True once the pointer has left the press dead zone.
+     *
+     * <p>The threshold is a user preference because "too twitchy" is a matter of pointer, mouse
+     * speed and display scaling. Zero disables the dead zone (the old immediate drag) without
+     * having to rebuild the timeline.</p>
+     */
+    private boolean pastDragThreshold(UIContext context)
+    {
+        float threshold = CompPrefs.dragThresholdPx();
+
+        if (threshold <= 0.0001F)
+        {
+            return true;
+        }
+
+        return Math.abs(context.mouseX - this.dragStartX) >= threshold
+            || Math.abs(context.mouseY - this.dragStartY) >= threshold;
     }
 
     /**
@@ -2848,6 +2966,7 @@ public class UICompTrackTimeline extends UIElement
         this.dragAudio = null;
         this.dragReorderTarget = -1;
         this.dragCheckpoint = false;
+        this.dragMoved = false;
         this.dragSnapPoints = null;
         this.dragLayers.clear();
         this.dragGroup.clear();

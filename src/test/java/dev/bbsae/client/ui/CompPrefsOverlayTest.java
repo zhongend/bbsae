@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The overlay keys must exist with sane defaults and survive a preferences round-trip. */
@@ -25,6 +26,24 @@ public class CompPrefsOverlayTest
         assertEquals(1F, data.gizmoOpacity, 0.0001F);
         assertEquals(1F, data.gizmoThickness, 0.0001F);
         assertEquals(0, data.replayCompPreview);
+        assertNull(data.dragThresholdPx,
+            "null means 'not stored yet'; the helper resolves it to the 4 px default");
+        assertNull(data.previewDragMove,
+            "null means 'not stored yet'; preview body drag defaults to on");
+    }
+
+    @Test
+    public void dragPreferencesRoundTripWithoutChangingOldDefaults()
+    {
+        CompPrefs.Data data = new CompPrefs.Data();
+
+        data.dragThresholdPx = 9F;
+        data.previewDragMove = false;
+
+        CompPrefs.Data loaded = new Gson().fromJson(new Gson().toJson(data), CompPrefs.Data.class);
+
+        assertEquals(9F, loaded.dragThresholdPx, 0.0001F);
+        assertEquals(false, loaded.previewDragMove);
     }
 
     @Test

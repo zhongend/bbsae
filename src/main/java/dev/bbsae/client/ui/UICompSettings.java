@@ -1056,6 +1056,8 @@ public class UICompSettings extends UIElement
         prefs.previewSnap = true;
         prefs.snapThresholdPx = 8F;
         prefs.scaleLock = true;
+        prefs.dragThresholdPx = null;
+        prefs.previewDragMove = null;
         prefs.previewHints = true;
         prefs.timelineRowHeight = 0;
         prefs.keyframeRowHeight = 0;
@@ -1108,6 +1110,16 @@ public class UICompSettings extends UIElement
             prefs.scaleLock = value;
             CompPrefs.save();
         }), 170, "角点和边缘缩放保持原宽高比；关闭后才能单独拉宽或拉高"));
+        this.add(this.row("移动拖动阈值", this.slider(CompPrefs.dragThresholdPx(), 0F, 20F, (value) ->
+        {
+            CompPrefs.setDragThresholdPx((float) value);
+            CompPrefs.markDirty();
+        }), 170, "鼠标移动超过该像素数才开始移动图层/片段；越大越防误触，默认 4px"));
+        this.add(this.row("预览中直接拖动图层", this.toggle("", CompPrefs.previewDragMove(), (value) ->
+        {
+            CompPrefs.setPreviewDragMove(value);
+            CompPrefs.save();
+        }), 170, "关闭后预览只负责选择，图层只能由角点/边柄或轨道移动；适合经常双击进入预合成的工作流"));
 
         this.add(this.section("其他线框"));        this.add(this.row("选择框", this.toggle("", prefs.selectionBoxes, (value) ->
         {

@@ -189,6 +189,22 @@ public class UIReplayModePanel extends UIDashboardPanel
             dev.bbsae.client.overlay.BbsPreviewBridge.setReplayWorldPreview(true);
 
             this.bindFromDashboard();
+
+            /* While this page owns the borrowed film panel, its replay list must keep showing the
+             * virtual rows. Outside it the same widget is the original BBS film editor's list,
+             * where those rows are hidden (see VirtualReplayVisibility). */
+            if (this.filmPanel != null)
+            {
+                VirtualReplayVisibility.borrow(this.filmPanel);
+
+                /* The same BBS widget is used by both editors. Rebuilding here makes a real-editor
+                 * list (virtual rows filtered out) show the virtual rows again when this page is
+                 * opened; the original editor does the reverse in onDisappear. */
+                if (this.filmPanel.replayEditor != null)
+                {
+                    this.filmPanel.replayEditor.replaysList.replays.refreshReplayList();
+                }
+            }
         });
         this.onDisappear(() ->
         {
@@ -202,6 +218,22 @@ public class UIReplayModePanel extends UIDashboardPanel
 
             dev.bbsae.client.overlay.BbsPreviewBridge.clearTimeOverride();
             dev.bbsae.client.overlay.BbsPreviewBridge.setReplayWorldPreview(false);
+
+            /* Leaving the page hands the film panel back to the original editor: hiding the
+             * virtual rows only affects rows rebuilt after this point, so they are refreshed here.
+             * Virtual replays also go back to disabled — otherwise they would stay as invisible
+             * (but simulated) actors in the film after leaving this page. */
+            VirtualReplayVisibility.release(this.filmPanel);
+
+            if (this.film != null)
+            {
+                CompReplayBridge.setVirtualEnabled(this.film, false);
+            }
+
+            if (this.filmPanel != null && this.filmPanel.replayEditor != null)
+            {
+                this.filmPanel.replayEditor.replaysList.replays.refreshReplayList();
+            }
 
             /* The cached composition frame belongs to this page; releasing it on leave keeps the
              * FBO pool from holding a full-resolution preview texture while another workspace is
@@ -627,6 +659,7 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.filmPanel = panel;
         this.film = film;
+        VirtualReplayVisibility.borrow(panel);
 
         /* Attach it before anything below can write into the film: BBS' undo data is collected
          * through UIElement.getRoot() at the moment of the edit (see attachBorrowedFilmPanel). */

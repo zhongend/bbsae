@@ -84,9 +84,14 @@ public final class ReplayActorPass
     {
         CompCamera camera = CompScene.camera(context);
 
+        /* A resolved binding is a screen-space anchor: the camera already produced the composition
+         * point, so projecting the actor through the camera view again moved it twice. The model is
+         * drawn in composition pixels (orthographic), exactly like the layer's other content. */
+        boolean bound = CompScene.boundPoint(context, layer) != null;
+
         return renderModel(layer, context, batcher,
-            camera == null ? null : camera.view,
-            camera == null ? GlStateGuard.ortho(context.width, context.height) : camera.projection,
+            bound || camera == null ? null : camera.view,
+            bound || camera == null ? GlStateGuard.ortho(context.width, context.height) : camera.projection,
             context.renderWidth(), context.renderHeight());
     }
 
@@ -178,6 +183,9 @@ public final class ReplayActorPass
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
         Matrix3f previousInverse = new Matrix3f(RenderSystem.getInverseViewRotationMatrix());
         boolean queued = FormRenderLast.suspend();
+        /* This pass renders into its own framebuffer; form translucency must be drawn here, not
+         * deferred to the world's flush (where it would be missing from the model target). */
+        boolean translucency = mchorse.bbs_mod.forms.FormTranslucentQueue.suspend();
 
         ReplayEntityMask.setCompositeActorPass(true);
 
@@ -237,6 +245,7 @@ public final class ReplayActorPass
         {
             ReplayEntityMask.setCompositeActorPass(false);
             FormRenderLast.restore(queued);
+            mchorse.bbs_mod.forms.FormTranslucentQueue.restore(translucency);
 
             RenderSystem.setProjectionMatrix(previousProjection, VertexSorter.BY_Z);
             RenderSystem.setInverseViewRotationMatrix(previousInverse);
@@ -360,10 +369,12 @@ public final class ReplayActorPass
             ? GlStateGuard.ortho(context.width, context.height)
             : projection;
 
-        float playhead = context.time * ReplayTime.TICKS_PER_SECOND;
+        float playhead = BindingResolver.frameTick() >= 0F
+            ? BindingResolver.frameTick()
+            : context.time * ReplayTime.TICKS_PER_SECOND;
         int tick = (int) Math.floor(playhead);
         float transition = playhead - tick;
-        float at = replay.getTick(tick) + transition;
+        float at = replay.getTick(tick);
 
         try
         {
@@ -394,6 +405,7 @@ public final class ReplayActorPass
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
         Matrix3f previousInverse = new Matrix3f(RenderSystem.getInverseViewRotationMatrix());
         boolean queued = FormRenderLast.suspend();
+        boolean translucency = mchorse.bbs_mod.forms.FormTranslucentQueue.suspend();
 
         ReplayEntityMask.setCompositeActorPass(true);
 
@@ -449,6 +461,7 @@ public final class ReplayActorPass
         {
             ReplayEntityMask.setCompositeActorPass(false);
             FormRenderLast.restore(queued);
+            mchorse.bbs_mod.forms.FormTranslucentQueue.restore(translucency);
 
             RenderSystem.setProjectionMatrix(previousProjection, VertexSorter.BY_Z);
             RenderSystem.setInverseViewRotationMatrix(previousInverse);
@@ -537,15 +550,15 @@ public final class ReplayActorPass
             return null;
         }
 
-        if (BbsPreviewBridge.filmPanel() == null)
+        if (BbsPreviewBridge.filmPanel() == null && context.film == null)
         {
             return null;
         }
 
-        Film film = BbsPreviewBridge.film();
+        Film film = context.film != null ? context.film : BbsPreviewBridge.film();
         Map<String, IEntity> entities = BbsPreviewBridge.entities();
 
-        if (film == null || film.replays == null || entities == null || entities.isEmpty())
+        if (film == null || film.replays == null)
         {
             return null;
         }
@@ -566,7 +579,9 @@ public final class ReplayActorPass
             return null;
         }
 
-        float playhead = context.time * ReplayTime.TICKS_PER_SECOND;
+        float playhead = BindingResolver.frameTick() >= 0F
+            ? BindingResolver.frameTick()
+            : context.time * ReplayTime.TICKS_PER_SECOND;
         int tick = (int) Math.floor(playhead);
         float transition = playhead - tick;
 
@@ -583,9 +598,27 @@ public final class ReplayActorPass
                 continue;
             }
 
-            IEntity entity = entities.get(replay.getId());
+            IEntity entity = entities == null ? null : entities.get(replay.getId());
 
-            if (entity == null || entity.getForm() == null)
+            if (entity == null)
+            {
+                /* The BBS film editor's overlay path does not own the replay editor's entity map
+                 * (the bridge is attached only while the compositor is open). A live actor is not
+                 * required to draw the matte actor: pose a private stub from the same keyframes. */
+                Form replayForm = replay.form.get();
+
+                if (replayForm == null)
+                {
+                    continue;
+                }
+
+                StubEntity stub = new StubEntity(client.world);
+
+                stub.setForm(FormUtils.copy(replayForm));
+                entity = stub;
+            }
+
+            if (entity.getForm() == null)
             {
                 continue;
             }
@@ -617,6 +650,7 @@ public final class ReplayActorPass
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
         Matrix3f previousInverse = new Matrix3f(RenderSystem.getInverseViewRotationMatrix());
         boolean queued = FormRenderLast.suspend();
+        boolean translucency = mchorse.bbs_mod.forms.FormTranslucentQueue.suspend();
 
         /* The pass fires ACTOR_BEFORE too; that event is how ReplayEntityMask snapshots the world
          * actor. Without the guard the composition camera would overwrite the world matte pose. */
@@ -690,6 +724,7 @@ public final class ReplayActorPass
         {
             ReplayEntityMask.setCompositeActorPass(false);
             FormRenderLast.restore(queued);
+            mchorse.bbs_mod.forms.FormTranslucentQueue.restore(translucency);
 
             RenderSystem.setProjectionMatrix(previousProjection, VertexSorter.BY_Z);
             RenderSystem.setInverseViewRotationMatrix(previousInverse);
@@ -722,7 +757,10 @@ public final class ReplayActorPass
 
     private static void applyPose(Replay replay, IEntity entity, int tick, float transition)
     {
-        float at = replay.getTick(tick) + transition;
+        /* Apply the integer keyframe tick; FilmEntityRenderer interpolates prev→current by the
+         * transition it is given. Advancing by the transition here as well made the actor (and its
+         * depth for the matte) up to a tick ahead of the world's copy. */
+        float at = replay.getTick(tick);
 
         replay.keyframes.apply(at, entity);
 

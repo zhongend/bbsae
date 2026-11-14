@@ -103,10 +103,24 @@ public class UICompositionClip extends UIClip<CompositionClip>
             String projectId = "film_" + CompStore.safe(film.getId());
             CompProject project = CompStore.loadFilmProject(film.getId(), film.getId(), width, height, fps, duration);
 
+            /* Keep what the user is already looking at. The old button always switched the clip to
+             * the selected replay's composition, which is usually a fresh, empty one — the
+             * composition on screen (and its effects) vanished the moment binding was clicked.
+             * A comp that already has layers is the edit; only an empty/missing target falls back
+             * to the replay composition. */
+            CompDocument current = this.clip.comp.get() == null ? null : project.getComp(this.clip.comp.get());
             mchorse.bbs_mod.film.replays.Replay replay = panel.replayEditor == null ? null : panel.replayEditor.getReplay();
-            CompDocument comp = replay == null
-                ? project.getCompOrFirst(CompStore.DEFAULT_COMP)
-                : CompStore.ensureReplayComp(project, replay.getId(), replay.getName(), width, height, fps, duration);
+
+            if (replay != null && dev.bbsae.client.replay.CompReplayBridge.isVirtual(replay))
+            {
+                replay = null;
+            }
+
+            CompDocument comp = current != null && current.layers != null && !current.layers.isEmpty()
+                ? current
+                : replay == null
+                    ? project.getCompOrFirst(CompStore.DEFAULT_COMP)
+                    : CompStore.ensureReplayComp(project, replay.getId(), replay.getName(), width, height, fps, duration);
 
             CompStore.save(project);
 
@@ -124,7 +138,8 @@ public class UICompositionClip extends UIClip<CompositionClip>
 
             if (comp != null)
             {
-                this.info.label = IKey.constant("已绑定到 " + projectId + " / " + comp.id);
+                this.info.label = IKey.constant("已绑定到 " + projectId + " / " + comp.id
+                    + (current != null && comp == current ? "（保留当前合成）" : ""));
             }
             else if (this.info != null)
             {

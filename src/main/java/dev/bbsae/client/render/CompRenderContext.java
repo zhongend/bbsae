@@ -14,6 +14,13 @@ public final class CompRenderContext
 {
     public final CompProject project;
     public final CompDocument comp;
+    /**
+     * BBS film this composition is rendered for, when known.
+     *
+     * <p>Copied from {@link BindingResolver} at construction time so nested comps inherit it and
+     * rendering passes never have to reach for a global. Null in a standalone composition.</p>
+     */
+    public final mchorse.bbs_mod.film.Film film;
     public final float time;
     public final float frame;
     public final int width;
@@ -130,6 +137,7 @@ public final class CompRenderContext
     {
         this.project = project;
         this.comp = comp;
+        this.film = BindingResolver.getFilm();
         this.time = Math.max(0F, time);
         this.frame = this.time * Math.max(1F, comp.fps);
         this.width = Math.max(1, comp.width);

@@ -100,6 +100,14 @@ public class BbsAeClient implements BBSAddonMod
      * language table) so the menu shows the same name as the rest of the panel: 合成器.</p>
      */
     @Subscribe
+    public void onKeybinds(mchorse.bbs_mod.api.client.events.RegisterKeybindsEvent event)
+    {
+        /* Makes Ctrl+K visible and editable in BBS's own keybind settings. The same combo instance
+         * is registered on every clip timeline, so a rebind takes effect immediately. */
+        event.register(dev.bbsae.client.ui.BbsClipSplit.CLIP_SPLIT);
+    }
+
+    @Subscribe
     public void onL10n(RegisterL10nEvent event)
     {
         localizeClipName(event.l10n);

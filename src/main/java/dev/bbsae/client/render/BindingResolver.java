@@ -26,6 +26,14 @@ public final class BindingResolver
      * cleared when the panel closes, so the fallback below cannot read a stale film.
      */
     private static mchorse.bbs_mod.film.Film boundFilm;
+    /**
+     * Absolute film tick for the overlay currently being drawn.
+     *
+     * <p>A split or time-scaled composition clip no longer maps one-to-one to film time, so the
+     * model-level fallback cannot derive the film tick from the composition seconds. The overlay
+     * knows the exact clip tick and sets it here for the duration of one instance.</p>
+     */
+    private static float frameTick = -1F;
 
     private BindingResolver()
     {}
@@ -38,7 +46,36 @@ public final class BindingResolver
         if (film == null)
         {
             SMOOTHED.clear();
+            frameTick = -1F;
         }
+    }
+
+    public static mchorse.bbs_mod.film.Film getFilm()
+    {
+        return boundFilm;
+    }
+
+    /**
+     * Restores a previously active film without clearing the smoothing state.
+     *
+     * <p>The overlay temporarily installs the film it is drawing and restores the panel's film on
+     * exit. Using {@link #setFilm(mchorse.bbs_mod.film.Film)} there would clear the filter every
+     * frame and make the "smooth" binding option do nothing.</p>
+     */
+    public static void restoreFilm(mchorse.bbs_mod.film.Film film)
+    {
+        boundFilm = film;
+    }
+
+    /** Sets the absolute film tick for the next binding resolution; negative clears it. */
+    public static void setFrameTick(float tick)
+    {
+        frameTick = tick;
+    }
+
+    public static float frameTick()
+    {
+        return frameTick;
     }
 
     /** True when the layer has a binding switch that actually asks for an external position. */
@@ -156,7 +193,7 @@ public final class BindingResolver
             return null;
         }
 
-        for (BaseFilmController controller : BBSModClient.getFilms().getControllers())
+        for (BaseFilmController controller : controllers())
         {
             /* Prefer the film the compositor is bound to. Another film playing in the world could
              * contain a replay with the same id, and projecting through it put the layer at a
@@ -199,6 +236,27 @@ public final class BindingResolver
     }
 
     /**
+     * Live film controllers, or an empty list when the client managers are not up yet (headless
+     * tests, the first frames of a session). A binding must never crash the renderer.
+     */
+    private static java.util.List<BaseFilmController> controllers()
+    {
+        try
+        {
+            mchorse.bbs_mod.film.Films films = BBSModClient.getFilms();
+
+            if (films != null && films.getControllers() != null)
+            {
+                return films.getControllers();
+            }
+        }
+        catch (RuntimeException ignored)
+        {}
+
+        return java.util.Collections.emptyList();
+    }
+
+    /**
      * Model-level fallback: the replay's curated x/y/z channels at the film tick.
      *
      * <p>The compositor time is in seconds and BBS films are in 20 ticks per second, the same
@@ -219,10 +277,50 @@ public final class BindingResolver
             return null;
         }
 
-        double tick = Math.max(0D, context.time * 20D);
-        /* Channels are independent: a replay that only animates X is common (Y/Z keep their static
-         * value). Requiring all three to have keys made the fallback silently unavailable — and the
-         * export fell back to the layer's own X/Y — for those replays. */
+        /* The overlay supplies the absolute camera-timeline tick. Composition time is the right
+         * fallback for an unsplit clip in the editor, but it is wrong for a split/time-scaled clip
+         * (the right half restarts at 0 and only its offset carries the film time). */
+        double tick = frameTick >= 0F ? frameTick : Math.max(0D, context.time * 20D);
+        int at = replay.getTick((int) Math.floor(tick));
+        double fraction = tick - Math.floor(tick);
+
+        /* Pose a stub through the replay's own channels instead of reading x/y/z directly: this
+         * gives relative replays their origin, looping its wrapped tick and the entity's real eye
+         * height, so the anchor lands where the actor's body is. */
+        try
+        {
+            mchorse.bbs_mod.forms.entities.StubEntity entity =
+                new mchorse.bbs_mod.forms.entities.StubEntity(null);
+
+            replay.keyframes.apply((float) (at + fraction), entity);
+
+            double x = entity.getX();
+            double y = entity.getY() + Math.max(0D, entity.getEyeHeight()) + binding.worldOffsetY;
+            double z = entity.getZ();
+
+            if (replay.relative.get() && replay.relativeOffset.get() != null)
+            {
+                org.joml.Vector3d origin = replay.getRelativeOrigin();
+
+                x += origin.x;
+                y += origin.y;
+                z += origin.z;
+            }
+
+            Vector4f projected = project(context.projection, context.camera, x, y, z,
+                context.width, context.height);
+
+            if (projected != null)
+            {
+                return new Vector2f(projected.x, projected.y);
+            }
+        }
+        catch (RuntimeException ignored)
+        {
+            /* A form/property channel that cannot apply on a stub must not kill the whole frame;
+             * the channel-level fallback below is still usable. */
+        }
+
         double x = channel(replay.keyframes.x, (float) tick);
         double y = channel(replay.keyframes.y, (float) tick);
         double z = channel(replay.keyframes.z, (float) tick);
@@ -230,6 +328,15 @@ public final class BindingResolver
         if (Double.isNaN(x) || Double.isNaN(y) || Double.isNaN(z))
         {
             return null;
+        }
+
+        if (replay.relative.get())
+        {
+            org.joml.Vector3d origin = replay.getRelativeOrigin();
+
+            x += origin.x;
+            y += origin.y;
+            z += origin.z;
         }
 
         Vector4f projected = project(context.projection, context.camera, x,
@@ -273,7 +380,9 @@ public final class BindingResolver
         point.mul(view);
         point.mul(projection);
 
-        if (point.w <= 0.0001F)
+        if (point.w <= 0.0001F
+            || Float.isNaN(point.x) || Float.isNaN(point.y) || Float.isNaN(point.z)
+            || Float.isInfinite(point.x) || Float.isInfinite(point.y))
         {
             return null;
         }

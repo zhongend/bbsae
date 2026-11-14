@@ -1165,6 +1165,10 @@ public final class CompStore
             /* Older projects were persisted with a 12s duration while their real layers/audio
              * extended past it. Grow on load so the timeline and export immediately cover the
              * content instead of waiting for the first render tick. */
+            /* The ceiling runs first: a project damaged by the old tick-as-seconds copy can carry
+             * a 36 000-second canvas and layers stretched to the same end. Growing to that content
+             * would re-inflate the canvas on every open. */
+            comp.clampToMaxDuration();
             comp.extendDurationToContent();
         }
     }
@@ -1262,7 +1266,7 @@ public final class CompStore
             comp.width = Math.max(16, width);
             comp.height = Math.max(16, height);
             comp.fps = Math.max(1F, fps);
-            comp.duration = Math.max(0.1F, duration);
+            comp.duration = CompDocument.clampDuration(duration);
             comp.workAreaOut = comp.duration;
         }
 
@@ -1479,7 +1483,9 @@ public final class CompStore
                 comp.width = Math.max(1, width);
                 comp.height = Math.max(1, height);
                 comp.fps = Math.max(1F, fps);
-                comp.duration = Math.max(0.1F, duration);
+                /* A film's camera placeholder can reserve half an hour for a twelve-second shot.
+                 * Inheriting it here is what made every new replay composition start stretched. */
+                comp.duration = CompDocument.adaptiveInitialDuration(duration);
                 comp.workAreaIn = 0F;
                 comp.workAreaOut = comp.duration;
             }
@@ -1497,7 +1503,7 @@ public final class CompStore
             comp.width = Math.max(1, width);
             comp.height = Math.max(1, height);
             comp.fps = Math.max(1F, fps);
-            comp.duration = Math.max(0.1F, duration);
+            comp.duration = CompDocument.adaptiveInitialDuration(duration);
             comp.workAreaOut = comp.duration;
             project.comps.add(comp);
         }
@@ -1526,7 +1532,7 @@ public final class CompStore
             comp.width = Math.max(1, width);
             comp.height = Math.max(1, height);
             comp.fps = Math.max(1F, fps);
-            comp.duration = Math.max(0.1F, duration);
+            comp.duration = CompDocument.adaptiveInitialDuration(duration);
             comp.workAreaOut = comp.duration;
             project.comps.add(comp);
         }

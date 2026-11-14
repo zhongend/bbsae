@@ -124,6 +124,35 @@ public class BindingSceneTest
     }
 
     @Test
+    public void anUnresolvableBindingLeavesTheLayerUnchanged()
+    {
+        CompProject project = project();
+        CompDocument comp = project.getCompOrFirst("main");
+        CompLayer bound = layer(comp, "bound", 0F, 0F);
+
+        bound.threeD = true;
+        bound.binding.enabled = true;
+        bound.binding.type = CompBinding.REPLAY;
+        bound.binding.target = "missing";
+
+        /* Tests share one JVM; the resolver's film is process-wide. */
+        BindingResolver.setFilm(null);
+
+        /* No film/controller/projection in this render path: the binding cannot resolve. The layer
+         * must then behave exactly like an unbound 3D layer instead of freezing itself in screen
+         * space (the old isBound() check changed camera/sort semantics even when resolution failed,
+         * which is why a bound layer seemed to vanish during BBS film playback). */
+        CompRenderContext ctx = context(project, comp);
+
+        assertTrue(CompScene.cameraAffects(ctx, bound),
+            "an unresolved binding must keep camera behaviour");
+        assertTrue(CompScene.usePerspective(ctx, bound),
+            "an unresolved binding must keep its 3D projection");
+        assertTrue(CompScene.sortsIn3D(ctx, bound),
+            "an unresolved binding must keep depth sorting");
+    }
+
+    @Test
     public void theBindingPointIsResolvedOncePerFrame()
     {
         CompProject project = project();

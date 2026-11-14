@@ -37,6 +37,35 @@ public class TimelineViewMemoryTest
     }
 
     @Test
+    public void theLaneWidthTravelsWithTheView()
+    {
+        CompProject.CompSettings settings = new CompProject.CompSettings();
+
+        settings.putTimelineView("main", false, 3.5D, 42D, 7, 1.25D, 60D, 840);
+
+        CompProject.CompSettings.TimelineView view =
+            CompProject.CompSettings.timelineView(settings.timelineViews.get("main"));
+
+        assertNotNull(view);
+        assertEquals(840, view.laneWidth(),
+            "restoring in a different window must be able to rescale pixels/second");
+    }
+
+    @Test
+    public void oldEntriesWithoutAWidthAreStillAccepted()
+    {
+        CompProject.CompSettings settings = new CompProject.CompSettings();
+
+        settings.putTimelineView("main", false, 3.5D, 42D, 7, 1.25D, 60D);
+
+        CompProject.CompSettings.TimelineView view =
+            CompProject.CompSettings.timelineView(settings.timelineViews.get("main"));
+
+        assertNotNull(view);
+        assertEquals(0, view.laneWidth(), "legacy entries keep their raw zoom");
+    }
+
+    @Test
     public void theFitFlagIsPreserved()
     {
         CompProject.CompSettings settings = new CompProject.CompSettings();

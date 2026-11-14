@@ -71,14 +71,15 @@ public class CompDurationRepairTest
     }
 
     @Test
-    public void aDifferentFilmLengthIsNotTheInflatedState()
+    public void aDifferentFilmLengthWithAnEmptyTailIsStillRepaired()
     {
         CompDocument doc = doc(1800F);
 
         layer(doc, 6F);
 
-        assertTrue(Float.isNaN(CompDurationRepair.fromFilm(doc, 600F)),
-            "only a duration equal to the film length carries the old bug's fingerprint");
+        assertEquals(12F, CompDurationRepair.fromFilm(doc, 600F), 0.001F,
+            "a 30-minute canvas holding six seconds is implausible even when the film has since "
+                + "been shortened; the adaptive tail rule does not need the old exact fingerprint");
     }
 
     @Test
@@ -121,9 +122,9 @@ public class CompDurationRepairTest
     }
 
     @Test
-    public void aNonWholeMinuteIsNotTouched()
+    public void anExtremeEmptyTailIsRepairedEvenOffTheWholeMinuteGrid()
     {
-        assertTrue(Float.isNaN(CompDurationRepair.implausibleLong(doc(601F))),
-            "only the round placeholder values are recognisable without a film");
+        assertEquals(12F, CompDurationRepair.implausibleLong(doc(601F)), 0.001F,
+            "an empty ten-minute canvas is the damage shape regardless of a round minute value");
     }
 }
