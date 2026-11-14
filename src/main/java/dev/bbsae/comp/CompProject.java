@@ -434,5 +434,82 @@ public class CompProject
         public double timelineZoom = 0D;
         public double timelineShift = 0D;
         public int timelineScrollY = 0;
+        /**
+         * Per-composition timeline view memory, keyed by composition id.
+         *
+         * <p>Values are {@code "shift,zoom,scrollY,keyShift,keyZoom"}. The single fields above can
+         * only remember one composition; a project edits many (main, precomps, replay comps), and
+         * switching between them used to re-fit the timeline and lose the zoom the user had set.
+         * Keeping one entry per composition makes "switch page/composition and come back" preserve
+         * the time-axis size, like the film editor does.</p>
+         */
+        public java.util.Map<String, String> timelineViews = new java.util.LinkedHashMap<>();
+
+        /** Decoded form of one {@link #timelineViews} entry. */
+        public record TimelineView(boolean fit, double shift, double zoom, int scrollY,
+                                   double keyShift, double keyZoom)
+        {}
+
+        /**
+         * Stores one composition's time-axis state. "Fit" is kept as a flag rather than two
+         * numbers so a fitted timeline keeps following the composition after new content grows it.
+         */
+        public void putTimelineView(String compId, boolean fit, double shift, double zoom,
+                                    int scrollY, double keyShift, double keyZoom)
+        {
+            if (compId == null || compId.isEmpty())
+            {
+                return;
+            }
+
+            this.timelineViews.put(compId, (fit ? "1" : "0") + "," + shift + "," + zoom + ","
+                + scrollY + "," + keyShift + "," + keyZoom);
+        }
+
+        /**
+         * Parses one entry. Accepts the six-field format and the earlier five-field format
+         * ({@code shift,zoom,scroll,keyShift,keyZoom}) written before the fit flag existed.
+         *
+         * @return null when the string is missing, malformed or carries a non-positive zoom
+         */
+        public static TimelineView timelineView(String encoded)
+        {
+            if (encoded == null || encoded.isBlank())
+            {
+                return null;
+            }
+
+            String[] parts = encoded.split(",");
+
+            if (parts.length < 2)
+            {
+                return null;
+            }
+
+            try
+            {
+                boolean fit = parts.length >= 6 && "1".equals(parts[0]);
+                int base = parts.length >= 6 ? 1 : 0;
+                double shift = Double.parseDouble(parts[base]);
+                double zoom = Double.parseDouble(parts[base + 1]);
+                int scroll = parts.length > base + 2
+                    ? (int) Math.round(Double.parseDouble(parts[base + 2])) : 0;
+                double keyShift = parts.length >= base + 5 ? Double.parseDouble(parts[base + 3]) : 0D;
+                double keyZoom = parts.length >= base + 5 ? Double.parseDouble(parts[base + 4]) : 0D;
+
+                if (!(zoom > 0D) || Double.isNaN(shift) || Double.isInfinite(shift)
+                    || Double.isNaN(zoom) || Double.isInfinite(zoom)
+                    || Double.isNaN(keyShift) || Double.isNaN(keyZoom))
+                {
+                    return null;
+                }
+
+                return new TimelineView(fit, shift, zoom, scroll, keyShift, keyZoom);
+            }
+            catch (NumberFormatException e)
+            {
+                return null;
+            }
+        }
     }
 }

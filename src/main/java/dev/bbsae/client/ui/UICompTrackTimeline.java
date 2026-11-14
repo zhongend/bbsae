@@ -569,6 +569,12 @@ public class UICompTrackTimeline extends UIElement
         return new double[] {this.xAxis.getShift(), this.xAxis.getZoom()};
     }
 
+    /** True while the axis follows the whole composition (the "fit" mode). */
+    public boolean isFitMode()
+    {
+        return this.fitMode;
+    }
+
     public void restoreView(double shift, double zoom)
     {
         this.fitMode = false;

@@ -148,7 +148,7 @@ public final class CompPrefs
         public int layoutPreset = LAYOUT_STANDARD;
         /** UI density preference used before a project exists. */
         public int uiDensity = 0;
-        /** Reveal/focus the AE curve when an effect parameter gets a keyframe. */
+        /** Reveal the keyframe drawer when an effect parameter gets a keyframe (never the curve page). */
         public boolean autoEffectCurve = true;
         /** 0 Premiere, 1 BBS. The active project still stores its own scheme. */
         public int shortcutScheme = 0;

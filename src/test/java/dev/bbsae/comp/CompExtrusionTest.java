@@ -69,31 +69,31 @@ public class CompExtrusionTest
     }
 
     @Test
-    public void backVolumeStartsAtTheArtworkAndRecedesFarthestFirst()
+    public void backVolumeIsPaintedFarToNearWithTheArtworkLast()
     {
         CompLayer layer = layer();
         List<CompExtrusion.Slice> slices = CompExtrusion.slices(layer);
 
         assertEquals(5, slices.size());
 
-        CompExtrusion.Slice artwork = slices.get(0);
+        CompExtrusion.Slice farthest = slices.get(0);
+        CompExtrusion.Slice artwork = slices.get(slices.size() - 1);
 
-        assertTrue(artwork.artwork(), "the artwork face is painted first so the sides blend behind it");
+        assertFalse(farthest.artwork());
+        assertEquals(-60F, farthest.z(), 0.0001F, "the far end is painted first");
+
+        assertTrue(artwork.artwork(), "the artwork face is painted last so the sides stay behind it");
         assertEquals(0F, artwork.z(), 0.0001F);
         assertEquals(0xFFFFFFFF, artwork.tint(), "the artwork face must keep its own colours");
 
-        float previous = artwork.z();
+        /* Painter order: each slice must be nearer than the previous one. */
+        float previous = farthest.z();
 
         for (int i = 1; i < slices.size(); i++)
         {
-            CompExtrusion.Slice slice = slices.get(i);
-
-            assertFalse(slice.artwork());
-            assertTrue(slice.z() < previous, "painter order is far-to-near, i.e. decreasing Z");
-            previous = slice.z();
+            assertTrue(slices.get(i).z() >= previous, "painter order is far-to-near");
+            previous = slices.get(i).z();
         }
-
-        assertEquals(-60F, slices.get(slices.size() - 1).z(), 0.0001F, "the volume ends at its depth");
     }
 
     @Test
@@ -143,14 +143,15 @@ public class CompExtrusionTest
     {
         CompLayer layer = layer();
 
-        assertTrue(CompExtrusion.slices(layer).get(4).z() < -59F);
+        assertTrue(CompExtrusion.slices(layer).get(0).z() < -59F);
 
         layer.extrudeCap = false;
 
         List<CompExtrusion.Slice> open = CompExtrusion.slices(layer);
 
         assertTrue(open.size() < 5, "without the cap the far end plane is not drawn");
-        assertTrue(open.get(open.size() - 1).z() > -60F, "the remaining planes stay inside the depth");
+        assertTrue(open.get(0).z() > -60F, "the remaining planes stay inside the depth");
+        assertTrue(open.get(open.size() - 1).artwork(), "the near artwork face is always drawn");
     }
 
     @Test
@@ -173,16 +174,17 @@ public class CompExtrusionTest
         layer.extrudeShade = 1F;
 
         List<CompExtrusion.Slice> slices = CompExtrusion.slices(layer);
-        int firstSide = (layer.extrudeDirection == CompExtrusion.DIRECTION_BACK ? 1 : 0);
-        int near = luminance(slices.get(firstSide).tint());
-        int far = luminance(slices.get(slices.size() - 1).tint());
+        /* Back volume: index 0 is the far end, index size-2 the slice closest to the artwork. */
+        int near = slices.size() - 2;
+        int nearLum = luminance(slices.get(near).tint());
+        int farLum = luminance(slices.get(0).tint());
 
-        assertTrue(far < near, "the depth cue has to darken towards the far end");
+        assertTrue(farLum < nearLum, "the depth cue has to darken towards the far end");
 
         layer.extrudeShade = 0F;
 
-        int flatNear = luminance(CompExtrusion.slices(layer).get(1).tint());
-        int flatFar = luminance(CompExtrusion.slices(layer).get(4).tint());
+        int flatNear = luminance(CompExtrusion.slices(layer).get(near).tint());
+        int flatFar = luminance(CompExtrusion.slices(layer).get(0).tint());
 
         assertEquals(flatNear, flatFar, "zero shade means a flat side");
     }
@@ -256,8 +258,9 @@ public class CompExtrusionTest
         List<CompExtrusion.Slice> slices = CompExtrusion.slices(layer, effect);
 
         assertEquals(4, slices.size());
-        assertEquals(0F, slices.get(0).z(), 0.0001F);
-        assertEquals(-100F, slices.get(slices.size() - 1).z(), 0.0001F);
+        assertEquals(-100F, slices.get(0).z(), 0.0001F, "legacy volumes use the same far-to-near order");
+        assertEquals(0F, slices.get(slices.size() - 1).z(), 0.0001F);
+        assertTrue(slices.get(slices.size() - 1).artwork());
 
         /* The layer switch wins when both exist: a project migrated to the new page must not be
          * extruded twice. */
@@ -268,7 +271,7 @@ public class CompExtrusionTest
         List<CompExtrusion.Slice> own = CompExtrusion.slices(layer, effect);
 
         assertEquals(3, own.size());
-        assertEquals(-30F, own.get(own.size() - 1).z(), 0.0001F);
+        assertEquals(-30F, own.get(0).z(), 0.0001F);
 
         /* The switch being on with zero thickness means "no volume"; it must not quietly fall back
          * to the legacy effect and keep drawing a volume the inspector says is off. */

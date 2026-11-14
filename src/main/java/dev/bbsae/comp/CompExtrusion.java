@@ -244,8 +244,11 @@ public final class CompExtrusion
             return slices;
         }
 
-        /* Back (the default): the artwork is the front face and the volume recedes. */
-        for (int i = 0; i < count; i++)
+        /* Back (the default): the artwork is the near face and the volume recedes away from the
+         * viewer. Painter order is far -> near, so the artwork must be the LAST slice: drawing it
+         * first put every darker side slice on top of the picture, which is exactly the "extrusion
+         * shows a dark/tinted plate instead of the layer" preview bug. */
+        for (int i = count - 1; i >= 0; i--)
         {
             float t = i / (float) (count - 1);
             boolean artwork = i == 0;

@@ -6983,8 +6983,11 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.doc != null)
         {
-            this.doc.duration = Math.max(this.doc.duration, duration);
-            this.doc.workAreaOut = Math.max(this.doc.workAreaOut, duration);
+            /* The film's length is not the composition's length. Older builds copied it into
+             * doc.duration, so a 30-minute camera placeholder stretched every composition and the
+             * timeline fitted to the empty tail. Only a project that was damaged that way is
+             * repaired; a composition with real content keeps its editorial duration. */
+            this.repairInflatedDuration(this.doc, duration);
             normalizeWorkArea(this.doc);
 
             /* A linked replay may have been re-formed in the BBS film editor while this project
@@ -7222,6 +7225,131 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             this.trackTimeline.fit();
         }
+    }
+
+    /**
+     * Undoes the old "composition duration = film duration" damage.
+     *
+     * <p>Binding a film used to raise every composition's duration to
+     * {@code film.calculateDuration() / 20}. BBS camera timelines commonly carry a 30-minute
+     * placeholder clip, so opening a project through the film editor stretched an unrelated 12-second
+     * composition to 30 minutes and the track/drawer axes fitted to that empty tail — the "timeline
+     * jumps to 30 minutes after switching pages" report.</p>
+     *
+     * <p>The repair only fires on the exact fingerprint of that bug: the duration still equals the
+     * film duration, is longer than a minute, and the real content ends far earlier. A composition
+     * that actually uses its length (audio, layers or work area near the end) is left untouched.</p>
+     */
+    private void repairInflatedDuration(CompDocument doc, float filmDuration)
+    {
+        if (doc == null)
+        {
+            return;
+        }
+
+        float repaired = dev.bbsae.comp.CompDurationRepair.fromFilm(doc, filmDuration);
+
+        if (Float.isNaN(repaired))
+        {
+            return;
+        }
+
+        float previous = doc.duration;
+        float content = doc.contentEnd();
+
+        doc.duration = repaired;
+
+        if (doc.workAreaOut > repaired || Math.abs(doc.workAreaOut - filmDuration) <= 0.05F)
+        {
+            doc.workAreaOut = repaired;
+        }
+
+        if (doc.workAreaIn > repaired)
+        {
+            doc.workAreaIn = 0F;
+        }
+
+        normalizeWorkArea(doc);
+        this.afterDurationRepair(doc);
+        this.save();
+        this.setStatus(String.format(java.util.Locale.ROOT,
+            "已修正被影片时长拉长的合成时长：%.0fs → %.0fs", previous, repaired));
+        BbsAeAddon.LOGGER.info("Repaired inflated composition duration: comp={} film={}s {}s -> {}s (content {}s)",
+            doc.id, filmDuration, previous, repaired, content);
+    }
+
+    /**
+     * The remembered axes and the current view were computed for the old (wrong) length. Drop the
+     * memory entry and, if this is the active document, re-fit both axes to the repaired length.
+     */
+    private void afterDurationRepair(CompDocument doc)
+    {
+        if (this.project != null && this.project.settings != null
+            && this.project.settings.timelineViews != null && doc != null)
+        {
+            this.project.settings.timelineViews.remove(doc.id);
+            /* The pre-map fields are the fallback used by restoreEditorViewState; leaving them
+             * pointing at the old (huge) view would re-apply it after the memory entry is gone. */
+            this.project.settings.timelineZoom = 0D;
+            this.project.settings.timelineShift = 0D;
+            this.project.settings.timelineScrollY = 0;
+        }
+
+        if (doc != this.doc)
+        {
+            return;
+        }
+
+        if (this.trackTimeline != null)
+        {
+            this.trackTimeline.fit();
+        }
+
+        this.resetTimelineView = true;
+        this.keyframeViewNeedsFit = true;
+
+        if (this.keyframeOpen && this.keyframeEditor != null && this.keyframeEditor.view != null)
+        {
+            this.keyframeEditor.view.getXAxis().view(0D, Math.max(1, this.getDurationTicks()));
+            this.keyframeViewNeedsFit = false;
+            this.resetTimelineView = false;
+        }
+    }
+
+    /**
+     * Standalone counterpart of {@link #repairInflatedDuration}: no film is bound, so the film
+     * length is unknown. The damage fingerprint is still unique enough to act on — a whole-minute
+     * duration of ten minutes or more, an end-to-end work area, and less than a minute of real
+     * content (layers and audio both count via {@link CompDocument#contentEnd()}).
+     */
+    private void repairImplausibleLongDuration(CompDocument doc)
+    {
+        if (doc == null)
+        {
+            return;
+        }
+
+        float repaired = dev.bbsae.comp.CompDurationRepair.implausibleLong(doc);
+
+        if (Float.isNaN(repaired))
+        {
+            return;
+        }
+
+        float previous = doc.duration;
+        float content = doc.contentEnd();
+
+        doc.duration = repaired;
+        doc.workAreaOut = doc.duration;
+        doc.workAreaIn = 0F;
+        normalizeWorkArea(doc);
+        this.afterDurationRepair(doc);
+        this.save();
+        this.setStatus(String.format(java.util.Locale.ROOT,
+            "已修正异常长的合成时长：%.0fs → %.0fs（内容只到 %.0fs，可能是旧版本的影片时长）",
+            previous, doc.duration, content));
+        BbsAeAddon.LOGGER.info("Repaired implausible composition duration: comp={} {}s -> {}s (content {}s)",
+            doc.id, previous, doc.duration, content);
     }
 
     private void syncBbsLoop(int ticks)
@@ -7576,6 +7704,9 @@ public class UICompositorPanel extends UIDashboardPanel
         this.loadPanelLayout();
         this.updateCompPath();
         this.repairSharedPrecompCopies("打开工程");
+        /* Standalone open (no film to compare against): repair the unmistakable 30-minute empty
+         * tail left by the old film-duration copy. */
+        this.repairImplausibleLongDuration(this.doc);
 
         this.save();
     }
@@ -10505,6 +10636,8 @@ public class UICompositorPanel extends UIDashboardPanel
     public void selectReplay(mchorse.bbs_mod.film.replays.Replay replay)
     {
         this.save();
+        /* Remember the outgoing replay composition's time-axis size before the document changes. */
+        this.rememberCurrentTimelineView();
         this.replay = replay;
 
         if (this.project != null && replay != null)
@@ -10523,14 +10656,14 @@ public class UICompositorPanel extends UIDashboardPanel
             String replayKey = replay.getId() == null || replay.getId().isBlank() ? replay.getName() : replay.getId();
 
             this.doc = CompStore.ensureReplayComp(this.project, replayKey, replay.getName(), width, height, fps, duration);
-            this.doc.duration = Math.max(this.doc.duration, duration);
-            this.doc.workAreaOut = Math.max(this.doc.workAreaOut, duration);
+            /* Switching replays must not stretch the composition to the film's length. */
+            this.repairInflatedDuration(this.doc, duration);
             normalizeWorkArea(this.doc);
             this.time = 0F;
             this.setSingleSelection(this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1));
             this.resetTimelineView = true;
 
-            if (this.trackTimeline != null)
+            if (this.trackTimeline != null && !this.restoreTimelineViewFor(this.doc))
             {
                 this.trackTimeline.fit();
             }
@@ -10565,6 +10698,7 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        this.rememberCurrentTimelineView();
         this.doc = next;
         this.time = 0F;
         this.playing = false;
@@ -10578,7 +10712,7 @@ public class UICompositorPanel extends UIDashboardPanel
         }
         this.setSingleSelection(this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1));
 
-        if (this.trackTimeline != null)
+        if (this.trackTimeline != null && !this.restoreTimelineViewFor(this.doc))
         {
             this.trackTimeline.fit();
         }
@@ -10815,7 +10949,97 @@ public class UICompositorPanel extends UIDashboardPanel
             settings.timelineShift = view[0];
             settings.timelineZoom = view[1];
             settings.timelineScrollY = this.trackTimeline.scrollY();
+            this.rememberCurrentTimelineView();
         }
+    }
+
+    /**
+     * Stores the current composition's time-axis size (track timeline + keyframe drawer).
+     *
+     * <p>The two axes are independent views of the same time range, so both are remembered. The
+     * values are read from BBS's {@code Scale} (shift/zoom), which is exactly what
+     * {@code restoreView} expects; nothing is derived from the composition duration, so a later
+     * duration change cannot silently rescale the remembered view.</p>
+     */
+    private void rememberCurrentTimelineView()
+    {
+        if (this.project == null || this.project.settings == null || this.doc == null
+            || this.doc.id == null || this.doc.id.isEmpty() || this.trackTimeline == null
+            || !this.trackTimeline.isViewReady())
+        {
+            return;
+        }
+
+        double[] view = this.trackTimeline.viewState();
+        double keyShift = 0D;
+        double keyZoom = 0D;
+
+        if (this.keyframeEditor != null && this.keyframeEditor.view != null)
+        {
+            mchorse.bbs_mod.ui.utils.Scale axis = this.keyframeEditor.view.getXAxis();
+
+            if (axis != null && axis.getZoom() > 0D)
+            {
+                keyShift = axis.getShift();
+                keyZoom = axis.getZoom();
+            }
+        }
+
+        this.project.settings.putTimelineView(this.doc.id, this.trackTimeline.isFitMode(),
+            view[0], view[1], this.trackTimeline.scrollY(), keyShift, keyZoom);
+    }
+
+    /**
+     * Restores the remembered view for {@code doc}. Returns false when there is nothing to restore,
+     * so callers can fall back to {@code fit()}.
+     */
+    private boolean restoreTimelineViewFor(CompDocument doc)
+    {
+        if (doc == null || doc.id == null || doc.id.isEmpty() || this.project == null
+            || this.project.settings == null || this.project.settings.timelineViews == null
+            || this.trackTimeline == null)
+        {
+            return false;
+        }
+
+        String encoded = this.project.settings.timelineViews.get(doc.id);
+
+        if (encoded == null || encoded.isBlank())
+        {
+            return false;
+        }
+
+        CompProject.CompSettings.TimelineView view =
+            CompProject.CompSettings.timelineView(encoded);
+
+        if (view == null)
+        {
+            return false;
+        }
+
+        if (view.fit())
+        {
+            /* "Fit" is a behaviour, not two numbers: restoring the numbers would freeze a fitted
+             * view and stop it following the composition when content grows. */
+            this.trackTimeline.fit();
+        }
+        else
+        {
+            this.trackTimeline.restoreView(view.shift(), view.zoom());
+        }
+
+        this.trackTimeline.restoreScrollY(view.scrollY());
+
+        if (view.keyZoom() > 0D && this.keyframeEditor != null && this.keyframeEditor.view != null)
+        {
+            this.keyframeEditor.view.getXAxis().set(view.keyShift(), view.keyZoom());
+            this.keyframeViewNeedsFit = false;
+            /* refreshSheets() must not re-fit the drawer afterwards; the remembered axis is the
+             * whole point of the per-composition view memory. */
+            this.resetTimelineView = false;
+        }
+
+        return true;
     }
 
     /** Schedules a write when only workspace/view state changed. */
@@ -14085,6 +14309,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
     public void openKeyframes()
     {
+        /* The drawer only exists on the track page. A parameter stopwatch must reveal the keys,
+         * not leave the user on the curve page with a hidden drawer. */
+        if (this.timelinePage != 0 && this.timelineTabs != null)
+        {
+            this.timelineTabs.select(0);
+        }
+
         this.setKeyframeOpen(true);
     }
 
@@ -15388,6 +15619,10 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
+        /* 合成/回放 switching hides one workspace's timeline; keep the composition's time-axis size
+         * so coming back does not re-fit it. */
+        this.rememberCurrentTimelineView();
+
         if (mode == WORKSPACE_REPLAY)
         {
             if (this.film == null || this.filmPanel == null)
@@ -16540,12 +16775,17 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.trackTimeline != null)
         {
-            if (settings.timelineZoom > 0D)
+            /* Per-composition memory first; the legacy single-view fields are the fallback for
+             * projects saved before the map existed. */
+            if (!this.restoreTimelineViewFor(this.doc))
             {
-                this.trackTimeline.restoreView(settings.timelineShift, settings.timelineZoom);
-            }
+                if (settings.timelineZoom > 0D)
+                {
+                    this.trackTimeline.restoreView(settings.timelineShift, settings.timelineZoom);
+                }
 
-            this.trackTimeline.restoreScrollY(settings.timelineScrollY);
+                this.trackTimeline.restoreScrollY(settings.timelineScrollY);
+            }
         }
 
         this.refreshLayers();
@@ -17675,6 +17915,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
         double[] view = this.trackTimeline.viewState();
 
+        this.rememberCurrentTimelineView();
         this.precompStack.push(new PrecompReturn(this.doc,
             this.selectedLayer == null ? "" : this.selectedLayer.id, this.time, view[0], view[1]));
         this.doc = sub;
@@ -17685,7 +17926,13 @@ public class UICompositorPanel extends UIDashboardPanel
         this.precompBack.setVisible(true);
         this.primedWidth = -1;
         this.keyframeEditor.view.pickKeyframe(null);
-        this.trackTimeline.fit();
+
+        /* The nested composition keeps (or starts with) its own time-axis size instead of being
+         * re-fitted on every entry. */
+        if (!this.restoreTimelineViewFor(sub))
+        {
+            this.trackTimeline.fit();
+        }
         this.refreshLayers();
         this.refreshInspector();
         this.refreshSheets();
@@ -17705,6 +17952,11 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             return;
         }
+
+        /* Store the nested comp's axis before leaving so re-entering it later is stable, then put
+         * the parent's remembered axis back before the exact stack view is applied. */
+        this.rememberCurrentTimelineView();
+        this.restoreTimelineViewFor(state.doc);
 
         this.doc = state.doc;
         this.time = state.time;
@@ -19986,9 +20238,19 @@ public class UICompositorPanel extends UIDashboardPanel
             UICompButton keyAll = new UICompButton(IKey.constant("AE 关键帧"), (button) ->
                 this.keyEffectAtPlayhead(layer, effect, definition));
 
-            keyAll.hint("在当前播放头为这个效果的所有可动画参数自动添加独立关键帧，并在下方 AE 曲线中展开该属性");
+            keyAll.hint("在当前播放头为这个效果的所有可动画参数自动添加独立关键帧，并展开关键帧抽屉");
             keyAll.w(1F).h(20);
             section.fields.add(keyAll);
+            section.fields.add(this.smallButton("在曲线中查看该效果", () ->
+            {
+                if (this.selectedLayer == null)
+                {
+                    return;
+                }
+
+                this.showCurveFor(CompLayer.effectPath(effect.id,
+                    dev.bbsae.client.render.EffectRenderer.STRENGTH));
+            }));
         }
 
         if (effect.type != null && effect.type.startsWith("depth_"))
@@ -20060,7 +20322,9 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.refreshSheets();
         this.refreshInspector();
-        this.showCurveFor(firstPath);
+        /* Adding keys is a timeline action: reveal them in the drawer. The graph stays one tab
+         * away instead of being forced on the artist mid-edit. */
+        this.openKeyframes();
         this.setStatus("已为「" + CompEffectRegistry.displayName(effect.type) + "」添加 "
             + (definition.params.size() + 1) + " 个 AE 关键帧（含效果强度）");
         this.save();
@@ -20336,6 +20600,22 @@ public class UICompositorPanel extends UIDashboardPanel
             this.save();
             this.refreshSheets();
         }));
+
+        /* The old "composition duration = film duration" behaviour left a huge empty tail on
+         * projects that were saved with it. The film-bound path repairs itself on open; this
+         * diagnose-and-fix row covers a project opened standalone (or a deliberately long comp
+         * the user wants to trim). */
+        float contentEnd = comp.contentEnd();
+
+        if (comp.duration > 60F && contentEnd + 60F < comp.duration)
+        {
+            section.fields.add(UI.label(IKey.constant(String.format(java.util.Locale.ROOT,
+                "内容只到 %.1fs，当前时长 %.1fs。旧版本会把影片时长（常见 30 分钟）写进合成；"
+                    + "空尾会让时间轴适配到 30 分钟。", contentEnd, comp.duration)), 13));
+            section.fields.add(this.smallButton("时长 = 内容结尾（清理空尾）", () ->
+                this.adoptCompositionDuration(Math.max(12F, comp.contentEnd()))));
+        }
+
         section.fields.add(this.colorRow("背景", comp.background, (color) -> comp.background = color));
 
         if (this.project != null && this.project.settings != null)
@@ -23571,15 +23851,20 @@ public class UICompositorPanel extends UIDashboardPanel
         this.setStatus("已在播放头添加关键帧");
         this.save();
 
+        /* A parameter stopwatch is a timeline gesture, not a graph-editing gesture: the artist wants
+         * to see the new key in the keyframe drawer underneath the tracks. Jumping to the curve page
+         * (the old behaviour) hid the tracks and made "add a key" feel like it changed the editor
+         * mode. The curve stays reachable through its tab and the explicit "在曲线中查看该效果"
+         * button. */
         if (path.startsWith("fx/") && CompPrefs.get().autoEffectCurve)
         {
-            this.showCurveFor(path);
+            this.openKeyframes();
         }
     }
 
     /**
-     * Opens the AE graph on one property. Called when an effect key is created, so the artist does
-     * not have to hunt for a row that appeared somewhere in the list.
+     * Opens the AE graph on one property. Now only called by the explicit "在曲线中查看该效果"
+     * button; adding a keyframe opens the drawer instead (see {@link #addScalarKey}).
      */
     private void showCurveFor(String path)
     {
@@ -24648,6 +24933,7 @@ public class UICompositorPanel extends UIDashboardPanel
         to.timelineZoom = from.timelineZoom;
         to.timelineShift = from.timelineShift;
         to.timelineScrollY = from.timelineScrollY;
+        to.timelineViews = from.timelineViews;
     }
 
     private void captureSnapshot()
@@ -24830,6 +25116,10 @@ public class UICompositorPanel extends UIDashboardPanel
         }
 
         this.forgetTransientTimelineExpansion();
+        /* Undo keeps the workspace: capture the live time-axis size into the settings that
+         * preserveWorkspaceSettings() copies into the restored project, so undo never re-fits the
+         * timeline or loses the zoom. */
+        this.rememberCurrentTimelineView();
         this.restoring = true;
 
         try
