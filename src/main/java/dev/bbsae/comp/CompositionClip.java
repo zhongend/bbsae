@@ -178,6 +178,51 @@ public class CompositionClip extends CameraClip
      * longer of the film and the composition, otherwise BBS's recorder stops at the film's old
      * length (the 12-second camera default) and the rest of the composition is never recorded.
      */
+    /**
+     * Composition-local time the overlay should draw for a clip instance.
+     *
+     * <p>{@code hold = "保持末帧"} means the last frame of the composition stays on screen for the
+     * remainder of the clip. The old implementation only skipped the "past the end" check and kept
+     * feeding the increasing time to the renderer, where every layer is inactive past its out
+     * point: the result was the stage background alone — visually an animation that freezes into a
+     * flat colour once playback passes the composition's end. A time scale/offset clip has the
+     * same failure even when its own duration was authored long enough.</p>
+     *
+     * @return the time to render, or {@link Float#NaN} when nothing should be drawn (past the end
+     *         with hold off)
+     */
+    public static float overlayTime(CompDocument doc, float rawSeconds, boolean hold)
+    {
+        if (!Float.isFinite(rawSeconds))
+        {
+            return 0F;
+        }
+
+        if (doc == null)
+        {
+            return Math.max(0F, rawSeconds);
+        }
+
+        float time = Math.max(0F, rawSeconds);
+
+        if (time <= doc.duration)
+        {
+            return time;
+        }
+
+        if (!hold)
+        {
+            return Float.NaN;
+        }
+
+        /* The last authored frame. `duration` itself is the exclusive end: a layer with
+         * out == duration is inactive at exactly that value, so holding at duration would paint
+         * the background. One frame earlier is the final picture the editor can show. */
+        float frame = 1F / Math.max(1F, doc.fps);
+
+        return Math.max(0F, doc.duration - frame);
+    }
+
     public static int exportDurationTicks(int filmTicks, float compDurationSeconds)
     {
         int filmDuration = Math.max(20, filmTicks);

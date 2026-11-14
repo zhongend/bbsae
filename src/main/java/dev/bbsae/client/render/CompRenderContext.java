@@ -121,6 +121,30 @@ public final class CompRenderContext
      */
     public boolean layerLocalPass;
 
+    /**
+     * True while rendering a precomposition.
+     *
+     * <p>A nested comp's time is its own local time (the precomp layer's offset and time scale
+     * have already been applied). A linked replay inside it must sample its animation on that
+     * local clock, exactly like the compositor preview does. The film overlay's absolute tick is
+     * only right for the top-level composition: using it inside a precomp ignored the precomp's
+     * time offset and made the nested actor animate on the wrong frame.</p>
+     */
+    public boolean nested;
+
+    /** Render-thread stack depth of precomp rendering; see {@link #pushNested()}. */
+    private static int nestedDepth;
+
+    public static void pushNested()
+    {
+        nestedDepth += 1;
+    }
+
+    public static void popNested()
+    {
+        nestedDepth = Math.max(0, nestedDepth - 1);
+    }
+
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> localCache = new java.util.IdentityHashMap<>();
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> worldCache = new java.util.IdentityHashMap<>();
     public final java.util.IdentityHashMap<CompLayer, Matrix4f> modelCache = new java.util.IdentityHashMap<>();
@@ -146,6 +170,7 @@ public final class CompRenderContext
         this.projection = projection;
         this.camera = camera;
         this.depth = depth;
+        this.nested = nestedDepth > 0;
         this.targetEdge = targetEdgeOverride;
     }
 

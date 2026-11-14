@@ -221,14 +221,19 @@ final class LayerContentRenderer
     private static void drawShapes(CompLayer layer, CompRenderContext context, Batcher2D batcher)
     {
         ShapeCache.Raster raster = ShapeCache.get(layer, context.frame,
-            MaskCache.cacheScope(context.project, context.comp));
+            MaskCache.cacheScope(context.project, context.comp),
+            context == null ? 1F : Math.max(1F, Math.min(2F, context.scale)));
 
         if (raster == null)
         {
             return;
         }
 
-        batcher.texturedBox(raster.texture.id, 0xFFFFFFFF, raster.originX, raster.originY, raster.width, raster.height, 0F, 0F, raster.width, raster.height, raster.width, raster.height);
+        int textureWidth = Math.max(1, raster.texture.width);
+        int textureHeight = Math.max(1, raster.texture.height);
+
+        batcher.texturedBox(raster.texture.id, 0xFFFFFFFF, raster.originX, raster.originY, raster.width, raster.height,
+            0F, 0F, textureWidth, textureHeight, textureWidth, textureHeight);
     }
 
     /**
@@ -395,7 +400,16 @@ final class LayerContentRenderer
 
         /* Complete cutout first: the world frame's own actor pixels have correct self-occlusion and
          * translucency, so the subject cannot show back faces over front ones (the "clipping
-         * through itself" report). Actor-only RGB is the fallback when no world frame is available. */
+         * through itself" report). When the layer asks for world occlusion, cut with the occluded
+         * coverage instead of the unoccluded union: the union includes body pixels hidden behind a
+         * wall, and cutting the world frame with them painted the wall into the actor silhouette.
+         * Actor-only RGB is the fallback when no world frame is available. */
+        if (layer.entityOcclusion
+            && ReplayEntityKey.drawCutoutOccluded(layer, context, matteWorld, matteProjection))
+        {
+            return;
+        }
+
         if (ReplayEntityKey.drawCutout(layer, context, matteWorld, matteProjection))
         {
             return;
@@ -644,34 +658,45 @@ final class LayerContentRenderer
 
         GlFramebuffer framebuffer;
 
-        if (collapse)
+        /* A nested comp has its own local clock; linked replays inside it must not keep sampling
+         * the film overlay's absolute tick. The flag is inherited by every deeper recurse. */
+        CompRenderContext.pushNested();
+
+        try
         {
-            CompCamera parentCamera = CompScene.camera(context);
-
-            CompScene.pushCamera(parentCamera);
-
-            try
+            if (collapse)
             {
+                CompCamera parentCamera = CompScene.camera(context);
+
+                CompScene.pushCamera(parentCamera);
+
+                try
+                {
+                    framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth,
+                        context.projection, context.camera, context.stack, batcher, 0,
+                        context.renderEffects, context.renderMasks, context.preview, context.scale, true);
+                }
+                finally
+                {
+                    CompScene.popCamera();
+                }
+            }
+            else
+            {
+                /* Flattened precomp: the child is its own composition, so it must be rendered with its
+                 * own camera/projection and only then placed as this layer's quad. Passing the parent
+                 * viewport projection here projected the nested 3D scene through the editor camera and
+                 * then projected the resulting quad again — the "pre-rendered layer is wrong/blank in
+                 * the 3D world" report. Collapse keeps the parent camera because that mode explicitly
+                 * joins the parent's space. */
                 framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth,
-                    context.projection, context.camera, context.stack, batcher, 0,
+                    null, null, context.stack, batcher, 0,
                     context.renderEffects, context.renderMasks, context.preview, context.scale, true);
             }
-            finally
-            {
-                CompScene.popCamera();
-            }
         }
-        else
+        finally
         {
-            /* Flattened precomp: the child is its own composition, so it must be rendered with its
-             * own camera/projection and only then placed as this layer's quad. Passing the parent
-             * viewport projection here projected the nested 3D scene through the editor camera and
-             * then projected the resulting quad again — the "pre-rendered layer is wrong/blank in
-             * the 3D world" report. Collapse keeps the parent camera because that mode explicitly
-             * joins the parent's space. */
-            framebuffer = CompRenderer.renderCompToFbo(context.project, sub, time, context.depth,
-                null, null, context.stack, batcher, 0,
-                context.renderEffects, context.renderMasks, context.preview, context.scale, true);
+            CompRenderContext.popNested();
         }
 
         if (framebuffer == null)

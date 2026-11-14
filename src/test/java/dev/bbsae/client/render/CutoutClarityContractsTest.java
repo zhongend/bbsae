@@ -48,7 +48,23 @@ public class CutoutClarityContractsTest
 
         assertTrue(key.contains("drawCutout"), "the cutout entry point must exist");
         assertTrue(key.contains("draw(layer, context, model, projection, false)"),
-            "the complete cutout uses the unoccluded coverage, not the world-depth matte");
+            "the unoccluded cutout remains the fallback when no world depth is available");
+    }
+
+    @Test
+    public void theWhollyOccludedCutoutIsPreferredOverTheUnoccludedUnion() throws IOException
+    {
+        String key = source("client", "render", "ReplayEntityKey.java");
+        String layer = source("client", "render", "LayerContentRenderer.java");
+        int occluded = layer.indexOf("ReplayEntityKey.drawCutoutOccluded(");
+        int unoccluded = layer.indexOf("ReplayEntityKey.drawCutout(");
+
+        assertTrue(key.contains("drawCutoutOccluded"),
+            "the world-color cutout needs a world-depth variant");
+        assertTrue(occluded > 0 && occluded < unoccluded,
+            "a layer with entityOcclusion must cut with the occluded matte first; the unoccluded "
+                + "union includes body pixels behind a wall and paints the wall into the actor");
+        assertTrue(layer.contains("layer.entityOcclusion"));
     }
 
     @Test
@@ -85,5 +101,21 @@ public class CutoutClarityContractsTest
             "there is still a hard 4K raster ceiling");
         assertFalse(cache.contains("return MAX_EDGE;\n        }\n\n        return Math.max(MAX_EDGE"),
             "a fixed 1024 preview cap was the fullscreen mosaic");
+    }
+
+    @Test
+    public void vectorShapesAndCustomTextFollowTheSupersample() throws IOException
+    {
+        String shape = source("client", "render", "ShapeCache.java");
+        String layer = source("client", "render", "LayerContentRenderer.java");
+
+        assertTrue(shape.contains("g.scale(pixelScale, pixelScale)"),
+            "a supersampled preview must rasterize vector shapes at the same pixel scale");
+        assertTrue(shape.contains("rasterScale"),
+            "ShapeCache needs an explicit raster-scale entry point");
+        assertTrue(layer.contains("fontSize * textOversample"),
+            "custom font atlases must be requested at the preview scale");
+        assertTrue(layer.contains("raster.texture.width"),
+            "shape quads must sample the full supersampled texture, not the composition extents");
     }
 }

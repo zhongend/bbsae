@@ -245,6 +245,62 @@ public class CompDocument
         return this.setDurationAtLeast(this.contentEnd());
     }
 
+    /**
+     * An explicit composition-duration edit, e.g. the duration field, an export length or the
+     * settings dialog.
+     *
+     * <p>This is deliberately <b>not</b> the same operation as {@link #setDurationAtLeast(float)}.
+     * Growing the canvas because content was added must leave every other layer's authored end
+     * untouched, while a user extending the composition expects the layers that filled the old
+     * canvas to fill the new one. Without that second half a composition extended to 60 s kept all
+     * of its layers ending at the old 12 s, so playback in the BBS film editor showed the stage
+     * background — a still, "frozen" picture — for the remaining 48 s.</p>
+     *
+     * <p>Only layers whose end is the old canvas end are extended: a layer deliberately trimmed
+     * shorter stays where the author put it. Shrinking never clips layers (they simply become
+     * inactive past the canvas), which keeps a mistaken short duration recoverable.</p>
+     */
+    public boolean resizeDuration(float seconds)
+    {
+        float wanted = clampDuration(seconds);
+        float old = this.duration;
+
+        if (Math.abs(wanted - old) <= 0.0001F)
+        {
+            return false;
+        }
+
+        if (wanted > old)
+        {
+            /* A frame of tolerance absorbs 1/60 s float noise and an end written as
+             * round(duration * fps) / fps. */
+            float tolerance = Math.max(0.001F, 1.5F / Math.max(1F, this.fps));
+
+            for (CompLayer layer : this.layers == null ? java.util.Collections.<CompLayer>emptyList() : this.layers)
+            {
+                if (layer != null && layer.out > 0F && Math.abs(layer.out - old) <= tolerance)
+                {
+                    layer.out = wanted;
+                }
+            }
+        }
+
+        this.duration = wanted;
+
+        if (this.workAreaOut <= 0F || Math.abs(this.workAreaOut - old) <= 0.0001F
+            || this.workAreaOut > this.duration)
+        {
+            this.workAreaOut = this.duration;
+        }
+
+        if (this.workAreaIn > this.duration)
+        {
+            this.workAreaIn = 0F;
+        }
+
+        return true;
+    }
+
     /** Grows duration/work area to at least {@code minimum}; returns true when it changed. */
     public boolean setDurationAtLeast(float minimum)
     {

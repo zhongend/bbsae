@@ -60,6 +60,21 @@ public final class ReplayEntityKey
         return drawTextured(layer, context, batcher, false);
     }
 
+    /**
+     * Complete-actor cutout with the world depth test.
+     *
+     * <p>The world frame already contains the actor's correct self-occlusion and lighting, but the
+     * <b>unoccluded</b> coverage knows nothing about blocks between the camera and the actor. Using
+     * it to cut the world frame painted the wall/ground behind the actor into the silhouette — a
+     * block-shaped "actor" as soon as the actor stood behind anything. The occluded coverage is
+     * the same union alpha with the world depth test already applied, so the cutout shows the
+     * visible part of the actor and stays transparent where the world hides it.</p>
+     */
+    public static boolean drawCutoutOccluded(CompLayer layer, CompRenderContext context, Matrix4f model, Matrix4f projection)
+    {
+        return draw(layer, context, model, projection, true);
+    }
+
     private static boolean drawTextured(CompLayer layer, CompRenderContext context, Batcher2D batcher, boolean occluded)
     {
         GlTexture world = BbsPreviewBridge.texture();

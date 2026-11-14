@@ -1,5 +1,23 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix84 — 2026-11-14
+
+BBS 原版播放冻结、回放动画、Transform 拖拽、K 帧部位、回放页布局与抠像的一轮修复，
+详见 [`docs/ROUND117-REPLAY-FIXES.zh.md`](docs/ROUND117-REPLAY-FIXES.zh.md)。
+
+- 合成时长/导出时长改为 `CompDocument.resizeDuration`：铺满旧画布的图层随新时长延伸；
+  “保持末帧”真正画最后一帧，不再在合成结尾后变成空背景。
+- BBS 原版播放/导出里 linked replay 不再退回静态 form；虚拟回放使用跨帧 tick 的 stand-in
+  actor（age/limb/form 动画每 tick 推进），并忽略离开回放页后的旧实体。
+- 回放 gizmo 使用带页面 context 的 `ReplaySessionTransform`，真实鼠标拖拽可以写回关键帧。
+- K 帧照搬原版：Alt/点击可拾取 form/bone，部位写回原版 body-part 列表与 `pickForm`；
+  骨骼 gizmo 用骨骼矩阵，orbit pivot 跟随部位，第一次 I/K 给选中骨骼插 pose 键。
+- 回放页新增左右列与时间轴三个 splitter，尺寸持久化到 `CompPrefs`；不再受 dock 锁影响。
+- 抠像在 `entityOcclusion` 下使用 world-depth 覆盖裁剪世界帧，避免把墙/背景抠进人物；
+  world/depth/entity 请求递归 precomp。
+- 预合成内 linked replay 使用嵌套合成本地时间；外部 BBS 回放也复制世界帧。
+- 全量 193 套件 / 1193 项 / 0 failures / 0 errors / 1 skipped。
+
 ## 0.99-hotfix83 — 2026-11-14
 
 全屏清晰度继续下探到渲染分辨率本身，详见

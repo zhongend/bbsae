@@ -123,6 +123,11 @@ public final class CompPrefs
          * 0 = off, 1 = subwindow (picture-in-picture), 2 = two windows (3D left, comp right).
          */
         public int replayCompPreview = 0;
+        /** Replay page body column widths (px); 0 is repaired to 190/252 on load. */
+        public int replayListWidth = 190;
+        public int replayPropsWidth = 252;
+        /** Replay page keyframe strip height (px); 0 = proportional default. */
+        public int replayTimelineHeight = 0;
         /** Link WAV/OGG audio from its original path instead of copying it into the project. */
         public boolean linkExternalAssets = true;
         /** Keep BBS' editor onion skins off while the compositor is open: their ghost frames can

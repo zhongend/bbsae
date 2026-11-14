@@ -1,6 +1,7 @@
 package dev.bbsae.client.replay;
 
 import dev.bbsae.BbsAeAddon;
+import dev.bbsae.client.ui.CompPrefs;
 import mchorse.bbs_mod.BBSSettings;
 import mchorse.bbs_mod.api.client.editor.TrackCategories;
 import mchorse.bbs_mod.api.client.editor.TrackCategory;
@@ -73,6 +74,12 @@ public class UIReplayModePanel extends UIDashboardPanel
     private static final int TIMELINE = 216;
     private static final int LIST_WIDTH = 190;
     private static final int PROPS_WIDTH = 252;
+    /** Drag strip thickness between the replay page's columns/rows. */
+    private static final int SPLIT = 6;
+    private static final int MIN_LIST_WIDTH = 120;
+    private static final int MIN_PROPS_WIDTH = 160;
+    private static final int MIN_TIMELINE = 96;
+    private static final int MIN_VIEWPORT = 220;
 
     private final UILabel title;
     private final UILabel status;
@@ -94,6 +101,13 @@ public class UIReplayModePanel extends UIDashboardPanel
     private UIReplayPropertiesPanel replayProperties;
     private UIReplayViewport viewport;
     private UIKeyframeEditor keyframeEditor;
+    /** Resizable column widths and keyframe-strip height (persisted in CompPrefs). */
+    private int listWidth = LIST_WIDTH;
+    private int propsWidth = PROPS_WIDTH;
+    private int timelineOverride;
+    private mchorse.bbs_mod.ui.framework.elements.utils.UIDraggable listSplitter;
+    private mchorse.bbs_mod.ui.framework.elements.utils.UIDraggable propsSplitter;
+    private mchorse.bbs_mod.ui.framework.elements.utils.UIDraggable timelineSplitter;
 
     private boolean built;
     private boolean tracksDirty;
@@ -114,6 +128,40 @@ public class UIReplayModePanel extends UIDashboardPanel
     /** The replay list as it looked last frame, for identity-preserving selection across edits. */
     private final java.util.List<Replay> knownOrder = new java.util.ArrayList<>();
     private String selectedPart = "";
+    /** Part pick waiting for the keyframe editor to finish relayout before it selects a track. */
+    private Form pendingPartForm;
+    private String pendingPartBone;
+    /** Cursor adapter: BBS' pick logic seeks through this, and it must move our playhead. */
+    private final mchorse.bbs_mod.ui.film.ICursor replayCursor = new mchorse.bbs_mod.ui.film.ICursor()
+    {
+        @Override
+        public int getCursor()
+        {
+            return UIReplayModePanel.this.session == null ? 0 : UIReplayModePanel.this.session.tick();
+        }
+
+        @Override
+        public void setCursor(int tick)
+        {
+            if (UIReplayModePanel.this.session != null)
+            {
+                UIReplayModePanel.this.session.setPlaying(false);
+                UIReplayModePanel.this.session.seek(tick);
+            }
+        }
+
+        @Override
+        public boolean isRunning()
+        {
+            return UIReplayModePanel.this.session != null && UIReplayModePanel.this.session.isPlaying();
+        }
+
+        @Override
+        public float getCursor(float transition)
+        {
+            return UIReplayModePanel.this.session == null ? 0F : UIReplayModePanel.this.session.playhead();
+        }
+    };
     private String cachedStatus = "";
     /** Visibility the borrowed film panel had before being attached hidden; restored on detach. */
     private boolean borrowedFilmPanelVisible = true;
@@ -136,6 +184,8 @@ public class UIReplayModePanel extends UIDashboardPanel
     public UIReplayModePanel(UIDashboard dashboard)
     {
         super(dashboard);
+
+        this.loadLayoutPrefs();
 
         this.header = new UIElement();
         this.header.relative(this).x(0).y(0).w(1F).h(HEADER);
@@ -347,7 +397,12 @@ public class UIReplayModePanel extends UIDashboardPanel
      */
     private int preferredTimelineHeight()
     {
-        return timelineHeightFor(this.area.h > 0 ? this.area.h : 640, this.embedded);
+        int page = this.area.h > 0 ? this.area.h : 640;
+        int auto = timelineHeightFor(page, this.embedded);
+        int max = Math.max(MIN_TIMELINE, (this.embedded ? page : page - HEADER) - MIN_VIEWPORT);
+        int height = this.timelineOverride > 0 ? this.timelineOverride : auto;
+
+        return Math.max(MIN_TIMELINE, Math.min(480, Math.min(height, max)));
     }
 
     /**
@@ -361,6 +416,141 @@ public class UIReplayModePanel extends UIDashboardPanel
         int maxTimeline = Math.max(80, available - 180);
 
         return Math.max(80, Math.min(480, Math.min(height, maxTimeline)));
+    }
+
+    private void loadLayoutPrefs()
+    {
+        CompPrefs.Data prefs = CompPrefs.get();
+
+        this.listWidth = Math.max(MIN_LIST_WIDTH,
+            Math.min(420, prefs.replayListWidth <= 0 ? LIST_WIDTH : prefs.replayListWidth));
+        this.propsWidth = Math.max(MIN_PROPS_WIDTH,
+            Math.min(520, prefs.replayPropsWidth <= 0 ? PROPS_WIDTH : prefs.replayPropsWidth));
+        this.timelineOverride = Math.max(0, prefs.replayTimelineHeight);
+    }
+
+    private void saveLayoutPrefs()
+    {
+        CompPrefs.Data prefs = CompPrefs.get();
+
+        prefs.replayListWidth = this.listWidth;
+        prefs.replayPropsWidth = this.propsWidth;
+        prefs.replayTimelineHeight = this.timelineOverride;
+        CompPrefs.markDirty();
+    }
+
+    /**
+     * Lays out the three body columns with user-adjustable widths.
+     *
+     * <p>The page used to hard-code 190/252 px columns and a proportional keyframe strip. There
+     * was no splitter anywhere, so unlocking the compositor's dock layout could never change this
+     * page: that lock only covers dock panels, not this internal layout. These handles are always
+     * live and their sizes persist in {@link CompPrefs}.</p>
+     */
+    private void layoutReplayColumns()
+    {
+        if (this.replaysList == null || this.viewport == null || this.replayProperties == null
+            || this.listSplitter == null || this.propsSplitter == null)
+        {
+            return;
+        }
+
+        int available = Math.max(MIN_VIEWPORT, this.main.area.w > 0 ? this.main.area.w : this.area.w);
+        int lw = Math.max(MIN_LIST_WIDTH, Math.min(420, this.listWidth));
+        int pw = Math.max(MIN_PROPS_WIDTH, Math.min(520, this.propsWidth));
+
+        if (lw + pw + MIN_VIEWPORT + SPLIT * 2 > available)
+        {
+            int excess = lw + pw + MIN_VIEWPORT + SPLIT * 2 - available;
+
+            if (lw > MIN_LIST_WIDTH)
+            {
+                int cut = Math.min(excess, lw - MIN_LIST_WIDTH);
+
+                lw -= cut;
+                excess -= cut;
+            }
+
+            if (excess > 0 && pw > MIN_PROPS_WIDTH)
+            {
+                pw = Math.max(MIN_PROPS_WIDTH, pw - excess);
+            }
+        }
+
+        this.listWidth = lw;
+        this.propsWidth = pw;
+
+        this.replaysList.relative(this.main).x(0).y(0).w(lw).h(1F);
+        this.listSplitter.relative(this.main).x(lw).y(0).w(SPLIT).h(1F);
+        this.viewport.relative(this.main).x(lw + SPLIT).y(0)
+            .w(1F, -(lw + SPLIT) - (pw + SPLIT)).h(1F);
+        this.propsSplitter.relative(this.main).x(1F, -(pw + SPLIT)).y(0).w(SPLIT).h(1F);
+        this.replayProperties.relative(this.main).x(1F, -pw).y(0).w(pw).h(1F);
+        this.main.resize();
+    }
+
+    private void applyReplayTimelineLayout()
+    {
+        int height = this.preferredTimelineHeight();
+
+        this.timelineHeight = height;
+        this.main.relative(this).x(0).y(this.embedded ? 0 : HEADER).w(1F)
+            .h(1F, -(this.embedded ? 0 : HEADER) - height);
+        this.repositionKeyframeEditor();
+
+        if (this.timelineSplitter != null)
+        {
+            this.timelineSplitter.relative(this).x(20).y(1F, -height - SPLIT).w(1F, -20).h(SPLIT);
+        }
+    }
+
+    private void buildReplaySplitters()
+    {
+        this.listSplitter = new mchorse.bbs_mod.ui.framework.elements.utils.UIDraggable((context) ->
+        {
+            this.listWidth = Math.max(MIN_LIST_WIDTH,
+                Math.min(420, (int) context.mouseX - this.main.area.x));
+            this.layoutReplayColumns();
+            this.invalidateLayout();
+        });
+        this.listSplitter.rendering((context) -> context.batcher.box(
+            this.listSplitter.area.x + SPLIT / 2F - 1F, this.listSplitter.area.y,
+            this.listSplitter.area.x + SPLIT / 2F + 1F, this.listSplitter.area.ey(), 0x884C9AFF));
+        this.listSplitter.cursors(org.lwjgl.glfw.GLFW.GLFW_RESIZE_EW_CURSOR, org.lwjgl.glfw.GLFW.GLFW_RESIZE_EW_CURSOR);
+        this.listSplitter.dragEnd(this::saveLayoutPrefs);
+
+        this.propsSplitter = new mchorse.bbs_mod.ui.framework.elements.utils.UIDraggable((context) ->
+        {
+            this.propsWidth = Math.max(MIN_PROPS_WIDTH,
+                Math.min(520, (int) this.main.area.ex() - context.mouseX));
+            this.layoutReplayColumns();
+            this.invalidateLayout();
+        });
+        this.propsSplitter.rendering((context) -> context.batcher.box(
+            this.propsSplitter.area.x + SPLIT / 2F - 1F, this.propsSplitter.area.y,
+            this.propsSplitter.area.x + SPLIT / 2F + 1F, this.propsSplitter.area.ey(), 0x884C9AFF));
+        this.propsSplitter.cursors(org.lwjgl.glfw.GLFW.GLFW_RESIZE_EW_CURSOR, org.lwjgl.glfw.GLFW.GLFW_RESIZE_EW_CURSOR);
+        this.propsSplitter.dragEnd(this::saveLayoutPrefs);
+
+        this.timelineSplitter = new mchorse.bbs_mod.ui.framework.elements.utils.UIDraggable((context) ->
+        {
+            int h = (int) this.area.ey() - context.mouseY - SPLIT / 2;
+            int max = Math.max(MIN_TIMELINE,
+                (this.embedded ? this.area.h : this.area.h - HEADER) - MIN_VIEWPORT);
+
+            this.timelineOverride = Math.max(MIN_TIMELINE, Math.min(480, Math.min(h, max)));
+
+            this.applyReplayTimelineLayout();
+            this.invalidateLayout();
+        });
+        this.timelineSplitter.rendering((context) -> context.batcher.box(
+            this.timelineSplitter.area.x, this.timelineSplitter.area.y + SPLIT / 2F - 1F,
+            this.timelineSplitter.area.ex(), this.timelineSplitter.area.y + SPLIT / 2F + 1F, 0x884C9AFF));
+        this.timelineSplitter.cursors(org.lwjgl.glfw.GLFW.GLFW_RESIZE_NS_CURSOR, org.lwjgl.glfw.GLFW.GLFW_RESIZE_NS_CURSOR);
+        this.timelineSplitter.dragEnd(this::saveLayoutPrefs);
+
+        this.main.add(this.listSplitter, this.propsSplitter);
+        this.add(this.timelineSplitter);
     }
 
     private void repositionKeyframeEditor()
@@ -386,17 +576,9 @@ public class UIReplayModePanel extends UIDashboardPanel
             return;
         }
 
-        int height = this.preferredTimelineHeight();
-
-        if (height != this.timelineHeight)
-        {
-            this.timelineHeight = height;
-            this.main.relative(this).x(0).y(this.embedded ? 0 : HEADER).w(1F)
-                .h(1F, -(this.embedded ? 0 : HEADER) - height);
-            this.repositionKeyframeEditor();
-        }
-
+        this.applyReplayTimelineLayout();
         super.resize();
+        this.layoutReplayColumns();
     }
 
     public boolean isEmbedded()
@@ -520,6 +702,39 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.session.applyPose(entity, this.replay);
 
         int tick = (int) Math.floor(this.session.keyframeTick());
+        String bone = this.boneGizmoPath();
+        Form partForm = this.session.selectedPartForm();
+
+        /* A picked part has no pose editor until a pose key exists. The first I/K therefore has to
+         * use the picked bone itself: it inserts into that part's pose track, selects the new key
+         * and thereby opens the pose gizmo. Falling back to the replay root here was why a part
+         * could be "selected" but never keyed. */
+        if (bone.isEmpty() && this.session.selectedBone() != null)
+        {
+            bone = this.session.selectedBone();
+        }
+
+        /* A selected body part is keyed on its own track, exactly like the original editor's
+         * I key while a bone is picked. The replay-root position/rotation key is only for a
+         * whole-actor selection. */
+        if (!pose && !bone.isEmpty() && partForm != null && this.keyframeEditor != null)
+        {
+            try
+            {
+                UIReplaysEditorUtils.pickForm(this.keyframeEditor, this.replayCursor, partForm, bone, true);
+
+                this.tracksDirty = true;
+                this.primed = false;
+                this.viewportInvalidate();
+                this.setViewportStatus("已在 tick " + tick + " 写入骨骼「" + bone + "」关键帧");
+
+                return;
+            }
+            catch (RuntimeException e)
+            {
+                BbsAeAddon.LOGGER.warn("Replay mode could not key the selected bone '{}'", bone, e);
+            }
+        }
 
         try
         {
@@ -689,6 +904,7 @@ public class UIReplayModePanel extends UIDashboardPanel
             this.session = new ReplayEditSession(panel, film, replay);
             this.session.setReplayFilter(CompReplayBridge::isVirtual);
             this.session.setPreviewInvalidator(this.viewport::invalidatePreview);
+            this.session.setContextSupplier(this::getContext);
             this.viewport.setSession(this.session);
             replacedSession = true;
         }
@@ -808,6 +1024,7 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.session = new ReplayEditSession(panel, this.film, this.replay);
         this.session.setReplayFilter(CompReplayBridge::isVirtual);
+        this.session.setContextSupplier(this::getContext);
 
         this.replaysList = new UIReplaysListPanel(
             panel,
@@ -841,13 +1058,13 @@ public class UIReplayModePanel extends UIDashboardPanel
 
         this.viewport = new UIReplayViewport(this.session);
         this.viewport.setPickHandler(this::selectReplayFromIndex);
+        this.viewport.setPartHandler(this::selectPartFromViewport);
+        this.viewport.setBoneTarget(this::boneGizmoTransform, this::boneGizmoPath);
         this.session.setPreviewInvalidator(this.viewport::invalidatePreview);
 
-        this.replaysList.relative(this.main).x(0).y(0).w(LIST_WIDTH).h(1F);
-        this.viewport.relative(this.main).x(LIST_WIDTH).y(0).w(1F, -LIST_WIDTH - PROPS_WIDTH).h(1F);
-        this.replayProperties.relative(this.main).x(1F, -PROPS_WIDTH).y(0).w(PROPS_WIDTH).h(1F);
-
         this.main.add(this.replaysList, this.viewport, this.replayProperties);
+        this.buildReplaySplitters();
+        this.layoutReplayColumns();
 
         this.rebuildKeyframeEditor();
     }
@@ -921,6 +1138,120 @@ public class UIReplayModePanel extends UIDashboardPanel
     }
 
     /**
+     * Selects a model part (and optionally one of its bones) from a viewport click.
+     *
+     * <p>This is the missing half of the original K-frame workflow: clicking a form/bone in the
+     * 3D view did nothing here — the click only selected the whole record. The path is handed to
+     * the original body-part list (so the timeline shows that part's tracks) and, once the rows
+     * have been rebuilt, to {@code UIReplaysEditorUtils.pickForm}, the original "select this bone
+     * for editing" entry point. The deferred application matters because selecting a body part
+     * rebuilds the keyframe editor; using the old instance would select a track in a widget that
+     * is no longer on screen.</p>
+     */
+    public void selectPartFromViewport(Form form, String bone)
+    {
+        if (this.replay == null || form == null || this.replaysList == null)
+        {
+            return;
+        }
+
+        String path = FormUtils.getPath(form);
+
+        if (path == null)
+        {
+            path = "";
+        }
+
+        String selected = this.replaysList.setBodyPartsReplay(this.replay, path);
+
+        this.selectedPart = selected;
+        this.tracksDirty = true;
+        this.primed = false;
+
+        if (this.session != null)
+        {
+            this.session.setSelectedPart(form, selected, bone == null ? "" : bone);
+        }
+
+        this.pendingPartForm = form;
+        this.pendingPartBone = bone == null ? "" : bone;
+
+        if (this.viewport != null)
+        {
+            String label = path.isEmpty() ? "模型" : path;
+            String boneLabel = bone == null || bone.isEmpty() ? "" : " · 骨骼 " + bone;
+
+            this.viewport.setStatus("已选择部位：" + label + boneLabel + "（关键帧/绕对象旋转跟随它）");
+            this.viewport.invalidatePreview();
+        }
+    }
+
+    /** The bone transform of the keyframe timeline's current track, or null when it is not a bone. */
+    private mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform boneGizmoTransform()
+    {
+        if (this.keyframeEditor == null || this.boneGizmoPath().isEmpty())
+        {
+            return null;
+        }
+
+        try
+        {
+            return UIReplaysEditorUtils.getEditableTransform(this.keyframeEditor);
+        }
+        catch (RuntimeException e)
+        {
+            return null;
+        }
+    }
+
+    /** The bone path the keyframe timeline is currently editing, or "". */
+    private String boneGizmoPath()
+    {
+        if (this.keyframeEditor == null)
+        {
+            return "";
+        }
+
+        try
+        {
+            mchorse.bbs_mod.utils.Pair<String, mchorse.bbs_mod.ui.framework.elements.input.drag.TransformSpace> bone =
+                this.keyframeEditor.getBone();
+
+            return bone == null || bone.a == null ? "" : bone.a;
+        }
+        catch (RuntimeException e)
+        {
+            return "";
+        }
+    }
+
+    /** Runs the actual "open this bone's track" selection once the rebuilt timeline exists. */
+    private void applyPendingPartPick()
+    {
+        Form form = this.pendingPartForm;
+
+        if (form == null || this.keyframeEditor == null || this.session == null)
+        {
+            return;
+        }
+
+        this.pendingPartForm = null;
+
+        String bone = this.pendingPartBone == null ? "" : this.pendingPartBone;
+
+        try
+        {
+            /* The original helper selects the closest keyframe/climbs to the pose editor. Without
+             * it the part's rows appear but the timeline still edits whatever was selected before. */
+            UIReplaysEditorUtils.pickForm(this.keyframeEditor, this.replayCursor, form, bone);
+        }
+        catch (RuntimeException e)
+        {
+            BbsAeAddon.LOGGER.warn("Replay mode could not select the picked body part '{}'", bone, e);
+        }
+    }
+
+    /**
      * Selection coming from the original replay list's own callback.
      *
      * <p>No {@code scrollToReplay} here: BBS' {@code UIReplayList.scrollToReplay()} re-picks the
@@ -977,11 +1308,23 @@ public class UIReplayModePanel extends UIDashboardPanel
                 effective = null;
             }
 
+            Replay previous = this.replay;
+
             this.replay = effective;
 
             if (this.session != null)
             {
                 this.session.setReplay(effective);
+
+                if (previous != effective)
+                {
+                    /* A part belongs to one actor. Carrying a bone path across a selection would
+                     * point the orbit pivot/gizmo at a bone of the previous actor. */
+                    this.session.setSelectedPart(null, "", "");
+                    this.session.setBoneTransform(null);
+                    this.pendingPartForm = null;
+                    this.pendingPartBone = null;
+                }
             }
 
             if (this.replayProperties != null)
@@ -1174,6 +1517,25 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.checkReplayListChanged();
         this.applyVirtualReplayFilter();
         this.ensureTracks();
+        this.applyPendingPartPick();
+
+        /* Keep the session's gizmo/pivot target in step with whatever the timeline currently
+         * exposes. A form-transform track has no bone path and falls back to the replay root. */
+        if (this.session != null)
+        {
+            String bone = this.boneGizmoPath();
+
+            if (this.session.selectedPartForm() != null && !bone.isEmpty())
+            {
+                this.session.setSelectedBone(bone);
+                this.session.setBoneTransform(this.boneGizmoTransform());
+            }
+            else
+            {
+                this.session.setBoneTransform(null);
+            }
+        }
+
         this.applyDebugSetup();
         this.refreshStatus();
 
@@ -1753,6 +2115,116 @@ public class UIReplayModePanel extends UIDashboardPanel
     private static double channel(Double value)
     {
         return value == null ? Double.NaN : value;
+    }
+
+    /* ------------------------------------------------------------ interaction debug */
+
+    /** Runs one real gizmo gesture; see {@link UIReplayViewport#debugDragGizmo}. */
+    public boolean debugGizmoDrag(int handleIndex, int dx, int dy)
+    {
+        return this.viewport != null && this.viewport.debugDragGizmo(handleIndex, dx, dy);
+    }
+
+    /**
+     * Debug: selects the first replay whose form is a model with a bone track, then selects its
+     * first bone. Returns the bone path, or "" when the film has no posed model.
+     */
+    public String debugSelectModelBone()
+    {
+        if (this.film == null)
+        {
+            return "";
+        }
+
+        for (Replay replay : this.film.replays.getList())
+        {
+            if (replay == null || !this.session.isAllowed(replay))
+            {
+                continue;
+            }
+
+            Form form = replay.form.get();
+
+            if (!(form instanceof mchorse.bbs_mod.forms.forms.ModelForm))
+            {
+                continue;
+            }
+
+            for (mchorse.bbs_mod.film.replays.tracks.TrackDescriptor track
+                : mchorse.bbs_mod.film.replays.tracks.TrackCatalog.of(form))
+            {
+                if (track.id().kind() == mchorse.bbs_mod.film.replays.tracks.TrackKind.BONE
+                    && track.id().subject() != null && !track.id().subject().isEmpty())
+                {
+                    this.selectReplay(replay);
+                    this.selectPartFromViewport(form, track.id().subject());
+
+                    return track.id().subject();
+                }
+            }
+        }
+
+        return "";
+    }
+
+    /** Selects a known body part/bone through the production part-click path. */
+    public boolean debugSelectPart(String bone)
+    {
+        Form form = this.replay == null ? null : this.replay.form.get();
+
+        if (form == null)
+        {
+            return false;
+        }
+
+        this.selectPartFromViewport(form, bone == null ? "" : bone);
+
+        return true;
+    }
+
+    /** One-line state for the part/gizmo/orbit verification. */
+    public String debugPartSummary()
+    {
+        if (this.session == null)
+        {
+            return "session=null";
+        }
+
+        org.joml.Vector3f pivot = this.session.selectedPartComp();
+
+        return String.format(java.util.Locale.ROOT,
+            "partPath='%s' bone='%s' editorBone='%s' boneGizmo=%s boneTransform=%s pivot=%s selectedPart='%s'",
+            this.session.selectedPartPath(), this.session.selectedBone(), this.boneGizmoPath(),
+            this.session.isBoneGizmo(), this.session.boneGizmoTransform() != null,
+            pivot == null ? "-" : String.format(java.util.Locale.ROOT, "(%.1f,%.1f)", pivot.x, pivot.y),
+            this.selectedPart);
+    }
+
+    /** Geometry proof that the page's internal splitters exist and are laid out. */
+    public String debugLayoutSummary()
+    {
+        return String.format(java.util.Locale.ROOT,
+            "list=%dx%d@%d viewport=%dx%d@%d props=%dx%d@%d listSplit=%dx%d propsSplit=%dx%d timelineSplit=%dx%d@%d main=%dx%d timelineH=%d",
+            this.replaysList.area.w, this.replaysList.area.h, this.replaysList.area.x,
+            this.viewport.area.w, this.viewport.area.h, this.viewport.area.x,
+            this.replayProperties.area.w, this.replayProperties.area.h, this.replayProperties.area.x,
+            this.listSplitter.area.w, this.listSplitter.area.h,
+            this.propsSplitter.area.w, this.propsSplitter.area.h,
+            this.timelineSplitter.area.w, this.timelineSplitter.area.h, this.timelineSplitter.area.y,
+            this.main.area.w, this.main.area.h, this.timelineHeight);
+    }
+
+    /** Debug: asks the splitters' production geometry to resize (not a synthetic field write). */
+    public void debugResizeColumns(int list, int props, int timeline)
+    {
+        this.listWidth = Math.max(MIN_LIST_WIDTH, Math.min(420, list));
+        this.propsWidth = Math.max(MIN_PROPS_WIDTH, Math.min(520, props));
+        this.timelineOverride = Math.max(MIN_TIMELINE, Math.min(480, timeline));
+        this.timelineHeight = this.preferredTimelineHeight();
+        this.layoutReplayColumns();
+        this.applyReplayTimelineLayout();
+        this.invalidateLayout();
+        this.resize();
     }
 
     /* ------------------------------------------------------------ transport */

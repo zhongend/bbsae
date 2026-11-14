@@ -103,6 +103,19 @@ public final class ShapeCache
      */
     public static synchronized Raster get(CompLayer layer, float frame, String scope)
     {
+        return get(layer, frame, scope, 1F);
+    }
+
+    /**
+     * Rasterize the shape at {@code rasterScale} pixels per composition pixel.
+     *
+     * <p>Shapes are vector graphics; at a 1.5×/2× supersampled preview their cached raster must
+     * grow too, otherwise the composition scales a 1280 px shape raster onto a 1920 px target and
+     * the clean vector edges turn into mosaic. {@link Raster#width}/{@link Raster#height} stay in
+     * composition units; the texture resolution is read from {@code texture.width/height}.</p>
+     */
+    public static synchronized Raster get(CompLayer layer, float frame, String scope, float rasterScale)
+    {
         if (layer == null || layer.shapes == null || layer.shapes.isEmpty())
         {
             return null;
@@ -123,7 +136,8 @@ public final class ShapeCache
 
             long content = contentHash(stack);
             String layerSlot = layerSlot(scope, layer.id);
-            String key = layerSlot + ":" + Long.toHexString(content);
+            float pixelScale = Math.max(1F, Math.min(2F, rasterScale));
+            String key = layerSlot + ":" + Long.toHexString(content) + ":s" + Float.floatToIntBits(pixelScale);
             CachedRaster cached = CACHE.get(key);
 
             if (cached != null && cached.width > 0)
@@ -154,17 +168,23 @@ public final class ShapeCache
             int width = Math.max(1, (int) Math.ceil(bounds.getWidth() + pad * 2F));
             int height = Math.max(1, (int) Math.ceil(bounds.getHeight() + pad * 2F));
 
-            /* Keep pathological projects from allocating a 16k image. */
+            /* Keep pathological projects from allocating a 16k image. The supersample is applied
+             * to the raster pixels, while width/height remain the composition-space rectangle
+             * used by every caller. */
             width = Math.min(width, 4096);
             height = Math.min(height, 4096);
 
-            ShapeWork work = workFor(width, height);
+            float effectiveScale = Math.min(pixelScale, Math.min(4096F / width, 4096F / height));
+            int pixelWidth = Math.max(1, Math.round(width * effectiveScale));
+            int pixelHeight = Math.max(1, Math.round(height * effectiveScale));
 
-            paint(stack, work, bounds, pad);
+            ShapeWork work = workFor(pixelWidth, pixelHeight);
+
+            paint(stack, work, bounds, pad, effectiveScale);
 
             float originX = (float) bounds.getX() - pad;
             float originY = (float) bounds.getY() - pad;
-            GlTexture texture = upload(layerSlot, key, width, height, work);
+            GlTexture texture = upload(layerSlot, key, pixelWidth, pixelHeight, work);
 
             CachedRaster entry = new CachedRaster(key, layerSlot, texture, width, height,
                 originX, originY, stack.anchorX, stack.anchorY);
@@ -593,6 +613,11 @@ public final class ShapeCache
 
     private static void paint(StackScratch stack, ShapeWork work, Rectangle2D bounds, float pad)
     {
+        paint(stack, work, bounds, pad, 1F);
+    }
+
+    private static void paint(StackScratch stack, ShapeWork work, Rectangle2D bounds, float pad, float pixelScale)
+    {
         BufferedImage image = work.image;
         Graphics2D g = work.graphics;
 
@@ -607,6 +632,7 @@ public final class ShapeCache
 
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.scale(pixelScale, pixelScale);
         g.translate(pad - bounds.getX(), pad - bounds.getY());
 
         /* Each shape paints its own fill and stroke, in list order. Boolean operators act on the
@@ -768,7 +794,8 @@ public final class ShapeCache
         CachedRaster recent = RECENT.get(layerSlot);
         GlTexture texture;
 
-        if (recent != null && recent.width == width && recent.height == height && recent.texture.id > 0)
+        if (recent != null && recent.texture != null
+            && recent.texture.width == width && recent.texture.height == height && recent.texture.id > 0)
         {
             texture = recent.texture;
             CACHE.remove(recent.key);

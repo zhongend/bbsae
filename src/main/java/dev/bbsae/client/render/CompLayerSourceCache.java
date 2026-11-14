@@ -330,7 +330,9 @@ public final class CompLayerSourceCache
             /* The shape raster is the authority on where shape pixels live (stroke, trim and
              * repeater can all exceed the layer box). It is cached by content, so asking for it
              * here is a lookup, not a second rasterization. */
-            ShapeCache.Raster raster = ShapeCache.get(layer, frame, MaskCache.cacheScope(context.project, context.comp));
+            ShapeCache.Raster raster = ShapeCache.get(layer, frame,
+                MaskCache.cacheScope(context.project, context.comp),
+                Math.max(1F, Math.min(2F, context.scale)));
 
             if (raster != null)
             {

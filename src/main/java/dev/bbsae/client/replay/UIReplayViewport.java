@@ -39,6 +39,7 @@ import mchorse.bbs_mod.ui.utils.icons.Icons;
 import mchorse.bbs_mod.utils.Direction;
 import mchorse.bbs_mod.utils.Pair;
 import org.joml.Matrix4f;
+import org.joml.Vector2f;
 import org.joml.Vector3f;
 
 import java.util.List;
@@ -157,6 +158,11 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     private final GizmoInteraction gizmo = new GizmoInteraction(this);
 
     private IntConsumer pickHandler;
+    /** Part pick (form, bone) from the viewport; the panel selects the part and its tracks. */
+    private java.util.function.BiConsumer<Form, String> partHandler;
+    /** The keyframe timeline's editable transform and bone, when a bone track is selected. */
+    private java.util.function.Supplier<mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform> boneTransform;
+    private java.util.function.Supplier<String> bonePath;
     private int navMode = NAV_NONE;
     private int navButton;
     private int navStartX;
@@ -335,7 +341,12 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
             return;
         }
 
-        Vector3f target = this.session.space().toComp(entity.getX(), entity.getY(), entity.getZ());
+        /* The selected body part is the pivot when there is one: the original editor orbits the
+         * bone being edited, not just the record's feet. A whole-actor selection keeps the old
+         * entity-centre pivot. */
+        Vector3f part = this.session.selectedPartComp();
+        Vector3f target = part != null ? part
+            : this.session.space().toComp(entity.getX(), entity.getY(), entity.getZ());
         CompViewportCamera camera = this.session.camera();
 
         camera.target.set(target);
@@ -645,7 +656,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         int[] size = CompRenderer.renderSizeFor(doc, scale);
         int width = Math.max(1, size[0]);
         int height = Math.max(1, size[1]);
-        boolean liveWorld = BbsPreviewBridge.needsWorldFrame(doc);
+        boolean liveWorld = BbsPreviewBridge.needsWorldFrame(project, doc);
         long signature = CompRenderCache.signature(project, doc, frameTime, true, true, 0,
             width, height, false) ^ freeCameraKey(this.session.camera())
             ^ (liveWorld ? (long) BbsPreviewBridge.worldGeneration() * 0x9E3779B97F4A7C15L : 0L);
@@ -878,7 +889,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
 
             context.batcher.textCard(hint, rect.x + 8, rect.y + 24, 0xFFFFB27A, 0xAA140D06);
         }
-        else if (bbsBackdrop && !world && doc != null && BbsPreviewBridge.needsWorldFrame(doc))
+        else if (bbsBackdrop && !world && doc != null && BbsPreviewBridge.needsWorldFrame(project, doc))
         {
             context.batcher.textCard("BBS 世界帧等待中…", rect.x + 8, rect.y + 24, 0xFFFFD27A, 0x99140D06);
         }
@@ -902,7 +913,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     /** True when the current composition actually samples the live world. */
     private boolean previewNeedsWorld(CompProject project, CompDocument doc)
     {
-        return doc != null && (BbsPreviewBridge.needsWorldFrame(doc) || this.usesBbsBackdrop(project));
+        return doc != null && (BbsPreviewBridge.needsWorldFrame(project, doc) || this.usesBbsBackdrop(project));
     }
 
     private boolean cameraPreviewNeedsWorld()
@@ -981,7 +992,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         long signature = CompRenderCache.signature(project, doc, frameTime, true, true, 0,
             width, height, false) ^ (transparentStage ? 0x9E3779B97F4A7C15L : 0L);
         /* Only a `bbs` / entity layer samples the live world; the stage flag alone does not. */
-        boolean liveWorld = BbsPreviewBridge.needsWorldFrame(doc);
+        boolean liveWorld = BbsPreviewBridge.needsWorldFrame(project, doc);
         boolean liveDepth = CompRenderer.needsWorldDepth(project, doc);
 
         if (liveDepth)
@@ -1257,6 +1268,20 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     public void setPickHandler(IntConsumer pickHandler)
     {
         this.pickHandler = pickHandler;
+    }
+
+    /** Receives (form, bone) when a model part is clicked; bone may be empty for a whole part. */
+    public void setPartHandler(java.util.function.BiConsumer<Form, String> partHandler)
+    {
+        this.partHandler = partHandler;
+    }
+
+    /** Supplies the bone transform the keyframe timeline currently exposes (or null). */
+    public void setBoneTarget(java.util.function.Supplier<mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform> transform,
+                              java.util.function.Supplier<String> bone)
+    {
+        this.boneTransform = transform;
+        this.bonePath = bone;
     }
 
     /** Human-readable state for the viewport HUD (camera, selection, gestures). */
@@ -1735,11 +1760,39 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         {
             int picked = this.pick.pickedReplay();
 
+            /* Alt has the original meaning: hovering another actor and clicking selects that
+             * replay. On the selected actor the stencil still carries its form parts, so the Alt
+             * click there selects a body part instead (see below). */
+            if (Window.isAltPressed() && picked >= 0)
+            {
+                if (this.pickHandler != null)
+                {
+                    this.pickHandler.accept(picked);
+                }
+
+                return true;
+            }
+
+            /* A whole-actor id belongs to one of the other actors (the selected actor's parts use
+             * ids past the replay range). Select that replay first: passing its form to the
+             * current replay's part picker would select the wrong actor's part. */
             if (picked >= 0)
             {
                 if (this.pickHandler != null)
                 {
                     this.pickHandler.accept(picked);
+                }
+
+                return true;
+            }
+
+            Pair<Form, String> part = this.pick.pickedForm();
+
+            if (part != null && part.a != null)
+            {
+                if (this.partHandler != null)
+                {
+                    this.partHandler.accept(part.a, part.b == null ? "" : part.b);
                 }
 
                 return true;
@@ -1892,7 +1945,16 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         camera.setViewport(area.w, area.h);
         camera.update();
 
-        GizmoDrag drag = this.session.gizmoDrag(area);
+        /* A selected body part owns the gizmo in the original editor: the transform comes from the
+         * keyframe timeline's pose editor, not from the replay's placement adapter. Fall back to
+         * the replay root when no bone track is active. */
+        mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform bone = this.boneTransform == null
+            ? null : this.boneTransform.get();
+        String bonePath = this.bonePath == null ? "" : this.bonePath.get();
+        boolean boneTarget = bone != null && bonePath != null && !bonePath.isEmpty()
+            && bone.getTransform() != null;
+
+        GizmoDrag drag = boneTarget ? this.session.boneGizmoDrag(area) : this.session.gizmoDrag(area);
 
         if (drag == null)
         {
@@ -1900,12 +1962,16 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         }
 
         UIReplayPropTransform transform = this.session.gizmoTransform();
-        boolean started = Gizmo.INSTANCE.start(stencilIndex, context.mouseX, context.mouseY, transform, drag);
+        boolean started = boneTarget
+            ? Gizmo.INSTANCE.start(stencilIndex, context.mouseX, context.mouseY, bone, drag)
+            : Gizmo.INSTANCE.start(stencilIndex, context.mouseX, context.mouseY, transform, drag);
 
         if (started)
         {
             this.gizmoActive = true;
-            this.setStatus("写回关键帧：" + (this.session.replay() == null ? "" : this.session.replay().getName()));
+            this.setStatus(boneTarget
+                ? "写回骨骼关键帧：" + bonePath
+                : "写回关键帧：" + (this.session.replay() == null ? "" : this.session.replay().getName()));
         }
 
         return started;
@@ -1973,6 +2039,69 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     public Pair<Form, String> pickedForm()
     {
         return this.pick.stencil().getPicked();
+    }
+
+    /**
+     * Debug hook: runs one real gizmo gesture through the production start/pump/accept path.
+     *
+     * <p>This is the regression check for "the transform handles cannot move the replay". A direct
+     * call to {@code UIReplayPropTransform.setT} (the old script did that) proves the write adapter
+     * works but not that a mouse press ever starts a gesture. This method uses the same
+     * {@link Gizmo#start} call the viewport's click handler uses, so a missing UI context or a stale
+     * render matrix fails here exactly as it does for the user.</p>
+     */
+    public boolean debugDragGizmo(int handleIndex, int dx, int dy)
+    {
+        if (this.session == null || this.getContext() == null)
+        {
+            return false;
+        }
+
+        UIContext context = this.getContext();
+        Area area = this.interactionArea();
+        CompViewportCamera camera = this.session.camera();
+
+        camera.setViewport(area.w, area.h);
+        camera.update();
+
+        Vector2f center = new Vector2f();
+
+        if (!Gizmo.INSTANCE.computeScreenCenter(camera.projection, area.x, area.y, area.w, area.h, center))
+        {
+            return false;
+        }
+
+        context.mouseX = Math.round(center.x);
+        context.mouseY = Math.round(center.y);
+        context.mouseButton = 0;
+
+        boolean started = this.startGizmo(context, handleIndex);
+
+        if (!started)
+        {
+            return false;
+        }
+
+        mchorse.bbs_mod.ui.framework.elements.input.drag.TransformGesture gesture =
+            Gizmo.INSTANCE.getTrackedGesture();
+
+        if (gesture == null)
+        {
+            Gizmo.INSTANCE.stop();
+            this.gizmoActive = false;
+
+            return false;
+        }
+
+        context.mouseX += dx;
+        context.mouseY += dy;
+        gesture.pump(context);
+
+        Gizmo.INSTANCE.stop();
+        this.gizmoActive = false;
+        this.invalidatePreview();
+
+        return true;
     }
 
     /** Test hook: switch the preview without a mouse click (0 free, 1 orbit, 2 camera). */

@@ -7381,8 +7381,11 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        this.doc.duration = seconds;
-        this.doc.workAreaOut = Math.max(this.doc.workAreaIn + 0.1F, seconds);
+        /* resizeDuration also carries every layer that filled the old canvas over to the new
+         * length. Assigning the field alone left a 60 s composition whose layers all ended at
+         * 12 s: the overlay then painted only the stage background, which reads as a frozen
+         * picture during BBS playback. */
+        this.doc.resizeDuration(seconds);
 
         if (this.film != null && this.filmPanel != null && this.project != null)
         {
@@ -8460,8 +8463,7 @@ public class UICompositorPanel extends UIDashboardPanel
         {
             if (this.doc != null)
             {
-                this.doc.duration = duration;
-                this.doc.workAreaOut = this.doc.duration;
+                this.doc.resizeDuration(duration);
             }
 
             if (this.film != null && this.filmPanel != null)
@@ -8738,8 +8740,7 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.project.settings.exportDuration = Math.max(0F, Math.min(3600F, seconds));
-            this.doc.duration = CompDocument.clampDuration(seconds);
-            this.doc.workAreaOut = this.doc.duration;
+            this.doc.resizeDuration(seconds);
             this.syncBbsLoopToDocument();
             this.updateFilmClip(this.doc.duration);
             this.filmPanel.forceSave();
@@ -10606,8 +10607,7 @@ public class UICompositorPanel extends UIDashboardPanel
 
             float seconds = settings.exportDuration > 0F ? settings.exportDuration : this.doc.duration;
 
-            this.doc.duration = CompDocument.clampDuration(seconds);
-            this.doc.workAreaOut = this.doc.duration;
+            this.doc.resizeDuration(seconds);
             this.syncBbsLoopToDocument();
             this.updateFilmClip(this.doc.duration);
             this.filmPanel.forceSave();
@@ -20864,23 +20864,10 @@ public class UICompositorPanel extends UIDashboardPanel
         section.fields.add(this.numberRow("帧率", comp.fps, 1, 240, false, (value) -> comp.fps = value.floatValue()));
         section.fields.add(this.numberRow("时长", comp.duration, 0.1F, CompDocument.MAX_CANVAS, false, (value) ->
         {
-            float previous = comp.duration;
-
-            comp.duration = CompDocument.clampDuration(value.floatValue());
-
-            /* The work area is the playback loop. It used to stay at the 12-second default after
-             * the composition duration was raised, so the compositor appeared to stop at 12s
-             * even though the timeline and the project said 30s. Only follow the duration when
-             * the work area was the old full-length range; a deliberately shorter loop stays. */
-            if (comp.workAreaOut <= previous + 0.001F || comp.workAreaOut > comp.duration)
-            {
-                comp.workAreaOut = comp.duration;
-            }
-
-            if (comp.workAreaIn > comp.duration)
-            {
-                comp.workAreaIn = 0F;
-            }
+            /* resizeDuration grows the work area only when it followed the old end and extends
+             * the layers that filled the old canvas. Growing the duration alone left every layer
+             * ending at the previous length, so BBS playback showed an empty stage afterwards. */
+            comp.resizeDuration(value.floatValue());
 
             this.time = Math.min(this.time, comp.duration);
 

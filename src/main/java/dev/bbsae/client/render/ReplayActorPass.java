@@ -6,6 +6,8 @@ import com.mojang.blaze3d.systems.VertexSorter;
 import dev.bbsae.BbsAeAddon;
 import dev.bbsae.client.overlay.BbsPreviewBridge;
 import dev.bbsae.client.replay.ReplayModelPass;
+import mchorse.bbs_mod.BBSModClient;
+import mchorse.bbs_mod.film.BaseFilmController;
 import dev.bbsae.client.replay.ReplayTime;
 import dev.bbsae.comp.CompLayer;
 import mchorse.bbs_mod.film.Film;
@@ -27,6 +29,7 @@ import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -282,8 +285,13 @@ public final class ReplayActorPass
                                                     Batcher2D batcher, Matrix4f view, Matrix4f projection,
                                                     int targetWidth, int targetHeight)
     {
-        Film film = BbsPreviewBridge.film();
-        Map<String, IEntity> entities = BbsPreviewBridge.entities();
+        /* The composition overlay sets BindingResolver.film (→ context.film) even when the
+         * compositor panel is not the screen on display. BbsPreviewBridge.filmPanel only exists
+         * while that panel is open; relying on it here made a linked replay fall back to the
+         * layer's static form during BBS original playback/export, so the actor lost its
+         * animation. Prefer the film the render is actually for. */
+        Film film = context.film != null ? context.film : BbsPreviewBridge.film();
+        Map<String, IEntity> entities = filmEntities(film);
 
         if (film == null)
         {
@@ -306,6 +314,19 @@ public final class ReplayActorPass
 
         IEntity entity = BbsPreviewBridge.entity(replay.getId());
 
+        /* A virtual replay has a live entity only while the replay page is open. Outside it the
+         * controller map may still hold the last stale copy (the replay is disabled again on
+         * leaving the page); rendering that copy froze the model at whatever pose the page left.
+         * The composition overlay/export therefore always uses the private, ticked stub for a
+         * virtual replay. */
+        if (entity != null && dev.bbsae.client.replay.CompReplayBridge.isVirtual(replay)
+            && (!BbsPreviewBridge.isActive() || !Boolean.TRUE.equals(replay.enabled.get())))
+        {
+            entity = null;
+        }
+
+        CachedStub privateStub = null;
+
         if (entity == null)
         {
             /* A virtual replay is disabled in the real film outside the replay editor, so the
@@ -313,23 +334,15 @@ public final class ReplayActorPass
              * skips disabled replays). The composition still needs to draw it: build a private
              * stub and pose it from the replay's own keyframes. This is also what keeps bbsae's
              * actors out of the live world while their animation stays live in the comp. */
-            Form replayForm = replay.form.get();
+            privateStub = stubFor(film, replay, layer);
 
-            if (replayForm == null)
-            {
-                replayForm = layer.modelForm();
-            }
-
-            if (replayForm == null)
+            if (privateStub == null || privateStub.entity.getForm() == null)
             {
                 return null;
             }
 
-            StubEntity stub = new StubEntity(client.world);
-
-            stub.setForm(FormUtils.copy(replayForm));
-            entities = java.util.Collections.<String, IEntity>singletonMap("bbsae_linked", stub);
-            entity = stub;
+            entity = privateStub.entity;
+            entities = java.util.Collections.<String, IEntity>singletonMap("bbsae_linked", entity);
         }
 
         if (entity.getForm() == null)
@@ -369,27 +382,37 @@ public final class ReplayActorPass
             ? GlStateGuard.ortho(context.width, context.height)
             : projection;
 
-        float playhead = BindingResolver.frameTick() >= 0F
-            ? BindingResolver.frameTick()
-            : context.time * ReplayTime.TICKS_PER_SECOND;
+        float playhead = replayTick(context);
         int tick = (int) Math.floor(playhead);
         float transition = playhead - tick;
         float at = replay.getTick(tick);
 
         try
         {
-            replay.keyframes.apply(at, entity);
-            entity.setPrevX(entity.getX());
-            entity.setPrevY(entity.getY());
-            entity.setPrevZ(entity.getZ());
-            entity.setPrevYaw(entity.getYaw());
-            entity.setPrevHeadYaw(entity.getHeadYaw());
-            entity.setPrevBodyYaw(entity.getBodyYaw());
-            entity.setPrevPitch(entity.getPitch());
-
-            if (entity.getForm() != null)
+            if (privateStub != null)
             {
-                replay.properties.applyProperties(entity.getForm(), at);
+                /* The private actor has no controller ticking it. Advance it through its form's
+                 * animation state (age, limb swing, model/CEM animation) exactly once per film
+                 * tick, then pose it from the replay's keyframes. Rebuilding a stub every frame
+                 * left its age at 0, so the model stood in its first frame in BBS original
+                 * playback/export while the same model animated in the replay editor. */
+                advanceStub(privateStub, replay, tick, transition, at);
+            }
+            else
+            {
+                replay.keyframes.apply(at, entity);
+                entity.setPrevX(entity.getX());
+                entity.setPrevY(entity.getY());
+                entity.setPrevZ(entity.getZ());
+                entity.setPrevYaw(entity.getYaw());
+                entity.setPrevHeadYaw(entity.getHeadYaw());
+                entity.setPrevBodyYaw(entity.getBodyYaw());
+                entity.setPrevPitch(entity.getPitch());
+
+                if (entity.getForm() != null)
+                {
+                    replay.properties.applyProperties(entity.getForm(), at);
+                }
             }
 
             mchorse.bbs_mod.forms.renderers.utils.RenderFrame.invalidate();
@@ -509,6 +532,211 @@ public final class ReplayActorPass
 
         return mapping.translate(-anchorX, -anchorY, -anchorZ);
     }
+    /**
+     * Private stand-in actors for replays the live controller does not own.
+     *
+     * <p>A virtual bbsae replay is disabled in the real film, so BBS never creates an entity for
+     * it. The composition still renders it from the replay's data. The stub has to persist across
+     * frames: it is the entity whose {@code age}, limb animator and form state are advanced every
+     * film tick. Re-creating it per render left all of that at zero, so the actor was drawn in
+     * its first animation frame forever in BBS original playback/export while it animated in the
+     * replay editor (which has a live entity).</p>
+     */
+    private static final Map<String, CachedStub> STUB_ACTORS = new HashMap<>();
+
+    private static final class CachedStub
+    {
+        final StubEntity entity;
+        final int formIdentity;
+        int lastTick = Integer.MIN_VALUE;
+
+        CachedStub(StubEntity entity, int formIdentity)
+        {
+            this.entity = entity;
+            this.formIdentity = formIdentity;
+        }
+    }
+
+    /**
+     * Live actors for a film, even when the compositor's preview bridge is not attached.
+     *
+     * <p>{@link BbsPreviewBridge#entities()} is the compositor/replay-page map. The film overlay
+     * path (BBS original editor and F6 recorder) renders the composition without that panel, but
+     * BBS still owns a controller for the playing film — the same entities the world frame shows.
+     * Falling back to it keeps a linked replay animated instead of demoting it to a static form.</p>
+     */
+    private static Map<String, IEntity> filmEntities(Film film)
+    {
+        Map<String, IEntity> entities = BbsPreviewBridge.entities();
+
+        if (entities != null && !entities.isEmpty())
+        {
+            return entities;
+        }
+
+        if (film != null)
+        {
+            try
+            {
+                BaseFilmController controller = BBSModClient.getFilms() == null
+                    ? null : BBSModClient.getFilms().getController(film.getId());
+
+                if (controller != null && controller.getEntities() != null
+                    && !controller.getEntities().isEmpty())
+                {
+                    return controller.getEntities();
+                }
+            }
+            catch (RuntimeException ignored)
+            {}
+        }
+
+        return entities == null ? java.util.Collections.emptyMap() : entities;
+    }
+
+    /**
+     * Film tick a linked replay's animation is sampled at.
+     *
+     * <p>The overlay's absolute film tick is right for the top-level composition (it survives a
+     * split/time-scaled clip), but a precomp has already applied its own offset/time scale and must
+     * run on its local clock. Using the film tick inside a precomp ignored both and made nested
+     * replay animation play at the wrong frame. The compositor preview never sets the absolute
+     * tick, so it keeps using composition time in either case.</p>
+     */
+    public static float replayTick(CompRenderContext context)
+    {
+        if (context != null && !context.nested && BindingResolver.frameTick() >= 0F)
+        {
+            return BindingResolver.frameTick();
+        }
+
+        return context == null ? 0F : context.time * ReplayTime.TICKS_PER_SECOND;
+    }
+
+    private static CachedStub stubFor(Film film, Replay replay, CompLayer layer)
+    {
+        if (replay == null)
+        {
+            return null;
+        }
+
+        Form form = replay.form.get();
+
+        if (form == null && layer != null)
+        {
+            form = layer.modelForm();
+        }
+
+        if (form == null)
+        {
+            return null;
+        }
+
+        String key = (film == null || film.getId() == null ? "-" : film.getId()) + "|" + replay.getId();
+        int identity = System.identityHashCode(form);
+        CachedStub cached = STUB_ACTORS.get(key);
+
+        if (cached == null || cached.formIdentity != identity || cached.entity.getForm() == null)
+        {
+            StubEntity entity = new StubEntity(MinecraftClient.getInstance().world);
+
+            entity.setForm(FormUtils.copy(form));
+            cached = new CachedStub(entity, identity);
+            STUB_ACTORS.put(key, cached);
+        }
+
+        return cached;
+    }
+
+    /**
+     * Advances a private actor to {@code tick} and applies the replay at that tick.
+     *
+     * <p>An ordinary BBS actor is ticked by its controller: {@code update()} shifts prev to
+     * current, increments the animation age and advances the limb animator; the replay keyframes
+     * then write the current tick. A private stub has to do the same work itself, once per film
+     * tick, or its procedural animation and limb swing stay parked at the first frame. Backward
+     * seeks and long jumps reset the age instead of replaying hundreds of ticks, which would be
+     * both slow and meaningless for a stub.</p>
+     */
+    private static void advanceStub(CachedStub cached, Replay replay, int tick, float transition, float at)
+    {
+        StubEntity entity = cached.entity;
+
+        if (cached.lastTick == Integer.MIN_VALUE)
+        {
+            int previous = tick - 1;
+
+            entity.setAge(Math.max(0, previous));
+            replay.keyframes.apply(replay.getTick(previous), entity);
+            copyPrev(entity);
+            entity.update();
+
+            if (entity.getForm() != null)
+            {
+                entity.getForm().update(entity);
+            }
+
+            cached.lastTick = tick;
+        }
+        else if (tick < cached.lastTick || tick - cached.lastTick > 40)
+        {
+            entity.setAge(Math.max(0, tick));
+            replay.keyframes.apply(replay.getTick(tick), entity);
+            copyPrev(entity);
+            cached.lastTick = tick;
+        }
+        else
+        {
+            while (cached.lastTick < tick)
+            {
+                entity.update();
+
+                if (entity.getForm() != null)
+                {
+                    entity.getForm().update(entity);
+                }
+
+                cached.lastTick += 1;
+            }
+        }
+
+        replay.keyframes.apply(replay.getTick(tick), entity);
+
+        if (entity.getForm() != null)
+        {
+            float phase = Math.max(0F, Math.min(1F, transition));
+
+            replay.properties.applyProperties(entity.getForm(), at + phase);
+        }
+
+        if (Boolean.getBoolean("bbsae.debugModelLog") && tick % 20 == 0)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.info(
+                "Replay stub: replay={} tick={} age={} form={} limb={}",
+                replay.getId(), tick, entity.getAge(),
+                entity.getForm() == null ? "-" : entity.getForm().getFormIdOrName(),
+                entity.getLimbPos(0F));
+        }
+    }
+
+    /** Snapshots the position/rotation channels so a freshly advanced stub does not lerp from 0. */
+    private static void copyPrev(IEntity entity)
+    {
+        entity.setPrevX(entity.getX());
+        entity.setPrevY(entity.getY());
+        entity.setPrevZ(entity.getZ());
+        entity.setPrevYaw(entity.getYaw());
+        entity.setPrevHeadYaw(entity.getHeadYaw());
+        entity.setPrevBodyYaw(entity.getBodyYaw());
+        entity.setPrevPitch(entity.getPitch());
+    }
+
+    /** Releases private stand-in actors (resource reload / client shutdown). */
+    public static void releaseStubs()
+    {
+        STUB_ACTORS.clear();
+    }
+
     private static GlFramebuffer target;
     private static int targetWidth;
     /** One target per independent model layer: a shared target was cleared by the next bake. */
@@ -556,7 +784,7 @@ public final class ReplayActorPass
         }
 
         Film film = context.film != null ? context.film : BbsPreviewBridge.film();
-        Map<String, IEntity> entities = BbsPreviewBridge.entities();
+        Map<String, IEntity> entities = filmEntities(film);
 
         if (film == null || film.replays == null)
         {
@@ -579,13 +807,23 @@ public final class ReplayActorPass
             return null;
         }
 
-        float playhead = BindingResolver.frameTick() >= 0F
-            ? BindingResolver.frameTick()
-            : context.time * ReplayTime.TICKS_PER_SECOND;
+        float playhead = replayTick(context);
         int tick = (int) Math.floor(playhead);
         float transition = playhead - tick;
 
-        /* Pose first: the centre and the render use the exact same frame of the replay. */
+        /* Pose first: the centre and the render use the exact same frame of the replay. The map
+         * the render pass receives must contain the private stand-ins too — the old pass created
+         * stubs here and then looked them up in the untouched live map, so every actor without a
+         * live entity was silently skipped at render time (an empty 3D/flat entity layer in BBS
+         * original playback). */
+        Map<String, IEntity> renderEntities = new HashMap<>();
+
+        if (entities != null)
+        {
+            renderEntities.putAll(entities);
+        }
+
+        Map<String, CachedStub> stubActors = new HashMap<>();
         int kept = 0;
         double cx = 0D;
         double cy = 0D;
@@ -599,23 +837,23 @@ public final class ReplayActorPass
             }
 
             IEntity entity = entities == null ? null : entities.get(replay.getId());
+            CachedStub stub = null;
 
             if (entity == null)
             {
                 /* The BBS film editor's overlay path does not own the replay editor's entity map
                  * (the bridge is attached only while the compositor is open). A live actor is not
                  * required to draw the matte actor: pose a private stub from the same keyframes. */
-                Form replayForm = replay.form.get();
+                stub = stubFor(film, replay, layer);
 
-                if (replayForm == null)
+                if (stub == null)
                 {
                     continue;
                 }
 
-                StubEntity stub = new StubEntity(client.world);
-
-                stub.setForm(FormUtils.copy(replayForm));
-                entity = stub;
+                entity = stub.entity;
+                renderEntities.put(replay.getId(), entity);
+                stubActors.put(replay.getId(), stub);
             }
 
             if (entity.getForm() == null)
@@ -623,7 +861,15 @@ public final class ReplayActorPass
                 continue;
             }
 
-            applyPose(replay, entity, tick, transition);
+            if (stub != null)
+            {
+                advanceStub(stub, replay, tick, transition, replay.getTick(tick));
+            }
+            else
+            {
+                applyPose(replay, entity, tick, transition);
+            }
+
             cx += entity.getX();
             cy += entity.getY();
             cz += entity.getZ();
@@ -688,7 +934,7 @@ public final class ReplayActorPass
                     continue;
                 }
 
-                IEntity entity = entities.get(replay.getId());
+                IEntity entity = renderEntities.get(replay.getId());
 
                 if (entity == null || entity.getForm() == null)
                 {
@@ -698,7 +944,7 @@ public final class ReplayActorPass
                 try
                 {
                     FilmControllerContext actor = FilmControllerContext.instance
-                        .setup(entities, entity, replay, synthetic, stack, consumers, transition)
+                        .setup(renderEntities, entity, replay, synthetic, stack, consumers, transition)
                         .shadow(false, 0F)
                         .nameTag("")
                         .relative(false);
@@ -847,6 +1093,7 @@ public final class ReplayActorPass
     /** Releases the offscreen actor target (client shutdown / resource reload). */
     public static void release()
     {
+        releaseStubs();
         releaseTarget();
 
         synchronized (MODEL_TARGETS)

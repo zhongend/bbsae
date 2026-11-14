@@ -11,6 +11,7 @@ import mchorse.bbs_mod.film.FilmMatrices;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.FormRenderLast;
 import mchorse.bbs_mod.forms.entities.IEntity;
+import mchorse.bbs_mod.forms.forms.Form;
 import mchorse.bbs_mod.graphics.texture.Texture;
 import mchorse.bbs_mod.resources.Link;
 import mchorse.bbs_mod.ui.film.replays.UIReplayPropTransform;
@@ -21,6 +22,7 @@ import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.Gizmo;
 import mchorse.bbs_mod.ui.utils.StencilFormFramebuffer;
 import mchorse.bbs_mod.utils.MatrixStackUtils;
+import mchorse.bbs_mod.utils.Pair;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.util.math.MatrixStack;
@@ -58,6 +60,8 @@ public final class ReplayPickPass
     /** The replay list index of the last picked model, or -1. */
     private int pickedReplay = -1;
     private boolean gizmoHandlePicked;
+    /** Form part/bone under the cursor on the selected actor, or null when none. */
+    private Pair<Form, String> pickedForm;
 
     public StencilFormFramebuffer stencil()
     {
@@ -72,6 +76,18 @@ public final class ReplayPickPass
     public boolean gizmoHandlePicked()
     {
         return this.gizmoHandlePicked;
+    }
+
+    /**
+     * The form part under the cursor on the selected actor, or null.
+     *
+     * <p>Only the selected actor is rendered with an incrementing stencil map, so this pair can
+     * only describe that actor. Its empty bone means "the whole form/part", which is what BBS'
+     * body-part list selects.</p>
+     */
+    public Pair<Form, String> pickedForm()
+    {
+        return this.pickedForm;
     }
 
     /**
@@ -168,43 +184,26 @@ public final class ReplayPickPass
 
             MatrixStack stack = new MatrixStack();
             List<Replay> replays = session.film().replays.getList();
+            int selectedIndex = session.replayIndex(session.replay());
 
+            /* Every other actor is one pickable object id. The selected actor is drawn last with
+             * an incrementing id map, exactly like BBS' FilmStencilPicker: its individual form
+             * parts/bones get their own ids, which is what makes the Alt pick able to select a
+             * body part instead of only the whole replay. */
             for (int i = 0; i < replays.size(); i++)
             {
-                Replay replay = replays.get(i);
-
-                if (replay == null || !Boolean.TRUE.equals(replay.enabled.get()))
+                if (i == selectedIndex)
                 {
                     continue;
                 }
 
-                IEntity entity = entities.get(replay.getId());
+                this.renderReplay(session, entities, replays, i, actorCamera, stack, transition, false, 0);
+            }
 
-                if (entity == null || entity.getForm() == null || !session.isReplayVisible(i))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    session.applyPose(entity, replay);
-
-                    this.stencilMap.objectIndex = ReplayPickIds.idFor(i, Gizmo.STENCIL_MAX);
-                    this.stencilMap.setIncrement(false);
-
-                    FilmEntityRenderer.renderEntity(FilmControllerContext.instance
-                        .setup(entities, entity, replay, actorCamera, stack, null, transition)
-                        .stencil(this.stencilMap)
-                        .relative(Boolean.TRUE.equals(replay.relative.get())));
-                }
-                catch (RuntimeException e)
-                {
-                    if (this.failures.allow(System.currentTimeMillis()))
-                    {
-                        BbsAeAddon.LOGGER.warn("Replay mode could not pick replay {}{}",
-                            replay.getId(), this.failures.describeSuppressed(), e);
-                    }
-                }
+            if (selectedIndex >= 0)
+            {
+                this.renderReplay(session, entities, replays, selectedIndex, actorCamera, stack, transition,
+                    true, replays.size() + ReplayPickIds.offsetFor(Gizmo.STENCIL_MAX));
             }
 
             this.renderGizmoStencil(session, viewCamera, transition);
@@ -227,6 +226,7 @@ public final class ReplayPickPass
 
             this.gizmoHandlePicked = ReplayPickIds.isGizmoHandle(picked, Gizmo.STENCIL_X, Gizmo.STENCIL_MAX);
             this.pickedReplay = ReplayPickIds.indexFor(picked, Gizmo.STENCIL_MAX, replays.size());
+            this.pickedForm = cursorInside && !this.gizmoHandlePicked ? this.stencil.getPicked() : null;
         }
         catch (RuntimeException e)
         {
@@ -264,6 +264,47 @@ public final class ReplayPickPass
      * camera-relative placement — because that is the matrix {@code Gizmo.renderInterface}
      * expects when it projects the visual back onto the screen.
      */
+    /** Draws one replay into the pick target, optionally with per-form-part incrementing ids. */
+    private void renderReplay(ReplayEditSession session, Map<String, IEntity> entities, List<Replay> replays,
+                              int index, net.minecraft.client.render.Camera actorCamera, MatrixStack stack, float transition,
+                              boolean increment, int objectIndex)
+    {
+        Replay replay = replays.get(index);
+
+        if (replay == null || !Boolean.TRUE.equals(replay.enabled.get()) || !session.isReplayVisible(index))
+        {
+            return;
+        }
+
+        IEntity entity = entities.get(replay.getId());
+
+        if (entity == null || entity.getForm() == null)
+        {
+            return;
+        }
+
+        try
+        {
+            session.applyPose(entity, replay);
+
+            this.stencilMap.objectIndex = increment ? objectIndex : ReplayPickIds.idFor(index, Gizmo.STENCIL_MAX);
+            this.stencilMap.setIncrement(increment);
+
+            FilmEntityRenderer.renderEntity(FilmControllerContext.instance
+                .setup(entities, entity, replay, actorCamera, stack, null, transition)
+                .stencil(this.stencilMap)
+                .relative(Boolean.TRUE.equals(replay.relative.get())));
+        }
+        catch (RuntimeException e)
+        {
+            if (this.failures.allow(System.currentTimeMillis()))
+            {
+                BbsAeAddon.LOGGER.warn("Replay mode could not pick replay {}{}",
+                    replay.getId(), this.failures.describeSuppressed(), e);
+            }
+        }
+    }
+
     private void renderGizmoStencil(ReplayEditSession session, Camera camera, float transition)
     {
         if (!session.canEditPlacement())
@@ -279,9 +320,25 @@ public final class ReplayPickPass
         }
 
         MatrixStack stack = new MatrixStack();
-        Matrix4f placement = FilmMatrices.getMatrixForRenderWithRotation(
-            entity, camera.position.x, camera.position.y, camera.position.z, transition
-        );
+        Matrix4f placement = null;
+        String bone = session.isBoneGizmo() ? session.selectedBone() : "";
+
+        if (bone != null && !bone.isEmpty() && entity.getForm() != null)
+        {
+            /* The selected body part is where the original editor puts the gizmo. Drawing the
+             * handles at the replay's feet while a bone is selected would make every drag start
+             * from the wrong origin. */
+            placement = FilmMatrices.getGizmoBoneCompositeMatrix(
+                session.entities(), entity, session.replay(),
+                camera.position.x, camera.position.y, camera.position.z, transition, bone, true);
+        }
+
+        if (placement == null)
+        {
+            placement = FilmMatrices.getMatrixForRenderWithRotation(
+                entity, camera.position.x, camera.position.y, camera.position.z, transition
+            );
+        }
 
         stack.peek().getPositionMatrix().set(camera.view);
         MatrixStackUtils.multiply(stack, placement);

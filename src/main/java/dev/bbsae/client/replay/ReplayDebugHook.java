@@ -332,6 +332,16 @@ public final class ReplayDebugHook
                 ReplayInteractionScript.start(panel);
             }
 
+            if (Boolean.getBoolean("bbsae.replayGizmoScript"))
+            {
+                ReplayGizmoScript.start(panel);
+            }
+
+            if (Boolean.getBoolean("bbsae.bbsPlaybackAudit"))
+            {
+                BbsPlaybackAudit.start(panel);
+            }
+
             /* Playback regression check: start the replay transport, let it run for a second of
              * wall time, then log the cursor. This catches the old "seek every frame restarts the
              * action" bug without needing a human to click play. */

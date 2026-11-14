@@ -43,6 +43,14 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
 
         if (instances.isEmpty())
         {
+            /* External playback: the composition clip has ended or was removed. Stop copying a
+             * full-res world frame every frame for a layer that is no longer drawn. The compositor
+             * panel re-requests the copy in its own per-frame sync. */
+            if (!BbsPreviewBridge.isActive())
+            {
+                BbsPreviewBridge.clearWorldCaptureRequest();
+            }
+
             return;
         }
 
@@ -129,18 +137,48 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
                         continue;
                     }
 
-                    float time = instance.time();
+                    float rawTime = instance.time();
+                    float time = CompositionClip.overlayTime(doc, rawTime, instance.hold);
 
-                    if (!instance.hold && time > doc.duration)
+                    /* NaN means the clip is past the composition end with hold off: the
+                     * composition contributes no pixels any more and the BBS world must show. */
+                    if (Float.isNaN(time))
                     {
                         continue;
                     }
 
-                    /* The instance carries the absolute camera-timeline tick, which is the only
-                     * correct clock for a split or time-scaled composition clip. */
-                    dev.bbsae.client.render.BindingResolver.setFrameTick(instance.filmTicks);
+                    if (Boolean.getBoolean("bbsae.traceExport") && time != rawTime)
+                    {
+                        long now = System.currentTimeMillis();
 
-                    if (BbsPreviewBridge.needsWorldFrame(doc))
+                        if (now - lastHoldTrace > 1000L)
+                        {
+                            lastHoldTrace = now;
+
+                            int active = 0;
+
+                            for (dev.bbsae.comp.CompLayer candidate : doc.layers)
+                            {
+                                if (candidate != null && candidate.activeAt(time))
+                                {
+                                    active += 1;
+                                }
+                            }
+
+                            dev.bbsae.BbsAeAddon.LOGGER.info(
+                                "[export trace] hold comp={} rawTime={} renderTime={} activeLayers={}/{}",
+                                doc.id, rawTime, time, active, doc.layers.size());
+                        }
+                    }
+
+                    /* The instance carries the absolute camera-timeline tick, which is the only
+                     * correct clock for a split or time-scaled composition clip. When the overlay
+                     * holds the last frame, sample the replay animation at the film tick that frame
+                     * came from instead of the (past-the-end) playback tick. */
+                    dev.bbsae.client.render.BindingResolver.setFrameTick(
+                        time == rawTime ? instance.filmTicks : instance.filmTickAt(time));
+
+                    if (BbsPreviewBridge.needsWorldFrame(project, doc))
                     {
                         BbsPreviewBridge.requestWorldCapture(true);
 
@@ -153,7 +191,10 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
                         }
                     }
 
-                    if (hasEntityLayer(doc))
+                    /* Recursive: a replay-entity layer may live inside a precomp. Scanning only the
+                     * top-level document used to skip the depth/matte request for exactly those
+                     * nested layers, so they rendered empty in BBS original playback and export. */
+                    if (BbsPreviewBridge.hasReplayEntityLayer(project, doc))
                     {
                         /* The depth copy and the entity mask are both per world frame. Ask for
                          * the depth for the next one, and let the mask re-render itself here if
@@ -275,6 +316,7 @@ public class CompositionOverlay implements FrameOverlays.IFrameOverlayRenderer
     }
 
     private static long lastTrace;
+    private static long lastHoldTrace;
 
     private static void traceFrame(ClipContext context, List<CompInstance> instances)
     {

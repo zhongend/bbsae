@@ -590,4 +590,79 @@ public class CompModelTest
         assertEquals(200F, layer.scalarAt("z", layer.scalar("z", 0F), 10F), 0.5F);
     }
 
+    /**
+     * Extending the canvas must carry the layers that filled it, or BBS playback turns into an
+     * empty stage ("frozen") from the old end onwards.
+     */
+    @Test
+    public void resizingTheDurationExtendsLayersThatFilledTheOldCanvas()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.duration = 12F;
+
+        CompLayer full = new CompLayer("full", "Full", "solid");
+        CompLayer trimmed = new CompLayer("trimmed", "Trimmed", "solid");
+
+        full.in = 0F;
+        full.out = 12F;
+        trimmed.in = 2F;
+        trimmed.out = 8F;
+        doc.layers.add(full);
+        doc.layers.add(trimmed);
+
+        assertTrue(doc.resizeDuration(30F));
+        assertEquals(30F, doc.duration, 0.0001F);
+        assertEquals(30F, full.out, 0.0001F);
+        assertEquals(8F, trimmed.out, 0.0001F, "a deliberately trimmed layer must stay trimmed");
+        assertEquals(30F, doc.workAreaOut, 0.0001F);
+
+        /* Shrinking never clips authored layer ends; they simply stop rendering past the canvas. */
+        assertTrue(doc.resizeDuration(10F));
+        assertEquals(10F, doc.duration, 0.0001F);
+        assertEquals(30F, full.out, 0.0001F);
+    }
+
+    @Test
+    public void resizingToTheSameDurationIsANoOp()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.duration = 12F;
+        doc.layers.add(new CompLayer("only", "Only", "solid"));
+        doc.layers.get(0).out = 12F;
+
+        assertFalse(doc.resizeDuration(12F));
+        assertEquals(12F, doc.layers.get(0).out, 0.0001F);
+    }
+
+    @Test
+    public void heldOverlayStopsAtTheLastAuthoredFrame()
+    {
+        CompDocument doc = new CompDocument();
+
+        doc.fps = 20F;
+        doc.duration = 12F;
+
+        assertEquals(5F, CompositionClip.overlayTime(doc, 5F, true), 0.0001F);
+        assertEquals(12F - 1F / 20F, CompositionClip.overlayTime(doc, 15F, true), 0.0001F,
+            "hold must render the last frame, not the empty background after the end");
+        assertTrue(Float.isNaN(CompositionClip.overlayTime(doc, 15F, false)),
+            "hold off means the composition has ended and contributes no pixels");
+    }
+
+    @Test
+    public void heldTimeMapsBackToTheFilmTickThatFrameCameFrom()
+    {
+        /* Composition time = (ticks * timeScale + offset) / 20. */
+        CompInstance instance = new CompInstance("demo", "main", 60F, 40, 2F, 1F, 0, true);
+
+        /* filmTicksAt inverts the same mapping. Raw time is 6.5s; the held time is one frame
+         * earlier; the film tick must be the one that produced that earlier composition time. */
+        float held = instance.filmTickAt(5.5F);
+
+        assertEquals((5.5F * 20F - 40F) / 2F, held, 0.0001F);
+        assertEquals(5.5F, (held * 2F + 40F) / 20F, 0.0001F);
+    }
+
 }

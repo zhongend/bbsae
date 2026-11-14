@@ -362,8 +362,8 @@ public final class BbsPreviewBridge
     {
         document = comp;
 
-        boolean world = needsWorldFrame(comp);
-        boolean depth = needsDepth(comp);
+        boolean world = needsWorldFrame(project, comp);
+        boolean depth = needsDepth(project, comp);
 
         worldCaptureRequested = world || depth;
         depthRequested = depth;
@@ -385,7 +385,26 @@ public final class BbsPreviewBridge
      */
     public static boolean needsWorldFrame(CompDocument comp)
     {
-        if (comp == null || comp.layers == null)
+        return needsWorldFrame(null, comp);
+    }
+
+    /**
+     * Whether a composition samples the live world, <b>including its precompositions</b>.
+     *
+     * <p>The old scan only looked at the document's top-level layers. A precomp containing a
+     * {@code BBS 预览} or replay-entity layer therefore never requested a world capture from the
+     * film overlay/recorder, and that nested layer rendered as an empty/transparent plate in BBS
+     * original playback and export. Recursing is the same rule {@code ReplayEntityMask} already
+     * uses for the matte request.</p>
+     */
+    public static boolean needsWorldFrame(dev.bbsae.comp.CompProject project, CompDocument comp)
+    {
+        return needsWorldFrame(project, comp, 0);
+    }
+
+    private static boolean needsWorldFrame(dev.bbsae.comp.CompProject project, CompDocument comp, int depth)
+    {
+        if (comp == null || comp.layers == null || depth > 8)
         {
             return false;
         }
@@ -401,6 +420,13 @@ public final class BbsPreviewBridge
             {
                 return true;
             }
+
+            if ("precomp".equals(layer.type) && project != null && layer.precompId != null
+                && !layer.precompId.isEmpty()
+                && needsWorldFrame(project, project.getComp(layer.precompId), depth + 1))
+            {
+                return true;
+            }
         }
 
         return false;
@@ -408,21 +434,38 @@ public final class BbsPreviewBridge
 
     private static boolean needsDepth(CompDocument comp)
     {
-        if (comp == null || comp.layers == null)
+        return needsDepth(null, comp);
+    }
+
+    private static boolean needsDepth(dev.bbsae.comp.CompProject project, CompDocument comp)
+    {
+        return needsDepth(project, comp, 0);
+    }
+
+    private static boolean needsDepth(dev.bbsae.comp.CompProject project, CompDocument comp, int depth)
+    {
+        if (comp == null || comp.layers == null || depth > 8)
         {
             return false;
         }
 
         for (dev.bbsae.comp.CompLayer layer : comp.layers)
         {
-            if (layer == null)
+            if (layer == null || !layer.visible)
             {
                 continue;
             }
 
             /* The entity matte is a depth test against the world buffer; without it the layer
              * would key every entity through walls. */
-            if (layer.visible && layer.isEntityLayer())
+            if (layer.isEntityLayer())
+            {
+                return true;
+            }
+
+            if ("precomp".equals(layer.type) && project != null && layer.precompId != null
+                && !layer.precompId.isEmpty()
+                && needsDepth(project, project.getComp(layer.precompId), depth + 1))
             {
                 return true;
             }
@@ -438,6 +481,42 @@ public final class BbsPreviewBridge
                 {
                     return true;
                 }
+            }
+        }
+
+        return false;
+    }
+
+    /** True when this composition (or a nested precomp) has a replay-entity layer. */
+    public static boolean hasReplayEntityLayer(dev.bbsae.comp.CompProject project, CompDocument comp)
+    {
+        return hasEntityLayer(project, comp, 0);
+    }
+
+    private static boolean hasEntityLayer(dev.bbsae.comp.CompProject project, CompDocument comp, int depth)
+    {
+        if (comp == null || comp.layers == null || depth > 8)
+        {
+            return false;
+        }
+
+        for (dev.bbsae.comp.CompLayer layer : comp.layers)
+        {
+            if (layer == null || !layer.visible)
+            {
+                continue;
+            }
+
+            if (layer.isEntityLayer())
+            {
+                return true;
+            }
+
+            if ("precomp".equals(layer.type) && project != null && layer.precompId != null
+                && !layer.precompId.isEmpty()
+                && hasEntityLayer(project, project.getComp(layer.precompId), depth + 1))
+            {
+                return true;
             }
         }
 
@@ -462,6 +541,12 @@ public final class BbsPreviewBridge
         {
             worldCaptureRequested = true;
         }
+    }
+
+    /** Drops the external-playback request once no composition is drawing this frame. */
+    public static void clearWorldCaptureRequest()
+    {
+        worldCaptureRequested = false;
     }
 
     /**
@@ -555,6 +640,7 @@ public final class BbsPreviewBridge
         active = false;
         backdropRequested = false;
         replayWorldPreview = false;
+        worldCaptureRequested = false;
         timeOverride = null;
         depthRequested = false;
         depthForced = false;
@@ -780,9 +866,13 @@ public final class BbsPreviewBridge
         /* Copying the world colour is a full framebuffer copy. Doing it every frame even when no
          * layer samples it was pure GPU cost, so it now requires an actual consumer. */
         boolean editorNeeds = active && (worldCaptureRequested || backdropRequested || replayWorldPreview);
-        boolean exportNeeds = worldCaptureRequested
-            && (mchorse.bbs_mod.client.BBSRendering.isCustomSize()
-                || BBSModClient.getVideoRecorder().isRecording());
+        /* The frame overlay also runs during external BBS playback. A composition shown there
+         * (showDuringExternalPlayback) can contain a BBS-preview or replay-entity layer; that layer
+         * needs this world copy too. The old customSize/recorder guard skipped the copy in exactly
+         * that case, so the layer kept the first frame (or stayed empty). The flag only comes from
+         * an overlay that actually saw such a layer, so this does not copy for every world frame by
+         * default. */
+        boolean exportNeeds = worldCaptureRequested;
 
         if (editorNeeds || exportNeeds)
         {

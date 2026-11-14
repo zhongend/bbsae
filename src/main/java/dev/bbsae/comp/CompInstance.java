@@ -50,4 +50,24 @@ public final class CompInstance
     {
         return ((this.ticks * this.timeScale) + this.offset) / 20F;
     }
+
+    /**
+     * Absolute film tick corresponding to a composition time, using this clip's own offset and
+     * time scale.
+     *
+     * <p>Needed when the overlay holds the last frame past the composition's end: the picture must
+     * stay on the last composition frame, but a linked replay's animation has to be sampled at the
+     * film tick that frame came from, not at the film tick playback has reached. Inverting
+     * {@link #time()} is the only mapping that stays correct for a split, offset or time-scaled
+     * clip.</p>
+     */
+    public float filmTickAt(float compositionSeconds)
+    {
+        if (Math.abs(this.timeScale) < 0.0001F)
+        {
+            return this.filmTicks;
+        }
+
+        return (compositionSeconds * 20F - this.offset) / this.timeScale;
+    }
 }

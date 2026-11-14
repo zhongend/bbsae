@@ -47,7 +47,9 @@ public final class ReplayEditSession
     private final Film film;
     private final CompViewportCamera camera = new CompViewportCamera();
     private final ReplaySceneSpace space = new ReplaySceneSpace();
-    private final UIReplayPropTransform replayTransform = new UIReplayPropTransform();
+    private final ReplaySessionTransform replayTransform = new ReplaySessionTransform(this::uiContext);
+    /** Page context supplier; see {@link ReplaySessionTransform}. */
+    private java.util.function.Supplier<mchorse.bbs_mod.ui.framework.UIContext> contextSupplier;
 
     private Replay replay;
     /** Set once the viewport had a real size and the scene was framed. */
@@ -58,6 +60,17 @@ public final class ReplayEditSession
     /** The replay page owns its transport; the borrowed film runner may be rewritten by BBS. */
     private float localPlayhead;
     private boolean localPlayheadValid;
+
+    /** Form path and bone picked in the 3D viewport (empty when the whole replay is the target). */
+    private String selectedPartPath = "";
+    private String selectedBone = "";
+    private mchorse.bbs_mod.forms.forms.Form selectedPartForm;
+    /**
+     * The BBS pose/transform editor the keyframe timeline exposes for the selected track, when it
+     * owns a bone. The gizmo borrows that transform instead of the replay root while a part is
+     * selected, which is how the original replay editor keys a bone rather than the record.
+     */
+    private mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform boneTransform;
 
     /* Per-frame visibility (frustum culling for big films); recomputed by the viewport before the
      * model and pick passes so both draw the same set. */
@@ -87,6 +100,17 @@ public final class ReplayEditSession
         {
             this.previewInvalidator.run();
         }
+    }
+
+    /** The UI context of the page this session belongs to; required for gizmo gestures. */
+    public void setContextSupplier(java.util.function.Supplier<mchorse.bbs_mod.ui.framework.UIContext> supplier)
+    {
+        this.contextSupplier = supplier;
+    }
+
+    private mchorse.bbs_mod.ui.framework.UIContext uiContext()
+    {
+        return this.contextSupplier == null ? null : this.contextSupplier.get();
     }
 
     public void setReplayFilter(java.util.function.Predicate<Replay> filter)
@@ -711,6 +735,130 @@ public final class ReplayEditSession
                 drag.setGlobalAxes(FilmMatrices.getReplayWorldAxes(entity, this.transition()));
             }
         }
+
+        return drag;
+    }
+
+    /* ------------------------------------------------------------ body parts */
+
+    /** Records the body part/bone picked in the viewport. */
+    public void setSelectedPart(mchorse.bbs_mod.forms.forms.Form form, String path, String bone)
+    {
+        this.selectedPartForm = form;
+        this.selectedPartPath = path == null ? "" : path;
+        this.selectedBone = bone == null ? "" : bone;
+    }
+
+    public String selectedPartPath()
+    {
+        return this.selectedPartPath;
+    }
+
+    public String selectedBone()
+    {
+        return this.selectedBone;
+    }
+
+    /** Keeps the part pivot in step with a bone selected from the timeline instead of the viewport. */
+    public void setSelectedBone(String bone)
+    {
+        this.selectedBone = bone == null ? "" : bone;
+    }
+
+    public mchorse.bbs_mod.forms.forms.Form selectedPartForm()
+    {
+        return this.selectedPartForm;
+    }
+
+    /** The transform the keyframe timeline currently exposes, when it owns a model bone. */
+    public void setBoneTransform(mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform transform)
+    {
+        this.boneTransform = transform;
+    }
+
+    /** The transform the gizmo should drive, or null to fall back to the replay root. */
+    public mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform boneGizmoTransform()
+    {
+        return this.boneTransform;
+    }
+
+    /** True when the gizmo currently edits a bone instead of the replay's own placement. */
+    public boolean isBoneGizmo()
+    {
+        return this.boneTransform != null && this.selectedBone != null && !this.selectedBone.isEmpty()
+            && this.selectedPartForm != null;
+    }
+
+    /**
+     * World position of the selected bone (or the actor's feet when no bone is selected).
+     *
+     * <p>Read from BBS' own bone composite matrix so it is the exact point the model was rendered
+     * at; the orbit camera and the gizmo both use it as their pivot. Null when there is no live
+     * actor.</p>
+     */
+    public Vector3f selectedPartWorld()
+    {
+        IEntity entity = this.selectedEntity();
+
+        if (entity == null)
+        {
+            return null;
+        }
+
+        if (this.selectedBone != null && !this.selectedBone.isEmpty() && entity.getForm() != null)
+        {
+            Matrix4f bone = mchorse.bbs_mod.film.FilmMatrices.getGizmoBoneCompositeMatrix(
+                this.entities(), entity, this.replay, 0D, 0D, 0D, this.transition(),
+                this.selectedBone, true);
+
+            if (bone != null)
+            {
+                return bone.getTranslation(new Vector3f());
+            }
+        }
+
+        return new Vector3f((float) entity.getX(), (float) entity.getY(), (float) entity.getZ());
+    }
+
+    /** The selected part's composition-space pivot, or null. */
+    public Vector3f selectedPartComp()
+    {
+        Vector3f world = this.selectedPartWorld();
+
+        return world == null ? null : this.space.toComp(world.x, world.y, world.z);
+    }
+
+    /**
+     * Drag snapshot for the bone gizmo. Uses the same camera/viewport the handles were drawn in,
+     * the replay's own facing as GLOBAL, and the bone's own/parent matrices so LOCAL and PARENT
+     * behave like the original.
+     */
+    public GizmoDrag boneGizmoDrag(Area area)
+    {
+        Camera camera = this.viewCamera();
+        GizmoDrag drag = GizmoDrag.fromRenderedGizmo(camera, area);
+
+        if (drag == null)
+        {
+            return null;
+        }
+
+        IEntity entity = this.selectedEntity();
+
+        drag.setGlobalAxes(FilmMatrices.getReplayWorldAxes(entity, this.transition()));
+
+        if (entity == null || this.selectedBone == null || this.selectedBone.isEmpty())
+        {
+            return drag;
+        }
+
+        Matrix4f local = FilmMatrices.getGizmoBoneCompositeMatrix(this.entities(), entity, this.replay,
+            camera.position.x, camera.position.y, camera.position.z, this.transition(), this.selectedBone, true);
+        Matrix4f parent = FilmMatrices.getGizmoBoneCompositeMatrix(this.entities(), entity, this.replay,
+            camera.position.x, camera.position.y, camera.position.z, this.transition(), this.selectedBone, false);
+
+        drag.setFrameAxes(local, parent);
+        drag.setRotateAxes(drag.gizmoWorldAxes);
 
         return drag;
     }
