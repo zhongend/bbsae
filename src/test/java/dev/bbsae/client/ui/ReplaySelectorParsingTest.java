@@ -22,6 +22,7 @@ public class ReplaySelectorParsingTest
         assertEquals(0, UICompositorPanel.replayIndexFromSelector("回放 · 1 · Alice"));
         assertEquals(4, UICompositorPanel.replayIndexFromSelector("回放 · 5 · Same Name"));
         assertEquals(4, UICompositorPanel.replayIndexFromSelector("回放 · 5"));
+        assertEquals(1, UICompositorPanel.replayIndexFromSelector("图层 · 2 · 主合成"));
         assertEquals(-1, UICompositorPanel.replayIndexFromSelector("回放 · x · Alice"));
         assertEquals(-1, UICompositorPanel.replayIndexFromSelector(null));
     }

@@ -10894,7 +10894,11 @@ public class UICompositorPanel extends UIDashboardPanel
         UIOverlay.addOverlay(this.getContext(), selector[0], 0.45F, 0.65F);
     }
 
-    /** Second level: the original BBS replay layers of one project, selecting one binds it. */
+    /**
+     * Second level: the bbsae compositions (the "compositor layers" that can be put on the BBS
+     * film timeline) belonging to the selected project. Replay entities are deliberately NOT the
+     * list here: a film project is the outer object, and its compositions are what BBS samples.
+     */
     private void openReplayPickerForFilm(String filmId)
     {
         if (filmId == null || filmId.isBlank())
@@ -10904,7 +10908,16 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.film != null && filmId.equals(this.film.getId()))
         {
-            this.showReplayPickerForFilm(this.film, false);
+            if (this.project == null)
+            {
+                this.project = CompStore.loadFilmProject(this.film.getId(), this.film.getId(),
+                    Math.max(1, BBSSettings.videoWidth.get()),
+                    Math.max(1, BBSSettings.videoHeight.get()),
+                    Math.max(1F, BBSSettings.videoFrameRate.get()),
+                    Math.max(1F, this.film.calculateDuration() / 20F));
+            }
+
+            this.showCompPickerForFilm(this.film, this.project, false);
             return;
         }
 
@@ -10928,9 +10941,15 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
-                /* Do not fill the shared film panel before the user actually picks a replay:
+                CompProject project = CompStore.loadFilmProject(loaded.getId(), loaded.getId(),
+                    Math.max(1, BBSSettings.videoWidth.get()),
+                    Math.max(1, BBSSettings.videoHeight.get()),
+                    Math.max(1F, BBSSettings.videoFrameRate.get()),
+                    Math.max(1F, loaded.calculateDuration() / 20F));
+
+                /* Do not fill the shared film panel before the user picks a composition:
                  * cancelling the selector must leave the currently open film untouched. */
-                this.showReplayPickerForFilm(loaded, true);
+                this.showCompPickerForFilm(loaded, project, true);
             });
         });
     }
@@ -10986,63 +11005,57 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
-    private void showReplayPickerForFilm(Film film, boolean otherFilm)
+    private void showCompPickerForFilm(Film film, CompProject project, boolean otherFilm)
     {
-        List<Replay> replays = film == null || film.replays == null ? List.of() : film.replays.getList();
+        List<CompDocument> comps = project == null || project.comps == null ? List.of() : project.comps;
 
-        if (replays.isEmpty())
+        if (comps.isEmpty())
         {
-            this.setStatus("影片「" + (film == null ? "-" : film.getId()) + "」没有原版回放图层");
+            this.setStatus("影片工程「" + (film == null ? "-" : film.getId()) + "」还没有合成器图层");
             return;
         }
 
         List<String> values = new ArrayList<>();
 
-        for (int i = 0; i < replays.size(); i++)
+        for (int i = 0; i < comps.size(); i++)
         {
-            String name = replays.get(i).getName();
+            CompDocument comp = comps.get(i);
+            String name = comp == null || comp.name == null || comp.name.isBlank() ? "-" : comp.name;
 
-            if (name == null || name.isBlank() || "-".equals(name.trim()))
-            {
-                name = "回放 " + (i + 1);
-            }
-
-            values.add("回放 · " + (i + 1) + " · " + name);
+            values.add("图层 · " + (i + 1) + " · " + name);
         }
 
         UIListOverlayPanel[] selector = new UIListOverlayPanel[1];
 
         selector[0] = new UIListOverlayPanel(
-            IKey.constant("选择回放图层（选中即绑定）· " + film.getId()), (value) ->
+            IKey.constant("选择合成器图层（选中即绑定）· " + (film == null ? "-" : film.getId())), (value) ->
         {
             if (selector[0] != null)
             {
                 selector[0].close();
             }
 
-            int separator = value.indexOf(" · ");
-
-            if (separator < 0)
-            {
-                return;
-            }
-
             int index = replayIndexFromSelector(value);
 
-            if (index < 0 || index >= replays.size())
+            if (index < 0 || index >= comps.size())
             {
                 return;
             }
 
-            this.bindReplayFromSelector(film, replays.get(index), otherFilm);
+            this.bindCompFromSelector(film, project, comps.get(index), otherFilm);
         });
 
         selector[0].addValues(values);
         UIOverlay.addOverlay(this.getContext(), selector[0], 0.45F, 0.65F);
     }
 
-    private void bindReplayFromSelector(Film film, Replay replay, boolean otherFilm)
+    private void bindCompFromSelector(Film film, CompProject project, CompDocument comp, boolean otherFilm)
     {
+        if (comp == null)
+        {
+            return;
+        }
+
         if (otherFilm)
         {
             if (this.filmPanel == null)
@@ -11051,20 +11064,40 @@ public class UICompositorPanel extends UIDashboardPanel
             }
 
             this.filmPanel.fill(film);
-            BbsAeClient.openCompositorForFilm(this.filmPanel, film, replay);
-
-            UICompositorPanel panel = BbsAeClient.compositorPanel();
-
-            if (panel != null)
-            {
-                panel.bindCurrentCompositionToFilm();
-            }
-
-            return;
+            this.bindComposition(this.filmPanel, film, project == null ? null : project.id, comp.id);
+        }
+        else
+        {
+            /* Keep a pending edit in the outgoing composition: refreshComp switches this.doc
+             * without the save that selectReplay/bindComposition perform. */
+            this.save();
+            this.refreshComp(comp.id);
         }
 
-        this.selectReplay(replay);
+        this.replay = this.replayForComp(film, comp.id);
+        this.updateReplaySelectorLabel();
         this.bindCurrentCompositionToFilm();
+    }
+
+    /** Maps a replay's composition id back to its BBS replay, when one exists. */
+    private Replay replayForComp(Film film, String compId)
+    {
+        if (film == null || film.replays == null || compId == null)
+        {
+            return null;
+        }
+
+        for (Replay replay : film.replays.getList())
+        {
+            String key = replay.getId() == null || replay.getId().isBlank() ? replay.getName() : replay.getId();
+
+            if (compId.equals(CompStore.replayCompId(key, replay.getName())))
+            {
+                return replay;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -11074,8 +11107,12 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     public void bindCurrentCompositionToFilm()
     {
-        this.ensureCompositionClip("已绑定回放「" + (this.replay == null ? "-" : this.replayLabel(this.replay))
-            + "」到影片工程「" + (this.film == null || this.film.getId() == null ? "-" : this.film.getId()) + "」");
+        String target = this.replay != null
+            ? "回放「" + this.replayLabel(this.replay) + "」"
+            : "合成「" + (this.doc == null || this.doc.name == null ? "-" : this.doc.name) + "」";
+
+        this.ensureCompositionClip("已绑定" + target
+            + "到影片工程「" + (this.film == null || this.film.getId() == null ? "-" : this.film.getId()) + "」");
     }
 
     private void replayContextMenu(ContextMenuManager manager)
@@ -11085,19 +11122,12 @@ public class UICompositorPanel extends UIDashboardPanel
             return;
         }
 
-        for (mchorse.bbs_mod.film.replays.Replay replay : this.film.replays.getList())
-        {
-            manager.action(Icons.SCENE, IKey.constant(replay.getName()), () -> this.selectReplay(replay));
-        }
-
+        /* A context menu cannot host the two-level project → composition picker. Keep it on the
+         * outer level (film projects) instead of reintroducing replay entities as pseudo-layers;
+         * left-clicking the selector opens the full hierarchy. */
         for (String filmId : this.filmIds)
         {
-            if (this.film != null && filmId.equals(this.film.getId()))
-            {
-                continue;
-            }
-
-            manager.action(Icons.FILM, IKey.constant("影片：" + filmId), () -> this.loadFilm(filmId));
+            manager.action(Icons.FILM, IKey.constant("影片工程：" + filmId), () -> this.loadFilm(filmId));
         }
     }
 

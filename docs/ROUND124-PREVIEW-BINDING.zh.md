@@ -47,29 +47,32 @@ Replay · Bob
 Film · my-film
 ```
 
-用户的心智模型是 BBS 原版层级 **影片工程 → 回放图层**：一个影片工程里可以有多个原版回放图层。
-顶层直接列 replay，既看不到“工程”，也无法在子级做二次选择。
+用户的心智模型是 **影片工程 → 合成器图层**：一个影片工程里可以有多个 bbsae 合成
+（`CompDocument`），它们才是进入 BBS 影片采样链路的对象。顶层直接列 replay，既看不到“工程”，
+也无法在子级选择合成。
 
 ### 修复
 
-- 顶栏标签改为 **影片工程**：`影片：<filmId>`（tooltip 显示当前回放图层）；无影片时仍显示
-  `工程：<project>`；无绑定显示 `回放/影片：-`。
+- 顶栏标签改为 **影片工程**：`影片：<filmId>`；无影片时仍显示 `工程：<project>`；无绑定显示
+  `回放/影片：-`。
 - 左键选择器改成二级：
   1. `选择回放工程（BBS 影片）`：列出 `filmIds`，当前影片标 `（当前）`；
-  2. `选择回放图层（选中即绑定）`：列出该影片的原版 Replay 图层，按索引解析，不靠重名匹配。
-- 选中回放图层后调用新的 `bindCurrentCompositionToFilm()`：
+  2. `选择合成器图层（选中即绑定）`：列出该影片工程的全部 `CompProject.comps`（按索引解析，
+     不靠重名匹配）；**不再把 Replay 实体当图层**。
+- 选中合成后调用新的 `bindCurrentCompositionToFilm()`：
   - 为 `(project, comp)` 幂等调用 `CompositionClip.ensureForFilm(...)`；
   - 已有片段只更新，不会重复添加；
-  - 这样 bbsae 的 replay 合成才真正进入 BBS 原版影片采样链路，而不是只切换了编辑视图。
-- 复用了单个 `ensureCompositionClip()` 创建入口：显式“加入影片轨道”和顶栏“绑定回放”共用同一逻辑，
+  - 这样 bbsae 的合成才真正进入 BBS 原版影片采样链路，而不是只切换了编辑视图。
+  - 若合成 ID 对应某个原版 Replay，会顺带恢复该 Replay 关联；手建合成没有对应 Replay 也能绑定。
+- 复用了单个 `ensureCompositionClip()` 创建入口：显式“加入影片轨道”和顶栏“绑定合成”共用同一逻辑，
   其余打开/时长路径继续只走 `updateForFilm()`，不会偷加片段。
-- 跨影片选择时，先 `load` 影片数据，选中回放后才 `fill` 共享 film panel 并打开合成器；取消选择不会
+- 跨影片选择时，先 `load` 影片数据；选中合成后才 `fill` 共享 film panel 并打开合成器；取消选择不会
   改掉当前影片。
 
 ## 验证
 
 - `PreviewProxyTest`：长边 cap、纹理上限 clamp；
-- `ReplaySelectorParsingTest`：`影片 · id（当前）` 与 `回放 · n · name` 的解析；
+- `ReplaySelectorParsingTest`：`影片 · id（当前）` 与 `图层 · n · name` 的解析；
 - 全量测试：**205 suites / 1241 tests / 0 failures / 0 errors / 1 skipped**；
 - 未启动客户端，未干扰正在使用的项目；
 - 构建产物：`bbsae-0.99-hotfix91.jar`。
