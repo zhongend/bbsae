@@ -119,6 +119,32 @@ public class PreviewProxyTest
     }
 
     @Test
+    public void ultraWidePreviewNeverRequestsATextureWiderThanTheEdgeCap()
+    {
+        CompDocument wide21x9 = document(2560, 1080);
+        CompDocument wide32x9 = document(3840, 1080);
+
+        float scale21 = CompRenderer.previewScale(wide21x9, 4000F, 3000F, 0, 1F);
+        float scale32 = CompRenderer.previewScale(wide32x9, 4000F, 3000F, 0, 1F);
+
+        assertTrue(wide21x9.width * scale21 <= 3840F + 0.5F,
+            "21:9 preview target must stay under the 3840 px edge cap: " + (wide21x9.width * scale21));
+        assertTrue(wide32x9.width * scale32 <= 3840F + 0.5F,
+            "32:9 preview target must stay under the 3840 px edge cap: " + (wide32x9.width * scale32));
+    }
+
+    @Test
+    public void renderScaleIsClampedByTheActualTextureLimit()
+    {
+        /* A 2560x1080 target at 2x would be 5120 px wide; a 4096/3840 cap must reduce it instead
+         * of silently creating an incomplete framebuffer (blank preview). */
+        assertEquals(1.5F, CompRenderer.renderScaleWithinTextureLimit(2560F, 1080F, 2F, 3840D), 0.001F);
+        /* A low-end GPU that reports 2048 still gets a visible (smaller) target. */
+        assertEquals(0.8F, CompRenderer.renderScaleWithinTextureLimit(2560F, 1080F, 2F, 2048D), 0.001F);
+        assertEquals(0.5F, CompRenderer.renderScaleWithinTextureLimit(7680F, 2160F, 2F, 3840D), 0.001F);
+    }
+
+    @Test
     public void cacheSizeIsBoundedAndKeepsTheAspectRatio()
     {
         int[] hd = CompPrecache.cacheSize(document(1920, 1080));

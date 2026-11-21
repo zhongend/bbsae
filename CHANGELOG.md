@@ -1,5 +1,29 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix91 — 2026-11-21
+
+预览放大后空白、顶栏回放工程绑定层级。本轮未启动客户端。
+
+### 预览：大尺寸/长条合成不再整块消失
+
+- **根因**：previewScale 只有 4K 像素预算，没有单边上限；21:9/32:9 合成可以总像素不超限却请求
+  超过 4096px 的纹理，FBO 不完整但不抛异常，预览在某个尺寸后变空白。
+- 增加 3840 长边 cap，并在 renderCompToFbo 按 GL_MAX_TEXTURE_SIZE 再 clamp；图层光栅同样按
+  实际纹理上限裁剪。低端 GPU 会降分辨率但保持画面可见。
+- 新增 PreviewProxyTest：21:9/32:9 长边、4096/2048 纹理上限、7680 宽合成。
+
+### 顶栏：影片工程 → 回放图层
+
+- 顶层不再直接列 Replay 实体，改为 BBS 影片工程列表；进入子级后列出该影片的原版回放图层。
+- 顶栏标签显示 `影片：<filmId>`（tooltip 带当前回放图层）；无影片时显示工程名。
+- 选中回放后调用 `bindCurrentCompositionToFilm()` 幂等确保 `CompositionClip`，真正进入 BBS 影片
+  采样链路；跨影片选择时才 fill 共享 film panel。
+- 创建入口收敛为单个 `ensureCompositionClip()`，显式“加入轨道”和顶栏“绑定回放”共用；其余打开/
+  时长路径仍只 updateForFilm。
+- 新增 ReplaySelectorParsingTest。
+
+全量测试：**205 suites / 1241 tests / 0 failures / 0 errors / 1 skipped**。
+
 ## 0.99-hotfix90 — 2026-11-21
 
 动态文字（变量/表达式/逐字动画）的 3D 光栅边界。本轮未启动客户端。

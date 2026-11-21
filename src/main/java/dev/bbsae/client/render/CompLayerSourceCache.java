@@ -218,11 +218,14 @@ public final class CompLayerSourceCache
             return MAX_EDGE;
         }
 
+        int cap = Math.min(4096, CompRenderer.maxTextureEdge());
+
         if (context.targetEdge > 0)
         {
             /* Explicit request (pre-render cache 1280, AE encoder frame size, …): the source raster
-             * must not be capped by the draft guard. */
-            return context.targetEdge;
+             * must not be capped by the draft guard, but it still cannot exceed the GPU's texture
+             * limit or the layer disappears from the frame. */
+            return Math.min(cap, context.targetEdge);
         }
 
         if (context.preview)
@@ -230,14 +233,14 @@ public final class CompLayerSourceCache
             /* The draft guard was a fixed 1024 px. That is fine for a small panel, but once the
              * preview is maximized/fullscreen the composition FBO can be 1920+ device pixels wide
              * while every baked 3D/text/effect raster stayed at 1024 — the layer was then upscaled
-             * ~1.9× and read as mosaic. Follow the actual preview target, capped at 4K so an 8K
-             * composition cannot allocate an 8K raster per layer. */
+             * ~1.9× and read as mosaic. Follow the actual preview target, capped at 4K (and the
+             * GPU edge) so a long/narrow composition cannot allocate an incomplete layer FBO. */
             int target = Math.max(context.renderWidth(), context.renderHeight());
 
-            return Math.max(MAX_EDGE, Math.min(4096, target));
+            return Math.min(cap, Math.max(MAX_EDGE, target));
         }
 
-        return Math.max(MAX_EDGE, Math.min(4096,
+        return Math.min(cap, Math.max(MAX_EDGE,
             Math.max(Math.max(context.width, context.height),
                 Math.max(context.renderWidth(), context.renderHeight()))));
     }

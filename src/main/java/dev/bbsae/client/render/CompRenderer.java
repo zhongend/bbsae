@@ -296,10 +296,13 @@ public final class CompRenderer
         /* Fullscreen previews legitimately cover more device pixels than the composition has. BBS
          * supersamples its own film preview; a compositor preview that stayed at 1× (and a text /
          * effect raster capped below that) is exactly the "everything is mosaic when fullscreen"
-         * report. Cap the supersample by a 4K pixel budget so a 4K composition still renders 1:1
-         * and an 8K panel cannot allocate an 8K graph per frame. */
+         * report. Cap the supersample by a 4K pixel budget AND by a 3840 px long edge: a wide
+         * composition (21:9 / 32:9) can stay under the pixel budget while still requesting a
+         * texture wider than the GPU supports, which produced an incomplete FBO — the preview simply
+         * went blank when the panel was enlarged. */
         double budgetScale = Math.sqrt(MAX_PREVIEW_PIXELS / ((double) dw * (double) dh));
-        uniform = (float) Math.min(uniform, Math.max(0.2D, budgetScale));
+        double edgeScale = MAX_PREVIEW_EDGE / Math.max(dw, dh);
+        uniform = (float) Math.min(uniform, Math.max(0.2D, Math.min(budgetScale, edgeScale)));
 
         return Math.round(uniform * 16F) / 16F;
     }
@@ -328,15 +331,79 @@ public final class CompRenderer
 
         uniform = Math.max(0.2F, Math.min(MAX_PREVIEW_SCALE, uniform));
         double budgetScale = Math.sqrt(MAX_PREVIEW_PIXELS / ((double) dw * (double) dh));
-        uniform = (float) Math.min(uniform, Math.max(0.2D, budgetScale));
+        double edgeScale = MAX_PREVIEW_EDGE / Math.max(dw, dh);
+        uniform = (float) Math.min(uniform, Math.max(0.2D, Math.min(budgetScale, edgeScale)));
 
         return Math.round(uniform * 16F) / 16F;
+    }
+
+    /**
+     * Last-resort safety for drivers whose {@code GL_MAX_TEXTURE_SIZE} is below the 4K budget
+     * (some integrated/virtual GPUs report 2048). Asking for a larger colour attachment yields an
+     * incomplete FBO with no exception, which looks exactly like "the preview went blank when I
+     * enlarged it". Clamp instead; the blit upscales the smaller target and the content stays
+     * visible.
+     */
+    static float renderScaleWithinTextureLimit(float width, float height, float scale, double maxEdge)
+    {
+        if (!(width > 0F) || !(height > 0F) || !(scale > 0F))
+        {
+            return Math.max(0.05F, Math.min(MAX_PREVIEW_SCALE, scale));
+        }
+
+        double limit = Math.max(0.05D, Math.min(maxEdge / width, maxEdge / height));
+
+        return (float) Math.min(scale, Math.min(MAX_PREVIEW_SCALE, limit));
+    }
+
+    private static int maxTextureSize = -1;
+    /**
+     * Last known texture edge for callers that size layer rasters outside the main composition
+     * target. Starts at 4096 so headless tests never touch GL; the first real render refreshes it.
+     */
+    private static int maxTextureEdge = 4096;
+
+    static int maxTextureSize()
+    {
+        if (maxTextureSize < 0)
+        {
+            try
+            {
+                maxTextureSize = GL11.glGetInteger(GL11.GL_MAX_TEXTURE_SIZE);
+            }
+            catch (RuntimeException | LinkageError ignored)
+            {
+                maxTextureSize = 0;
+            }
+
+            if (maxTextureSize <= 0)
+            {
+                maxTextureSize = 4096;
+            }
+
+            maxTextureEdge = maxTextureSize;
+        }
+
+        return maxTextureSize;
+    }
+
+    /** Last known safe texture edge; see {@link #maxTextureSize()}. */
+    public static int maxTextureEdge()
+    {
+        return maxTextureEdge;
     }
 
     /** Upper bound for a preview supersample. 2× is enough for GUI-scale-2 and fullscreen. */
     public static final float MAX_PREVIEW_SCALE = 2F;
     /** Pixel budget of one preview composition target; 4K UHD. */
     private static final double MAX_PREVIEW_PIXELS = 3840D * 2160D;
+    /**
+     * Long-edge cap for a preview/overlay target. A long, narrow composition (e.g. 2560×1080 at
+     * 2×) can fit the pixel budget but exceed a 4096 px GL texture limit, producing a silently
+     * incomplete FBO (blank preview) exactly when the panel crosses that scale. 3840×2160 is the
+     * largest common 16:9 target and keeps every orientation under the usual 4096 limit.
+     */
+    static final double MAX_PREVIEW_EDGE = 3840D;
 
     /** MC's GUI scale (device pixels per GUI pixel); 1 when it cannot be read (headless/tests). */
     private static float deviceScale()
@@ -1542,6 +1609,8 @@ public final class CompRenderer
 
         context.preview = preview;
         context.scale = Math.max(0.05F, Math.min(MAX_PREVIEW_SCALE, scale));
+        context.scale = renderScaleWithinTextureLimit(comp.width, comp.height, context.scale,
+            Math.min(MAX_PREVIEW_EDGE, maxTextureSize()));
 
         if (perPixelDepthFrame(context))
         {

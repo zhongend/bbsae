@@ -38,6 +38,7 @@ import dev.bbsae.comp.CompositionClip;
 import dev.bbsae.client.render.CompRenderContext;
 import dev.bbsae.client.ui.CompInput;
 import mchorse.bbs_mod.BBSSettings;
+import mchorse.bbs_mod.film.Film;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.graphics.window.Window;
 import mchorse.bbs_mod.l10n.keys.IKey;
@@ -7001,7 +7002,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.replay = film.replays.getList().get(0);
         }
 
-        this.replaySelector.label = IKey.constant("回放：" + (this.replay == null ? "-" : this.replayLabel(this.replay)));
+        this.updateReplaySelectorLabel();
 
         mchorse.bbs_mod.ui.ContentType.FILMS.getRepository().requestKeys((keys) ->
         {
@@ -7237,11 +7238,21 @@ public class UICompositorPanel extends UIDashboardPanel
      */
     private void addCompositionToFilm()
     {
+        this.ensureCompositionClip("已把「" + (this.doc == null ? "-" : this.doc.name)
+            + "」加入 BBS 影片轨道（合成器片段）");
+    }
+
+    /**
+     * Single clip-creation gate for both explicit actions: "add to film timeline" and selecting a
+     * replay from the top-bar project selector. Every other path uses {@link #updateFilmClip}.
+     */
+    private boolean ensureCompositionClip(String successStatus)
+    {
         if (this.film == null || this.project == null || this.doc == null)
         {
             this.setStatus("没有打开的影片：先在 BBS 影片编辑器打开一个影片");
 
-            return;
+            return false;
         }
 
         CompositionClip clip = CompositionClip.ensureForFilm(this.film, this.project.id, this.doc.id,
@@ -7249,19 +7260,27 @@ public class UICompositorPanel extends UIDashboardPanel
 
         this.filmClipLinked = clip != null;
 
-        if (clip != null)
+        if (clip == null)
         {
-            this.syncBbsLoopToDocument();
-
-            if (this.filmPanel != null)
-            {
-                this.filmPanel.forceSave();
-            }
-
-            this.refreshInspector();
-            this.save();
-            this.setStatus("已把「" + this.doc.name + "」加入 BBS 影片轨道（合成器片段）");
+            return false;
         }
+
+        this.syncBbsLoopToDocument();
+
+        if (this.filmPanel != null)
+        {
+            this.filmPanel.forceSave();
+        }
+
+        this.refreshInspector();
+        this.save();
+
+        if (successStatus != null && !successStatus.isBlank())
+        {
+            this.setStatus(successStatus);
+        }
+
+        return true;
     }
 
     /** Removes this composition's clip from the film timeline (explicit user action). */
@@ -7768,7 +7787,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.projectBin.refresh();
         }
         this.setSingleSelection(comp == null || comp.layers.isEmpty() ? null : comp.layers.get(comp.layers.size() - 1));
-        this.replaySelector.label = IKey.constant("工程：" + (project.name == null ? project.id : project.name));
+        this.updateReplaySelectorLabel();
 
         if (this.trackTimeline != null)
         {
@@ -7888,7 +7907,7 @@ public class UICompositorPanel extends UIDashboardPanel
         this.playing = false;
         this.playRate = 0F;
         this.setSingleSelection(this.doc == null || this.doc.layers.isEmpty() ? null : this.doc.layers.get(this.doc.layers.size() - 1));
-        this.replaySelector.label = IKey.constant("回放：片段");
+        this.updateReplaySelectorLabel();
 
         if (this.trackTimeline != null)
         {
@@ -10367,6 +10386,35 @@ public class UICompositorPanel extends UIDashboardPanel
         return name;
     }
 
+    /**
+     * Top-bar label for the outer binding context: a BBS film project, not one of its replay
+     * layers. The replay layer is a second-level choice (see the selector), because one film can
+     * contain many original BBS replay layers.
+     */
+    private void updateReplaySelectorLabel()
+    {
+        if (this.film != null)
+        {
+            String filmId = this.film.getId();
+            String child = this.replay == null ? "" : "；回放图层：" + this.replayLabel(this.replay);
+
+            this.replaySelector.label = IKey.constant("影片：" + (filmId == null || filmId.isBlank() ? "-" : filmId));
+            this.replaySelector.tooltip(IKey.constant("当前 BBS 影片工程" + child
+                + "。点击先选择影片工程，再进入子级选择回放图层并绑定。"));
+            return;
+        }
+
+        if (this.project != null)
+        {
+            this.replaySelector.label = IKey.constant("工程：" + (this.project.name == null ? this.project.id : this.project.name));
+            this.replaySelector.tooltip(IKey.constant("当前 bbsae 工程；从 BBS 影片打开时会显示影片工程与回放图层。"));
+            return;
+        }
+
+        this.replaySelector.label = IKey.constant("回放/影片：-");
+        this.replaySelector.tooltip(IKey.constant("选择 BBS 影片工程，再选择原版回放图层进行绑定。"));
+    }
+
     private void showReplayPicker()
     {
         if (this.film == null)
@@ -10779,49 +10827,255 @@ public class UICompositorPanel extends UIDashboardPanel
         this.selectReplay(replays.get((index + 1 + replays.size()) % replays.size()));
     }
 
+    /**
+     * Two-level binding selector: first the BBS film project, then the replay layer inside it.
+     *
+     * <p>The old selector listed replay <em>entities</em> directly and films as a second group. The
+     * user's mental model (and BBS' own hierarchy) is project → replay layer: a film is the project,
+     * and one film can contain several original BBS replay layers. Binding a layer from the
+     * sub-level also ensures the composition clip exists on the film timeline, which is what makes
+     * the bbsae comp actually sample into the BBS film.</p>
+     */
     private void openReplaySelector()
     {
         List<String> values = new ArrayList<>();
+        List<String> ids = new ArrayList<>();
 
-        if (this.film != null)
+        if (this.film != null && this.film.getId() != null && !this.film.getId().isBlank())
         {
-            for (mchorse.bbs_mod.film.replays.Replay replay : this.film.replays.getList())
-            {
-                values.add("Replay · " + replay.getName());
-            }
+            values.add("影片 · " + this.film.getId() + "（当前）");
+            ids.add(this.film.getId());
         }
 
         for (String filmId : this.filmIds)
         {
-            if (this.film == null || !filmId.equals(this.film.getId()))
+            if (filmId == null || filmId.isBlank() || ids.contains(filmId))
             {
-                values.add("Film · " + filmId);
+                continue;
             }
+
+            values.add("影片 · " + filmId);
+            ids.add(filmId);
         }
 
-        UIListOverlayPanel panel = new UIListOverlayPanel(IKey.constant("回放 / 影片"), (value) ->
+        if (values.isEmpty())
         {
-            if (value.startsWith("Replay · ") && this.film != null)
-            {
-                String name = value.substring("Replay · ".length());
+            this.setStatus("没有可选择的 BBS 影片工程：先在 BBS 影片编辑器打开或创建一个影片");
+            return;
+        }
 
-                for (mchorse.bbs_mod.film.replays.Replay replay : this.film.replays.getList())
-                {
-                    if (replay.getName().equals(name))
-                    {
-                        this.selectReplay(replay);
-                        return;
-                    }
-                }
-            }
-            else if (value.startsWith("Film · "))
+        UIListOverlayPanel[] selector = new UIListOverlayPanel[1];
+
+        selector[0] = new UIListOverlayPanel(IKey.constant("选择回放工程（BBS 影片）"), (value) ->
+        {
+            if (selector[0] != null)
             {
-                this.loadFilm(value.substring("Film · ".length()));
+                selector[0].close();
             }
+
+            int separator = value.indexOf(" · ");
+
+            if (separator < 0)
+            {
+                return;
+            }
+
+            String filmId = filmIdFromSelector(value);
+
+            if (filmId.isEmpty())
+            {
+                return;
+            }
+
+            this.openReplayPickerForFilm(filmId);
         });
 
-        panel.addValues(values);
-        UIOverlay.addOverlay(this.getContext(), panel, 0.45F, 0.65F);
+        selector[0].addValues(values);
+        UIOverlay.addOverlay(this.getContext(), selector[0], 0.45F, 0.65F);
+    }
+
+    /** Second level: the original BBS replay layers of one project, selecting one binds it. */
+    private void openReplayPickerForFilm(String filmId)
+    {
+        if (filmId == null || filmId.isBlank())
+        {
+            return;
+        }
+
+        if (this.film != null && filmId.equals(this.film.getId()))
+        {
+            this.showReplayPickerForFilm(this.film, false);
+            return;
+        }
+
+        if (this.filmPanel == null)
+        {
+            this.setStatus("没有打开的 BBS 影片编辑器，无法读取影片工程");
+            return;
+        }
+
+        mchorse.bbs_mod.ui.ContentType.FILMS.getRepository().load(filmId, (data) ->
+        {
+            if (!(data instanceof Film loaded))
+            {
+                return;
+            }
+
+            net.minecraft.client.MinecraftClient.getInstance().execute(() ->
+            {
+                if (this.filmPanel == null)
+                {
+                    return;
+                }
+
+                /* Do not fill the shared film panel before the user actually picks a replay:
+                 * cancelling the selector must leave the currently open film untouched. */
+                this.showReplayPickerForFilm(loaded, true);
+            });
+        });
+    }
+
+    /** Extracts the film id from a {@code 影片 · <id>[（当前）]} selector row. */
+    static String filmIdFromSelector(String value)
+    {
+        if (value == null)
+        {
+            return "";
+        }
+
+        int separator = value.indexOf(" · ");
+
+        if (separator < 0)
+        {
+            return "";
+        }
+
+        String filmId = value.substring(separator + " · ".length());
+        String current = "（当前）";
+
+        return filmId.endsWith(current)
+            ? filmId.substring(0, filmId.length() - current.length())
+            : filmId;
+    }
+
+    /** Extracts the zero-based replay index from a {@code 回放 · <n> · <name>} selector row. */
+    static int replayIndexFromSelector(String value)
+    {
+        if (value == null)
+        {
+            return -1;
+        }
+
+        int separator = value.indexOf(" · ");
+
+        if (separator < 0)
+        {
+            return -1;
+        }
+
+        String rest = value.substring(separator + " · ".length());
+        int separator2 = rest.indexOf(" · ");
+
+        try
+        {
+            return Integer.parseInt(separator2 < 0 ? rest : rest.substring(0, separator2)) - 1;
+        }
+        catch (NumberFormatException ignored)
+        {
+            return -1;
+        }
+    }
+
+    private void showReplayPickerForFilm(Film film, boolean otherFilm)
+    {
+        List<Replay> replays = film == null || film.replays == null ? List.of() : film.replays.getList();
+
+        if (replays.isEmpty())
+        {
+            this.setStatus("影片「" + (film == null ? "-" : film.getId()) + "」没有原版回放图层");
+            return;
+        }
+
+        List<String> values = new ArrayList<>();
+
+        for (int i = 0; i < replays.size(); i++)
+        {
+            String name = replays.get(i).getName();
+
+            if (name == null || name.isBlank() || "-".equals(name.trim()))
+            {
+                name = "回放 " + (i + 1);
+            }
+
+            values.add("回放 · " + (i + 1) + " · " + name);
+        }
+
+        UIListOverlayPanel[] selector = new UIListOverlayPanel[1];
+
+        selector[0] = new UIListOverlayPanel(
+            IKey.constant("选择回放图层（选中即绑定）· " + film.getId()), (value) ->
+        {
+            if (selector[0] != null)
+            {
+                selector[0].close();
+            }
+
+            int separator = value.indexOf(" · ");
+
+            if (separator < 0)
+            {
+                return;
+            }
+
+            int index = replayIndexFromSelector(value);
+
+            if (index < 0 || index >= replays.size())
+            {
+                return;
+            }
+
+            this.bindReplayFromSelector(film, replays.get(index), otherFilm);
+        });
+
+        selector[0].addValues(values);
+        UIOverlay.addOverlay(this.getContext(), selector[0], 0.45F, 0.65F);
+    }
+
+    private void bindReplayFromSelector(Film film, Replay replay, boolean otherFilm)
+    {
+        if (otherFilm)
+        {
+            if (this.filmPanel == null)
+            {
+                return;
+            }
+
+            this.filmPanel.fill(film);
+            BbsAeClient.openCompositorForFilm(this.filmPanel, film, replay);
+
+            UICompositorPanel panel = BbsAeClient.compositorPanel();
+
+            if (panel != null)
+            {
+                panel.bindCurrentCompositionToFilm();
+            }
+
+            return;
+        }
+
+        this.selectReplay(replay);
+        this.bindCurrentCompositionToFilm();
+    }
+
+    /**
+     * Ensures this replay's composition clip exists on the film timeline. The old selector only
+     * switched the edited composition; without a clip, the BBS film never sampled it, so the
+     * "binding" existed only inside the compositor.
+     */
+    public void bindCurrentCompositionToFilm()
+    {
+        this.ensureCompositionClip("已绑定回放「" + (this.replay == null ? "-" : this.replayLabel(this.replay))
+            + "」到影片工程「" + (this.film == null || this.film.getId() == null ? "-" : this.film.getId()) + "」");
     }
 
     private void replayContextMenu(ContextMenuManager manager)
@@ -10924,7 +11178,7 @@ public class UICompositorPanel extends UIDashboardPanel
             this.updateCompPath();
         }
 
-        this.replaySelector.label = IKey.constant("回放：" + (replay == null ? "-" : this.replayLabel(replay)));
+        this.updateReplaySelectorLabel();
         this.save();
     }
 
