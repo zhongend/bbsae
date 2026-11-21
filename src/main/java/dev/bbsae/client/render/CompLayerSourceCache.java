@@ -379,7 +379,12 @@ public final class CompLayerSourceCache
              * the raster chopped the bottom of the text. Grow the raster to the authored text
              * block (plus its stroke), never shrink it. This only affects the baked 3D path: 2D
              * text is drawn straight into the composition-sized target. */
-            String text = layer.text == null ? "" : layer.text;
+            /* The raster must measure the text that is actually drawn, not the raw template:
+             * variables/expressions/animators can resolve to a longer string, and a raw
+             * `layer.text` estimate then clips the 3D bake. */
+            String text = dev.bbsae.comp.TextContent.resolve(layer, context.time,
+                Math.max(1, context.comp == null ? 60 : Math.round(context.comp.fps)),
+                Math.round(frame));
             int lines = 1;
 
             for (int i = 0; i < text.length(); i += 1)
