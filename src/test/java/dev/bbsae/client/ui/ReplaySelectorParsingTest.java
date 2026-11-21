@@ -17,6 +17,18 @@ public class ReplaySelectorParsingTest
     }
 
     @Test
+    public void freshBbsCompositionClipsAreTreatedAsUnbound()
+    {
+        assertEquals(true, UICompositorPanel.isDefaultClipBinding("demo", "main", "Compositor"));
+        assertEquals(true, UICompositorPanel.isDefaultClipBinding("demo", "main", ""));
+        assertEquals(false, UICompositorPanel.isDefaultClipBinding("my-project", "main", "Compositor"),
+            "a real project id must be honoured even if the clip title is still default");
+        assertEquals(false, UICompositorPanel.isDefaultClipBinding("demo", "custom", "Compositor"),
+            "only the factory demo/main pair is the empty binding");
+        assertEquals(false, UICompositorPanel.isDefaultClipBinding("demo", "main", "Demo / Main"),
+            "after an explicit binding the title marks the layer as bound");
+    }
+    @Test
     public void replayIndexIsZeroBasedAndNameIndependent()
     {
         assertEquals(0, UICompositorPanel.replayIndexFromSelector("回放 · 1 · Alice"));

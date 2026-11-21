@@ -42,7 +42,7 @@
 | 渲染 | 每层独立 FBO、straight-alpha 合成、mask/matte/effects/styles、ping-pong 效果链、GlStateGuard、BBS BufferRenderer 缓存同步 |
 | 输出 | 渲染队列（新增/移除/重试/取消/串行）、render settings 与 output module 分离、输出模块 UI 可编辑、PNG 序列、H.264 审阅、ProRes 422 HQ、ProRes 4444 Alpha、输出模板持久化、打开输出文件夹 |
 | 影片集成 | 一个影片一个项目；每个 replay 一个独立 composition；**打开合成器不会自动往影片轨道加片段**（合成页显式添加/移除；导出时按需准备片段并在导出结束后移除临时片段）；合成器片段检查器可「选择工程/合成」或「绑定到当前回放工程」（自动建工程与 replay 合成）；`ClipContext.clipData` → `FrameOverlays` → BBS recorder；不修改 `.dat` |
-| 回放绑定 | 顶栏按 BBS 原版层级显示：**影片工程 → 合成器图层**；第一级列出 BBS 影片工程，第二级列出该工程的 `CompProject.comps`（不再把 Replay 实体当图层）；选中即幂等绑定 `CompositionClip`（已有片段更新、不重复添加），跨影片选择时才切换共享 film panel |
+| 回放绑定 | 顶栏按 BBS 原版层级显示：**BBS 影片工程 → BBS 原版影片编辑器里的合成器图层**；第二级列出 `film.camera.getClips(CompositionClip.class)`，不列 Replay 实体或内部 CompDocument；已绑定图层直接打开，未绑定图层（工厂 demo/main 视为空）依次选 bbsae 工程与合成并写回 `clip.project/comp` |
 | 预览尺寸 | 预览目标同时按 4K 像素预算与 3840 长边限制，并按实际 `GL_MAX_TEXTURE_SIZE` 再 clamp；21:9/32:9 或低端 GPU 放大面板时不会创建不完整 FBO（画面不再整块消失），图层源光栅同样受纹理上限约束 |
 | BBS 原版音频 | `CompositionClip` 的合成音轨通过 `CompFilmAudio` 跟随 BBS 原版影片时钟播放（`AudioClientClip.manageSounds` 之后；播放/暂停/拖动/循环与画面同源），并通过 `CompFilmAudioExport` 混入 BBS 导出/“渲染音频”的 WAV（时间映射与画面相同的 `(ticks * timeScale + offset)/20`；影片没有 `AudioClip` 时也能生成音轨） |
 | 回放 gizmo | 复用 BBS 原版 `Gizmo` + 原版 `FilmTarget` 级联：**骨骼 → 表单锚点 → replay root**；骨骼/锚点使用完整移动/缩放/旋转/平面/球/视口环手柄，root 保留 BBS 的受限遮罩；矩阵、拖拽 frame axes、stencil 与视觉同源，锚点轨道不再误写 root；gizmo 在 HUD 之后绘制并清理合成残留深度 |

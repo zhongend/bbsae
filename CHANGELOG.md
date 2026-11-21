@@ -1,5 +1,17 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix93 — 2026-11-21
+
+再次修正顶栏子级：改成 BBS 原版影片编辑器的合成器图层，并支持绑定 bbsae 工程。未启动客户端。
+
+- 第二级改为 `film.camera.getClips(CompositionClip.class)`：BBS 原版影片编辑器里实际存在的合成器
+  图层；不再列 Replay 实体，也不列 bbsae 内部 CompDocument。
+- 已绑定图层直接打开对应工程/合成；未绑定图层（工厂 `demo/main` 且标题仍默认视为空绑定）依次
+  选择 bbsae 工程和合成，写回 `clip.project/comp` 并保存影片。
+- 绑定后把默认标题写成 `<工程> / <合成>`，使该图层下次被识别为已绑定。
+- 跨影片选择时选中图层后才切换共享 film panel；取消不影响当前影片。
+- 新增默认绑定判定测试；全量测试：**205 suites / 1242 tests / 0 failures / 0 errors / 1 skipped**。
+
 ## 0.99-hotfix92 — 2026-11-21
 
 修正顶栏子级：列出工程的合成器图层，而不是回放实体。本轮未启动客户端。

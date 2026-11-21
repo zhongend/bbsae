@@ -35,7 +35,7 @@
 FBO 不完整不会抛异常，`glCheckFramebufferStatus` 才是事实来源；本轮在请求阶段就不产生超限目标，
 并用纯函数把“尺寸→安全 scale”钉进单元测试，避免下次预算改动重新引入。
 
-## 2. 顶栏「回放/影片」选到回放实体而不是工程
+## 2. 顶栏「回放/影片」：BBS 影片工程 → BBS 原版合成器图层
 
 ### 根因
 
@@ -47,32 +47,31 @@ Replay · Bob
 Film · my-film
 ```
 
-用户的心智模型是 **影片工程 → 合成器图层**：一个影片工程里可以有多个 bbsae 合成
-（`CompDocument`），它们才是进入 BBS 影片采样链路的对象。顶层直接列 replay，既看不到“工程”，
-也无法在子级选择合成。
+但正确的层级是 **BBS 影片工程 → BBS 原版影片编辑器里的合成器图层**。合成器图层是
+`film.camera` 上的 `CompositionClip`（在原版影片编辑器里添加的层），每个层通过
+`project` / `comp` 指向一个 bbsae 工程/合成。回放实体不是图层，bbsae 内部 CompDocument 也不是
+原版影片的图层。
 
 ### 修复
 
-- 顶栏标签改为 **影片工程**：`影片：<filmId>`；无影片时仍显示 `工程：<project>`；无绑定显示
-  `回放/影片：-`。
-- 左键选择器改成二级：
-  1. `选择回放工程（BBS 影片）`：列出 `filmIds`，当前影片标 `（当前）`；
-  2. `选择合成器图层（选中即绑定）`：列出该影片工程的全部 `CompProject.comps`（按索引解析，
-     不靠重名匹配）；**不再把 Replay 实体当图层**。
-- 选中合成后调用新的 `bindCurrentCompositionToFilm()`：
-  - 为 `(project, comp)` 幂等调用 `CompositionClip.ensureForFilm(...)`；
-  - 已有片段只更新，不会重复添加；
-  - 这样 bbsae 的合成才真正进入 BBS 原版影片采样链路，而不是只切换了编辑视图。
-  - 若合成 ID 对应某个原版 Replay，会顺带恢复该 Replay 关联；手建合成没有对应 Replay 也能绑定。
-- 复用了单个 `ensureCompositionClip()` 创建入口：显式“加入影片轨道”和顶栏“绑定合成”共用同一逻辑，
-  其余打开/时长路径继续只走 `updateForFilm()`，不会偷加片段。
-- 跨影片选择时，先 `load` 影片数据；选中合成后才 `fill` 共享 film panel 并打开合成器；取消选择不会
-  改掉当前影片。
+- 顶栏标签显示 **影片工程**：`影片：<filmId>`；无影片时仍显示 `工程：<project>`。
+- 左键选择器两级：
+  1. `选择回放工程（BBS 影片）`：列出 BBS 影片工程；
+  2. `选择 BBS 原版合成器图层`：列出该影片 `film.camera.getClips(CompositionClip.class)`，
+     每行显示图层标题与当前绑定的 bbsae 工程/合成。
+- 选中已绑定的图层：直接打开对应 `project/comp`。
+- 选中未绑定图层（BBS 工厂默认 `demo/main` 视为空绑定）：
+  1. `选择 bbsae 工程绑定到该图层`；
+  2. `选择合成绑定到图层`；
+  3. 写入 `clip.project` / `clip.comp`，保存影片，再打开合成器。
+  绑定后把默认标题改成 `<工程> / <合成>`，下次识别为已绑定。
+- 跨影片选择时，先 `load` 影片数据；选中图层后才 `fill` 共享 film panel，取消不会改掉当前影片。
 
 ## 验证
 
 - `PreviewProxyTest`：长边 cap、纹理上限 clamp；
-- `ReplaySelectorParsingTest`：`影片 · id（当前）` 与 `图层 · n · name` 的解析；
-- 全量测试：**205 suites / 1241 tests / 0 failures / 0 errors / 1 skipped**；
+- `ReplaySelectorParsingTest`：影片/图层行解析，以及 BBS 工厂默认 `demo/main` 空绑定判定；
+- 全量测试：**205 suites / 1242 tests / 0 failures / 0 errors / 1 skipped**；
 - 未启动客户端，未干扰正在使用的项目；
-- 构建产物：`bbsae-0.99-hotfix91.jar`。
+- 构建产物：`bbsae-0.99-hotfix93.jar`。
+

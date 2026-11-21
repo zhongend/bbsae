@@ -10388,31 +10388,31 @@ public class UICompositorPanel extends UIDashboardPanel
 
     /**
      * Top-bar label for the outer binding context: a BBS film project, not one of its replay
-     * layers. The replay layer is a second-level choice (see the selector), because one film can
-     * contain many original BBS replay layers.
+     * entities or internal compositions. The BBS original composition layers are the second-level
+     * choice (see the selector), because one film can contain many such layers.
      */
     private void updateReplaySelectorLabel()
     {
         if (this.film != null)
         {
             String filmId = this.film.getId();
-            String child = this.replay == null ? "" : "；回放图层：" + this.replayLabel(this.replay);
+            String child = this.doc == null ? "" : "；当前合成：" + (this.doc.name == null ? this.doc.id : this.doc.name);
 
             this.replaySelector.label = IKey.constant("影片：" + (filmId == null || filmId.isBlank() ? "-" : filmId));
             this.replaySelector.tooltip(IKey.constant("当前 BBS 影片工程" + child
-                + "。点击先选择影片工程，再进入子级选择回放图层并绑定。"));
+                + "。点击先选择影片工程，再进入子级选择 BBS 原版合成器图层并绑定 bbsae 工程。"));
             return;
         }
 
         if (this.project != null)
         {
             this.replaySelector.label = IKey.constant("工程：" + (this.project.name == null ? this.project.id : this.project.name));
-            this.replaySelector.tooltip(IKey.constant("当前 bbsae 工程；从 BBS 影片打开时会显示影片工程与回放图层。"));
+            this.replaySelector.tooltip(IKey.constant("当前 bbsae 工程；从 BBS 影片打开时会显示影片工程与合成器图层。"));
             return;
         }
 
         this.replaySelector.label = IKey.constant("回放/影片：-");
-        this.replaySelector.tooltip(IKey.constant("选择 BBS 影片工程，再选择原版回放图层进行绑定。"));
+        this.replaySelector.tooltip(IKey.constant("选择 BBS 影片工程，再选择原版合成器图层进行绑定。"));
     }
 
     private void showReplayPicker()
@@ -10899,6 +10899,12 @@ public class UICompositorPanel extends UIDashboardPanel
      * film timeline) belonging to the selected project. Replay entities are deliberately NOT the
      * list here: a film project is the outer object, and its compositions are what BBS samples.
      */
+    /**
+     * Second level: the composition layers that already exist on the BBS film's camera timeline.
+     * This is the BBS original film editor's layer list, not bbsae's internal CompDocument list and
+     * not replay entities. A layer can be opened when already bound, or bound to a bbsae project
+     * first.
+     */
     private void openReplayPickerForFilm(String filmId)
     {
         if (filmId == null || filmId.isBlank())
@@ -10908,22 +10914,13 @@ public class UICompositorPanel extends UIDashboardPanel
 
         if (this.film != null && filmId.equals(this.film.getId()))
         {
-            if (this.project == null)
-            {
-                this.project = CompStore.loadFilmProject(this.film.getId(), this.film.getId(),
-                    Math.max(1, BBSSettings.videoWidth.get()),
-                    Math.max(1, BBSSettings.videoHeight.get()),
-                    Math.max(1F, BBSSettings.videoFrameRate.get()),
-                    Math.max(1F, this.film.calculateDuration() / 20F));
-            }
-
-            this.showCompPickerForFilm(this.film, this.project, false);
+            this.showFilmLayerPicker(this.film, false);
             return;
         }
 
         if (this.filmPanel == null)
         {
-            this.setStatus("没有打开的 BBS 影片编辑器，无法读取影片工程");
+            this.setStatus("没有打开的 BBS 影片编辑器，无法读取影片图层");
             return;
         }
 
@@ -10941,15 +10938,7 @@ public class UICompositorPanel extends UIDashboardPanel
                     return;
                 }
 
-                CompProject project = CompStore.loadFilmProject(loaded.getId(), loaded.getId(),
-                    Math.max(1, BBSSettings.videoWidth.get()),
-                    Math.max(1, BBSSettings.videoHeight.get()),
-                    Math.max(1F, BBSSettings.videoFrameRate.get()),
-                    Math.max(1F, loaded.calculateDuration() / 20F));
-
-                /* Do not fill the shared film panel before the user picks a composition:
-                 * cancelling the selector must leave the currently open film untouched. */
-                this.showCompPickerForFilm(loaded, project, true);
+                this.showFilmLayerPicker(loaded, true);
             });
         });
     }
@@ -11005,16 +10994,193 @@ public class UICompositorPanel extends UIDashboardPanel
         }
     }
 
-    private void showCompPickerForFilm(Film film, CompProject project, boolean otherFilm)
+    private void showFilmLayerPicker(Film film, boolean otherFilm)
     {
-        List<CompDocument> comps = project == null || project.comps == null ? List.of() : project.comps;
+        List<CompositionClip> layers = film == null || film.camera == null
+            ? List.of() : film.camera.getClips(CompositionClip.class);
 
-        if (comps.isEmpty())
+        if (layers.isEmpty())
         {
-            this.setStatus("影片工程「" + (film == null ? "-" : film.getId()) + "」还没有合成器图层");
+            this.setStatus("BBS 影片「" + (film == null ? "-" : film.getId())
+                + "」没有合成器图层：先在 BBS 原版影片编辑器里添加合成器图层");
             return;
         }
 
+        List<String> values = new ArrayList<>();
+
+        for (int i = 0; i < layers.size(); i++)
+        {
+            CompositionClip clip = layers.get(i);
+            String title = clip == null || clip.title.get() == null || clip.title.get().isBlank()
+                ? "合成器 " + (i + 1) : clip.title.get();
+
+            values.add("图层 · " + (i + 1) + " · " + title + " · " + this.bindingLabel(clip));
+        }
+
+        UIListOverlayPanel[] selector = new UIListOverlayPanel[1];
+
+        selector[0] = new UIListOverlayPanel(
+            IKey.constant("选择 BBS 原版合成器图层 · " + (film == null ? "-" : film.getId())), (value) ->
+        {
+            if (selector[0] != null)
+            {
+                selector[0].close();
+            }
+
+            int index = replayIndexFromSelector(value);
+
+            if (index < 0 || index >= layers.size())
+            {
+                return;
+            }
+
+            this.openFilmLayer(film, layers.get(index), otherFilm);
+        });
+
+        selector[0].addValues(values);
+        UIOverlay.addOverlay(this.getContext(), selector[0], 0.45F, 0.65F);
+    }
+
+    private String bindingLabel(CompositionClip clip)
+    {
+        String projectId = clip == null ? null : clip.project.get();
+        String compId = clip == null ? null : clip.comp.get();
+
+        if (projectId == null || projectId.isBlank() || compId == null || compId.isBlank()
+            || this.isDefaultClipBinding(clip))
+        {
+            return "未绑定 bbsae 工程";
+        }
+
+        CompProject project = CompStore.loadOrNull(projectId, false);
+
+        if (project == null)
+        {
+            return "工程不存在：" + projectId;
+        }
+
+        CompDocument comp = project.getComp(compId);
+        String projectName = project.name == null || project.name.isBlank() ? projectId : project.name;
+
+        return comp == null ? projectName + " / 合成不存在：" + compId
+            : projectName + " / " + (comp.name == null || comp.name.isBlank() ? comp.id : comp.name);
+    }
+
+    /**
+     * A freshly added BBS composition clip still carries the clip factory's {@code demo/main}
+     * defaults. That is not a user binding; treat it as empty until the user picks a bbsae project.
+     */
+    private boolean isDefaultClipBinding(CompositionClip clip)
+    {
+        return clip != null && isDefaultClipBinding(clip.project.get(), clip.comp.get(), clip.title.get());
+    }
+
+    /** Pure default-binding rule, package-visible for tests. */
+    static boolean isDefaultClipBinding(String projectId, String compId, String title)
+    {
+        if (!"demo".equals(projectId) || !"main".equals(compId))
+        {
+            return false;
+        }
+
+        return title == null || title.isBlank() || "Compositor".equals(title) || "合成器".equals(title);
+    }
+
+    private boolean isClipBound(CompositionClip clip)
+    {
+        if (clip == null || this.isDefaultClipBinding(clip))
+        {
+            return false;
+        }
+
+        String projectId = clip.project.get();
+        String compId = clip.comp.get();
+
+        if (projectId == null || projectId.isBlank() || compId == null || compId.isBlank())
+        {
+            return false;
+        }
+
+        CompProject project = CompStore.loadOrNull(projectId, false);
+
+        return project != null && project.getComp(compId) != null;
+    }
+
+    /** Opens a bound layer, or starts the project → composition binding flow for an unbound one. */
+    private void openFilmLayer(Film film, CompositionClip clip, boolean otherFilm)
+    {
+        if (clip == null)
+        {
+            return;
+        }
+
+        if (!this.isClipBound(clip))
+        {
+            this.openProjectPickerForClip(film, clip, otherFilm);
+            return;
+        }
+
+        if (otherFilm && this.filmPanel != null)
+        {
+            this.filmPanel.fill(film);
+        }
+
+        BbsAeClient.openCompositorForClip(this.filmPanel, film, clip);
+    }
+
+    private void openProjectPickerForClip(Film film, CompositionClip clip, boolean otherFilm)
+    {
+        List<CompStore.ProjectInfo> projects = CompStore.listProjects();
+
+        if (projects.isEmpty())
+        {
+            this.setStatus("没有 bbsae 工程可绑定：先在合成器里创建工程，再回到 BBS 原版添加合成器图层");
+            return;
+        }
+
+        List<String> values = new ArrayList<>();
+
+        for (int i = 0; i < projects.size(); i++)
+        {
+            CompStore.ProjectInfo info = projects.get(i);
+
+            values.add("工程 · " + (i + 1) + " · " + info.name + " · " + info.id);
+        }
+
+        UIListOverlayPanel[] selector = new UIListOverlayPanel[1];
+
+        selector[0] = new UIListOverlayPanel(IKey.constant("选择 bbsae 工程绑定到该图层"), (value) ->
+        {
+            if (selector[0] != null)
+            {
+                selector[0].close();
+            }
+
+            int index = replayIndexFromSelector(value);
+
+            if (index < 0 || index >= projects.size())
+            {
+                return;
+            }
+
+            this.openCompPickerForClip(film, clip, otherFilm, projects.get(index).id);
+        });
+
+        selector[0].addValues(values);
+        UIOverlay.addOverlay(this.getContext(), selector[0], 0.45F, 0.65F);
+    }
+
+    private void openCompPickerForClip(Film film, CompositionClip clip, boolean otherFilm, String projectId)
+    {
+        CompProject project = CompStore.loadOrNull(projectId, true);
+
+        if (project == null || project.comps == null || project.comps.isEmpty())
+        {
+            this.setStatus("工程「" + projectId + "」没有合成可绑定");
+            return;
+        }
+
+        List<CompDocument> comps = project.comps;
         List<String> values = new ArrayList<>();
 
         for (int i = 0; i < comps.size(); i++)
@@ -11022,13 +11188,13 @@ public class UICompositorPanel extends UIDashboardPanel
             CompDocument comp = comps.get(i);
             String name = comp == null || comp.name == null || comp.name.isBlank() ? "-" : comp.name;
 
-            values.add("图层 · " + (i + 1) + " · " + name);
+            values.add("合成 · " + (i + 1) + " · " + name);
         }
 
         UIListOverlayPanel[] selector = new UIListOverlayPanel[1];
 
         selector[0] = new UIListOverlayPanel(
-            IKey.constant("选择合成器图层（选中即绑定）· " + (film == null ? "-" : film.getId())), (value) ->
+            IKey.constant("选择合成绑定到图层 · " + projectId), (value) ->
         {
             if (selector[0] != null)
             {
@@ -11042,77 +11208,42 @@ public class UICompositorPanel extends UIDashboardPanel
                 return;
             }
 
-            this.bindCompFromSelector(film, project, comps.get(index), otherFilm);
-        });
+            CompDocument comp = comps.get(index);
 
-        selector[0].addValues(values);
-        UIOverlay.addOverlay(this.getContext(), selector[0], 0.45F, 0.65F);
-    }
-
-    private void bindCompFromSelector(Film film, CompProject project, CompDocument comp, boolean otherFilm)
-    {
-        if (comp == null)
-        {
-            return;
-        }
-
-        if (otherFilm)
-        {
-            if (this.filmPanel == null)
+            if (comp == null)
             {
                 return;
             }
 
-            this.filmPanel.fill(film);
-            this.bindComposition(this.filmPanel, film, project == null ? null : project.id, comp.id);
-        }
-        else
-        {
-            /* Keep a pending edit in the outgoing composition: refreshComp switches this.doc
-             * without the save that selectReplay/bindComposition perform. */
-            this.save();
-            this.refreshComp(comp.id);
-        }
+            clip.project.set(projectId);
+            clip.comp.set(comp.id);
 
-        this.replay = this.replayForComp(film, comp.id);
-        this.updateReplaySelectorLabel();
-        this.bindCurrentCompositionToFilm();
-    }
+            String title = clip.title.get();
 
-    /** Maps a replay's composition id back to its BBS replay, when one exists. */
-    private Replay replayForComp(Film film, String compId)
-    {
-        if (film == null || film.replays == null || compId == null)
-        {
-            return null;
-        }
-
-        for (Replay replay : film.replays.getList())
-        {
-            String key = replay.getId() == null || replay.getId().isBlank() ? replay.getName() : replay.getId();
-
-            if (compId.equals(CompStore.replayCompId(key, replay.getName())))
+            if (title == null || title.isBlank() || "Compositor".equals(title) || "合成器".equals(title))
             {
-                return replay;
+                String projectName = project.name == null || project.name.isBlank() ? projectId : project.name;
+                String compName = comp.name == null || comp.name.isBlank() ? comp.id : comp.name;
+
+                clip.title.set(projectName + " / " + compName);
             }
-        }
 
-        return null;
-    }
+            if (this.filmPanel != null)
+            {
+                this.filmPanel.forceSave();
+            }
 
-    /**
-     * Ensures this replay's composition clip exists on the film timeline. The old selector only
-     * switched the edited composition; without a clip, the BBS film never sampled it, so the
-     * "binding" existed only inside the compositor.
-     */
-    public void bindCurrentCompositionToFilm()
-    {
-        String target = this.replay != null
-            ? "回放「" + this.replayLabel(this.replay) + "」"
-            : "合成「" + (this.doc == null || this.doc.name == null ? "-" : this.doc.name) + "」";
+            if (otherFilm && this.filmPanel != null)
+            {
+                this.filmPanel.fill(film);
+            }
 
-        this.ensureCompositionClip("已绑定" + target
-            + "到影片工程「" + (this.film == null || this.film.getId() == null ? "-" : this.film.getId()) + "」");
+            BbsAeClient.openCompositorForClip(this.filmPanel, film, clip);
+            this.setStatus("已把 bbsae 工程「" + projectId + " / " + comp.id + "」绑定到 BBS 图层");
+        });
+
+        selector[0].addValues(values);
+        UIOverlay.addOverlay(this.getContext(), selector[0], 0.45F, 0.65F);
     }
 
     private void replayContextMenu(ContextMenuManager manager)
