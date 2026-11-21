@@ -50,6 +50,8 @@ public final class CompAudioPlayer
     private static volatile String failure;
     private static String failedKey = "";
     private static String status = "无预览音频";
+    /** Project whose asset folder produced the current mix; clip paths are project-relative. */
+    private static String currentProjectId = "";
 
     private CompAudioPlayer()
     {}
@@ -58,6 +60,11 @@ public final class CompAudioPlayer
      * Content key of the mix: the clips and the range. Any edit to a clip changes it, which is the
      * only thing that has to invalidate the buffer.
      */
+    private static String keyOf(String projectId, CompDocument doc)
+    {
+        return (projectId == null ? "" : projectId) + '\u0000' + keyOf(doc);
+    }
+
     private static String keyOf(CompDocument doc)
     {
         if (doc == null)
@@ -203,7 +210,7 @@ public final class CompAudioPlayer
         {
             failure = null;
             status = error;
-            failedKey = pendingKey == null ? keyOf(currentDoc) : pendingKey;
+            failedKey = pendingKey == null ? keyOf(currentProjectId, currentDoc) : pendingKey;
         }
 
         float[] samples = pending;
@@ -222,7 +229,7 @@ public final class CompAudioPlayer
 
         String key = pendingKey;
 
-        if (key == null || !key.equals(keyOf(currentDoc)))
+        if (key == null || !key.equals(keyOf(currentProjectId, currentDoc)))
         {
             return;
         }
@@ -289,8 +296,9 @@ public final class CompAudioPlayer
     private static void ensureBuffer(CompProject project, CompDocument doc)
     {
         currentDoc = doc;
+        currentProjectId = project == null || project.id == null ? "" : project.id;
 
-        String key = keyOf(doc);
+        String key = keyOf(currentProjectId, doc);
 
         if (key.equals(failedKey))
         {
@@ -369,6 +377,7 @@ public final class CompAudioPlayer
         loading = false;
         failure = null;
         failedKey = "";
+        currentProjectId = "";
         status = "无预览音频";
 
         releaseBuffer();
@@ -439,7 +448,8 @@ public final class CompAudioPlayer
     public static boolean isActive()
     {
         return loading || player != null
-            || (failedKey != null && !failedKey.isEmpty() && failedKey.equals(keyOf(currentDoc)));
+            || (failedKey != null && !failedKey.isEmpty()
+                && failedKey.equals(keyOf(currentProjectId, currentDoc)));
     }
 
     /** True while a mix is being prepared on the worker thread. */

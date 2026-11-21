@@ -507,7 +507,13 @@ public class UICompositorPanel extends UIDashboardPanel
     /** 0 = fully below the timeline, 1 = fully open; drives the slide-up drawer animation. */
     private float keyframeDrawerSlide;
     private long keyframeSlideNanos;
-    private static final int KEYFRAME_DRAWER_MIN = 96;
+    static final int KEYFRAME_DRAWER_MIN = 96;
+    /**
+     * A splitter whose whole travel is a few pixels is indistinguishable from a broken one. Opening
+     * the drawer (or resizing into a short timeline) grows the timeline until at least this much
+     * travel exists above {@link #KEYFRAME_DRAWER_MIN}, as long as the preview floor allows it.
+     */
+    private static final int KEYFRAME_DRAWER_MIN_RESIZE_RANGE = 24;
     /** Guards the "make the timeline tall enough for the drawer" pass against re-entry. */
     private boolean drawerSpacePass;
     /** The too-short status line is emitted once per open attempt, not on every layout pass. */
@@ -14907,23 +14913,22 @@ public class UICompositorPanel extends UIDashboardPanel
          * toolbar). */
         int max = this.keyframeDrawerMaxHeight(timelineHeight);
 
-        if (this.keyframeOpen && max < KEYFRAME_DRAWER_MIN)
+        if (this.keyframeOpen && max < KEYFRAME_DRAWER_MIN + KEYFRAME_DRAWER_MIN_RESIZE_RANGE)
         {
-            /* Dock ratios are user-controlled, and the default 72/28 split leaves the timeline
-             * ~125 px on a 960×540 UI: less than the drawer minimum. Grow the timeline panel (a
-             * layout can and must honour a hard minimum) and re-measure; do not flip the open flag
-             * off, because that made the button lie and made a resize unable to reveal the drawer. */
+            /* A drawer with only one or two pixels of travel is effectively not resizable. Grow
+             * until the splitter has a usable range; the preview floor below may still cap it. */
             this.ensureKeyframeDrawerSpace();
             timelineHeight = this.timelineLayoutHeight();
             max = this.keyframeDrawerMaxHeight(timelineHeight);
         }
 
-        if (this.keyframeOpen && max < KEYFRAME_DRAWER_MIN && !this.drawerSpaceWarned)
+        if (this.keyframeOpen && max < KEYFRAME_DRAWER_MIN + KEYFRAME_DRAWER_MIN_RESIZE_RANGE
+            && !this.drawerSpaceWarned)
         {
             this.drawerSpaceWarned = true;
             this.setStatus("时间轴太矮，关键帧抽屉只能显示 " + max + "px；拖高时间轴可完整显示");
         }
-        else if (max >= KEYFRAME_DRAWER_MIN)
+        else if (max >= KEYFRAME_DRAWER_MIN + KEYFRAME_DRAWER_MIN_RESIZE_RANGE)
         {
             this.drawerSpaceWarned = false;
         }
@@ -14979,6 +14984,11 @@ public class UICompositorPanel extends UIDashboardPanel
                 this.fitKeyframeTimeline();
             }
         }
+
+        /* Keep the splitter's hit rectangle on the drawn seam. It used to update only during the
+         * open/close animation, so a drag could move the seam while the 5 px grab area stayed at
+         * the old position. */
+        this.keyframeHandle.resize();
     }
 
     /** Pixel height of the timeline panel in whichever layout engine is active. */
@@ -15006,15 +15016,24 @@ public class UICompositorPanel extends UIDashboardPanel
     /** Room left for the drawer after the strip header, the visible tracks and the splitter. */
     private int keyframeDrawerMaxHeight(int timelineHeight)
     {
-        return Math.max(0, timelineHeight - this.timelineContentTop() - this.keyframeDrawerTrackReserve() - 5);
+        int row = KEYFRAME_TRACK_ROW_FALLBACK;
+
+        if (this.trackTimeline != null)
+        {
+            row = this.trackTimeline.rowHeight();
+        }
+
+        return keyframeDrawerMaxHeight(timelineHeight, this.timelineContentTop(), row);
     }
 
     /**
-     * Pixels the track lane must keep above the drawer: its ruler plus three full rows.
+     * Pixels the track lane must keep above the drawer: its ruler plus one full row.
      *
-     * <p>The old constant was 56 px, which is less than ruler (20) + two default rows (52). A drawer
-     * opening at the "minimum" therefore covered half of the second track — the user saw the
-     * drawer "eat" the tracks. Row height is user-adjustable, so this is measured, not assumed.</p>
+     * <p>Keeping three rows was meant to stop the drawer covering tracks, but on a normal docked
+     * timeline (~236 px) that left only {@code 96..101 px} of drawer travel — a splitter that was
+     * visibly present and effectively unable to resize. Reserving the ruler + one row keeps the
+     * lane identifiable and still leaves a usable splitter range; the strip's own splitter can make
+     * the whole timeline taller when more drawer space is wanted.</p>
      */
     private int keyframeDrawerTrackReserve()
     {
@@ -15025,7 +15044,28 @@ public class UICompositorPanel extends UIDashboardPanel
             row = Math.max(18, this.trackTimeline.rowHeight());
         }
 
-        return KEYFRAME_TRACK_RULER + row * 3;
+        return KEYFRAME_TRACK_RULER + Math.max(18, row);
+    }
+
+    /** Pure geometry behind {@link #keyframeDrawerMaxHeight(int)}, package-visible for tests. */
+    static int keyframeDrawerMaxHeight(int timelineHeight, int contentTop, int rowHeight)
+    {
+        int reserve = KEYFRAME_TRACK_RULER + Math.max(18, rowHeight);
+
+        return Math.max(0, timelineHeight - Math.max(0, contentTop) - reserve - 5);
+    }
+
+    /**
+     * Drawer height after dragging the splitter by {@code dy} pixels (up is negative).
+     *
+     * <p>Clamped to {@link #KEYFRAME_DRAWER_MIN} and the current room. This is the exact function
+     * the handle uses, so a regression to a 1 px travel window is caught without a client run.</p>
+     */
+    static int resizeKeyframeDrawerHeight(int startHeight, int dy, int maxHeight)
+    {
+        int max = Math.max(KEYFRAME_DRAWER_MIN, maxHeight);
+
+        return Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, startHeight - dy));
     }
 
     /**
@@ -17334,9 +17374,11 @@ public class UICompositorPanel extends UIDashboardPanel
                 int max = Math.max(KEYFRAME_DRAWER_MIN,
                     UICompositorPanel.this.keyframeDrawerMaxHeight(height));
 
-                UICompositorPanel.this.keyframeDrawerHeight = Math.max(KEYFRAME_DRAWER_MIN, Math.min(max, this.startDrawerHeight - dy));
+                UICompositorPanel.this.keyframeDrawerHeight =
+                    resizeKeyframeDrawerHeight(this.startDrawerHeight, dy, max);
                 UICompositorPanel.this.layoutKeyframeDrawer();
                 UICompositorPanel.this.timeline.resize();
+                UICompositorPanel.this.keyframeHandle.resize();
                 UICompositorPanel.this.primedWidth = -1;
 
                 return;

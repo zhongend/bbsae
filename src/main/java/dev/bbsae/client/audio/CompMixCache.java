@@ -43,8 +43,27 @@ public final class CompMixCache
     {}
 
     /**
-     * Content key of a mix: the clips and the document length. Deliberately excludes the playhead
-     * and the clip selection — those do not change a single sample.
+     * Content key of a mix: the project, the clips and the document length.
+     *
+     * <p>The project id is part of the key because clip paths are project-relative. Two projects
+     * can both have a {@code main} composition with {@code audio/bgm.wav}; keying only by clip
+     * content would hand project B the samples mixed from project A's asset folder.</p>
+     */
+    public static String keyOf(CompProject project, CompDocument doc)
+    {
+        String projectId = project == null || project.id == null ? "" : project.id;
+
+        return keyOf(projectId, doc);
+    }
+
+    private static String keyOf(String projectId, CompDocument doc)
+    {
+        return (projectId == null ? "" : projectId) + '\u0000' + keyOf(doc);
+    }
+
+    /**
+     * Content-only key, kept for callers/tests that only compare two documents of one project.
+     * Cache lookups must use {@link #keyOf(CompProject, CompDocument)}.
      */
     public static String keyOf(CompDocument doc)
     {
@@ -89,7 +108,7 @@ public final class CompMixCache
             return null;
         }
 
-        String key = keyOf(doc);
+        String key = keyOf(project, doc);
         Entry entry = READY.get(key);
 
         if (entry != null)
@@ -113,7 +132,7 @@ public final class CompMixCache
             return new float[0];
         }
 
-        String key = keyOf(doc);
+        String key = keyOf(project, doc);
         Entry entry = READY.get(key);
 
         if (entry != null)
@@ -147,7 +166,7 @@ public final class CompMixCache
 
             try
             {
-                current = result.key.equals(keyOf(result.doc));
+                current = result.key.equals(keyOf(result.projectId, result.doc));
             }
             catch (RuntimeException e)
             {
@@ -176,12 +195,18 @@ public final class CompMixCache
 
     public static String status(CompDocument doc)
     {
+        return status(null, doc);
+    }
+
+    /** Status for a specific project's mix; see {@link #keyOf(CompProject, CompDocument)}. */
+    public static String status(CompProject project, CompDocument doc)
+    {
         if (!hasAudio(doc))
         {
             return "无音轨";
         }
 
-        String key = keyOf(doc);
+        String key = keyOf(project, doc);
 
         if (LOADING.containsKey(key))
         {
@@ -222,7 +247,7 @@ public final class CompMixCache
                 samples = new float[0];
             }
 
-            RESULTS.add(new Result(key, doc, samples));
+            RESULTS.add(new Result(key, project.id, doc, samples));
         }, "bbsae-film-audio");
 
         worker.setDaemon(true);
@@ -290,12 +315,14 @@ public final class CompMixCache
     private static final class Result
     {
         final String key;
+        final String projectId;
         final CompDocument doc;
         final float[] samples;
 
-        Result(String key, CompDocument doc, float[] samples)
+        Result(String key, String projectId, CompDocument doc, float[] samples)
         {
             this.key = key;
+            this.projectId = projectId;
             this.doc = doc;
             this.samples = samples;
         }

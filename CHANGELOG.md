@@ -1,5 +1,27 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix89 — 2026-11-21
+
+关键帧抽屉无法调节大小、跨工程音频缓存串音。本轮未启动客户端。
+
+### 关键帧抽屉
+
+- **根因**：轨道区保留“ruler + 3 行”使常见 236px 时间轴上的抽屉最大值只有 101px，而最小高度
+  是 96px，splitter 实际只有 5px 行程。
+- 轨道区改为保留 ruler + 1 行；新增 24px 最小可调行程，不足时自动尝试增高时间轴；拖动时同步
+  `keyframeHandle.resize()`，抓取区跟手。
+- 新增 `KeyframeDrawerResizeTest`，把旧几何的 101px/5px 回归钉死。
+
+### 跨工程音频
+
+- **根因**：混音 key 不含 project id；两个工程使用相同的 `main` + `audio/bgm.wav` 时会复用
+  另一个工程的采样。
+- `CompMixCache.keyOf(project, doc)`、worker result 校验、`CompFilmAudioExport` 与
+  `CompAudioPlayer` 的 buffer/失败 key 全部纳入 project id。
+- 新增 `CompMixCacheKeyTest.projectIdIsPartOfTheMixKey`。
+
+聚焦测试通过；未启动客户端。最终全量测试/构建见 `docs/ROUND122-DRAWER-AUDIO-CACHE.zh.md`。
+
 ## 0.99-hotfix88 — 2026-11-21
 
 封面更换、3D 文字字距边界修复，并重新验证合成器预览音频。

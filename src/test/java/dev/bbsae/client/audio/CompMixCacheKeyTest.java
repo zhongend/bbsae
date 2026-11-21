@@ -2,6 +2,7 @@ package dev.bbsae.client.audio;
 
 import dev.bbsae.comp.CompAudio;
 import dev.bbsae.comp.CompDocument;
+import dev.bbsae.comp.CompProject;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -65,6 +66,23 @@ public class CompMixCacheKeyTest
 
         doc.name = "renamed";
         assertEquals(key, CompMixCache.keyOf(doc));
+    }
+
+    @Test
+    public void projectIdIsPartOfTheMixKey()
+    {
+        CompProject a = new CompProject();
+        CompProject b = new CompProject();
+
+        a.id = "project-a";
+        b.id = "project-b";
+
+        CompDocument doc = document();
+
+        /* Clip paths are project-relative: the same "audio/bgm.wav" resolves to a different file
+         * in each project, so one project must never reuse the other's mixed buffer. */
+        assertNotEquals(CompMixCache.keyOf(a, doc), CompMixCache.keyOf(b, doc));
+        assertEquals(CompMixCache.keyOf(a, doc), CompMixCache.keyOf(a, doc));
     }
 
     @Test
