@@ -764,6 +764,18 @@ final class LayerContentRenderer
         batcher.textShadow(hint, x + 12F, y + 12F, 0xFF9CC7FF);
     }
 
+    /**
+     * Converts tracking expressed in composition pixels to the font units the layout is built in.
+     *
+     * <p>The layout is later scaled by {@code fontSize/fontHeight}; multiplying by the inverse here
+     * makes one tracking unit exactly one composition pixel, independent of whether the font is
+     * the default bitmap atlas (height 7 at any requested size) or an oversampled imported font.</p>
+     */
+    static float trackingInFontUnits(float trackingPixels, float fontSize, float fontHeight)
+    {
+        return trackingPixels * Math.max(1F, fontHeight) / Math.max(1F, fontSize);
+    }
+
     private static void drawText(CompLayer layer, CompRenderContext context, Batcher2D batcher)
     {
         String text = dev.bbsae.comp.TextContent.resolve(layer,
@@ -789,14 +801,15 @@ final class LayerContentRenderer
         LayerFont chosen = fontFor(layer, batcher, fontSize * textOversample);
         FontRenderer font = chosen.renderer;
         int fontHeight = Math.max(1, font.getHeight());
-        /* Tracking/stroke are authored in composition pixels. They are applied inside the
-         * fontSize/fontHeight stack scale, so a custom font whose atlas was oversampled needs the
-         * same font-unit factor to keep the same on-screen spacing. The default Minecraft bitmap
-         * font is not oversampled and must keep the original values. */
+        /* Tracking is authored in composition pixels: the layout is built in font units and then
+         * scaled by fontSize/fontHeight, so dividing by that scale before the stack transform makes
+         * one tracking unit exactly one composition pixel for both the default bitmap font and an
+         * (oversampled) imported font. The previous custom-only factor left the default font's
+         * tracking in 9 px cells and made a value like 9 look like ~90 px. */
         float fontUnitScale = chosen.custom()
             ? Math.max(1F, fontHeight / Math.max(1, fontSize))
             : 1F;
-        float tracking = layer.trackingAt(context.frame) * fontUnitScale;
+        float tracking = trackingInFontUnits(layer.trackingAt(context.frame), fontSize, fontHeight);
         float lineHeightFactor = layer.lineHeightAt(context.frame);
         float textStroke = layer.textStrokeAt(context.frame) * fontUnitScale;
         float scale = Math.max(0.001F, fontSize / fontHeight);

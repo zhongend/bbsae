@@ -11,14 +11,18 @@ import mchorse.bbs_mod.camera.Camera;
 import mchorse.bbs_mod.film.BaseFilmController;
 import mchorse.bbs_mod.film.Film;
 import mchorse.bbs_mod.film.FilmMatrices;
+import mchorse.bbs_mod.film.FilmTarget;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.entities.IEntity;
 import mchorse.bbs_mod.forms.renderers.utils.RenderFrame;
 import mchorse.bbs_mod.ui.film.UIFilmPanel;
 import mchorse.bbs_mod.ui.film.controller.UIFilmController;
 import mchorse.bbs_mod.ui.film.replays.UIReplayPropTransform;
+import mchorse.bbs_mod.ui.framework.elements.input.drag.TransformSpace;
+import mchorse.bbs_mod.ui.framework.elements.input.keyframes.UIKeyframeEditor;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.GizmoDrag;
+import mchorse.bbs_mod.utils.Pair;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -726,14 +730,85 @@ public final class ReplayEditSession
         Camera camera = this.viewCamera();
         GizmoDrag drag = GizmoDrag.fromRenderedGizmo(camera, area);
 
-        if (drag != null)
+        if (drag == null)
         {
-            IEntity entity = this.selectedEntity();
+            return null;
+        }
 
-            if (entity != null)
+        IEntity entity = this.selectedEntity();
+
+        if (entity == null)
+        {
+            return drag;
+        }
+
+        drag.setGlobalAxes(FilmMatrices.getReplayWorldAxes(entity, this.transition()));
+
+        /* BBS' buildReplayGizmoDrag: the record's own placement is both its frame and its
+         * "parent" frame, and rotation rings turn about the drawn gizmo's own axes. Leaving the
+         * frame axes unset made LOCAL/PARENT scale and rotation use the raw world axes. */
+        Matrix4f placement = FilmMatrices.getMatrixForRenderWithRotation(
+            entity, camera.position.x, camera.position.y, camera.position.z, this.transition()
+        );
+
+        drag.setRotateAxes(drag.gizmoWorldAxes);
+        drag.setFrameAxes(placement, placement);
+
+        return drag;
+    }
+
+    /**
+     * The original BBS edit-target cascade: a selected bone wins, then the form's anchor track,
+     * then the replay's own placement. The gizmo display, its mask and its drag are all derived
+     * from this one answer, exactly like {@code UIFilmController.getDefaultEditTarget()}.
+     */
+    public FilmTarget editTarget(UIKeyframeEditor keyframeEditor)
+    {
+        if (this.replay == null || this.selectedEntity() == null)
+        {
+            return FilmTarget.NONE;
+        }
+
+        if (keyframeEditor != null)
+        {
+            Pair<String, TransformSpace> bone = keyframeEditor.getBone();
+
+            if (bone != null && bone.a != null && !bone.a.isEmpty())
             {
-                drag.setGlobalAxes(FilmMatrices.getReplayWorldAxes(entity, this.transition()));
+                return FilmTarget.bone(bone.a, bone.b);
             }
+
+            if (keyframeEditor.isFormAnchorTrack())
+            {
+                return FilmTarget.anchor(keyframeEditor.getAnchorSpace());
+            }
+        }
+
+        return FilmTarget.root(this.replayTransform.getSpace());
+    }
+
+    /** BBS' buildAnchorGizmoDrag: the anchor composite is both frame and rotation source. */
+    public GizmoDrag anchorGizmoDrag(Area area)
+    {
+        Camera camera = this.viewCamera();
+        GizmoDrag drag = GizmoDrag.fromRenderedGizmo(camera, area);
+        IEntity entity = this.selectedEntity();
+
+        if (drag == null || entity == null)
+        {
+            return drag;
+        }
+
+        drag.setGlobalAxes(FilmMatrices.getReplayWorldAxes(entity, this.transition()));
+
+        Matrix4f anchor = FilmMatrices.getGizmoAnchorCompositeMatrix(
+            this.entities(), entity, this.replay,
+            camera.position.x, camera.position.y, camera.position.z, this.transition());
+
+        if (anchor != null)
+        {
+            drag.setRotateAxes(drag.gizmoWorldAxes);
+            drag.setFrameAxes(anchor, anchor);
         }
 
         return drag;
@@ -835,6 +910,16 @@ public final class ReplayEditSession
      */
     public GizmoDrag boneGizmoDrag(Area area)
     {
+        return this.boneGizmoDrag(area, this.selectedBone);
+    }
+
+    /**
+     * Bone drag for an explicit bone path (the panel's edit target), so a form-transform/bone
+     * track uses the same path the gizmo was placed on instead of whatever the last viewport pick
+     * left in {@link #selectedBone}.
+     */
+    public GizmoDrag boneGizmoDrag(Area area, String bonePath)
+    {
         Camera camera = this.viewCamera();
         GizmoDrag drag = GizmoDrag.fromRenderedGizmo(camera, area);
 
@@ -847,15 +932,15 @@ public final class ReplayEditSession
 
         drag.setGlobalAxes(FilmMatrices.getReplayWorldAxes(entity, this.transition()));
 
-        if (entity == null || this.selectedBone == null || this.selectedBone.isEmpty())
+        if (entity == null || bonePath == null || bonePath.isEmpty())
         {
             return drag;
         }
 
         Matrix4f local = FilmMatrices.getGizmoBoneCompositeMatrix(this.entities(), entity, this.replay,
-            camera.position.x, camera.position.y, camera.position.z, this.transition(), this.selectedBone, true);
+            camera.position.x, camera.position.y, camera.position.z, this.transition(), bonePath, true);
         Matrix4f parent = FilmMatrices.getGizmoBoneCompositeMatrix(this.entities(), entity, this.replay,
-            camera.position.x, camera.position.y, camera.position.z, this.transition(), this.selectedBone, false);
+            camera.position.x, camera.position.y, camera.position.z, this.transition(), bonePath, false);
 
         drag.setFrameAxes(local, parent);
         drag.setRotateAxes(drag.gizmoWorldAxes);

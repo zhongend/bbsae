@@ -19,6 +19,7 @@ import dev.bbsae.comp.CompProject;
 import dev.bbsae.comp.CompLayer;
 import mchorse.bbs_mod.BBSModClient;
 import mchorse.bbs_mod.film.Film;
+import mchorse.bbs_mod.film.FilmTarget;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.FormUtils;
 import mchorse.bbs_mod.forms.entities.IEntity;
@@ -28,6 +29,7 @@ import mchorse.bbs_mod.l10n.keys.IKey;
 import mchorse.bbs_mod.ui.film.replays.UIReplayPropTransform;
 import mchorse.bbs_mod.ui.framework.UIContext;
 import mchorse.bbs_mod.ui.framework.elements.UIElement;
+import mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform;
 import mchorse.bbs_mod.ui.framework.elements.buttons.UIIcon;
 import mchorse.bbs_mod.ui.utils.Area;
 import mchorse.bbs_mod.ui.utils.Gizmo;
@@ -160,9 +162,10 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     private IntConsumer pickHandler;
     /** Part pick (form, bone) from the viewport; the panel selects the part and its tracks. */
     private java.util.function.BiConsumer<Form, String> partHandler;
-    /** The keyframe timeline's editable transform and bone, when a bone track is selected. */
+    /** The keyframe timeline's editable transform, when a bone/anchor track is selected. */
     private java.util.function.Supplier<mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform> boneTransform;
-    private java.util.function.Supplier<String> bonePath;
+    /** BBS' single bone → anchor → replay-root edit target cascade, supplied by the panel. */
+    private java.util.function.Supplier<FilmTarget> editTarget;
     private int navMode = NAV_NONE;
     private int navButton;
     private int navStartX;
@@ -178,6 +181,7 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
     public UIReplayViewport(ReplayEditSession session)
     {
         this.session = session;
+        this.pick.setEditTarget(this::editTarget);
 
         String initialView = System.getProperty("bbsae.replayViewMode", "camera").trim().toLowerCase(java.util.Locale.ROOT);
 
@@ -1276,12 +1280,23 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.partHandler = partHandler;
     }
 
-    /** Supplies the bone transform the keyframe timeline currently exposes (or null). */
-    public void setBoneTarget(java.util.function.Supplier<mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform> transform,
-                              java.util.function.Supplier<String> bone)
+    /** Supplies the current BBS edit target (bone, anchor or replay root). */
+    public void setEditTarget(java.util.function.Supplier<FilmTarget> editTarget)
+    {
+        this.editTarget = editTarget;
+    }
+
+    private FilmTarget editTarget()
+    {
+        FilmTarget target = this.editTarget == null ? null : this.editTarget.get();
+
+        return target == null ? FilmTarget.NONE : target;
+    }
+
+    /** Supplies the bone/anchor transform the keyframe timeline currently exposes (or null). */
+    public void setBoneTarget(java.util.function.Supplier<mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform> transform)
     {
         this.boneTransform = transform;
-        this.bonePath = bone;
     }
 
     /** Human-readable state for the viewport HUD (camera, selection, gestures). */
@@ -1484,8 +1499,23 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         this.pick.renderHighlight(context, interaction, Window.isAltPressed());
         this.renderPickHint(context);
 
-        if (this.session.canEditPlacement())
+        this.gizmo.update(context);
+        this.pollNavigation(context);
+        this.renderHud(context, drawn, this.isCameraPreviewActive());
+
+        /* The gizmo is the editor's primary instrument; draw it after the HUD cards so the
+         * header row cannot cover the handles when the actor happens to sit near the top-left
+         * of the viewport (camera view framing does exactly that). */
+        if (this.session.canEditPlacement() && !this.editTarget().isNone())
         {
+            /* The composition/world was just drawn into the main framebuffer and left its depth
+             * buffer behind. BBS' gizmo keeps its handles on top of the scene and only depth-sorts
+             * them among themselves, so that stale depth (the actor's name tag sits exactly at the
+             * bone pivot) made the whole gizmo disappear behind the label in free/orbit view.
+             * The UI pass after this does not use depth, so clearing it here is safe. */
+            RenderSystem.depthMask(true);
+            org.lwjgl.opengl.GL11.glClear(org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT);
+
             this.gizmo.renderGizmo(context);
             this.gizmo.renderSphereHighlight(context);
             this.gizmo.renderReadout(context);
@@ -1498,15 +1528,16 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
                 boolean placed = Gizmo.INSTANCE.computeScreenCenter(projection,
                     gizmoArea.x, gizmoArea.y, gizmoArea.w, gizmoArea.h, center);
 
-                dev.bbsae.BbsAeAddon.LOGGER.info("Replay gizmo draw: area={}x{}@{},{} projection={} placed={} center={},{}",
+                dev.bbsae.BbsAeAddon.LOGGER.info("Replay gizmo draw: area={}x{}@{},{} projection={} placed={} center={},{} sphereWorldR={} m11={} m23={} m33={} near={} far={}",
                     gizmoArea.w, gizmoArea.h, gizmoArea.x, gizmoArea.y,
-                    projection == null ? "-" : projection.hashCode(), placed, center.x, center.y);
+                    projection == null ? "-" : projection.hashCode(), placed, center.x, center.y,
+                    Gizmo.INSTANCE.getSphereWorldRadius(),
+                    projection == null ? 0F : projection.m11(),
+                    projection == null ? 0F : projection.m23(),
+                    projection == null ? 0F : projection.m33(),
+                    this.session.camera().near, this.session.camera().far);
             }
         }
-
-        this.gizmo.update(context);
-        this.pollNavigation(context);
-        this.renderHud(context, drawn, this.isCameraPreviewActive());
 
         context.batcher.outline(this.area.x, this.area.y, this.area.ex(), this.area.ey(),
             this.gizmoActive ? 0xFF66CCFF : 0xFF2A3340);
@@ -1960,33 +1991,57 @@ public final class UIReplayViewport extends UIElement implements GizmoViewport
         camera.setViewport(area.w, area.h);
         camera.update();
 
-        /* A selected body part owns the gizmo in the original editor: the transform comes from the
-         * keyframe timeline's pose editor, not from the replay's placement adapter. Fall back to
-         * the replay root when no bone track is active. */
-        mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform bone = this.boneTransform == null
-            ? null : this.boneTransform.get();
-        String bonePath = this.bonePath == null ? "" : this.bonePath.get();
-        boolean boneTarget = bone != null && bonePath != null && !bonePath.isEmpty()
-            && bone.getTransform() != null;
+        FilmTarget target = this.editTarget();
 
-        GizmoDrag drag = boneTarget ? this.session.boneGizmoDrag(area) : this.session.gizmoDrag(area);
-
-        if (drag == null)
+        if (target.isNone())
         {
             return false;
         }
 
-        UIReplayPropTransform transform = this.session.gizmoTransform();
-        boolean started = boneTarget
-            ? Gizmo.INSTANCE.start(stencilIndex, context.mouseX, context.mouseY, bone, drag)
-            : Gizmo.INSTANCE.start(stencilIndex, context.mouseX, context.mouseY, transform, drag);
+        /* The original editor derives the transform AND the drag from its one edit target. A bone
+         * uses the pose editor's transform, the anchor track uses the same editable transform
+         * (with the anchor composite for the ray math), and the replay root uses
+         * UIReplayPropTransform. Mixing these up makes the handles drag a different track than the
+         * one they are drawn on. */
+        mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform editable = this.boneTransform == null
+            ? null : this.boneTransform.get();
+        UIReplayPropTransform root = this.session.gizmoTransform();
+        UIPropTransform transform;
+        GizmoDrag drag;
+
+        switch (target.kind())
+        {
+            case BONE:
+                transform = editable;
+                drag = this.session.boneGizmoDrag(area, target.bone());
+                break;
+
+            case ANCHOR:
+                transform = editable;
+                drag = this.session.anchorGizmoDrag(area);
+                break;
+
+            default:
+                transform = root;
+                drag = this.session.gizmoDrag(area);
+                break;
+        }
+
+        if (transform == null || transform.getTransform() == null || drag == null)
+        {
+            return false;
+        }
+
+        boolean started = Gizmo.INSTANCE.start(stencilIndex, context.mouseX, context.mouseY, transform, drag);
 
         if (started)
         {
             this.gizmoActive = true;
-            this.setStatus(boneTarget
-                ? "写回骨骼关键帧：" + bonePath
-                : "写回关键帧：" + (this.session.replay() == null ? "" : this.session.replay().getName()));
+            this.setStatus(target.kind() == FilmTarget.Kind.ROOT
+                ? "写回关键帧：" + (this.session.replay() == null ? "" : this.session.replay().getName())
+                : target.kind() == FilmTarget.Kind.ANCHOR
+                    ? "写回锚点关键帧（Alt 拖动断开轴向约束）"
+                    : "写回骨骼关键帧：" + target.bone());
         }
 
         return started;

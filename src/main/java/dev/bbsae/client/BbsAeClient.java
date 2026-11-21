@@ -38,6 +38,29 @@ public class BbsAeClient implements BBSAddonMod
     private static UICompositorPanel compositorPanel;
 
     /**
+     * True while the bbsae compositor is the dashboard panel the user is looking at.
+     *
+     * <p>Used by the audio bridge: the compositor owns its own preview transport and
+     * {@code CompAudioPlayer}; BBS' original film audio bridge must not touch that player or play
+     * a second copy of the same mix while this page is on screen. Checking the selected dashboard
+     * panel (not only {@code isVisible()}) also covers the replay workspace and overlays that live
+     * inside the same panel.</p>
+     */
+    public static boolean isCompositorActive()
+    {
+        UICompositorPanel panel = compositorPanel;
+
+        if (panel == null || !panel.isVisible() || panel.dashboard == null
+            || panel.dashboard.getPanels() == null)
+        {
+            return false;
+        }
+
+        return panel.dashboard.getPanels().panel == panel
+            && net.minecraft.client.MinecraftClient.getInstance().currentScreen instanceof UIScreen;
+    }
+
+    /**
      * File drop hook for {@code UIScreen.acceptFilePaths}. BBS normally runs its importer and
      * converts/copies files into the assets folder; in the bbsae compositor that is both
      * duplicate work and the wrong destination. Returning true means "bbsae consumed the drop",

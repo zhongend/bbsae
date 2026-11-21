@@ -1,5 +1,44 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix87 — 2026-11-21
+
+合成器预览没有声音、文字默认间距太紧、回放 gizmo 仍是简化版。
+
+### 声音：合成器不再被影片音频桥接暂停
+
+- **根因**：上一轮的 `CompFilmAudio.manage()` 在影片 runner 仍为 `context.playing` 时每帧调用
+  `CompAudioPlayer.pause()`；`pause()` 清掉 `wanted`，而合成器的 `syncPreviewAudio()` 只在
+  `previewAudioRunning=false` 或 player 不存在时重新 `play()`，于是整个合成器永久静音。
+- **修复**：新增 `BbsAeClient.isCompositorActive()`；合成器可见时 `CompFilmAudio` 完全不碰
+  `CompAudioPlayer`，只暂停自己的影片合成源；`CompAudioPlayer.sync()` 在播放器存在但 `wanted`
+  被外部清掉时恢复播放意图。
+- **验证**：真实客户端日志 `preview audio: playing=true status='播放中 · 3.76s'` 起连续三帧；
+  截图 `docs/verify/round120-audio.png`。
+
+### 文字：默认字距 9px
+
+- `CompLayer.tracking` 默认从 0 改为 9；`LayerContentRenderer` 把 tracking 统一换算成合成
+  像素（默认位图字体与导入字体一致），默认 9 就是 9px。
+- 工程格式升到 **v8**：打开 v7 及更早工程时，只把“tracking=0 且没有 text/tracking 关键帧”的
+  文字层一次性迁移到 9；显式非 0 值与关键帧保留。
+- 验证：`TextSpacingDefaultTest`、`TextTrackingUnitsTest`、`CompStoreMigrationTest`。
+
+### gizmo：BBS 原版骨骼/锚点/root 级联与完整手柄
+
+- `ReplayEditSession.editTarget()` 复刻 BBS `UIFilmController.getDefaultEditTarget()` 的唯一级联：
+  骨骼 → 锚点 → replay root；骨骼/锚点用 `HandleMask.ALL`（完整移动/缩放/旋转/平面/球/视口环），
+  root 保留 `UIReplayPropTransform.MASK`。
+- 骨骼用 `getGizmoBoneCompositeMatrix`，锚点用 `getGizmoAnchorCompositeMatrix`（新增
+  `anchorGizmoDrag`），root 用 `getMatrixForRenderWithRotation`；视觉与 stencil 共用同一目标/
+  矩阵/遮罩，pick 签名包含目标。
+- 合成器 `renderBbsNativeGizmo` 之前把空 `MatrixStack` 交给 `Gizmo.render()`，gizmo 一直画在
+  相机原点；现在传入 `camera.view × layerWorld`。回放页把 gizmo 放到 HUD 之后绘制并清理合成
+  残留深度，避免被 HUD/景深遮住。
+- 验证：gizmo 脚本 `gizmoStarted=true channelsMoved=true partSelected=true`；截图
+  `docs/verify/round120-gizmo.png`。
+
+全量测试：**203 suites / 1228 tests / 0 failures / 0 errors / 1 skipped**。
+
 ## 0.99-hotfix86 — 2026-11-14
 
 BBS 原版界面/导出没有声音、回放编辑器 gizmo 闪与 Alt 选择、合成器文字下半部被裁切。

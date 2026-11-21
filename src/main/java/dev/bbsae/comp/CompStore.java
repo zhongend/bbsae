@@ -1776,6 +1776,17 @@ public final class CompStore
                 if (layer != null)
                 {
                     layer.ensureInitialized();
+
+                    /* v8: 9 px is the new default letter spacing. Old files wrote the old default
+                     * (0) explicitly, so a zero tracking with no tracking keys is migrated once; any
+                     * non-zero value or keyframed tracking is the user's own choice. */
+                    if (previousVersion < 8
+                        && "text".equals(layer.type)
+                        && layer.tracking == 0F
+                        && !layer.hasScalarChannel("text/tracking"))
+                    {
+                        layer.tracking = 9F;
+                    }
                 }
             }
         }

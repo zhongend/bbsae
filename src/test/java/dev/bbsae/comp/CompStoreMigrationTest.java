@@ -135,6 +135,34 @@ public class CompStoreMigrationTest
     }
 
     @Test
+    public void oldZeroTrackingBecomesTheNewNinePixelDefaultOnce()
+    {
+        CompProject project = project(7);
+        CompLayer text = new CompLayer("text", "Text", "text");
+
+        text.tracking = 0F;
+        project.comps.get(0).layers.add(text);
+
+        CompLayer explicit = new CompLayer("text2", "Text 2", "text");
+
+        explicit.tracking = 24F;
+        project.comps.get(0).layers.add(explicit);
+
+        CompStore.migrate(project);
+
+        assertEquals(9F, text.tracking, 0.0001F, "the old default must become the new one");
+        assertEquals(24F, explicit.tracking, 0.0001F, "a deliberate spacing must be kept");
+
+        /* Saving at the current version and loading again must not rewrite the choice. */
+        text.tracking = 0F;
+        project.version = CompProject.VERSION;
+        CompStore.migrate(project);
+
+        assertEquals(0F, text.tracking, 0.0001F,
+            "a v8 project with an explicit zero must keep it");
+    }
+
+    @Test
     public void audioModulesAreMarkedAsAudio()
     {
         assertEquals("audio", CompOutputPreset.audioWav().kind);

@@ -65,15 +65,19 @@ public final class CompFilmAudio
 
         lastManageMs = System.currentTimeMillis();
 
+        /* The compositor is its own transport: its preview calls CompAudioPlayer directly. This
+         * bridge belongs to BBS' original film page. Running here used to pause that player every
+         * frame (pause() clears its `wanted` flag, so the preview never resumed) and could start a
+         * second copy of the same mix — the "compositor has no sound at all" regression. */
+        if (dev.bbsae.client.BbsAeClient.isCompositorActive())
+        {
+            pauseSources();
+
+            return;
+        }
+
         List<CompInstance> instances = context.clipData.get(CompositionClip.KEY, ArrayList::new);
         Map<String, Boolean> seen = new LinkedHashMap<>();
-
-        /* The film's own playback supersedes the film-page audition: both would otherwise play the
-         * same mix at two positions. */
-        if (!instances.isEmpty() && context.playing && CompAudioPlayer.isPlaying())
-        {
-            CompAudioPlayer.pause();
-        }
 
         for (CompInstance instance : instances)
         {
@@ -207,14 +211,7 @@ public final class CompFilmAudio
          * silent without reacting to a single dropped render frame. */
         if (now - lastManageMs > 250L)
         {
-            for (Source source : SOURCES.values())
-            {
-                if (source.player != null && source.player.isPlaying())
-                {
-                    source.player.pause();
-                    source.lastState = "等待播放头";
-                }
-            }
+            pauseSources();
         }
 
         Iterator<Map.Entry<String, Source>> it = SOURCES.entrySet().iterator();
@@ -273,6 +270,19 @@ public final class CompFilmAudio
     public static int sourceCount()
     {
         return SOURCES.size();
+    }
+
+    /** Pauses every film composition source without releasing its buffer. */
+    private static void pauseSources()
+    {
+        for (Source source : SOURCES.values())
+        {
+            if (source.player != null && source.player.isPlaying())
+            {
+                source.player.pause();
+                source.lastState = "等待播放头";
+            }
+        }
     }
 
     private static void seek(SoundPlayer player, float seconds)

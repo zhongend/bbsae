@@ -1070,9 +1070,10 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.replayProperties.attachReplayList(this.replaysList.replays);
 
         this.viewport = new UIReplayViewport(this.session);
+        this.viewport.setEditTarget(this::currentEditTarget);
         this.viewport.setPickHandler(this::selectReplayFromIndex);
         this.viewport.setPartHandler(this::selectPartFromViewport);
-        this.viewport.setBoneTarget(this::boneGizmoTransform, this::boneGizmoPath);
+        this.viewport.setBoneTarget(this::boneGizmoTransform);
         this.session.setPreviewInvalidator(this.viewport::invalidatePreview);
 
         this.main.add(this.replaysList, this.viewport, this.replayProperties);
@@ -1080,6 +1081,14 @@ public class UIReplayModePanel extends UIDashboardPanel
         this.layoutReplayColumns();
 
         this.rebuildKeyframeEditor();
+    }
+
+    /** The BBS bone → anchor → replay-root cascade the gizmo, pick pass and drag all read. */
+    private mchorse.bbs_mod.film.FilmTarget currentEditTarget()
+    {
+        return this.session == null
+            ? mchorse.bbs_mod.film.FilmTarget.NONE
+            : this.session.editTarget(this.keyframeEditor);
     }
 
     public boolean isBound()
@@ -1202,13 +1211,16 @@ public class UIReplayModePanel extends UIDashboardPanel
     /** The bone transform of the keyframe timeline's current track, or null when it is not a bone. */
     private mchorse.bbs_mod.ui.framework.elements.input.UIPropTransform boneGizmoTransform()
     {
-        if (this.keyframeEditor == null || this.boneGizmoPath().isEmpty())
+        if (this.keyframeEditor == null)
         {
             return null;
         }
 
         try
         {
+            /* Also covers the anchor track: its editable transform is what the anchor gizmo must
+             * write. The old path gated this on a non-empty bone path, so an anchor-track gizmo
+             * either did not appear or dragged the replay root instead. */
             return UIReplaysEditorUtils.getEditableTransform(this.keyframeEditor);
         }
         catch (RuntimeException e)

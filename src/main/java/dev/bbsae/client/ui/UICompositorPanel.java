@@ -320,6 +320,8 @@ public class UICompositorPanel extends UIDashboardPanel
     private UIElement encoderBadge;
     /** True while the preview is auditioning the composition's mix. */
     private boolean previewAudioRunning;
+    /** Throttle for the preview-audio verification log. */
+    private int debugAudioTicks;
     private UIToggle effectsToggle;
     private UIToggle masksToggle;
     private UIToggle bbsBackdropToggle;
@@ -2432,7 +2434,16 @@ public class UICompositorPanel extends UIDashboardPanel
                     org.lwjgl.opengl.GL11.glClear(org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT);
 
                     mchorse.bbs_mod.ui.utils.Gizmo.INSTANCE.setViewportHeight(this.area.h);
-                    mchorse.bbs_mod.ui.utils.Gizmo.INSTANCE.render(new MatrixStack());
+
+                    /* Gizmo.render() reads its placement from the stack it is handed, not from
+                     * the RenderSystem model-view. Passing an empty stack captured the identity
+                     * matrix, so the "BBS native" gizmo was drawn at the camera origin instead of
+                     * on the selected layer — the crude/invisible gizmo this path was meant to
+                     * replace. Hand it the exact camera-view × layer-world matrix used above. */
+                    MatrixStack gizmoStack = new MatrixStack();
+
+                    gizmoStack.peek().getPositionMatrix().set(modelView);
+                    mchorse.bbs_mod.ui.utils.Gizmo.INSTANCE.render(gizmoStack);
                     ok = true;
                 }
                 catch (Throwable error)
@@ -25294,6 +25305,15 @@ public class UICompositorPanel extends UIDashboardPanel
         /* Drains the mixer thread; must run even when disabled so a mix started a moment ago is
          * picked up (or dropped) instead of leaking. */
         dev.bbsae.client.audio.CompAudioPlayer.tick();
+
+        if (Boolean.getBoolean("bbsae.debugEncoder") && this.previewAudioRunning
+            && (this.debugAudioTicks++ % 40) == 0)
+        {
+            dev.bbsae.BbsAeAddon.LOGGER.info("preview audio: playing={} status='{}' time={}",
+                dev.bbsae.client.audio.CompAudioPlayer.isPlaying(),
+                dev.bbsae.client.audio.CompAudioPlayer.status(),
+                this.time);
+        }
     }
 
     /** The keyframe editor is built before the panel is laid out: adding sheets at 0x0 leaves its

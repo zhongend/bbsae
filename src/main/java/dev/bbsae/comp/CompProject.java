@@ -88,8 +88,12 @@ public class CompProject
      * 图层 + 效果. Version 7 lets {@link CompProject.CompSettings#uiLayoutRevision} distinguish an
      * old saved effects-right tree (one-time conversion) from a user who later chooses that layout
      * from the menu (must stay chosen).
+     *
+     * 8 — text letter spacing default. New text layers use 9 composition pixels of tracking; old
+     * files stored the previous 0 default explicitly, so the migration converts a zero tracking with
+     * no tracking keyframes once. A deliberate non-zero spacing (and any keyframed tracking) is kept.
      */
-    public static final int VERSION = 7;
+    public static final int VERSION = 8;
 
     public String format = FORMAT;
     public int version = VERSION;

@@ -20,7 +20,7 @@
 | 效果 | 58 个精选效果：Gaussian/Box/Directional/Radial Blur、Sharpen、Brightness/Contrast、Hue/Saturation、Exposure、Tint、Levels、Curves、Invert、Vignette、Noise/Grain、Gradient Ramp、Fractal Noise、Checkerboard、Grid、Circle、Displacement、Bulge、Pinch、Twist、Wave、Chroma Key、Luma Key、Glow、Drop Shadow、Stroke、Outer Glow、Mosaic、Posterize、Threshold、Find Edges、Linear/Radial Wipe、Dissolve、Depth Matte/Fog/DOF、Scanlines、Glitch、VHS、Halftone、Emboss、Mirror、Kaleidoscope、**网格重复、随机重复、湍流置换、色彩映射、扫光** |
 | 效果 · 3D | 3D 图层效果烘焙进 layer-local 源纹理；效果栈的类型/顺序/启用/解析后参数进入内容指纹，调参、增删、关键帧动画都会刷新；深度类效果在透视投影后执行，深度缺失时精确 no-op |
 | 图层样式 | Drop Shadow、Inner Shadow、Outer Glow、Inner Glow、Bevel、Color Overlay、Gradient Overlay、Satin、Stroke（Bevel/Satin 为近似实现） |
-| 文字 | 字号、颜色、描边、字距、行距、对齐、换行、逐字 animator、range selector、wiggle、随机顺序；**导入 TTF/OTF/系统字体（含 .ttc 集合，自动提取第一个字体）；逐字符字形回退（字体缺字时自动用默认字体，并按比例对齐字号）** |
+| 文字 | 字号、颜色、描边、字距（默认 9px，按合成像素）、行距、对齐、换行、逐字 animator、range selector、wiggle、随机顺序；**导入 TTF/OTF/系统字体（含 .ttc 集合，自动提取第一个字体）；逐字符字形回退（字体缺字时自动用默认字体，并按比例对齐字号）** |
 | 形状 | 矩形、椭圆、**三角形**、多边形、星形、贝塞尔路径、合并/减去/交集/排除、trim、repeater、**逐角半径（矩形 4 角 / 三角与多边形按顶点，可单独关键帧、圆角或切角）**、**逐形状填充与描边颜色**、局部空间两段填充渐变（可关键帧角度）、路径点编辑与逐点动画 |
 | 效果参数动画 | 每个标量效果参数都能用 BBS float channel 打关键帧 |
 | 表达式 | 安全子集：`+ - * / % ^`、括号、`time/frame/fps/value`、`comp.<参数>`、`layer.<id>.<属性>`、sin/cos/abs/min/max/clamp/noise/wiggle 等 |
@@ -42,6 +42,7 @@
 | 输出 | 渲染队列（新增/移除/重试/取消/串行）、render settings 与 output module 分离、输出模块 UI 可编辑、PNG 序列、H.264 审阅、ProRes 422 HQ、ProRes 4444 Alpha、输出模板持久化、打开输出文件夹 |
 | 影片集成 | 一个影片一个项目；每个 replay 一个独立 composition；**打开合成器不会自动往影片轨道加片段**（合成页显式添加/移除；导出时按需准备片段并在导出结束后移除临时片段）；合成器片段检查器可「选择工程/合成」或「绑定到当前回放工程」（自动建工程与 replay 合成）；`ClipContext.clipData` → `FrameOverlays` → BBS recorder；不修改 `.dat` |
 | BBS 原版音频 | `CompositionClip` 的合成音轨通过 `CompFilmAudio` 跟随 BBS 原版影片时钟播放（`AudioClientClip.manageSounds` 之后；播放/暂停/拖动/循环与画面同源），并通过 `CompFilmAudioExport` 混入 BBS 导出/“渲染音频”的 WAV（时间映射与画面相同的 `(ticks * timeScale + offset)/20`；影片没有 `AudioClip` 时也能生成音轨） |
+| 回放 gizmo | 复用 BBS 原版 `Gizmo` + 原版 `FilmTarget` 级联：**骨骼 → 表单锚点 → replay root**；骨骼/锚点使用完整移动/缩放/旋转/平面/球/视口环手柄，root 保留 BBS 的受限遮罩；矩阵、拖拽 frame axes、stencil 与视觉同源，锚点轨道不再误写 root；gizmo 在 HUD 之后绘制并清理合成残留深度 |
 | 回放实体抠像 | **`回放实体` 图层**：把选中的 BBS 回放实体按**深度**从世界帧里抠出来（背景透明），可整层做变换/蒙版/效果/混合并随工程导出 alpha；判断依据是"实体深度 = 世界深度"，因此**方块或未选中的实体挡在前面时会正确遮挡**，且不比较颜色（换光影、换材质不影响）；检查器里有"抠出所有回放实体"开关 + 逐回放勾选表（勾选/取消会自动在"全部/仅勾选"之间切换）、羽化/收缩/深度容差、遮挡开关与实时状态行 |
 | BBS 预览 | 合成器面板内通过 `BbsPreviewBridge` 重新启用 BBS customSize + film runner + `FilmEditorController`：`BBS 预览` 图层与预览背景 `BBS` 开关显示真实的影片/世界帧，机位与回放随合成播放头移动 |
 | UI 密度 | **三档（小/中/大）+ 自动跟随 BBS 的 GUI 缩放**：控件高度 14/16/20、行高 16/18/22、标签列 62/76/92、左右栏与时间轴宽度全部由 `CompUi` 一张表推导；设置里可切换，随工程保存 |

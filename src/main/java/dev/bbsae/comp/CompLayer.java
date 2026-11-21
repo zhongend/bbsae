@@ -156,7 +156,7 @@ public class CompLayer
     public Float textCounterScale;
     public String fontName = "";
     public float fontSize = 48F;
-    public float tracking = 0F;
+    public float tracking = 9F;
     public float lineHeight = 1.15F;
     public int align = 1;
     public boolean wrap = false;

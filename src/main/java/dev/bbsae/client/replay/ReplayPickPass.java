@@ -8,6 +8,7 @@ import mchorse.bbs_mod.camera.Camera;
 import mchorse.bbs_mod.film.FilmControllerContext;
 import mchorse.bbs_mod.film.FilmEntityRenderer;
 import mchorse.bbs_mod.film.FilmMatrices;
+import mchorse.bbs_mod.film.FilmTarget;
 import mchorse.bbs_mod.film.replays.Replay;
 import mchorse.bbs_mod.forms.FormRenderLast;
 import mchorse.bbs_mod.forms.entities.IEntity;
@@ -240,7 +241,7 @@ public final class ReplayPickPass
                     true, replays.size() + ReplayPickIds.offsetFor(Gizmo.STENCIL_MAX));
             }
 
-            this.renderGizmoStencil(session, viewCamera, transition, area.h);
+            this.renderGizmoStencil(session, area.h);
 
             /* The readback has to happen while the pick framebuffer is still bound. A pointer
              * outside the viewport means "no hover", not a clamped readback. */
@@ -421,16 +422,24 @@ public final class ReplayPickPass
 
     private SelectedPart selectedPart;
 
-    private void renderGizmoStencil(ReplayEditSession session, Camera camera, float transition, float areaHeight)
-    {
-        MatrixStack stack = this.gizmoStack(session, areaHeight);
+    /** What the original film gizmo is editing this frame — see {@link ReplayEditSession#editTarget}. */
+    private java.util.function.Supplier<FilmTarget> editTarget = () -> FilmTarget.NONE;
 
-        if (stack == null)
+    public void setEditTarget(java.util.function.Supplier<FilmTarget> editTarget)
+    {
+        this.editTarget = editTarget == null ? () -> FilmTarget.NONE : editTarget;
+    }
+
+    private void renderGizmoStencil(ReplayEditSession session, float areaHeight)
+    {
+        GizmoFrame frame = this.gizmoFrame(session, areaHeight);
+
+        if (frame == null)
         {
             return;
         }
 
-        Gizmo.INSTANCE.renderStencil(stack, UIReplayPropTransform.MASK);
+        Gizmo.INSTANCE.renderStencil(frame.stack, frame.mask);
     }
 
     /**
@@ -450,33 +459,40 @@ public final class ReplayPickPass
             return;
         }
 
-        MatrixStack stack = this.gizmoStack(session, areaHeight);
+        GizmoFrame frame = this.gizmoFrame(session, areaHeight);
 
-        if (stack == null)
+        if (frame == null)
         {
             return;
         }
 
-        Gizmo.INSTANCE.captureVisual(stack, UIReplayPropTransform.MASK);
+        Gizmo.INSTANCE.captureVisual(frame.stack, frame.mask);
 
         if (Boolean.getBoolean("bbsae.debugGizmoCapture"))
         {
-            org.joml.Vector3f translation = stack.peek().getPositionMatrix().getTranslation(new org.joml.Vector3f());
+            org.joml.Vector3f translation = frame.stack.peek().getPositionMatrix().getTranslation(new org.joml.Vector3f());
 
-            BbsAeAddon.LOGGER.info("Replay gizmo capture: origin=({}, {}, {}) bone={} areaH={} mask={}",
+            BbsAeAddon.LOGGER.info("Replay gizmo capture: origin=({}, {}, {}) target={} bone={} areaH={} mask={}",
                 translation.x, translation.y, translation.z,
-                session.isBoneGizmo() ? session.selectedBone() : "-", areaHeight, UIReplayPropTransform.MASK);
+                frame.target.kind(), frame.target.boneOrNull(), areaHeight, frame.mask);
         }
     }
 
     /**
-     * The frame the original film gizmo is drawn in: camera view times the actor's camera-relative
-     * placement, reoriented to the edit space. Shared by the visual capture and the stencil pass so
-     * the drawn handles and their hitboxes cannot drift apart.
+     * The frame the original film gizmo is drawn in: camera view times the target's,
+     * camera-relative placement, reoriented to the edit space. Shared by the visual capture and
+     * the stencil pass so the drawn handles and their hitboxes cannot drift apart.
+     *
+     * <p>The target itself comes from the panel's cascade (bone → anchor → replay root), copied
+     * from {@code UIFilmController.getDefaultEditTarget()}. The handle mask is the original one
+     * per target: bones and anchors get every move/scale/rotate handle, while a replay root keeps
+     * BBS' {@link UIReplayPropTransform#MASK} (scale and roll are not writable there).</p>
      */
-    private MatrixStack gizmoStack(ReplayEditSession session, float areaHeight)
+    private GizmoFrame gizmoFrame(ReplayEditSession session, float areaHeight)
     {
-        if (!session.canEditPlacement())
+        FilmTarget target = this.editTarget.get();
+
+        if (target == null || target.isNone() || !session.canEditPlacement())
         {
             return null;
         }
@@ -490,35 +506,62 @@ public final class ReplayPickPass
 
         Camera camera = session.viewCamera();
         float transition = session.transition();
-        MatrixStack stack = new MatrixStack();
-        Matrix4f placement = null;
-        String bone = session.isBoneGizmo() ? session.selectedBone() : "";
+        Matrix4f placement;
 
-        if (bone != null && !bone.isEmpty() && entity.getForm() != null)
+        switch (target.kind())
         {
-            /* The selected body part is where the original editor puts the gizmo. Drawing the
-             * handles at the replay's feet while a bone is selected would make every drag start
-             * from the wrong origin. */
-            placement = FilmMatrices.getGizmoBoneCompositeMatrix(
-                session.entities(), entity, session.replay(),
-                camera.position.x, camera.position.y, camera.position.z, transition, bone, true);
+            case BONE:
+                placement = entity.getForm() == null ? null : FilmMatrices.getGizmoBoneCompositeMatrix(
+                    session.entities(), entity, session.replay(),
+                    camera.position.x, camera.position.y, camera.position.z, transition,
+                    target.bone(), true);
+                break;
+
+            case ANCHOR:
+                placement = FilmMatrices.getGizmoAnchorCompositeMatrix(
+                    session.entities(), entity, session.replay(),
+                    camera.position.x, camera.position.y, camera.position.z, transition);
+                break;
+
+            default:
+                placement = FilmMatrices.getMatrixForRenderWithRotation(
+                    entity, camera.position.x, camera.position.y, camera.position.z, transition);
+                break;
         }
 
         if (placement == null)
         {
-            placement = FilmMatrices.getMatrixForRenderWithRotation(
-                entity, camera.position.x, camera.position.y, camera.position.z, transition
-            );
+            return null;
         }
+
+        MatrixStack stack = new MatrixStack();
 
         stack.peek().getPositionMatrix().set(camera.view);
         MatrixStackUtils.multiply(stack, placement);
 
         Gizmo.INSTANCE.setViewportHeight(areaHeight);
-        Gizmo.INSTANCE.reorientForSpace(stack, TransformSpace.GLOBAL, camera.view,
-            FilmMatrices.getReplayWorldAxes(entity, transition));
+        Gizmo.INSTANCE.reorientForSpace(stack, target.space() == null ? TransformSpace.GLOBAL : target.space(),
+            camera.view, FilmMatrices.getReplayWorldAxes(entity, transition));
 
-        return stack;
+        Gizmo.HandleMask mask = target.kind() == FilmTarget.Kind.ROOT
+            ? UIReplayPropTransform.MASK
+            : Gizmo.HandleMask.ALL;
+
+        return new GizmoFrame(stack, mask, target);
+    }
+
+    private static final class GizmoFrame
+    {
+        final MatrixStack stack;
+        final Gizmo.HandleMask mask;
+        final FilmTarget target;
+
+        GizmoFrame(MatrixStack stack, Gizmo.HandleMask mask, FilmTarget target)
+        {
+            this.stack = stack;
+            this.mask = mask;
+            this.target = target;
+        }
     }
 
     private void ensureStencil(Area area)
@@ -580,7 +623,7 @@ public final class ReplayPickPass
      * Deliberately includes the mouse, camera, playhead, selection and visibility counts; a
      * heartbeat is unnecessary because a change in any of them forces a rebuild.
      */
-    private static long signature(UIContext context, ReplayEditSession session, Area area)
+    private long signature(UIContext context, ReplayEditSession session, Area area)
     {
         Camera camera = session.viewCamera();
         long h = 0x9E3779B97F4A7C15L;
@@ -598,6 +641,18 @@ public final class ReplayPickPass
         h = mix(h, session.replayIndex(session.replay()));
         h = mix(h, session.selectedBone() == null ? 0 : session.selectedBone().hashCode());
         h = mix(h, session.isBoneGizmo() ? 1 : 0);
+
+        /* The gizmo handles themselves are part of what the stencil draws; changing the edit
+         * target (bone → anchor → root) must force a new pass even when the actor did not move. */
+        FilmTarget target = this.editTarget.get();
+
+        if (target != null)
+        {
+            h = mix(h, target.kind() == null ? 0 : target.kind().ordinal());
+            h = mix(h, target.bone() == null ? 0 : target.bone().hashCode());
+            h = mix(h, target.space() == null ? 0 : target.space().ordinal());
+        }
+
         h = mix(h, session.visibleCount());
         h = mix(h, session.culledCount());
 

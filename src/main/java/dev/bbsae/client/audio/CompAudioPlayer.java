@@ -164,9 +164,18 @@ public final class CompAudioPlayer
     {
         lastTime = time;
 
-        if (!wanted || player == null)
+        if (player == null)
         {
             return;
+        }
+
+        if (!wanted)
+        {
+            /* Something paused the preview from outside the transport (the old film-audio bridge
+             * called pause() every frame). The compositor calls sync() only while it is playing,
+             * so sync is allowed to restore the intent instead of staying silent forever. */
+            wanted = true;
+            startTime = time;
         }
 
         if (!player.isPlaying())
