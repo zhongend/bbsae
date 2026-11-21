@@ -35,4 +35,33 @@ public class TextLayerBoundsTest
     {
         assertTrue(CompLayerSourceCache.estimatedTextWidth("", 100F, 4F) >= 12F);
     }
+
+    @Test
+    public void trackingIsReservedBetweenGlyphs()
+    {
+        float plain = CompLayerSourceCache.estimatedTextWidth("abcde", 80F, 0F);
+        float spaced = CompLayerSourceCache.estimatedTextWidth("abcde", 80F, 0F, 9F);
+
+        assertTrue(spaced >= plain + 4F * 9F,
+            "five glyphs need four 9 px gaps: plain=" + plain + " spaced=" + spaced);
+    }
+
+    @Test
+    public void widestLineWinsWithTracking()
+    {
+        float single = CompLayerSourceCache.estimatedTextWidth("AAAA", 80F, 0F, 9F);
+        float multi = CompLayerSourceCache.estimatedTextWidth("A\nAAAA", 80F, 0F, 9F);
+
+        assertTrue(multi >= single,
+            "a newline must not be summed into the line width; the widest line is used");
+    }
+
+    @Test
+    public void negativeTrackingDoesNotMakeTheEstimateNarrowerThanInk()
+    {
+        float plain = CompLayerSourceCache.estimatedTextWidth("abcd", 80F, 0F);
+        float tightened = CompLayerSourceCache.estimatedTextWidth("abcd", 80F, 0F, -20F);
+
+        assertTrue(tightened >= plain, "a negative gap must not shrink the safety estimate");
+    }
 }

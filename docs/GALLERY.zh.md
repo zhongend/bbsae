@@ -192,8 +192,8 @@ framebuffer，再按 BBS 的 `customSize`/world 状态合成。这样编辑器�
 - 项目维护者：**终end**（[@zhongend](https://github.com/zhongend)）；
 - 32×32 原图：`docs/gallery/compositor-icon.png`；
 - BBS 界面使用的 16×16 版本：`src/main/resources/assets/bbsae/assets/textures/gui/compositor_icon.png`；
-- **Mod Menu / 启动器插件图标**：`src/main/resources/assets/bbsae/icon.png`（128×128，同一图标的
-  深色圆角底版本，`fabric.mod.json` 的 `icon` 字段指向它）；
+- **Mod Menu / 启动器插件图标**：`src/main/resources/assets/bbsae/icon.png`（128×128，
+  由 `docs/gallery/cover.png` 缩放的封面缩略图，`fabric.mod.json` 的 `icon` 字段指向它）；
 - 图标同时用于 BBS dashboard 页签和 `bbsae:composition` 影片 clip。
 
 ## 13. 已知限制

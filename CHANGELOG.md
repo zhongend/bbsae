@@ -1,5 +1,31 @@
 # BBS AE 更新日记
 
+## 0.99-hotfix88 — 2026-11-21
+
+封面更换、3D 文字字距边界修复，并重新验证合成器预览音频。
+
+### 封面
+
+- `docs/gallery/cover.png` 换成新封面（真正的 PNG，不是改后缀的 JPEG），README 顶部展示；
+- `src/main/resources/assets/bbsae/icon.png` 从封面缩放为 128×128，Mod Menu/启动器显示新图标；
+- 新增 `IconResourceTest.galleryCoverIsARealSquarePng`，防止再次把 JPEG 当 PNG 上传。
+
+### 3D 文字：字距 9 的宽度边界
+
+- **根因**：3D 文字的光栅宽度由 `CompLayerSourceCache.estimatedTextWidth()` 估算；它只按字符
+  宽度相加，没有加 `tracking` 的字间空隙。默认字距从 0 改成 9 后，长行 3D 文字可能被光栅
+  左右裁切。
+- 估算现在按行统计字形，并在每个字间加一次 `max(0, tracking)`；多行取最宽一行，负字距不会
+  让估算变窄。
+- 新增 `TextLayerBoundsTest` 三个用例（正字距、多行、负字距）。
+
+### 合成器声音复检
+
+- 使用 final 代码重新跑真实客户端：`preview audio: playing=true status='播放中 · 3.64s'`，
+  连续三帧；hotfix87 的 `isCompositorActive` + `sync()` 自愈仍有效。
+
+全量测试：**203 suites / 1232 tests / 0 failures / 0 errors / 1 skipped**。
+
 ## 0.99-hotfix87 — 2026-11-21
 
 合成器预览没有声音、文字默认间距太紧、回放 gizmo 仍是简化版。

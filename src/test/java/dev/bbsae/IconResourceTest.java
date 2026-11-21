@@ -49,4 +49,42 @@ public class IconResourceTest
             assertTrue(image.getColorModel().hasAlpha(), "mod icon should keep its rounded corners");
         }
     }
+
+    /**
+     * The repository/GitHub cover is uploaded as {@code .png}. A JPEG saved under that extension
+     * still renders in a browser but some launchers/uploaders reject it (and the wrong old cover
+     * was reaching the plugin page), so pin the actual container format here.
+     */
+    @Test
+    public void galleryCoverIsARealSquarePng() throws Exception
+    {
+        java.io.File file = new java.io.File("docs/gallery/cover.png");
+
+        assertTrue(file.isFile(), "docs/gallery/cover.png is missing");
+
+        try (javax.imageio.stream.ImageInputStream input = ImageIO.createImageInputStream(file))
+        {
+            assertNotNull(input, "cover cannot be opened");
+            java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(input);
+
+            assertTrue(readers.hasNext(), "cover is not a readable image");
+
+            javax.imageio.ImageReader reader = readers.next();
+
+            try
+            {
+                assertEquals("png", reader.getFormatName().toLowerCase(java.util.Locale.ROOT),
+                    "cover must really be a PNG, not a JPEG renamed to .png");
+
+                reader.setInput(input, true, true);
+
+                assertEquals(reader.getWidth(0), reader.getHeight(0), "cover must be square");
+                assertTrue(reader.getWidth(0) >= 512, "cover must be at least 512 px");
+            }
+            finally
+            {
+                reader.dispose();
+            }
+        }
+    }
 }

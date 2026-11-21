@@ -404,8 +404,9 @@ public final class CompLayerSourceCache
             if (!layer.wrap)
             {
                 /* Without wrapping a long line can be much wider than the box (the 3D raster
-                 * clipped a wide line on both sides). */
-                float needed = estimatedTextWidth(text, font, stroke);
+                 * clipped a wide line on both sides). Tracking adds a gap between every pair of
+                 * glyphs; with the new 9 px default it is a large part of the width. */
+                float needed = estimatedTextWidth(text, font, stroke, layer.trackingAt(frame));
 
                 if (needed > rect.width)
                 {
@@ -443,21 +444,54 @@ public final class CompLayerSourceCache
      */
     static float estimatedTextWidth(String text, float fontSize, float stroke)
     {
+        return estimatedTextWidth(text, fontSize, stroke, 0F);
+    }
+
+    /**
+     * Conservative advance estimate for an unwrapped line, including letter spacing.
+     *
+     * <p>Tracking is added once per gap between glyphs on the same line. Newlines split the estimate
+     * into lines and the widest line wins; the old implementation summed every code point including
+     * newlines, which over-estimated but still missed the (now default 9 px) tracking gaps.</p>
+     */
+    static float estimatedTextWidth(String text, float fontSize, float stroke, float tracking)
+    {
         if (text == null || text.isEmpty())
         {
             return Math.max(1F, stroke * 2F + 4F);
         }
 
-        float estimate = 0F;
+        float maxLine = 0F;
+        float line = 0F;
+        int lineGlyphs = 0;
+        float gap = Math.max(0F, tracking);
 
         for (int i = 0; i < text.length(); )
         {
             int codePoint = text.codePointAt(i);
-            estimate += (isWideCodePoint(codePoint) ? 0.98F : 0.62F) * fontSize;
+
+            if (codePoint == '\n')
+            {
+                maxLine = Math.max(maxLine, line);
+                line = 0F;
+                lineGlyphs = 0;
+                i += 1;
+                continue;
+            }
+
+            if (lineGlyphs > 0)
+            {
+                line += gap;
+            }
+
+            line += (isWideCodePoint(codePoint) ? 0.98F : 0.62F) * fontSize;
+            lineGlyphs += 1;
             i += Character.charCount(codePoint);
         }
 
-        return estimate + stroke * 2F + 4F;
+        maxLine = Math.max(maxLine, line);
+
+        return maxLine + stroke * 2F + 4F;
     }
 
     /** CJK/full-width ranges occupy roughly one em in a mixed-script line. */
